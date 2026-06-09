@@ -3,7 +3,7 @@
  * Binary entry point for fuzzycortex-cli — the full interactive Commander CLI.
  * Loads .env, then forwards to the compiled dist/index.js (default `chat` = the
  * CHALK interactiveChat REPL; `ui` browsers; other subcommands delegate to the
- * headless @nexus-cortex/cli). Same behavior as the pre-split omniclaude.js.
+ * headless @nexus-cortex/cli).
  */
 import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
