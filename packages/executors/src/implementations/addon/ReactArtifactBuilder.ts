@@ -148,7 +148,9 @@ async function buildCdn(
 async function runEsbuild(artifactPath: string): Promise<void> {
   const esbuild = require_('esbuild') as typeof import('esbuild');
   // Resolve react/react-dom from THIS package's node_modules — never per-artifact install.
-  const reactNodeModules = join(dirname(require_.resolve('react/package.json')), '..');
+  const reactDir = dirname(require_.resolve('react/package.json'));
+  const reactDomDir = dirname(require_.resolve('react-dom/package.json'));
+  const reactNodeModules = join(reactDir, '..');
   await esbuild.build({
     entryPoints: [join(artifactPath, 'src', 'main.tsx')],
     bundle: true,
@@ -160,6 +162,12 @@ async function runEsbuild(artifactPath: string): Promise<void> {
     target: 'es2020',
     define: { 'process.env.NODE_ENV': '"development"' },
     nodePaths: [reactNodeModules],   // bare 'react'/'react-dom' resolve here
+    // Dedup React: when the artifact builds INSIDE a monorepo, esbuild's upward
+    // node_modules walk can resolve the user's `import 'react'` and react-dom's internal
+    // `react` to DIFFERENT copies -> "Invalid hook call (more than one copy of React)" ->
+    // <App> crashes and #root stays empty (react-dom still registers a renderer, so detect
+    // reports react:true). Pin every react/react-dom (and subpaths) to ONE resolved dir.
+    alias: { 'react': reactDir, 'react-dom': reactDomDir },
     logLevel: 'silent'
   });
 }
