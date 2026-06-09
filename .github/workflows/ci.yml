@@ -13,6 +13,8 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
+      - name: Lint (fails on error-level issues; warnings are a tidy-up backlog)
+        run: npm run lint
       - run: npm run build
       - name: Tests (fresh-clone mode, no API keys)
         run: |
