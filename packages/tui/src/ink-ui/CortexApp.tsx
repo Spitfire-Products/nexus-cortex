@@ -2478,7 +2478,7 @@ export const CortexApp: React.FC<CortexAppProps> = ({
         // Direct mentorship commands
         // Find installation root - prefer env var, then use module location
         const getInstallationRoot = (): string => {
-          const root = process.env.CORTEX_ROOT || process.env.OMNICLAUDE_ROOT;
+          const root = process.env.CORTEX_ROOT;
           if (root) return root;
           return CLI_INSTALLATION_ROOT;
         };

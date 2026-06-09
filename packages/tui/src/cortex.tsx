@@ -108,8 +108,8 @@ const CortexApp: React.FC = () => {
   useEffect(() => {
     const init = async () => {
       try {
-        const mode = (process.env.CORTEX_MODE || process.env.OMNICLAUDE_MODE) || 'direct';
-        const serverUrl = (process.env.CORTEX_SERVER_URL || process.env.OMNICLAUDE_SERVER_URL);
+        const mode = process.env.CORTEX_MODE || 'direct';
+        const serverUrl = process.env.CORTEX_SERVER_URL;
 
         const orchestratorClient = new OrchestratorClient({
           mode: mode as 'direct' | 'server',
