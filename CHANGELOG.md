@@ -405,9 +405,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **Legacy `cortex-v4` and `cortex-v4-daemon` bin entries** from
-  server package. Duplicate scripts deleted — `cortex-server` and
-  `cortex-daemon` are the canonical commands.
+- **Legacy version-suffixed bin entries** from the server package.
+  Duplicate scripts deleted — `cortex-server` and `cortex-daemon`
+  are the canonical commands.
 
 ### Changed
 
