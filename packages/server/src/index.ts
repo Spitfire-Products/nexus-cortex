@@ -242,7 +242,9 @@ export class CortexV4Server {
       console.log(chalk.yellow('[STATELESS] Stateless mode - orchestrator created per request'));
     }
 
-    // Step 2: Initialize SandboxViewServer (unified dashboard)
+    // Step 2: Initialize SandboxViewServer (unified dashboard) — opt-in, default off.
+    // Binds an extra port (DASHBOARD_PORT, default 4001); enable with ENABLE_DASHBOARD=true.
+    if (process.env.ENABLE_DASHBOARD === 'true') {
     console.log(chalk.cyan('[INIT] Starting unified dashboard (sandbox + tmux viewer)...'));
     this.viewServer = SandboxViewServer.getInstance();
     await this.viewServer.start(4001);
@@ -288,6 +290,7 @@ export class CortexV4Server {
 
     const viewPort = this.viewServer.getPort();
     console.log(chalk.green(`[OK] Dashboard running on http://localhost:${viewPort}`));
+    }
 
     // Step 3: Start HTTP server
     return new Promise((resolve, reject) => {
@@ -304,16 +307,19 @@ export class CortexV4Server {
           console.log(chalk.green(`\n[OK] Nexus Cortex server running on port ${port}`));
           console.log(chalk.blue(`[ARCH] Core Library Architecture`));
           console.log(chalk.yellow(`[API] API Server: http://localhost:${port}/health`));
-          console.log(chalk.yellow(`[VIEW] Dashboard: http://localhost:${viewPort}`));
+          if (this.viewServer) console.log(chalk.yellow(`[VIEW] Dashboard: http://localhost:${this.viewServer.getPort()}`));
           console.log(chalk.gray(`\nAPI Endpoints:`));
           console.log(chalk.gray(` POST   /v1/messages  - Main LLM endpoint`));
           console.log(chalk.gray(` GET    /models       - List available models`));
           console.log(chalk.gray(` GET    /health       - Server status`));
-          console.log(chalk.gray(`\nDashboard:`));
-          console.log(chalk.gray(` http://localhost:${viewPort}/           - Sandbox list`));
-          console.log(chalk.gray(` http://localhost:${viewPort}/tmux       - Tmux sessions`));
-          console.log(chalk.gray(` http://localhost:${viewPort}/sandbox/ID - View sandbox`));
-          console.log(chalk.gray(` http://localhost:${viewPort}/tmux/ID    - View tmux\n`));
+          if (this.viewServer) {
+            const vp = this.viewServer.getPort();
+            console.log(chalk.gray(`\nDashboard:`));
+            console.log(chalk.gray(` http://localhost:${vp}/           - Sandbox list`));
+            console.log(chalk.gray(` http://localhost:${vp}/tmux       - Tmux sessions`));
+            console.log(chalk.gray(` http://localhost:${vp}/sandbox/ID - View sandbox`));
+            console.log(chalk.gray(` http://localhost:${vp}/tmux/ID    - View tmux\n`));
+          }
 
           if (this.idleTimeoutMs > 0) {
             console.log(chalk.gray(` Idle timeout: ${Math.round(this.idleTimeoutMs / 1000)}s`));

@@ -53,7 +53,7 @@ export class SandboxViewServer {
   private app: Express;
   private httpServer: HttpServer;
   private io: SocketIOServer;
-  private port: number = 4001;
+  private port: number = Number(process.env.DASHBOARD_PORT) || 4001;
   private isRunning: boolean = false;
 
   private constructor() {
@@ -83,14 +83,15 @@ export class SandboxViewServer {
   /**
    * Start the server with dynamic port conflict resolution
    */
-  async start(startPort: number = 4001): Promise<void> {
+  async start(startPort?: number): Promise<void> {
     if (this.isRunning) {
       console.log(` View server already running on http://localhost:${this.port}`);
       return;
     }
 
-    // Try starting on the requested port, with automatic retry on next port if occupied
-    let currentPort = startPort;
+    // Dashboard port: DASHBOARD_PORT env wins, then the caller's arg, then 4001.
+    // Try starting on that port, with automatic retry on next port if occupied.
+    let currentPort = Number(process.env.DASHBOARD_PORT) || startPort || 4001;
     const maxAttempts = 10; // Try up to 10 ports
     let lastError: Error | null = null;
 
