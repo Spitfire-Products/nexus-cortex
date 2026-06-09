@@ -301,13 +301,15 @@ export class SubAgentManager implements ISubAgentManager {
       // the conservative trust-gated greedy pick. Either path falls back to the
       // parent model when there's no eligible recommendation, so 'auto' never
       // routes to a banned (MODEL_ROUTER_EXCLUDE) or unresolvable model.
+      // MODEL_ROUTER_EXCLUDE is a comma-separated ban list — each entry is an exact
+      // model ID or a 'prefix*' wildcard, so multiple models/providers can be excluded
+      // at once (e.g. "grok*,gpt-4o,deepseek-reasoner"). Applied to BOTH routing paths.
+      const exclude = (process.env.MODEL_ROUTER_EXCLUDE ?? '')
+        .split(',').map(s => s.trim()).filter(Boolean);
       const explore = process.env.MODEL_ROUTER_EXPLORATION === 'true';
       const recommended = explore
-        ? this.getRouterMatrix().recommendThompson(taskType, {
-            exclude: (process.env.MODEL_ROUTER_EXCLUDE ?? '')
-              .split(',').map(s => s.trim()).filter(Boolean),
-          })
-        : this.getRouterMatrix().recommendTrusted(taskType, minSamples);
+        ? this.getRouterMatrix().recommendThompson(taskType, { exclude })
+        : this.getRouterMatrix().recommendTrusted(taskType, minSamples, exclude);
       if (!recommended) return parentModel;
       return this.modelResolver.resolveToId(recommended) ?? recommended;
     } catch {

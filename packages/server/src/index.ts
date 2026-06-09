@@ -344,9 +344,19 @@ export class CortexV4Server {
   }
 
   async stop(): Promise<void> {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
       this.cleanupInterval = null;
+    }
+
+    // Gracefully close the dashboard view server if it was started (eager or lazy).
+    if (this.viewServer) {
+      try { await this.viewServer.stop(); } catch { /* viewer is optional */ }
+      this.viewServer = null;
     }
 
     // Print session summary on shutdown
@@ -369,9 +379,21 @@ export class CortexV4Server {
       } catch {}
     }
 
+    // Close the HTTP server, but cap the wait with a grace period so a hung
+    // keep-alive connection can't block shutdown forever (default 10s; 0 = wait forever).
+    const graceMs = parseInt(process.env.SHUTDOWN_GRACE_MS || '10000', 10);
     return new Promise((resolve) => {
       if (this.server) {
+        let graceTimer: ReturnType<typeof setTimeout> | null = null;
+        if (graceMs > 0) {
+          graceTimer = setTimeout(() => {
+            console.log(chalk.yellow(`Server stopped (forced after ${Math.round(graceMs / 1000)}s grace)`));
+            resolve();
+          }, graceMs);
+          if (typeof graceTimer.unref === 'function') graceTimer.unref();
+        }
         this.server.close(() => {
+          if (graceTimer) clearTimeout(graceTimer);
           console.log(chalk.yellow('Server stopped'));
           resolve();
         });

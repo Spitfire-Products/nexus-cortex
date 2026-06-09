@@ -24,7 +24,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
-import { thompsonSelect, type ThompsonOptions } from './ThompsonRouter.js';
+import { thompsonSelect, isExcluded, type ThompsonOptions } from './ThompsonRouter.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -395,10 +395,16 @@ export class ModelRouterMatrix {
    * a safe default. As MODEL_ROUTER_RECORD accumulates observations, more task
    * types cross the threshold and begin routing.
    */
-  recommendTrusted(taskType: string, minSamples = 3): string | null {
-    const top = this.getScores(taskType)[0];
-    if (!top || top.sampleCount < minSamples) return null;
-    return top.modelId;
+  recommendTrusted(taskType: string, minSamples = 3, exclude: string[] = []): string | null {
+    // Walk best-first; skip any banned model (MODEL_ROUTER_EXCLUDE supports multiple
+    // comma-split entries, each exact or 'prefix*'). Apply the trust gate to the best
+    // ELIGIBLE model: if it lacks enough samples, return null so the caller inherits.
+    for (const s of this.getScores(taskType)) {
+      if (exclude.length && isExcluded(s.modelId, exclude)) continue;
+      if (s.sampleCount < minSamples) return null;
+      return s.modelId;
+    }
+    return null;
   }
 
   /**
