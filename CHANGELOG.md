@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (deficiency + repro + strategy; never task sets — the overfitting trip-wire is
   the caller's), `--model`, `--max-iterations`, `--json` (clean stdout:
   `{cwd, model, changed, filesEdited, toolCallCount, iterations, summary}`).
-  Boundary: omniclaude owns the agent invocation; the swarm owns
+  Boundary: cortex owns the agent invocation; the swarm owns
   which-deficiency/strategy + the commit/FWER orchestration. Verified live
   (autonomous edit applied, clean JSON).
 
@@ -237,9 +237,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - 13 previously invisible runtime vars registered in SettingsSchema:
-  `OMNICLAUDE_ENDTURN_GATE`, `CORTEX_ENDTURN_GATE`, `CORTEX_RECORD_DECISIONS`,
+  `CORTEX_ENDTURN_GATE`, `CORTEX_RECORD_DECISIONS`,
   `CORTEX_LOOKUP_PRIOR_DECISIONS`, `CORTEX_DECISIONS_MAX_BYTES`,
-  `OMNICLAUDE_MODE`, `YOLO`, `AUTO_RESUME`, `PORT`, `DEBUG_PAYLOAD`,
+  `CORTEX_MODE`, `YOLO`, `AUTO_RESUME`, `PORT`, `DEBUG_PAYLOAD`,
   `DEBUG_THINKING`, `ENABLE_SMOKE_TESTS`, `NVIDIA_API_KEY`.
 
 - Missing metadata for `GEMINI_API_KEY`, `MENTORSHIP_ACTIVE_DISCOVERY`,
@@ -295,7 +295,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Error truncation.** ToolFormatter truncates error output to first
   line, max 120 chars.
 
-- **Launcher .env loading.** omniclaude.js now loads `.env` from cwd
+- **Launcher .env loading.** cortex.js now loads `.env` from cwd
   first, falling back to monorepo root.
 
 - **findProjectRoot renamed to findInstallRoot.** Clarifies this finds
@@ -405,7 +405,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **Legacy `omniclaude-v4` and `omniclaude-v4-daemon` bin entries** from
+- **Legacy `cortex-v4` and `cortex-v4-daemon` bin entries** from
   server package. Duplicate scripts deleted — `cortex-server` and
   `cortex-daemon` are the canonical commands.
 
@@ -573,7 +573,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   map to a citation whose source sits at that line in a `cat -n` read)
   verifiers. Emits nexus-DBAI-schema-compatible `RouterTrainingSample`
   records to `<root>/.cortex/training/cortex-samples.jsonl`. Default
-  **OFF** — opt in via `OMNICLAUDE_ENDTURN_GATE=true`; OFF still emits
+  **OFF** — opt in via `CORTEX_ENDTURN_GATE=true`; OFF still emits
   records with a deterministic-only score. Bounded by
   `END_TURN_MAX_NUDGES`, scoped to tool-using turns.
   (`a6f25ef47`, `62f896302`, `20b39e925`)
