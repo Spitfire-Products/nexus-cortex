@@ -81,7 +81,7 @@ describe('SystemMessageMiddleware', () => {
       turnNumber: 0,
       modelId: 'claude-sonnet-4-5-20250929',
       config: {
-        projectPath: '/home/runner/workspace',
+        projectPath: '/tmp/test-workspace',
         enableSandbox: true
       } as any
     };
@@ -205,8 +205,8 @@ describe('SystemMessageMiddleware', () => {
       const vars = middleware.buildTemplateVariables(5, mockContext);
 
       expect(vars).toMatchObject({
-        projectPath: '/home/runner/workspace',
-        workspacePath: '/home/runner/workspace',
+        projectPath: '/tmp/test-workspace',
+        workspacePath: '/tmp/test-workspace',
         toolCount: 5,
         sandboxEnabled: true
       });
@@ -557,7 +557,7 @@ describe('SystemMessageMiddleware', () => {
 
       // Verify template variables
       expect(templateVars).toMatchObject({
-        projectPath: '/home/runner/workspace',
+        projectPath: '/tmp/test-workspace',
         sandboxEnabled: true
       });
     });
@@ -635,10 +635,10 @@ describe('SystemMessageMiddleware', () => {
     });
   });
 
-  // R28: cross-provider prompt-cache stability — static prepend system content
+  // cross-provider prompt-cache stability — static prepend system content
   // must be split into a stable `systemPrompt` (→ provider system field) instead
   // of riding the moving latest-user-message slot. Byte-preserved (only relocated).
-  describe('injectWithSystemSplit (R28 cache stability)', () => {
+  describe('injectWithSystemSplit (cache stability)', () => {
     it('routes BOTH prepend and append static content to systemPrompt; userContent = bare user only', async () => {
       const prepend: SystemMessageForInjection = {
         content: 'System instructions', position: 'prepend', priority: 10,
@@ -654,7 +654,7 @@ describe('SystemMessageMiddleware', () => {
         'User message', mockModel, false, mockContext
       );
 
-      // R28: prepend AND append both → systemPrompt (stable system field).
+      // prepend AND append both → systemPrompt (stable system field).
       // messages[0] must stay byte-identical across tool-loop iterations
       // (xAI caches the linear prefix; messages serializes before system).
       expect(systemPrompt).toContain('System instructions');

@@ -151,16 +151,16 @@ describe('CacheMetricsAccumulator', () => {
     });
   });
 
-  // R28g / Opus Defect-E guard: the accumulator recomputes
+  // Cache-rate regression guard: the accumulator recomputes
   // overallCacheHitRate = totalCacheReadTokens / totalInputTokens. Before
-  // R28g, extractUsage fed an UNDERSTATED inputTokens (post-breakpoint only)
-  // for Anthropic/xAI, so this division blew past 1.0. R28g makes
+  // the fix, extractUsage fed an UNDERSTATED inputTokens (post-breakpoint only)
+  // for Anthropic/xAI, so this division blew past 1.0. The fix makes
   // usage.inputTokens the true total; this pins the invariant so a future
   // regression of extractUsage is caught here, loudly, instead of silently
   // shipping impossible session-level rates.
-  describe('rates stay <= 1.0 with R28g-shaped usage (Defect-E guard)', () => {
+  describe('rates stay <= 1.0 with regression-shaped usage', () => {
     it('heavy-cache steady state never yields an impossible rate', () => {
-      // Post-R28g shape for the exact benchmark scenario: tiny post-breakpoint
+      // Post-fix shape for the exact regression scenario: tiny post-breakpoint
       // input + huge cache_read, recombined into the true total.
       const heavyCacheTurn = (): TokenUsageMetrics => ({
         inputTokens: 30 + 922,        // postBreakpoint + cacheRead (true total)

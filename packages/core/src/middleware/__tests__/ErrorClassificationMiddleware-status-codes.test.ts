@@ -1,11 +1,11 @@
 /**
- * Round 13 (parallel-bench output): status-code-authoritative classification.
+ * Regression test: status-code-authoritative classification.
  *
- * Cortex: `isRetryable` allowed network-pattern matches to win over status
+ * Finding: `isRetryable` allowed network-pattern matches to win over status
  * codes, so a 401 auth error with "ECONNRESET" in the body would be
  * retried indefinitely.
  *
- * Opus: `getErrorType` ignored status codes entirely; 429s with "invalid"
+ * Finding: `getErrorType` ignored status codes entirely; 429s with "invalid"
  * in the body were classified `'validation'` instead of `'rate_limit'`.
  */
 

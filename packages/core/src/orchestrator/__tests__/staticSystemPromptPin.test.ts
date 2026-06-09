@@ -1,5 +1,5 @@
 /**
- * R28f regression: xAI cross-turn prompt-cache floor.
+ * regression: xAI cross-turn prompt-cache floor.
  *
  * The "static" system prompt is built from a turn-conditional system-message
  * loader. A large first-turn-only block (project context / onboarding,

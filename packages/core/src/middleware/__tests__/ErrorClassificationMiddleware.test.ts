@@ -430,12 +430,12 @@ describe('ErrorClassificationMiddleware', () => {
     it('should correctly classify a series of real-world errors', () => {
       const testCases: Array<{ error: any; expectedRetryable: boolean; expectedType: ErrorClassification['errorType'] }> = [
         { error: new Error('ECONNRESET'), expectedRetryable: true, expectedType: 'network' },
-        { error: { status: 503 }, expectedRetryable: true, expectedType: 'network' }, // R13: 5xx status authoritative (was 'unknown' — pre-fix bug)
+        { error: { status: 503 }, expectedRetryable: true, expectedType: 'network' }, // 5xx status authoritative (was 'unknown' — pre-fix bug)
         { error: new Error('EACCES'), expectedRetryable: false, expectedType: 'permission' },
         { error: { name: 'AbortError' }, expectedRetryable: false, expectedType: 'abort' },
         { error: new Error('invalid input'), expectedRetryable: false, expectedType: 'validation' },
         { error: new Error('socket hang up'), expectedRetryable: true, expectedType: 'network' },
-        { error: { status: 404 }, expectedRetryable: false, expectedType: 'validation' }, // R13: 4xx status authoritative (was 'unknown' — pre-fix bug)
+        { error: { status: 404 }, expectedRetryable: false, expectedType: 'validation' }, // 4xx status authoritative (was 'unknown' — pre-fix bug)
         { error: new Error('EBUSY'), expectedRetryable: true, expectedType: 'unknown' },
       ];
 

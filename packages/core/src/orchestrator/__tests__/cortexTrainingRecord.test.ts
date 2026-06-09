@@ -1,9 +1,9 @@
 /**
- * Emits review-records schema-compatible with the nexus DBAI corpus tables
+ * Emits review-records schema-compatible with an external training-corpus ingester
  * (verified at the leaf: tables/training_streams.rs RouterTrainingSample /
  * ReasonerTrainingSample, training_fanout.rs sample_id/channel rules).
  *
- * nexus-cortex has no SpacetimeDB — these are local JSONL rows shaped for
+ * These are local JSONL rows shaped for
  * later ingestion by the nexus pipeline. They fill the slot the schema
  * explicitly reserves but nexus leaves empty: outcome_score "from the
  * alignment scorer or CHALLENGE-graded review" (training_streams.rs:71-72).

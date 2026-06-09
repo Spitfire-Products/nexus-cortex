@@ -1,5 +1,5 @@
 /**
- * Round 5 (parallel-bench output): canonical conversion prefix-cache.
+ * Regression test: canonical conversion prefix-cache.
  *
  * `convertToCanonicalMessages` walks the entire message history every call,
  * from 4 sites. Messages 0..N-2 are immutable (persisted append-only JSONL,

@@ -1,5 +1,5 @@
 /**
- * Round 4 (parallel-bench output): per-message token memoization.
+ * Regression test: per-message token memoization.
  *
  * `estimateTotalTokens(messageHistory)` runs once per tool iteration inside
  * the orchestrator. Without a cache, the tokenizer fires ~history-length ×

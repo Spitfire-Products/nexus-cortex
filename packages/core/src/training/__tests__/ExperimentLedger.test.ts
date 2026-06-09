@@ -75,7 +75,7 @@ describe('ExperimentLedger — keep/discard decision record', () => {
     expect(led2.list().filter(e => e.experimentTag === 'swarm-05')).toHaveLength(1);
   });
 
-  it('allTaskResults() flattens child rows for STDB experiment_task_result ingest', () => {
+  it('allTaskResults() flattens child rows for external ledger ingest', () => {
     led.open({ experimentTag: 'x', baseRef: 'r', candidateRef: 'c', branch: 'b', results: [tr('x', 'fp1', 1, 2)] });
     led.open({ experimentTag: 'y', baseRef: 'r', candidateRef: 'c', branch: 'b', results: [tr('y', 'fp2', 3, 4), tr('y', 'fp3', 5, 6)] });
     const rows = led.allTaskResults();

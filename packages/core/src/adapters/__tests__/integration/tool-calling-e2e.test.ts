@@ -30,7 +30,8 @@ import { GatewayTranslationLayer } from '../../GatewayTranslationLayer';
 import { AdapterRegistry } from '../../AdapterRegistry';
 import { createTestModelConfig, createTestSessionContext, createTestTool } from './test-fixtures';
 
-describe('End-to-End Tool Calling', () => {
+const HAS_KEYS = !!(process.env.ANTHROPIC_API_KEY && process.env.OPENAI_API_KEY && (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY));
+describe.skipIf(!HAS_KEYS)('End-to-End Tool Calling', () => {
   const sessionContext = createTestSessionContext();
   const adapterRegistry = new AdapterRegistry();
   const gateway = new GatewayTranslationLayer(adapterRegistry);

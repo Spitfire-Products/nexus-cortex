@@ -1,7 +1,7 @@
 /**
- * R28f hybrid: classify a system message as turn-varying vs turn-0-static.
+ * Hybrid split: classify a system message as turn-varying vs turn-0-static.
  *
- * R28f pins the static system prompt per conversation for xAI cross-turn
+ * The hybrid split pins the static system prompt per conversation for xAI cross-turn
  * cache stability. That correctly handles content gated to turnNumber:0 /
  * sessionPhase purely as a token-saving heuristic (it stays cached). But a
  * genuinely periodic message (turnNumberModulo — e.g. periodic_reminder, every

@@ -653,11 +653,11 @@ describe('Message Round-Trip Conversion', () => {
     });
 
     it('should drop thinking blocks (Gemini does not round-trip foreign thinking)', () => {
-      // R20d (2026-05-13): foreign thinking blocks (e.g. from Anthropic or
+      // Foreign thinking blocks (e.g. from Anthropic or
       // OpenAI in a cross-provider session) are dropped when serialized to
       // Gemini. Previously stringified as `[Thinking: ...]` text, which Gemini
       // would parrot back in its response — caught by parallel benchmark.
-      // Matches nexus-terminal CORTEX GeminiTransport.ts handling exactly
+      // Matches the reference Gemini transport handling exactly
       // ("thinking / redacted_thinking: not round-trippable in Gemini API,
       // dropped. Reasoning is server-side and re-derived per turn.")
       const original: CanonicalMessage = {

@@ -1,5 +1,5 @@
 /**
- * R27b: xAI Responses output → canonical conversion.
+ * xAI Responses output → canonical conversion.
  *
  * xAI returns `output: [reasoning, message]`. The orchestrator reads only
  * messages[0]. Previously the adapter prepended reasoning as a SEPARATE
@@ -23,7 +23,7 @@ const xaiModel = {
 
 const sessionContext = { sessionId: 's1', conversationId: 'c1', turnNumber: 1 };
 
-describe('R27b — ResponsesAPIAdapter merges xAI reasoning + message into one canonical message', () => {
+describe('ResponsesAPIAdapter merges xAI reasoning + message into one canonical message', () => {
   it('returns ONE assistant message with [thinking, text], not a separate reasoning message', () => {
     const xaiResponse = {
       object: 'response',

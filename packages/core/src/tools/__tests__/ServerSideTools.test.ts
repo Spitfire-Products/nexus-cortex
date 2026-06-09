@@ -57,13 +57,13 @@ describe('Server-Side Tool Registry', () => {
   });
 
   it('should return empty array for providers without server-side tools', () => {
-    // R20: OpenAI now has hosted Responses API tools (web_search, code_interpreter,
+    // OpenAI now has hosted Responses API tools (web_search, code_interpreter,
     // file_search, image_generation, mcp). Use a truly empty provider for the
     // empty-case assertion.
     expect(getServerSideTools('google')).toEqual([]);
   });
 
-  it('R20: should include OpenAI Responses API hosted tools', () => {
+  it('should include OpenAI Responses API hosted tools', () => {
     const tools = getServerSideTools('openai');
     expect(tools).toContain('web_search');
     expect(tools).toContain('code_interpreter');

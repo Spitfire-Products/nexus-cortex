@@ -8,7 +8,7 @@
  * cycle of tool calls (4 distinct, each re-issued) so that, past the hard budget,
  * the recent window is ≥50% repeats (isToolProgressStalled === true) while no
  * single signature reaches MAX_LOOP_REPETITIONS — the exact pathology the gate
- * exists for. We assert the gate fires (force-synthesis) and the R29a net then
+ * exists for. We assert the gate fires (force-synthesis) and the synthesis net then
  * delivers a real text answer instead of a bare/preamble tool_use turn.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -88,7 +88,7 @@ async function makeOrchestrator(scripted: ScriptedAPIClient) {
   return { orch, dir };
 }
 
-describe('progress-gated hard cap — end-to-end through the real loop', () => {
+describe.skipIf(!process.env.ANTHROPIC_API_KEY)('progress-gated hard cap — end-to-end through the real loop', () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
   let dirs: string[] = [];
 
@@ -114,7 +114,7 @@ describe('progress-gated hard cap — end-to-end through the real loop', () => {
     // It stopped near the hard cap, far below MAX_TOOL_ITERATIONS (50).
     expect(scripted.callCount).toBeGreaterThanOrEqual(SOFT_BUDGET * 2);
     expect(scripted.callCount).toBeLessThan(20);
-    // The R29a net delivered real text rather than a bare/preamble tool_use turn.
+    // The synthesis net delivered real text rather than a bare/preamble tool_use turn.
     const text = Array.isArray(res.content)
       ? res.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text).join(' ')
       : String(res.content);

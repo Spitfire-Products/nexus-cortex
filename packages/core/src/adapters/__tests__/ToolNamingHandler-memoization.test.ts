@@ -1,5 +1,5 @@
 /**
- * Round 16 (Opus parallel-bench finding): ToolNamingHandler.convertName
+ * Regression test: ToolNamingHandler.convertName
  * memoization. The function is pure on (name, convention) — the regex
  * chains re-run on the same ~30 canonical names on every request.
  */

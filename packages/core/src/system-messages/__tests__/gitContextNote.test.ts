@@ -51,8 +51,8 @@ describe('buildGitContextSection', () => {
     expect(note).toContain('<harness-note source="automated-harness" from-user="false">');
     expect(note).toContain('</harness-note>');
     expect(note).toContain('STALE');
-    expect(note).toContain('/repo/a.ts  (CHANGED on disk)');
-    expect(note).toContain('/repo/b.ts  (DELETED/MOVED on disk)');
+    expect(note).toContain('- /repo/a.ts (CHANGED on disk)');
+    expect(note).toContain('- /repo/b.ts (DELETED/MOVED on disk)');
   });
 
   it('marks the note as not-from-user so self-talk reasoners do not read it as instruction', () => {

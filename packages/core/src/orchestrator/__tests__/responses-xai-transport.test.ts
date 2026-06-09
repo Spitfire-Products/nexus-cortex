@@ -1,10 +1,10 @@
 /**
- * R27: xAI Responses API transport.
+ * xAI Responses API transport.
  *
  * The OpenAI SDK's client.responses.create() produces a request xAI's
  * /v1/responses route rejects (404 "No handler found on route") and a
- * response shape the adapter cannot convert (empty content). nexus-terminal's
- * working ResponsesAPITransport uses a raw fetch with Bearer auth instead.
+ * response shape the adapter cannot convert (empty content). A raw fetch with
+ * Bearer auth works where the SDK does not.
  *
  * Contract: for an xAI model on the responses pattern, sendResponsesAPI MUST
  * issue a raw fetch to the configured /v1/responses endpoint with
@@ -55,7 +55,7 @@ const fakeXaiResponseBody = {
   usage: { input_tokens: 5, output_tokens: 2 },
 };
 
-describe('R27 — xAI Responses transport uses raw fetch, not the OpenAI SDK', () => {
+describe('xAI Responses transport uses raw fetch, not the OpenAI SDK', () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
   const prevKey = process.env.XAI_API_KEY;
 

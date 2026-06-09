@@ -1,5 +1,5 @@
 /**
- * R30 — ESC-abort orphan sub-agent recovery
+ * ESC-abort orphan sub-agent recovery
  *
  * Tests the two-part fix:
  * 1. SubAgentProcessManager persists completed results to disk keyed by tool_use_id
@@ -17,7 +17,7 @@ import type { SubAgentResult } from '../SubAgentTypes.js';
 // Part 1: Durable persistence via loadPersistedResult
 // ============================================
 
-describe('SubAgentProcessManager — durable result persistence (R30)', () => {
+describe('SubAgentProcessManager — durable result persistence', () => {
   const testDir = join(tmpdir(), `r30-test-${Date.now()}`);
   const sessionId = 'test-session-abc';
   const toolUseId = 'toolu_01XYZ';

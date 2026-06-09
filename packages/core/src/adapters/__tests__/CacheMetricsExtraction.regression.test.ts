@@ -1,9 +1,9 @@
 /**
  * Cache Metrics Extraction — Benchmark Regression Suite
  *
- * Defect-E / R28g regression guard.
+ * Cache-metrics regression guard.
  *
- * PRE-R28g BUG (the benchmark scenario):
+ * THE BUG:
  *   Anthropic `usage.input_tokens` is ONLY the post-cache-breakpoint remainder,
  *   NOT the grand total. The three input fields are mutually exclusive:
  *     true_total = input_tokens + cache_creation_input_tokens + cache_read_input_tokens
@@ -11,7 +11,7 @@
  *   then computed `cacheHitRate = cacheRead / inputTokens = 922/30 ≈ 30.7366`
  *   and `costSavingsRatio = (922*0.9)/30 ≈ 27.663` — both >>1.0, both impossible.
  *
- * POST-R28g FIX:
+ * THE FIX:
  *   `inputTokens = postBreakpointInput + cacheCreation + cacheRead` (true total).
  *   `cacheHitRate = cacheRead / inputTokens` → 922/952 ≈ 0.969 (≤1.0 ✓).
  *   `costSavingsRatio = (cacheRead * discount) / inputTokens` → (922*0.9)/952 ≈ 0.872 (≤0.9 ✓).
@@ -58,16 +58,16 @@ function stubModelConfig(provider: string, apiPattern: string): ModelConfig {
 }
 
 // ---------------------------------------------------------------------------
-// R28g benchmark scenario — exact reproduction of the pre-fix blowup
+// Exact reproduction of the original defect of the pre-fix blowup
 // ---------------------------------------------------------------------------
 
-describe('R28g regression guard — Anthropic Messages API', () => {
+describe('Regression guard — Anthropic Messages API', () => {
   const gtl = new GatewayTranslationLayer();
   const cfg = stubModelConfig('anthropic', 'messages');
 
   // Benchmark repro (from the real bug): input_tokens=30 (post-breakpoint),
   // cache_read=922, cache_creation=0. Pre-fix cacheHitRate=30.74, costSavingsRatio=27.66.
-  it('cacheHitRate <= 1.0 for the exact R28g benchmark shape', () => {
+  it('cacheHitRate <= 1.0 for the exact regression shape', () => {
     const r: any = { usage: { input_tokens: 30, cache_creation_input_tokens: 0, cache_read_input_tokens: 922, output_tokens: 50 } };
     const u = gtl['extractUsage'](r, cfg);
 

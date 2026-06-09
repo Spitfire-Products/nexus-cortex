@@ -238,7 +238,7 @@ describe('ServerSideToolDetection', () => {
       expect(endpoint).toContain('/v1/responses');
     });
 
-    it('R27: is idempotent when the endpoint is already /v1/responses (XAI_API_MODE=responses)', () => {
+    it('is idempotent when the endpoint is already /v1/responses (XAI_API_MODE=responses)', () => {
       const alreadyResponses: ModelConfig = {
         ...mockXAIModel,
         api: {

@@ -1,10 +1,10 @@
 /**
- * Round 10 (parallel-bench output): two fixes to ContentAddressableStore.
+ * Regression test: two fixes to ContentAddressableStore.
  *
- * Opus finding: `initialize()` ran `fs.mkdir(recursive:true)` on every
+ * Finding: `initialize()` ran `fs.mkdir(recursive:true)` on every
  * `saveBackup` call. Memoize so the syscall fires once per instance.
  *
- * Cortex finding: `saveBackup` did a redundant `fs.stat` to get byte size
+ * Finding: `saveBackup` did a redundant `fs.stat` to get byte size
  * when we already had the content in memory. Use Buffer.byteLength.
  */
 

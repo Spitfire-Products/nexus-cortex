@@ -1,5 +1,5 @@
 /**
- * DecisionStore — MVP port of nexus-terminal's `witty-tracing-narwhal`
+ * DecisionStore — append-only tool-decision store
  * lookup-before-action pattern.
  *
  * Every tool call's {tool, input, outcome} is appended to a JSONL file.

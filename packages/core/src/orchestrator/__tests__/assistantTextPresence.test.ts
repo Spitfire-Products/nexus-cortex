@@ -1,10 +1,10 @@
 /**
- * R29a regression: the tool loop could exit (MAX_CONSECUTIVE_ERRORS,
+ * regression: the tool loop could exit (MAX_CONSECUTIVE_ERRORS,
  * loop-detection, etc.) with the final assistant turn being a bare tool_use
  * and ZERO text — the orchestrator then returned content=[tool_use],
  * ansLen=0 (deepseek-chat produced no deliverable in the 6-surface
  * benchmark). The post-loop synthesis net uses this predicate to detect
- * "no visible text" regardless of WHY the loop ended; R18b's inline check is
+ * "no visible text" regardless of WHY the loop ended; the original inline check is
  * de-duplicated onto it too.
  */
 import { describe, it, expect } from 'vitest';
@@ -27,7 +27,7 @@ describe('hasVisibleAssistantText', () => {
     expect(hasVisibleAssistantText([{ type: 'tool_use', toolUse: { name: 'Grep' } }])).toBe(false);
   });
 
-  it('false for thinking-only / empty / whitespace-only text (R18b shape)', () => {
+  it('false for thinking-only / empty / whitespace-only text (historical bug shape)', () => {
     expect(hasVisibleAssistantText([{ type: 'thinking', thinking: 'hmm' }])).toBe(false);
     expect(hasVisibleAssistantText([{ type: 'text', text: '   \n\t ' }])).toBe(false);
     expect(hasVisibleAssistantText([{ type: 'text', text: '' }])).toBe(false);
@@ -55,7 +55,7 @@ describe('hasUnexecutedToolUse', () => {
   });
 });
 
-describe('shouldForceSynthesis (R29a trigger incl. the preamble edge case)', () => {
+describe('shouldForceSynthesis (force-synthesis trigger incl. the preamble edge case)', () => {
   it('fires on a bare tool_use turn (original no-text case)', () => {
     expect(shouldForceSynthesis([{ type: 'tool_use', toolUse: { name: 'Grep' } }], false)).toBe(true);
   });

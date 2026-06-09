@@ -158,13 +158,16 @@ describe('FileReadTracker', () => {
       expect(FileReadTracker.getConsecutiveEditCount(testFile)).toBe(2);
     });
 
-    it('should invalidate read timestamp', () => {
+    it('should keep the file fresh after our own edit (no forced re-read)', () => {
       FileReadTracker.markAsRead(testFile, 0, 10);
       expect(FileReadTracker.hasBeenRead(testFile)).toBe(true);
 
+      // A successful edit proves the caller knew the content (old_string matched),
+      // so markAsEdited bumps the read timestamp — only EXTERNAL modifications
+      // (detected via disk mtime) should go stale.
       FileReadTracker.markAsEdited(testFile, 0, 5);
-      expect(FileReadTracker.hasBeenRead(testFile)).toBe(false);
-      expect(FileReadTracker.isStale(testFile)).toBe(true);
+      expect(FileReadTracker.hasBeenRead(testFile)).toBe(true);
+      expect(FileReadTracker.isStale(testFile)).toBe(false);
     });
   });
 

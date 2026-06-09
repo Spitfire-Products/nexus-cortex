@@ -1,5 +1,5 @@
 /**
- * R34: Sliding window must not orphan tool_result messages.
+ * Sliding window must not orphan tool_result messages.
  *
  * When the context budget trims older messages via sliding-window,
  * it can cut an assistant message (with tool_calls) while keeping its
@@ -79,7 +79,7 @@ const assistantTextMsg = (text: string): Message => ({
   message: { role: 'assistant', content: [{ type: 'text', text }] },
 } as any);
 
-describe('R34: sliding window strips orphaned tool_result messages', () => {
+describe('sliding window strips orphaned tool_result messages', () => {
   let mgr: ContextBudgetManager;
 
   beforeEach(() => {

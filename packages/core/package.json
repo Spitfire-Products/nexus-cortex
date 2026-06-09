@@ -37,7 +37,8 @@
     "clean": "rm -rf dist",
     "test": "vitest",
     "test:ci": "vitest run --coverage",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:run": "vitest run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.20.9",

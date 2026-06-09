@@ -1,10 +1,10 @@
 /**
- * Round 12 (parallel-bench output): two fixes to MentorshipMiddleware.
+ * Regression test: two fixes to MentorshipMiddleware.
  *
- * Opus: `shouldTriggerMentorship` ran medium-severity pattern scan even when
+ * Finding: `shouldTriggerMentorship` ran medium-severity pattern scan even when
  * `threshold === 'low'` would return true unconditionally afterwards.
  *
- * Cortex: `extractErrorPattern` compiled two regex literals per call.
+ * Finding: `extractErrorPattern` compiled two regex literals per call.
  * Hoisted to static fields.
  */
 

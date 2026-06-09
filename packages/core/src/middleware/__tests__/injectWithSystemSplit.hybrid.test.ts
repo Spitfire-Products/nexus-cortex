@@ -1,5 +1,5 @@
 /**
- * R28f hybrid: injectWithSystemSplit must route turn-varying system messages
+ * Hybrid split: injectWithSystemSplit must route turn-varying system messages
  * (e.g. periodic_reminder, turnNumberModulo) into the MOVING user turn — which
  * sits after every provider's cache boundary — while turn-0-static content
  * stays in the cached/pinned `system` field. This preserves periodic/phased
@@ -17,7 +17,7 @@ function mw(messages: any[]): SystemMessageMiddleware {
 }
 const def = (conditions: any) => ({ conditions, injection: {} });
 
-describe('injectWithSystemSplit hybrid (R28f)', () => {
+describe('injectWithSystemSplit hybrid', () => {
   it('keeps turn-0-static in systemPrompt, routes turn-varying into the moving user turn', async () => {
     const m = mw([
       { content: 'STATIC_SYSTEM_PROMPT', position: 'prepend', priority: 1,
@@ -36,7 +36,7 @@ describe('injectWithSystemSplit hybrid (R28f)', () => {
     // varying -> front of the moving user turn (after the cache boundary),
     // wrapped as authored; the user's actual text follows it
     const texts = r.userContent.map((b: any) => b.text);
-    expect(texts[0]).toBe('<system-reminder>\nPERIODIC_REMINDER_TEXT\n</system-reminder>');
+    expect(texts[0]).toBe('<harness-note source="automated-harness" from-user="false">\nPERIODIC_REMINDER_TEXT\n</harness-note>');
     expect(texts).toContain('<user_query>\nhello from user\n</user_query>');
     expect(texts.join('')).not.toContain('STATIC_SYSTEM_PROMPT');
   });

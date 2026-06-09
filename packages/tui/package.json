@@ -22,6 +22,7 @@
     "@nexus-cortex/core": "^4.8.0",
     "chalk": "^4.1.2",
     "cli-spinners": "^2.9.0",
+    "commander": "^11.0.0",
     "diff": "^8.0.2",
     "dotenv": "^17.2.3",
     "highlight.js": "^11.9.0",
@@ -30,10 +31,10 @@
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
     "inquirer": "^9.2.12",
+    "lowlight": "^3.3.0",
     "marked-terminal": "^6.0.0",
     "react": "^19.2.0",
-    "tinygradient": "^2.0.1",
-    "commander": "^11.0.0"
+    "tinygradient": "^2.0.1"
   },
   "devDependencies": {
     "@types/diff": "^7.0.2",

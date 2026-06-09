@@ -1,5 +1,5 @@
 /**
- * Round 15 (Opus parallel-bench finding): McpClientManager.connectToServer
+ * Regression test: McpClientManager.connectToServer
  * must serialize concurrent calls for the same server name. Without this,
  * a second caller during CONNECTING tore down the first caller's
  * half-built transport, silently leaving the connection map broken.

@@ -1,5 +1,5 @@
 /**
- * Round 9 (parallel-bench output): BashCommandPolicy pre-lowercases the
+ * Regression test: BashCommandPolicy pre-lowercases the
  * `dangerousPatterns` array once at construction so `findDangerousPattern`
  * doesn't lowercase every pattern on every Bash check. With ~32 default
  * patterns × 10-20 Bash calls per turn, this used to allocate 320-640

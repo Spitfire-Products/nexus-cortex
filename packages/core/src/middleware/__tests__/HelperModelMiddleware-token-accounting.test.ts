@@ -1,12 +1,12 @@
 /**
- * Round 11 (parallel-bench output): two fixes to HelperModelMiddleware.
+ * Regression test: two fixes to HelperModelMiddleware.
  *
- * Cortex finding: `analyzeRejection` double-counted tool_result tokens
+ * Finding: `analyzeRejection` double-counted tool_result tokens
  * (historyTokens already included them, then toolResultTokens was added
  * AGAIN). Inflated total by ~30-40% on tool-heavy turns, skewed the
  * rejection-reason classifier.
  *
- * Opus finding: `getHelperModelConfig` rebuilt the ~140-line nested
+ * Finding: `getHelperModelConfig` rebuilt the ~140-line nested
  * fallback config literal on every call (interleaved-thinking
  * continuation fires it per tool-call iteration).
  */

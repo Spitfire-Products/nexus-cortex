@@ -1,5 +1,5 @@
 /**
- * Round 9 (parallel-bench output): PermissionAuditLogger.rotateIfNeeded
+ * Regression test: PermissionAuditLogger.rotateIfNeeded
  * previously called fs.existsSync inside an async hot path. Now it relies
  * on the async fs.promises.stat throwing ENOENT for missing files.
  */

@@ -694,8 +694,8 @@ describe('Cross-Provider Continuity', () => {
       expect((anthropicMessages[0] as any).content[0].type).toBe('thinking');
       expect((anthropicMessages[0] as any).content[0].signature).toBe('thinking_xyz789');
 
-      // Convert to Gemini (R20d: foreign thinking dropped — Gemini doesn't
-      // round-trip non-native thinking. Mirrors nexus-terminal CORTEX
+      // Convert to Gemini (foreign thinking dropped — Gemini doesn't
+      // round-trip non-native thinking. Mirrors the reference Gemini transport's
       // GeminiTransport.ts. Replaced earlier `[Thinking: ...]` text injection
       // which caused Gemini to parrot the literal string in responses.)
       const geminiAdapter = new GenerateContentAPIAdapter();

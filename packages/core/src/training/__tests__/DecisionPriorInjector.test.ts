@@ -7,7 +7,7 @@
  *   • Only successes → null (no value warning about a known-good pattern).
  *   • Any failure → emit a reminder that names the tool, summarises the
  *     hit count, surfaces the most recent error, and includes up to 3
- *     specific recent outcomes when supplied (matches the nexus-terminal
+ *     specific recent outcomes when supplied (matches the recent-outcomes
  *     `witty-tracing-narwhal` pattern).
  *   • Output is wrapped in <system-reminder>...</system-reminder> so the
  *     model's verbatim-quote heuristics filter it out of any subsequent

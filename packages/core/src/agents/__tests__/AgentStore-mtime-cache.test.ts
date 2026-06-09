@@ -1,5 +1,5 @@
 /**
- * Round 17 (Opus parallel-bench finding): AgentStore mtime cache.
+ * Regression test: AgentStore mtime cache.
  * Without this, loadAllAgents() re-parsed every profile from disk on
  * every call (and the watcher fires loadAllAgents on every single-file
  * change). Same pattern as R1's SystemMessageLoader cache.

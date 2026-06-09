@@ -75,7 +75,7 @@ describe('/models endpoint', () => {
       const response = await request(app).get('/models');
       const models = response.body.data;
 
-      const validProviders = ['anthropic', 'openai', 'google', 'xai', 'deepseek', 'zhipu', 'qwen', 'moonshot', 'minimax', 'openrouter', 'cloudflare'];
+      const validProviders = ['anthropic', 'cloudflare', 'deepseek', 'google', 'mercury', 'minimax', 'moonshot', 'openai', 'qwen', 'xai', 'zhipu'];
 
       models.forEach((model: any) => {
         expect(validProviders).toContain(model.owned_by);

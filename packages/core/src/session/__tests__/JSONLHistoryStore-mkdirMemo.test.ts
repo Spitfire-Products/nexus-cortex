@@ -1,5 +1,5 @@
 /**
- * Round 3 (parallel-bench output): JSONLHistoryStore memoizes mkdir per
+ * Regression test: JSONLHistoryStore memoizes mkdir per
  * directory. Before this, every `appendMessage` made a redundant
  * `fs.mkdir({recursive:true})` syscall — once-per-session is enough.
  *

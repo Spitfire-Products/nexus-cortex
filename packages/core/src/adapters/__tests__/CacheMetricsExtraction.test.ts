@@ -38,7 +38,7 @@ describe('GatewayTranslationLayer - Cache Metrics Extraction', () => {
   describe('Anthropic Messages API', () => {
     const anthropicConfig = createModelConfig('anthropic', 'messages');
 
-    // R28g regression (benchmark repro): Anthropic `input_tokens` is ONLY the
+    // Regression repro: Anthropic `input_tokens` is ONLY the
     // post-cache-breakpoint remainder — NOT the grand total. The three input
     // fields are mutually exclusive; true total =
     // input_tokens + cache_creation_input_tokens + cache_read_input_tokens.

@@ -3,7 +3,7 @@
  * recent N matching decisions in reverse chronological order.
  *
  * Used by the prior-injector to surface up to 3 specific recent outcomes
- * (matching the nexus-terminal cortex pattern) instead of an aggregate
+ * (recent concrete outcomes) instead of an aggregate
  * success/failure count. Specific recent outcomes give the model more
  * actionable signal — "the last 2 attempts both timed out" vs "1 of 3
  * historical calls failed at some point".

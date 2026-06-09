@@ -1,5 +1,5 @@
 /**
- * R29b: tool-budget brake for runaway exploration.
+ * tool-budget brake for runaway exploration.
  *
  * The 6-surface benchmark caught deepseek-chat doing 46 successful local
  * tool calls (Read/Grep/Glob — zero web) over 392s with no convergence.
