@@ -8,7 +8,6 @@ export default defineConfig({
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
-      'src/ink-ui/components/messages/ToolConfirmationMessage.test.tsx',
     ],
   },
 });

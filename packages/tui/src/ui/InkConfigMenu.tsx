@@ -9,7 +9,7 @@
  * Used by both neoncortex (inline overlay) and cortex-cli (imperative render).
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { render, Box, Text, useInput } from 'ink';
 import {
   SETTINGS_METADATA,
@@ -115,8 +115,9 @@ const ConfigMenu: React.FC<ConfigMenuProps> = ({ onClose, projectPath, onUpdateR
   const [resetConfirm, setResetConfirm] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
 
-  const loader = new SettingsLoader(projectPath);
-  const writer = new SettingsWriter(projectPath);
+  // Stable instances: rebuilt-per-render objects defeat useCallback dependency checks.
+  const loader = useMemo(() => new SettingsLoader(projectPath), [projectPath]);
+  const writer = useMemo(() => new SettingsWriter(projectPath), [projectPath]);
 
   const termHeight = process.stdout.rows || 30;
   const maxVisible = Math.max(5, termHeight - 8);
