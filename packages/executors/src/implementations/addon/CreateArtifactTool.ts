@@ -4,6 +4,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
+import { buildReactArtifact } from './ReactArtifactBuilder.js';
 import { watch } from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -77,7 +78,9 @@ export interface CreateArtifactToolParams {
 
   uiConfig?: {                         // NEW: UI display configuration
     type?: 'web' | 'terminal' | 'both';
-    framework?: 'express' | 'fastapi' | 'flask' | 'nextjs';
+    framework?: 'express' | 'fastapi' | 'flask' | 'nextjs' | 'react';
+    reactMode?: 'cdn' | 'bundled';     // react only: cdn (zero-install) | bundled (esbuild, real source maps)
+    additionalFiles?: Array<{ path: string; code: string }>; // react bundled: extra source modules
     autoStart?: boolean;
   };
 
@@ -216,8 +219,25 @@ export class CreateArtifactToolExecutor extends BaseTool<CreateArtifactToolParam
             },
             framework: {
               type: 'string' as const,
-              enum: ['express', 'fastapi', 'flask', 'nextjs'],
-              description: 'Web framework to use'
+              enum: ['express', 'fastapi', 'flask', 'nextjs', 'react'],
+              description: "Web framework. Use 'react' to build a React artifact from a component in implementation.code (define or default-export `App`). React artifacts are served statically and are introspectable via sandbox_scan/sandbox_grab/sandbox_detect_framework."
+            },
+            reactMode: {
+              type: 'string' as const,
+              enum: ['cdn', 'bundled'],
+              description: "React only. 'bundled' (default when esbuild is available): real source maps, sandbox_grab returns real src/App.tsx:line. 'cdn': zero-install in-browser Babel, faster to start."
+            },
+            additionalFiles: {
+              type: 'array' as const,
+              items: {
+                type: 'object' as const,
+                properties: {
+                  path: { type: 'string' as const, description: "Path under src/, e.g. 'components/Button.tsx'" },
+                  code: { type: 'string' as const, description: 'Module source' }
+                },
+                required: ['path' as const, 'code' as const]
+              },
+              description: 'React bundled mode only: extra source modules importable from App.'
             },
             autoStart: {
               type: 'boolean' as const,
@@ -368,6 +388,12 @@ export class CreateArtifactToolExecutor extends BaseTool<CreateArtifactToolParam
       await fs.mkdir(artifactPath, { recursive: true });
       await fs.mkdir(workspacePath, { recursive: true });
       await fs.mkdir(join(artifactPath, 'snapshots'), { recursive: true });
+
+      // React artifacts: introspection on by default so the initial snapshot (and the
+      // sandbox_scan/grab/detect tools) report the fiber tree. Opt out by passing false.
+      if (params.uiConfig?.framework === 'react' && params.enableReactIntrospection === undefined) {
+        params.enableReactIntrospection = true;
+      }
 
       // Install dependencies in workspace
       await this.installDependencies(
@@ -551,6 +577,18 @@ pkgs.mkShell {
     uiConfig: CreateArtifactToolParams['uiConfig'],
     artifactPath: string
   ): Promise<void> {
+    // React artifact: build a static dir (index.html [+ dist/bundle.js, src/*]) served by http-server.
+    if (uiConfig?.framework === 'react') {
+      const result = await buildReactArtifact(artifactPath, {
+        code: implementation.code,
+        reactMode: uiConfig.reactMode,
+        additionalFiles: uiConfig.additionalFiles
+      });
+      console.log(`[CreateArtifactTool] React artifact built (${result.mode} mode)` +
+        (result.warnings.length ? ` — ${result.warnings.join('; ')}` : ''));
+      return;
+    }
+
     // Detect if code is HTML (starts with <!DOCTYPE or <html)
     const isHtml = implementation.code.trim().match(/^<!DOCTYPE|^<html/i);
 
@@ -742,8 +780,9 @@ if __name__ == '__main__':
     } else {
       // Auto-detect based on language or content
       const isHtml = params.implementation.code.trim().match(/^<!DOCTYPE|^<html/i);
+      const isReact = params.uiConfig?.framework === 'react';
 
-      if (isHtml || params.implementation.language === 'html') {
+      if (isReact || isHtml || params.implementation.language === 'html') {
         // HTML file - serve with http-server
         fileName = params.implementation.fileName || 'index.html';
         command = `npx http-server -p ${params.artifactConfig?.ports?.[0] || 3000} --silent`;

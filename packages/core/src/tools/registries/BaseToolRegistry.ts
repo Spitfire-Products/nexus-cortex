@@ -1388,6 +1388,34 @@ Go API Server:
           description: 'Include a framework report (React/Vue/Svelte detection, React version) in the initial visual snapshot. sandbox_scan/sandbox_grab/sandbox_detect_framework work regardless of this flag.',
           default: false
         },
+        uiConfig: {
+          type: 'object',
+          description: 'UI / framework options. For a REACT artifact, set framework="react" and put a component (define or default-export `App`) in implementation.code — it is built into a static, introspectable page (no need to hand-write index.html).',
+          properties: {
+            framework: {
+              type: 'string',
+              enum: ['express', 'fastapi', 'flask', 'nextjs', 'react'],
+              description: "Web framework. 'react' builds a React artifact from implementation.code; introspect it with sandbox_scan/sandbox_grab/sandbox_detect_framework."
+            },
+            reactMode: {
+              type: 'string',
+              enum: ['cdn', 'bundled'],
+              description: "React only. 'bundled' (default when available): esbuild + real source maps (sandbox_grab returns real src/App.tsx:line). 'cdn': zero-install in-browser Babel, faster start."
+            },
+            additionalFiles: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  path: { type: 'string', description: "Path under src/, e.g. 'components/Button.tsx'" },
+                  code: { type: 'string', description: 'Module source' }
+                },
+                required: ['path', 'code']
+              },
+              description: 'React bundled mode only: extra source modules importable from App.'
+            }
+          }
+        },
         testCases: {
           type: 'array',
           items: {
