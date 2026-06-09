@@ -229,3 +229,129 @@ export class SandboxDetectFrameworkExecutor extends BaseTool<SandboxDetectFramew
     }
   }
 }
+
+export interface SandboxComponentTreeParams {
+  sandboxId: string;
+  rootSelector?: string;
+  maxDepth?: number;
+}
+
+export class SandboxComponentTreeExecutor extends BaseTool<SandboxComponentTreeParams, ToolResult> {
+  constructor() {
+    super(
+      'SandboxComponentTree',
+      'SandboxComponentTree',
+      'Return the React component hierarchy of a running sandbox (nexus-sense `tree` role)',
+      {
+        type: 'object' as const,
+        properties: {
+          sandboxId: { type: 'string' as const, description: 'ID of the sandbox' },
+          rootSelector: { type: 'string' as const, description: 'CSS selector for the tree root (default: #root/#app)' },
+          maxDepth: { type: 'number' as const, description: 'Max component depth (default 8)' }
+        },
+        required: ['sandboxId' as const]
+      }
+    );
+  }
+
+  validateToolParams(params: SandboxComponentTreeParams): string | null {
+    if (!params.sandboxId || !UUID_RE.test(params.sandboxId)) return 'sandboxId must be a valid UUID';
+    return null;
+  }
+
+  async execute(params: SandboxComponentTreeParams, _signal: AbortSignal): Promise<ToolResult> {
+    const validationError = this.validateToolParams(params);
+    if (validationError) return this.createErrorResult(validationError);
+    const target = resolveSandboxUrl(params.sandboxId);
+    if ('error' in target) return this.createErrorResult(target.error);
+
+    try {
+      await visualBridge.initialize();
+      const result = await visualBridge.sandboxComponentTree(target.url, {
+        rootSelector: params.rootSelector,
+        maxDepth: params.maxDepth
+      });
+      if (result?.error) return this.createErrorResult(result.error);
+      const lines = [
+        `Component tree: ${result.componentCount} component(s), max depth ${result.maxDepth}`,
+        '',
+        '```json',
+        JSON.stringify(result.tree, null, 2),
+        '```'
+      ];
+      return {
+        ...this.createSuccessResult(lines.join('\n')),
+        metadata: { sandboxId: params.sandboxId, componentCount: result.componentCount, maxDepth: result.maxDepth }
+      };
+    } catch (error) {
+      return this.createErrorResult(`Component tree failed: ${(error as Error).message}`);
+    }
+  }
+}
+
+export interface SandboxRenderTraceParams {
+  sandboxId: string;
+  action: 'start' | 'stop';
+}
+
+export class SandboxRenderTraceExecutor extends BaseTool<SandboxRenderTraceParams, ToolResult> {
+  constructor() {
+    super(
+      'SandboxRenderTrace',
+      'SandboxRenderTrace',
+      'Trace React re-renders in a running sandbox (react-scan role). action:start resets+enables, then interact, then action:stop reports per-component render counts/timings.',
+      {
+        type: 'object' as const,
+        properties: {
+          sandboxId: { type: 'string' as const, description: 'ID of the sandbox' },
+          action: { type: 'string' as const, enum: ['start', 'stop'], description: "'start' begins tracing; interact with the UI; 'stop' returns the report." }
+        },
+        required: ['sandboxId' as const, 'action' as const]
+      }
+    );
+  }
+
+  validateToolParams(params: SandboxRenderTraceParams): string | null {
+    if (!params.sandboxId || !UUID_RE.test(params.sandboxId)) return 'sandboxId must be a valid UUID';
+    if (params.action !== 'start' && params.action !== 'stop') return "action must be 'start' or 'stop'";
+    return null;
+  }
+
+  async execute(params: SandboxRenderTraceParams, _signal: AbortSignal): Promise<ToolResult> {
+    const validationError = this.validateToolParams(params);
+    if (validationError) return this.createErrorResult(validationError);
+    const target = resolveSandboxUrl(params.sandboxId);
+    if ('error' in target) return this.createErrorResult(target.error);
+
+    try {
+      await visualBridge.initialize();
+      if (params.action === 'start') {
+        const r = await visualBridge.sandboxTraceStart(target.url);
+        if (r?.error) return this.createErrorResult(r.error);
+        return {
+          ...this.createSuccessResult('Render trace started. Interact with the sandbox (interact_with_sandbox), then call sandbox_render_trace with action:"stop".'),
+          metadata: { sandboxId: params.sandboxId, tracing: true }
+        };
+      }
+      const report = await visualBridge.sandboxTraceReport(target.url, { stop: true });
+      if (report?.error) return this.createErrorResult(report.error);
+      const top = report.components.slice(0, 10)
+        .map((c: any) => `  ${c.renders}x ${c.name} (${c.totalDurationMs}ms)`).join('\n');
+      const lines = [
+        `Render trace: ${report.totalCommits} commit(s) over ${report.durationMs}ms`,
+        report.components.length ? 'Re-renders by component (most first):' : 'No component re-renders recorded.',
+        top,
+        '',
+        '```json',
+        JSON.stringify(report.components, null, 2),
+        '```'
+      ];
+      return {
+        ...this.createSuccessResult(lines.join('\n')),
+        metadata: { sandboxId: params.sandboxId, totalCommits: report.totalCommits, componentsRendered: report.components.length }
+      };
+    } catch (error) {
+      return this.createErrorResult(`Render trace failed: ${(error as Error).message}`);
+    }
+  }
+}

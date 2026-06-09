@@ -119,3 +119,13 @@ MCP, so the same loop works in both places:
 The names map 1:1 to nexus-browser tools (`scan`, `grab`, `detect_framework`) — only the
 `sandbox_` prefix and the `sandboxId` parameter differ. Skills learned on one surface
 transfer to the other.
+
+## Sandbox React structure & performance
+
+For a React artifact (sandbox_detect_framework reports react:true), two more senses:
+- `sandbox_component_tree` — the component hierarchy (what nests where, plus source files).
+  Use it to understand or verify structure after building.
+- `sandbox_render_trace` — react-scan's job: `action:'start'` → drive the UI with
+  interact_with_sandbox → `action:'stop'` returns which components re-rendered and how
+  often. Use it to catch wasted re-renders after a change (e.g. "every keystroke
+  re-renders the whole list").

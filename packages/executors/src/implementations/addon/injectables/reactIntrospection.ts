@@ -112,6 +112,52 @@ export const PRELOAD_SCRIPT = `
     return null;
   };
 
+  // Render trace (react-scan role): accumulate per-component render counts/timings across
+  // React commits. The commit interceptor records work whenever tracing is enabled.
+  window.__cortexRenderTrace = { enabled: false, counts: {}, totalCommits: 0, startedAt: 0 };
+
+  // A component fiber "rendered" this commit if newly mounted, or its props/state identity
+  // changed vs its previous (alternate) fiber. Profiler actualDuration (dev build) gives
+  // timing when present but isn't required for the render signal.
+  const didRender = (f) => {
+    const alt = f.alternate;
+    if (!alt) return true;                                   // mounted this commit
+    if (alt.memoizedProps !== f.memoizedProps) return true;  // new props
+    if (alt.memoizedState !== f.memoizedState) return true;  // new state/hooks
+    return (f.actualDuration != null && f.actualDuration > 0 && f.actualDuration !== alt.actualDuration);
+  };
+
+  const hook = window.__REACT_DEVTOOLS_GLOBAL_HOOK__;
+  const prevCommit = hook.onCommitFiberRoot;
+  hook.onCommitFiberRoot = function (id, root, ...rest) {
+    try {
+      if (root && root.current && window.__cortexReact) {
+        // Always stash the LIVE root (root.current) — the container DOM key can point at a
+        // stale double-buffer fiber, so the tree walker must start from here.
+        window.__cortexReact.__lastRoot = root.current;
+        const trace = window.__cortexRenderTrace;
+        if (trace && trace.enabled) {
+          trace.totalCommits++;
+          const seen = new Set();
+          const visit = (f) => {
+            if (!f || seen.has(f)) return;
+            seen.add(f);
+            const name = (typeof f.type !== 'string') ? displayName(f.type) : null;
+            if (name && !INTERNAL.test(name) && didRender(f)) {
+              const e = trace.counts[name] || (trace.counts[name] = { renders: 0, totalDurationMs: 0 });
+              e.renders++;
+              if (f.actualDuration != null) e.totalDurationMs += f.actualDuration;
+            }
+            visit(f.child);
+            visit(f.sibling);
+          };
+          visit(root.current);
+        }
+      }
+    } catch (e) { /* never break React's commit */ }
+    if (typeof prevCommit === 'function') return prevCommit.call(this, id, root, ...rest);
+  };
+
   window.__cortexReact = {
     getFiber,
     info(el) {
@@ -125,6 +171,35 @@ export const PRELOAD_SCRIPT = `
         props: serializeProps(fiber),
         sourceLocation: sourceLocation(fiber)
       };
+    },
+    // Component hierarchy (nexus-sense 'tree' role): host fibers collapsed, components only.
+    tree(el, maxDepth) {
+      // The container DOM key can point at a stale double-buffer fiber whose .child is null,
+      // and __lastRoot may not be set yet on the very first commit. Walk from a LIVE
+      // descendant host fiber (React keeps those current) and climb to the root.
+      let fiber = window.__cortexReact.__lastRoot || getFiber(el);
+      if (!fiber) return null;
+      while (fiber.return) fiber = fiber.return;     // climb to the host root
+      // If the resolved root has no child but its alternate does, use the live one.
+      if (!fiber.child && fiber.alternate && fiber.alternate.child) fiber = fiber.alternate;
+      const build = (f, depth) => {
+        const name = (typeof f.type !== 'string') ? displayName(f.type) : null;
+        const isComponent = !!name && !INTERNAL.test(name);
+        let kids = [];
+        if (depth < maxDepth) {
+          let c = f.child;
+          while (c) { kids = kids.concat(build(c, isComponent ? depth + 1 : depth)); c = c.sibling; }
+        }
+        if (isComponent) {
+          const node = { name };
+          const src = f._debugSource || (f._debugOwner && f._debugOwner._debugSource);
+          if (src && src.fileName) node.source = src.fileName + ':' + (src.lineNumber || 0);
+          if (kids.length) node.children = kids;
+          return [node];
+        }
+        return kids; // host fiber: lift its component descendants up
+      };
+      return build(fiber, 0);
     }
   };
 })();
@@ -341,5 +416,61 @@ export const GRAB_SCRIPT = `
     if (info) result.react = info;
   }
   return result;
+}
+`;
+
+/**
+ * Runtime: component hierarchy (nexus-sense `tree` role). Walks the React fiber tree from
+ * the root, host elements collapsed, components only. Args: { rootSelector?, maxDepth? }.
+ */
+export const TREE_SCRIPT = `
+(args) => {
+  args = args || {};
+  if (!window.__cortexReact || !window.__cortexReact.tree) return { error: 'React introspection not available on this page' };
+  // Use a LIVE descendant host element (React keeps its fiber current) rather than the
+  // root container itself (whose fiber key can be a stale double-buffer fiber).
+  const el = args.rootSelector ? document.querySelector(args.rootSelector)
+    : (document.querySelector('#root *, #app *, [data-reactroot] *') ||
+       (document.body && document.body.firstElementChild) || document.body);
+  const tree = window.__cortexReact.tree(el, args.maxDepth || 8);
+  if (!tree) return { error: 'No React tree found (is this a React page?)' };
+  // component count + max depth summary
+  let count = 0, maxDepth = 0;
+  const walk = (nodes, d) => { for (const n of nodes) { count++; maxDepth = Math.max(maxDepth, d); if (n.children) walk(n.children, d + 1); } };
+  walk(tree, 1);
+  return { tree, componentCount: count, maxDepth };
+}
+`;
+
+/** Runtime: begin a render trace (resets + enables the commit interceptor). */
+export const TRACE_START_SCRIPT = `
+(() => {
+  if (!window.__cortexRenderTrace) return { error: 'React introspection not available on this page' };
+  window.__cortexRenderTrace = { enabled: true, counts: {}, totalCommits: 0, startedAt: Date.now() };
+  return { started: true };
+})()
+`;
+
+/**
+ * Runtime: stop (or peek) a render trace and return per-component render counts/timings,
+ * sorted by render count (react-scan's "what re-rendered and how often").
+ */
+export const TRACE_REPORT_SCRIPT = `
+(args) => {
+  args = args || {};
+  const t = window.__cortexRenderTrace;
+  if (!t) return { error: 'React introspection not available on this page' };
+  if (args.stop !== false) t.enabled = false;
+  const components = Object.keys(t.counts).map((name) => ({
+    name,
+    renders: t.counts[name].renders,
+    totalDurationMs: Math.round(t.counts[name].totalDurationMs * 100) / 100
+  })).sort((a, b) => b.renders - a.renders);
+  return {
+    durationMs: t.startedAt ? Date.now() - t.startedAt : 0,
+    totalCommits: t.totalCommits,
+    components,
+    stopped: args.stop !== false
+  };
 }
 `;

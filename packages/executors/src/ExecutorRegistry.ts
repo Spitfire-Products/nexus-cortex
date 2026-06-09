@@ -91,6 +91,8 @@ import {
   SandboxScanExecutor,
   SandboxGrabExecutor,
   SandboxDetectFrameworkExecutor,
+  SandboxComponentTreeExecutor,
+  SandboxRenderTraceExecutor,
   StopSandboxExecutor,
 } from './implementations/addon/index.js';
 
@@ -188,6 +190,8 @@ export class ExecutorRegistry implements IExecutorRegistry {
     this.register(new SandboxScanExecutor());
     this.register(new SandboxGrabExecutor());
     this.register(new SandboxDetectFrameworkExecutor());
+    this.register(new SandboxComponentTreeExecutor());
+    this.register(new SandboxRenderTraceExecutor());
     this.register(new StopSandboxExecutor({ workingDirectory: this.config.workingDirectory || process.cwd() }));
 
     // Code execution (token-efficient tool chaining)

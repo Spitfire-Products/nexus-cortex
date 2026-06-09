@@ -1702,6 +1702,43 @@ WHEN TO USE: once after creating an artifact — if react=true, prefer sandbox_s
   },
 
   {
+    name: 'SandboxComponentTree',
+    description: `Return the React component hierarchy of a running sandbox (host elements collapsed, components only). Same role as the nexus-sense 'tree' tool.
+
+WHEN TO USE: understand a React artifact's structure — which components nest where, and (when available) each component's source file. Use after sandbox_detect_framework reports react:true.`,
+    schema: {
+      type: 'object',
+      properties: {
+        sandboxId: { type: 'string', description: 'ID of the sandbox' },
+        rootSelector: { type: 'string', description: 'CSS selector for the tree root (default #root/#app)' },
+        maxDepth: { type: 'number', description: 'Max component depth (default 8)' }
+      },
+      required: ['sandboxId']
+    },
+    category: 'base',
+    discoveryTier: 'standard',
+    metadata: { immutable: true, executionEnvironment: 'client', version: '1.0.0' }
+  },
+
+  {
+    name: 'SandboxRenderTrace',
+    description: `Trace React re-renders in a running sandbox — react-scan's role: which components re-rendered, how often, and total render time. Catches wasted re-renders (unstable props, context churn).
+
+WORKFLOW: sandbox_render_trace(action:'start') -> interact_with_sandbox (click/type to drive renders) -> sandbox_render_trace(action:'stop') returns per-component render counts/timings, most-rendered first. Requires a React artifact in development build (the default).`,
+    schema: {
+      type: 'object',
+      properties: {
+        sandboxId: { type: 'string', description: 'ID of the sandbox' },
+        action: { type: 'string', enum: ['start', 'stop'], description: "'start' resets+enables tracing; 'stop' returns the report" }
+      },
+      required: ['sandboxId', 'action']
+    },
+    category: 'base',
+    discoveryTier: 'standard',
+    metadata: { immutable: true, executionEnvironment: 'client', version: '1.0.0' }
+  },
+
+  {
     name: 'StopSandbox',
     description: `Stop a running sandbox/artifact and cleanup resources.
 

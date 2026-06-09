@@ -17,7 +17,7 @@ import { chromium, Browser, Page } from 'playwright';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { getChromiumBinary } from '../../utils/ChromiumBrowserManager.js';
-import { PRELOAD_SCRIPT, DETECT_SCRIPT, SCAN_SCRIPT, GRAB_SCRIPT } from './injectables/reactIntrospection.js';
+import { PRELOAD_SCRIPT, DETECT_SCRIPT, SCAN_SCRIPT, GRAB_SCRIPT, TREE_SCRIPT, TRACE_START_SCRIPT, TRACE_REPORT_SCRIPT } from './injectables/reactIntrospection.js';
 
 export interface VisualBridgeConfig {
   headless?: boolean;        // Browser visibility (default: true)
@@ -220,18 +220,24 @@ export class VisualFeedbackBridge {
   /** Ensure the page is on the given URL (navigates only when needed). */
   private async ensureOnUrl(url: string): Promise<void> {
     if (!this.page) throw new Error('Browser not initialized');
-    if (this.page.url() !== url) {
+    // Normalize before comparing — the browser adds a trailing slash to an origin-only URL
+    // (http://host:port -> http://host:port/). Without this, every call re-navigates, which
+    // (critically) resets the in-page render-trace counters between start and report.
+    const norm = (u: string): string => { try { return new URL(u).href; } catch { return u; } };
+    if (norm(this.page.url()) !== norm(url)) {
       await this.page.goto(url, { waitUntil: 'networkidle' });
-      // Settle for client-side frameworks: React/Vue/etc. mount asynchronously after
-      // networkidle. Wait for the conventional #root/#app mount point to gain children
-      // (up to ~1.2s), falling back to a short fixed delay for plain/SSR pages.
+      // Settle for client-side frameworks. The definitive "React rendered" signal is the
+      // introspection commit hook setting __lastRoot; for non-React/SSR pages, fall back to
+      // the mount point gaining children. Generous timeout for cold bundle parse + mount.
       await this.page
         .waitForFunction(
           () => {
+            const cr = (window as any).__cortexReact;
+            if (cr && cr.__lastRoot) return true;              // React committed
             const m = document.querySelector('#root, #app, [data-reactroot]');
-            return !m || m.childElementCount > 0;
+            return !m || m.childElementCount > 0;              // non-React or DOM populated
           },
-          { timeout: 1200 }
+          { timeout: 2500 }
         )
         .catch(() => {});
       await this.page.waitForTimeout(200);
@@ -263,6 +269,27 @@ export class VisualFeedbackBridge {
     await this.enableReactIntrospection();
     await this.ensureOnUrl(url);
     return await this.page!.evaluate(`(${GRAB_SCRIPT})(${JSON.stringify(args)})`);
+  }
+
+  /** Component hierarchy of the React tree (nexus-sense 'tree' role). */
+  async sandboxComponentTree(url: string, args: Record<string, unknown> = {}): Promise<any> {
+    await this.enableReactIntrospection();
+    await this.ensureOnUrl(url);
+    return await this.page!.evaluate(`(${TREE_SCRIPT})(${JSON.stringify(args)})`);
+  }
+
+  /** Begin a render trace (react-scan role). Resets + enables the commit interceptor. */
+  async sandboxTraceStart(url: string): Promise<any> {
+    await this.enableReactIntrospection();
+    await this.ensureOnUrl(url);
+    return await this.page!.evaluate(TRACE_START_SCRIPT);
+  }
+
+  /** Stop (or peek) a render trace and return per-component render counts/timings. */
+  async sandboxTraceReport(url: string, args: Record<string, unknown> = {}): Promise<any> {
+    await this.enableReactIntrospection();
+    await this.ensureOnUrl(url);
+    return await this.page!.evaluate(`(${TRACE_REPORT_SCRIPT})(${JSON.stringify(args)})`);
   }
 
   /**
