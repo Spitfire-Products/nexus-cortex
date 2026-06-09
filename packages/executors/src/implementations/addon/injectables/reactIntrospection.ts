@@ -113,8 +113,16 @@ export const PRELOAD_SCRIPT = `
   };
 
   // Render trace (react-scan role): accumulate per-component render counts/timings across
-  // React commits. The commit interceptor records work whenever tracing is enabled.
-  window.__cortexRenderTrace = { enabled: false, counts: {}, totalCommits: 0, startedAt: 0 };
+  // React commits. Backed by sessionStorage so an incidental same-origin reload (e.g.
+  // InteractWithSandbox capturing a snapshot between start and stop) doesn't wipe it.
+  const TRACE_KEY = '__cortexRenderTrace';
+  const loadTrace = () => {
+    try { const s = sessionStorage.getItem(TRACE_KEY); if (s) return JSON.parse(s); } catch (e) {}
+    return { enabled: false, counts: {}, totalCommits: 0, startedAt: 0 };
+  };
+  const saveTrace = (t) => { try { sessionStorage.setItem(TRACE_KEY, JSON.stringify(t)); } catch (e) {} };
+  window.__cortexRenderTrace = loadTrace();
+  window.__cortexSaveTrace = saveTrace;
 
   // A component fiber "rendered" this commit if newly mounted, or its props/state identity
   // changed vs its previous (alternate) fiber. Profiler actualDuration (dev build) gives
@@ -152,6 +160,7 @@ export const PRELOAD_SCRIPT = `
             visit(f.sibling);
           };
           visit(root.current);
+          saveTrace(trace);   // persist across same-origin reloads
         }
       }
     } catch (e) { /* never break React's commit */ }
@@ -447,6 +456,7 @@ export const TRACE_START_SCRIPT = `
 (() => {
   if (!window.__cortexRenderTrace) return { error: 'React introspection not available on this page' };
   window.__cortexRenderTrace = { enabled: true, counts: {}, totalCommits: 0, startedAt: Date.now() };
+  if (window.__cortexSaveTrace) window.__cortexSaveTrace(window.__cortexRenderTrace);
   return { started: true };
 })()
 `;
@@ -460,7 +470,7 @@ export const TRACE_REPORT_SCRIPT = `
   args = args || {};
   const t = window.__cortexRenderTrace;
   if (!t) return { error: 'React introspection not available on this page' };
-  if (args.stop !== false) t.enabled = false;
+  if (args.stop !== false) { t.enabled = false; if (window.__cortexSaveTrace) window.__cortexSaveTrace(t); }
   const components = Object.keys(t.counts).map((name) => ({
     name,
     renders: t.counts[name].renders,

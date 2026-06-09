@@ -70,6 +70,19 @@ describe.skipIf(!RUN)('React senses (tree + render trace) integration', () => {
     expect(report.stopped).toBe(true);
   }, 30000);
 
+  it('render trace survives a same-origin reload between start and stop (InteractWithSandbox case)', async () => {
+    await bridge.sandboxTraceStart(url);
+    const page = bridge.getPage()!;
+    // InteractWithSandbox captures a snapshot (page.goto -> reload) around the click;
+    // the sessionStorage-backed trace must survive that.
+    await bridge.captureSnapshot(url);
+    await page.click('#c'); await page.waitForTimeout(80);
+    await bridge.captureSnapshot(url);
+    const report = await bridge.sandboxTraceReport(url, { stop: true });
+    expect(report.totalCommits).toBeGreaterThanOrEqual(1);
+    expect(report.components.some((c: any) => c.name === 'Counter')).toBe(true);
+  }, 40000);
+
   it('tree reports a clean error on a non-React page', async () => {
     const plain = 'data:text/html,' + encodeURIComponent('<!DOCTYPE html><html><body><h1>Plain</h1></body></html>');
     const tree = await bridge.sandboxComponentTree(plain, {});
