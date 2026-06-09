@@ -244,10 +244,39 @@ export class VisualFeedbackBridge {
     }
   }
 
+  /**
+   * Wait for React to have committed at least once (the introspection commit hook sets
+   * __lastRoot) — runs even when ensureOnUrl did NOT navigate, so a tree/scan/grab/trace
+   * call on an already-loaded page doesn't race a still-mounting app. No-op for non-React.
+   */
+  private async awaitReactReady(): Promise<void> {
+    if (!this.page) return;
+    await this.page
+      .waitForFunction(
+        () => {
+          const cr = (window as any).__cortexReact;
+          if (cr && cr.__lastRoot) return true;               // React committed
+          const m = document.querySelector('#root, #app, [data-reactroot]');
+          return !m || m.childElementCount > 0;               // non-React or DOM populated
+        },
+        { timeout: 2500 }
+      )
+      .catch(() => {});
+  }
+
+  /** Is a render trace currently active on the live page? (no navigation) */
+  async isTraceActive(): Promise<boolean> {
+    if (!this.page) return false;
+    try {
+      return await this.page.evaluate(() => !!((window as any).__cortexRenderTrace && (window as any).__cortexRenderTrace.enabled));
+    } catch { return false; }
+  }
+
   /** detect_framework against the given sandbox URL (nexus-browser schema). */
   async sandboxDetect(url: string): Promise<FrameworkReport> {
     await this.enableReactIntrospection();
     await this.ensureOnUrl(url);
+    await this.awaitReactReady();
     return (await this.page!.evaluate(DETECT_SCRIPT)) as FrameworkReport;
   }
 
@@ -258,6 +287,7 @@ export class VisualFeedbackBridge {
   async sandboxScan(url: string, args: Record<string, unknown> = {}): Promise<any> {
     await this.enableReactIntrospection();
     await this.ensureOnUrl(url);
+    await this.awaitReactReady();
     return await this.page!.evaluate(`(${SCAN_SCRIPT})(${JSON.stringify(args)})`);
   }
 
@@ -268,6 +298,7 @@ export class VisualFeedbackBridge {
   async sandboxGrab(url: string, args: Record<string, unknown>): Promise<any> {
     await this.enableReactIntrospection();
     await this.ensureOnUrl(url);
+    await this.awaitReactReady();
     return await this.page!.evaluate(`(${GRAB_SCRIPT})(${JSON.stringify(args)})`);
   }
 
@@ -275,6 +306,7 @@ export class VisualFeedbackBridge {
   async sandboxComponentTree(url: string, args: Record<string, unknown> = {}): Promise<any> {
     await this.enableReactIntrospection();
     await this.ensureOnUrl(url);
+    await this.awaitReactReady();
     return await this.page!.evaluate(`(${TREE_SCRIPT})(${JSON.stringify(args)})`);
   }
 
@@ -282,6 +314,7 @@ export class VisualFeedbackBridge {
   async sandboxTraceStart(url: string): Promise<any> {
     await this.enableReactIntrospection();
     await this.ensureOnUrl(url);
+    await this.awaitReactReady();
     return await this.page!.evaluate(TRACE_START_SCRIPT);
   }
 

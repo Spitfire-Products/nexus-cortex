@@ -236,9 +236,14 @@ export class InteractWithSandboxExecutor extends BaseTool<InteractWithSandboxPar
       // Initialize visual bridge
       await visualBridge.initialize();
 
-      // Navigate to sandbox URL first
+      // If a render trace is active, suppress the bracketing snapshots — captureSnapshot
+      // reloads the page (page.goto), which would add spurious mount-commits and could
+      // drown out the interaction's real re-render. Just drive the interaction on the live page.
+      const traceActive = await visualBridge.isTraceActive();
+
+      // Navigate to sandbox URL first (skip when tracing — page is already live)
       const currentPage = (visualBridge as any).page;
-      if (!currentPage || currentPage.url() !== session.url) {
+      if (!traceActive && (!currentPage || currentPage.url() !== session.url)) {
         await visualBridge.captureSnapshot(session.url);
       }
 
@@ -261,8 +266,8 @@ export class InteractWithSandboxExecutor extends BaseTool<InteractWithSandboxPar
           // Emit interaction executed event
           broadcaster.emitInteraction(params.sandboxId, action.type, action.selector, true);
 
-          // Capture snapshot if requested
-          if (captureAfterEach) {
+          // Capture snapshot if requested (suppressed during an active trace)
+          if (captureAfterEach && !traceActive) {
             const snapshot = await visualBridge.captureSnapshot(session.url);
             snapshots.push({
               actionIndex: i,
@@ -295,7 +300,7 @@ export class InteractWithSandboxExecutor extends BaseTool<InteractWithSandboxPar
       let finalSnapshot: any = null;
       const returnFinalSnapshot = params.returnFinalSnapshot ?? true;
 
-      if (returnFinalSnapshot) {
+      if (returnFinalSnapshot && !traceActive) {
         finalSnapshot = await visualBridge.captureSnapshot(session.url);
         session.visualSnapshot = finalSnapshot;
         session.lastActivity = new Date();
