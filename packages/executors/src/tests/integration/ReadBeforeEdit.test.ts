@@ -148,76 +148,38 @@ describe('Read-Before-Edit Protocol', () => {
   });
 
   describe('Timestamp-Based Staleness', () => {
-        // TODO(edit-freshness): asserts the OLD stale-on-own-edit protocol; markAsEdited now
-    // keeps files fresh (only EXTERNAL mtime changes go stale). Rewrite against the new contract.
-    it.skip('should mark file as stale after edit', async () => {
+    it('keeps the file fresh after our own edit; external change is detected', async () => {
       fs.writeFileSync(testFile, 'Line 1\nLine 2\nLine 3');
-
-      // Initially not stale (not read)
       expect(FileReadTracker.isStale(testFile)).toBe(false);
 
-      // Read file
       await readTool.execute({ file_path: testFile }, new AbortController().signal);
-      expect(FileReadTracker.isStale(testFile)).toBe(false);
-
-      // Edit file
       await editTool.execute(
-        {
-          file_path: testFile,
-          old_string: 'Line 1',
-          new_string: 'First Line',
-        },
+        { file_path: testFile, old_string: 'Line 1', new_string: 'First Line' },
         new AbortController().signal,
       );
 
-      // Now stale
-      expect(FileReadTracker.isStale(testFile)).toBe(true);
+      // Own edit proves we knew the content — file stays fresh.
+      expect(FileReadTracker.isStale(testFile)).toBe(false);
+
+      // An EXTERNAL writer bumps mtime past our read timestamp -> flagged.
+      const future = new Date(Date.now() + 5000);
+      fs.utimesSync(testFile, future, future);
+      const changed = FileReadTracker.getExternallyChangedFiles();
+      expect(changed.map((c) => c.path)).toContain(testFile);
     });
-
-        // TODO(edit-freshness): asserts the OLD stale-on-own-edit protocol; markAsEdited now
-    // keeps files fresh (only EXTERNAL mtime changes go stale). Rewrite against the new contract.
-    it.skip('should reject second edit without re-reading', async () => {
+    it('allows consecutive edits without re-reading (edit-freshness)', async () => {
       fs.writeFileSync(testFile, 'Line 1\nLine 2\nLine 3');
-
-      // Read and first edit
       await readTool.execute({ file_path: testFile }, new AbortController().signal);
 
-      const edit1 = await editTool.execute(
-        {
-          file_path: testFile,
-          old_string: 'Line 1',
-          new_string: 'First Line',
-        },
-        new AbortController().signal,
-      );
-      expect(edit1.success).toBe(true);
-
-      // File is now: "First Line\nLine 2\nLine 3"
-      // Second edit should SUCCEED (brief read mode: allows up to MAX_CONSECUTIVE_EDITS=2)
-      const edit2 = await editTool.execute(
-        {
-          file_path: testFile,
-          old_string: 'Line 2',
-          new_string: 'Second Line',
-        },
-        new AbortController().signal,
-      );
-      expect(edit2.success).toBe(true);
-
-      // File is now: "First Line\nSecond Line\nLine 3"
-      // Third edit should FAIL - exceeded MAX_CONSECUTIVE_EDITS
-      const edit3 = await editTool.execute(
-        {
-          file_path: testFile,
-          old_string: 'Line 3',
-          new_string: 'Third Line',
-        },
-        new AbortController().signal,
-      );
-
-      expect(edit3.success).toBe(false);
-      expect(edit3.error).toContain('File has been edited since you last read it');
-      expect(edit3.error).toContain('re-read the file');
+      // Each successful edit proves knowledge of the content, so edits chain freely.
+      for (const [oldStr, newStr] of [['Line 1', 'First Line'], ['Line 2', 'Second Line'], ['Line 3', 'Third Line']]) {
+        const r = await editTool.execute(
+          { file_path: testFile, old_string: oldStr, new_string: newStr },
+          new AbortController().signal,
+        );
+        expect(r.success).toBe(true);
+      }
+      expect(fs.readFileSync(testFile, 'utf-8')).toBe('First Line\nSecond Line\nThird Line');
     });
 
     it('should allow second edit after re-reading', async () => {
@@ -251,106 +213,49 @@ describe('Read-Before-Edit Protocol', () => {
       expect(edit2.success).toBe(true);
       expect(fs.readFileSync(testFile, 'utf-8')).toBe('First Line\nSecond Line\nLine 3');
     });
-
-        // TODO(edit-freshness): asserts the OLD stale-on-own-edit protocol; markAsEdited now
-    // keeps files fresh (only EXTERNAL mtime changes go stale). Rewrite against the new contract.
-    it.skip('should provide smart read suggestions', async () => {
+    it('does not interrupt an edit chain after a partial read', async () => {
       fs.writeFileSync(testFile, 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5');
+      await readTool.execute({ file_path: testFile, offset: 1, limit: 2 }, new AbortController().signal);
 
-      // Read specific section
-      await readTool.execute(
-        {
-          file_path: testFile,
-          offset: 1,
-          limit: 2,
-        },
-        new AbortController().signal,
-      );
-
-      // First edit
-      await editTool.execute(
-        {
-          file_path: testFile,
-          old_string: 'Line 2',
-          new_string: 'Second Line',
-        },
-        new AbortController().signal,
-      );
-
-      // Second edit (allowed by brief read mode)
-      const edit2 = await editTool.execute(
-        {
-          file_path: testFile,
-          old_string: 'Line 3',
-          new_string: 'Third Line',
-        },
-        new AbortController().signal,
-      );
-      expect(edit2.success).toBe(true);
-
-      // Third edit should fail (exceeded MAX_CONSECUTIVE_EDITS) and provide smart suggestions
-      const edit3 = await editTool.execute(
-        {
-          file_path: testFile,
-          old_string: 'Line 4',
-          new_string: 'Fourth Line',
-        },
-        new AbortController().signal,
-      );
-
-      expect(edit3.success).toBe(false);
-      expect(edit3.error).toContain('offset:');
-      expect(edit3.error).toContain('limit:');
+      for (const [oldStr, newStr] of [['Line 2', 'Second Line'], ['Line 3', 'Third Line'], ['Line 4', 'Fourth Line']]) {
+        const r = await editTool.execute(
+          { file_path: testFile, old_string: oldStr, new_string: newStr },
+          new AbortController().signal,
+        );
+        expect(r.success).toBe(true);
+      }
     });
-
-        // TODO(edit-freshness): asserts the OLD stale-on-own-edit protocol; markAsEdited now
-    // keeps files fresh (only EXTERNAL mtime changes go stale). Rewrite against the new contract.
-    it.skip('should clear staleness after re-reading', async () => {
+    it('re-reading clears an external-change flag', async () => {
       fs.writeFileSync(testFile, 'Content');
-
       await readTool.execute({ file_path: testFile }, new AbortController().signal);
-      expect(FileReadTracker.isStale(testFile)).toBe(false);
 
-      await editTool.execute(
-        {
-          file_path: testFile,
-          old_string: 'Content',
-          new_string: 'New Content',
-        },
-        new AbortController().signal,
-      );
-      expect(FileReadTracker.isStale(testFile)).toBe(true);
+      const slightlyAhead = new Date(Date.now() + 100);
+      fs.utimesSync(testFile, slightlyAhead, slightlyAhead);
+      expect(FileReadTracker.getExternallyChangedFiles().map((c) => c.path)).toContain(testFile);
 
-      // Re-read clears staleness
+      // Let the bumped mtime fall into the past, then re-read to refresh the timestamp.
+      await new Promise((r) => setTimeout(r, 150));
       await readTool.execute({ file_path: testFile }, new AbortController().signal);
-      expect(FileReadTracker.isStale(testFile)).toBe(false);
+      expect(FileReadTracker.getExternallyChangedFiles().map((c) => c.path)).not.toContain(testFile);
     });
   });
 
   describe('Session Management', () => {
-        // TODO(edit-freshness): asserts the OLD stale-on-own-edit protocol; markAsEdited now
-    // keeps files fresh (only EXTERNAL mtime changes go stale). Rewrite against the new contract.
-    it.skip('should clear all state on clearSession', async () => {
+    it('should clear all state on clearSession', async () => {
       fs.writeFileSync(testFile, 'Content');
-
       await readTool.execute({ file_path: testFile }, new AbortController().signal);
       await editTool.execute(
-        {
-          file_path: testFile,
-          old_string: 'Content',
-          new_string: 'New Content',
-        },
+        { file_path: testFile, old_string: 'Content', new_string: 'New Content' },
         new AbortController().signal,
       );
 
       expect(FileReadTracker.getReadFiles()).toHaveLength(1);
-      expect(FileReadTracker.isStale(testFile)).toBe(true);
+      expect(FileReadTracker.getConsecutiveEditCount(testFile)).toBeGreaterThan(0);
 
       FileReadTracker.clearSession();
-
       expect(FileReadTracker.getReadFiles()).toHaveLength(0);
-      expect(FileReadTracker.isStale(testFile)).toBe(false);
       expect(FileReadTracker.hasBeenRead(testFile)).toBe(false);
+      expect(FileReadTracker.getConsecutiveEditCount(testFile)).toBe(0);
     });
   });
 
@@ -372,48 +277,18 @@ describe('Read-Before-Edit Protocol', () => {
       // Smart suggestions now provide targeted Read() call with offset/limit when target is found
       expect(result.error).toMatch(/read\(file_path:|Use the Read tool first/i);
     });
-
-        // TODO(edit-freshness): asserts the OLD stale-on-own-edit protocol; markAsEdited now
-    // keeps files fresh (only EXTERNAL mtime changes go stale). Rewrite against the new contract.
-    it.skip('should provide different message for stale files', async () => {
+    it('never reports stale for an unbroken own-edit chain', async () => {
       fs.writeFileSync(testFile, 'Line 1\nLine 2\nLine 3');
-
       await readTool.execute({ file_path: testFile }, new AbortController().signal);
 
-      // First edit (success)
-      await editTool.execute(
-        {
-          file_path: testFile,
-          old_string: 'Line 1',
-          new_string: 'First',
-        },
-        new AbortController().signal,
-      );
-
-      // Second edit (allowed by brief read mode)
-      const edit2 = await editTool.execute(
-        {
-          file_path: testFile,
-          old_string: 'Line 2',
-          new_string: 'Second',
-        },
-        new AbortController().signal,
-      );
-      expect(edit2.success).toBe(true);
-
-      // Third edit should fail with stale message
-      const result = await editTool.execute(
-        {
-          file_path: testFile,
-          old_string: 'Line 3',
-          new_string: 'Third',
-        },
-        new AbortController().signal,
-      );
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('File has been edited since you last read it');
-      expect(result.error).not.toContain('You must read the file before editing it');
+      for (const [oldStr, newStr] of [['Line 1', 'First'], ['Line 2', 'Second'], ['Line 3', 'Third']]) {
+        const r = await editTool.execute(
+          { file_path: testFile, old_string: oldStr, new_string: newStr },
+          new AbortController().signal,
+        );
+        expect(r.success).toBe(true);
+        expect(r.error ?? '').not.toContain('File has been edited since you last read it');
+      }
     });
   });
 });

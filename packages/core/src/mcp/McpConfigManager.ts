@@ -179,9 +179,9 @@ export class McpConfigManager {
       if (currentServer) {
         // Status
         if (line.startsWith('**Status**:')) {
-          const statusMatch = line.match(/\*\*Status\*\*:\s*([OK]|⏸|[ERROR])\s*(\w+)/);
-          if (statusMatch && statusMatch[2]) {
-            const statusText = statusMatch[2].toLowerCase();
+          const statusMatch = line.match(/\*\*Status\*\*:\s*(?:\[OK\]|\[ERROR\]|⏸️?|✅|❌)\s*(\w+)/);
+          if (statusMatch && statusMatch[1]) {
+            const statusText = statusMatch[1].toLowerCase();
             currentServer.status = statusText as McpConfigStatus;
           }
         }

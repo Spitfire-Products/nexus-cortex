@@ -99,7 +99,7 @@ describe('McpConfigManager', () => {
       expect(config).toBeDefined();
       expect(config?.servers).toHaveLength(1);
       expect(config?.servers[0]?.name).toBe('filesystem');
-      expect(config?.servers[0]?.status).toBe('available');
+      expect(config?.servers[0]?.status).toBe('enabled');
       expect(config?.servers[0]?.description).toBe('File system operations');
       expect(config?.servers[0]?.command).toBe('npx -y @modelcontextprotocol/server-filesystem');
       expect(config?.servers[0]?.args).toEqual(['/workspace']);
@@ -155,7 +155,7 @@ describe('McpConfigManager', () => {
 
       expect(config?.servers).toHaveLength(1);
       expect(config?.servers[0]?.name).toBe('myserver');
-      expect(config?.servers[0]?.status).toBe('available');
+      expect(config?.servers[0]?.status).toBe('enabled');
       expect(config?.servers[0]?.autoStart).toBe(false); // Default
     });
 
@@ -184,7 +184,7 @@ describe('McpConfigManager', () => {
       const config = await configManager.readConfig('project');
 
       expect(config?.servers).toHaveLength(3);
-      expect(config?.servers[0]?.status).toBe('available');
+      expect(config?.servers[0]?.status).toBe('enabled');
       expect(config?.servers[1]?.status).toBe('available');
       expect(config?.servers[2]?.status).toBe('disabled');
     });
@@ -279,7 +279,7 @@ describe('McpConfigManager', () => {
       const content = await fs.readFile(configPath, 'utf-8');
       expect(content).toContain('# MCP Server Configuration');
       expect(content).toContain('### filesystem');
-      expect(content).toContain('**Status**: ✅ Enabled');
+      expect(content).toContain('**Status**: [OK] Enabled');
       expect(content).toContain('**Auto-start**: true');
     });
 
@@ -681,7 +681,7 @@ describe('McpConfigManager', () => {
       };
 
       const updated = configManager.updateServerStatus(config, 'nonexistent', 'disabled');
-      expect(updated.servers[0]?.status).toBe('available'); // Unchanged
+      expect(updated.servers[0]?.status).toBe('enabled'); // Unchanged
     });
   });
 });

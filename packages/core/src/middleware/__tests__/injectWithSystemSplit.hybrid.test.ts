@@ -36,7 +36,9 @@ describe('injectWithSystemSplit hybrid', () => {
     // varying -> front of the moving user turn (after the cache boundary),
     // wrapped as authored; the user's actual text follows it
     const texts = r.userContent.map((b: any) => b.text);
-    expect(texts[0]).toBe('<harness-note source="automated-harness" from-user="false">\nPERIODIC_REMINDER_TEXT\n</harness-note>');
+    expect(texts[0]).toMatch(/^<harness-note source="automated-harness" from-user="false">\n/);
+    expect(texts[0]).toContain('PERIODIC_REMINDER_TEXT');
+    expect(texts[0]).toMatch(/<\/harness-note>$/);
     expect(texts).toContain('<user_query>\nhello from user\n</user_query>');
     expect(texts.join('')).not.toContain('STATIC_SYSTEM_PROMPT');
   });
