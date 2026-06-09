@@ -1,0 +1,84 @@
+{
+  "name": "@nexus-cortex/core",
+  "version": "4.8.0",
+  "description": "Core orchestration library implementing Claude CLI architecture patterns",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./system-messages/types.js": {
+      "types": "./dist/system-messages/types.d.ts",
+      "import": "./dist/system-messages/types.js"
+    },
+    "./system-messages/SystemMessageStore.js": {
+      "types": "./dist/system-messages/SystemMessageStore.d.ts",
+      "import": "./dist/system-messages/SystemMessageStore.js"
+    },
+    "./system-messages/SystemMessageRegistry.js": {
+      "types": "./dist/system-messages/SystemMessageRegistry.d.ts",
+      "import": "./dist/system-messages/SystemMessageRegistry.js"
+    },
+    "./system-messages/MessageValidator.js": {
+      "types": "./dist/system-messages/MessageValidator.d.ts",
+      "import": "./dist/system-messages/MessageValidator.js"
+    },
+    "./utils/ContextResolver.js": {
+      "types": "./dist/utils/ContextResolver.d.ts",
+      "import": "./dist/utils/ContextResolver.js"
+    }
+  },
+  "scripts": {
+    "build": "npm run clean && tsc && npm run copy-assets",
+    "copy-assets": "mkdir -p dist/system-messages/messages && cp src/system-messages/*.json dist/system-messages/ && cp -r src/system-messages/messages/*.md dist/system-messages/messages/",
+    "clean": "rm -rf dist",
+    "test": "vitest",
+    "test:ci": "vitest run --coverage",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.20.9",
+    "@anthropic-ai/tokenizer": "^0.0.4",
+    "@google/genai": "^1.27.0",
+    "@google/generative-ai": "^0.2.1",
+    "@modelcontextprotocol/sdk": "^1.20.2",
+    "@nexus-cortex/executors": "^4.8.0",
+    "@nexus-cortex/types": "^4.8.0",
+    "@types/uuid": "^10.0.0",
+    "chokidar": "^3.6.0",
+    "openai": "^4.104.0",
+    "tiktoken": "^1.0.22",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@vitest/coverage-v8": "^1.0.0",
+    "dotenv": "^17.2.3",
+    "typescript": "^5.3.3",
+    "vitest": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Spitfire-Products/nexus-cortex.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/Spitfire-Products/nexus-cortex#readme",
+  "bugs": {
+    "url": "https://github.com/Spitfire-Products/nexus-cortex/issues"
+  },
+  "license": "MIT"
+}

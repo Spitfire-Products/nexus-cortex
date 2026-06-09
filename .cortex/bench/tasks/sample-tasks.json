@@ -1,0 +1,20 @@
+[
+  {
+    "id": "read-package-version",
+    "taskType": "T1",
+    "prompt": "Read the file packages/core/package.json in this repository and reply with ONLY the value of its \"version\" field, nothing else.",
+    "verifier": { "type": "regex", "pattern": "\\b\\d+\\.\\d+\\.\\d+\\b" }
+  },
+  {
+    "id": "budget-signal-recall",
+    "taskType": "T1",
+    "prompt": "Read packages/core/src/orchestrator/toolBudgetSignal.ts and answer precisely: (1) what condition makes computeToolBudgetSignal return null, (2) what is the firm-STOP threshold expressed in terms of softBudget, (3) name the two sets compared in isToolProgressStalled. Cite exact identifiers.",
+    "verifier": { "type": "contains", "all": ["softBudget", "stall", "null"], "caseInsensitive": true }
+  },
+  {
+    "id": "registered-tool-count",
+    "taskType": "T3",
+    "prompt": "How many base tool executors are registered in packages/executors/src/ExecutorRegistry.ts? Reply with just the number.",
+    "verifier": { "type": "regex", "pattern": "\\b(2[5-9]|3[0-5])\\b" }
+  }
+]

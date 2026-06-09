@@ -1,0 +1,18 @@
+{
+  "version": "1.0.0",
+  "lastModified": "2026-04-21T22:30:03.487492+00:00",
+  "messages": [
+    {
+      "id": "work_quality",
+      "type": "instruction",
+      "path": "messages/WORK_QUALITY.md",
+      "enabled": true,
+      "priority": 30,
+      "metadata": {
+        "created": "2026-04-21T22:30:03.487480+00:00",
+        "displayName": "Work Quality Protocols",
+        "author": "system"
+      }
+    }
+  ]
+}

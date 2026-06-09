@@ -1,0 +1,63 @@
+{
+  "$comment": "Production environment — strict deny-by-default. Whitelist allows the minimum read-only tools needed for read-only operation. defaultPolicy: deny + approvalHandler: deny-all means anything not on the allowlist is hard-blocked.",
+  "enabled": true,
+  "defaultPolicy": "deny",
+  "policies": [
+    {
+      "type": "whitelist",
+      "enabled": true,
+      "priority": 100,
+      "config": {
+        "allowedTools": [
+          "Read",
+          "Glob",
+          "Grep",
+          "BashOutput",
+          "WebSearch",
+          "WebFetch",
+          "GetMcpConfig",
+          "ListAvailableMcpServers",
+          "SearchMcpServers",
+          "ListSessions",
+          "LoadSession",
+          "RequestHistoricalContext",
+          "SearchConversationHistory",
+          "GetConversationSegment",
+          "ListCompactionBoundaries",
+          "TodoList",
+          "SearchTools"
+        ]
+      }
+    },
+    {
+      "type": "file-operation",
+      "enabled": true,
+      "priority": 80,
+      "config": {
+        "allowedPaths": ["./public", "./dist", "./build"],
+        "blockedPaths": ["/etc", "/root", "/sys", "/.git", "/node_modules", "./config", "./secrets", "./.env"],
+        "requireApprovalForDelete": false,
+        "requireApprovalForWrite": false
+      }
+    },
+    {
+      "type": "bash-command",
+      "enabled": true,
+      "priority": 50,
+      "config": {
+        "allowedCommands": [],
+        "blockedCommands": ["*"],
+        "requireApprovalForDangerous": false
+      }
+    }
+  ],
+  "approvalHandler": "deny-all",
+  "auditLog": {
+    "enabled": true,
+    "path": ".cortex/audit/permissions.log",
+    "maxFileSizeBytes": 10485760,
+    "enableRotation": true,
+    "maxRotatedFiles": 5
+  },
+  "enableLogging": true
+}

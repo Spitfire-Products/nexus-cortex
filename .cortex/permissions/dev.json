@@ -1,0 +1,20 @@
+{
+  "$comment": "Development environment - permissive defaults. Only bash dangerous-command guard remains; all other tools fall through to defaultPolicy: allow.",
+  "enabled": true,
+  "defaultPolicy": "allow",
+  "policies": [
+    {
+      "type": "bash-command",
+      "enabled": true,
+      "priority": 50,
+      "config": {
+        "allowedCommands": [],
+        "blockedCommands": ["rm -rf /", "sudo rm -rf", "dd if=", "mkfs", "fdisk"],
+        "requireApprovalForDangerous": false,
+        "customDangerousPatterns": []
+      }
+    }
+  ],
+  "approvalHandler": "auto-approve",
+  "enableLogging": false
+}

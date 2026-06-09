@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Terminal Sandbox</title>
+
+  <!-- xterm.js CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/xterm@5.0.0/css/xterm.css" />
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #1e1e1e;
+      font-family: 'Courier New', Courier, monospace;
+      overflow: hidden;
+    }
+
+    #terminal-container {
+      width: 100vw;
+      height: 100vh;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #terminal {
+      flex: 1;
+      background: #000000;
+    }
+
+    #status-bar {
+      height: 24px;
+      background: #2d2d2d;
+      color: #fff;
+      padding: 4px 10px;
+      font-size: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .status-item {
+      display: flex;
+      gap: 10px;
+    }
+
+    .indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .indicator.connected {
+      background: #0f0;
+      box-shadow: 0 0 4px #0f0;
+    }
+
+    .indicator.disconnected {
+      background: #f00;
+      box-shadow: 0 0 4px #f00;
+    }
+  </style>
+</head>
+<body>
+  <div id="terminal-container">
+    <div id="status-bar">
+      <div class="status-item">
+        <span class="indicator disconnected" id="connection-indicator"></span>
+        <span id="connection-status">Connecting...</span>
+      </div>
+      <div class="status-item">
+        <span id="terminal-info">Terminal Sandbox</span>
+      </div>
+    </div>
+    <div id="terminal"></div>
+  </div>
+
+  <!-- xterm.js and addons -->
+  <script src="https://unpkg.com/xterm@5.0.0/lib/xterm.js"></script>
+  <script src="https://unpkg.com/xterm-addon-fit@0.6.0/lib/xterm-addon-fit.js"></script>
+  <script src="https://unpkg.com/xterm-addon-web-links@0.7.0/lib/xterm-addon-web-links.js"></script>
+
+  <script>
+    // Configuration
+    const WS_PORT = 3001;
+    const WS_URL = `ws://localhost:${WS_PORT}`;
+
+    // UI elements
+    const indicator = document.getElementById('connection-indicator');
+    const statusText = document.getElementById('connection-status');
+
+    // Create terminal with xterm.js
+    const term = new Terminal({
+      cursorBlink: true,
+      cursorStyle: 'block',
+      fontSize: 14,
+      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      fontWeight: 'normal',
+      lineHeight: 1.2,
+      letterSpacing: 0,
+      theme: {
+        background: '#000000',
+        foreground: '#ffffff',
+        cursor: '#ffffff',
+        cursorAccent: '#000000',
+        selection: '#ffffff40',
+        black: '#000000',
+        red: '#e06c75',
+        green: '#98c379',
+        yellow: '#d19a66',
+        blue: '#61afef',
+        magenta: '#c678dd',
+        cyan: '#56b6c2',
+        white: '#abb2bf',
+        brightBlack: '#5c6370',
+        brightRed: '#e06c75',
+        brightGreen: '#98c379',
+        brightYellow: '#d19a66',
+        brightBlue: '#61afef',
+        brightMagenta: '#c678dd',
+        brightCyan: '#56b6c2',
+        brightWhite: '#ffffff'
+      },
+      allowProposedApi: true,
+      scrollback: 1000,
+      tabStopWidth: 4
+    });
+
+    // Load addons
+    const fitAddon = new FitAddon.FitAddon();
+    const webLinksAddon = new WebLinksAddon.WebLinksAddon();
+
+    term.loadAddon(fitAddon);
+    term.loadAddon(webLinksAddon);
+
+    // Open terminal in DOM
+    term.open(document.getElementById('terminal'));
+
+    // Fit to window
+    fitAddon.fit();
+
+    // WebSocket connection
+    let ws = null;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 5;
+
+    function connect() {
+      ws = new WebSocket(WS_URL);
+
+      ws.onopen = () => {
+        console.log('Connected to terminal server');
+        updateStatus(true);
+        reconnectAttempts = 0;
+
+        // Terminal welcome message
+        term.writeln('\x1b[32m✓ Connected to terminal server\x1b[0m');
+        term.writeln('');
+      };
+
+      ws.onmessage = (event) => {
+        // Write server output to terminal
+        term.write(event.data);
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        updateStatus(false, 'Connection error');
+      };
+
+      ws.onclose = () => {
+        console.log('Disconnected from terminal server');
+        updateStatus(false, 'Disconnected');
+
+        // Attempt to reconnect
+        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+          reconnectAttempts++;
+          setTimeout(() => {
+            console.log(`Reconnecting... (attempt ${reconnectAttempts})`);
+            connect();
+          }, 2000);
+        } else {
+          term.writeln('');
+          term.writeln('\x1b[31m✗ Connection lost. Max reconnect attempts reached.\x1b[0m');
+        }
+      };
+    }
+
+    // Update connection status
+    function updateStatus(connected, message) {
+      if (connected) {
+        indicator.className = 'indicator connected';
+        statusText.textContent = 'Connected';
+      } else {
+        indicator.className = 'indicator disconnected';
+        statusText.textContent = message || 'Disconnected';
+      }
+    }
+
+    // Send user input to server
+    term.onData((data) => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(data);
+      }
+    });
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      fitAddon.fit();
+    });
+
+    // Handle terminal paste
+    term.onKey((e) => {
+      if (e.domEvent.ctrlKey && e.domEvent.key === 'v') {
+        // Paste from clipboard
+        navigator.clipboard.readText().then((text) => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(text);
+          }
+        });
+      }
+    });
+
+    // Focus terminal on load
+    term.focus();
+
+    // Connect to server
+    connect();
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      // Ctrl+C: Copy selection
+      if (e.ctrlKey && e.key === 'c' && term.hasSelection()) {
+        e.preventDefault();
+        const selection = term.getSelection();
+        navigator.clipboard.writeText(selection);
+      }
+
+      // Ctrl+L: Clear terminal
+      if (e.ctrlKey && e.key === 'l') {
+        e.preventDefault();
+        term.clear();
+      }
+    });
+  </script>
+</body>
+</html>

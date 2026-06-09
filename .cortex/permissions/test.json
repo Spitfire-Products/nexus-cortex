@@ -1,0 +1,63 @@
+{
+  "enabled": true,
+  "defaultPolicy": "allow",
+  "policies": [
+    {
+      "type": "whitelist",
+      "enabled": true,
+      "priority": 100,
+      "config": {
+        "allowedTools": [
+          "Read",
+          "Glob",
+          "Grep",
+          "BashOutput",
+          "SearchConversationHistory",
+          "Write",
+          "Edit",
+          "Bash",
+          "CodeExecute",
+          "WebFetch",
+          "WebSearch",
+          "TodoCreate",
+          "Task",
+          "NotebookEdit",
+          "KillShell",
+          "SlashCommand",
+          "Skill",
+          "AskUserQuestion",
+          "ExitPlanMode",
+          "WorkspaceManager",
+          "RequestHistoricalContext",
+          "GetConversationSegment",
+          "ListCompactionBoundaries",
+          "ListSessions",
+          "LoadSession"
+        ]
+      }
+    },
+    {
+      "type": "file-operation",
+      "enabled": true,
+      "priority": 50,
+      "config": {
+        "allowedPaths": ["/tmp", "./test", "./src", "./tests", "./packages"],
+        "blockedPaths": ["/etc", "/root", "/.git", "/node_modules"],
+        "requireApprovalForDelete": true,
+        "requireApprovalForWrite": false
+      }
+    },
+    {
+      "type": "bash-command",
+      "enabled": true,
+      "priority": 50,
+      "config": {
+        "allowedCommands": ["npm test", "npm run", "yarn test", "jest", "mocha", "vitest", "npx"],
+        "blockedCommands": ["rm -rf /", "sudo", "dd", "mkfs"],
+        "requireApprovalForDangerous": true
+      }
+    }
+  ],
+  "approvalHandler": "auto-approve",
+  "enableLogging": true
+}

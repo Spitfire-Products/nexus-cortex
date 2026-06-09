@@ -1,0 +1,19 @@
+{
+  "$comment": "Testing/CI environment - Auto-approve with minimal restrictions",
+  "enabled": true,
+  "defaultPolicy": "allow",
+  "policies": [
+    {
+      "type": "file-operation",
+      "config": {
+        "allowedPaths": ["/tmp/test-workspace"],
+        "blockedPaths": [],
+        "requireApprovalForDelete": false
+      }
+    }
+  ],
+  "approvalHandler": "auto-approve",
+  "auditLog": {
+    "enabled": false
+  }
+}

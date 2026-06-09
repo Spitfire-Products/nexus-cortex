@@ -1,0 +1,20 @@
+{
+  "$comment": "Development environment - permissive defaults. Bash dangerous-command guard via blacklist; everything else allowed.",
+  "enabled": true,
+  "defaultPolicy": "allow",
+  "policies": [
+    {
+      "type": "bash-command",
+      "config": {
+        "allowedCommands": [],
+        "blockedCommands": ["rm -rf /", "sudo rm"],
+        "requireApprovalForDangerous": true
+      }
+    }
+  ],
+  "approvalHandler": "auto-approve",
+  "auditLog": {
+    "enabled": true,
+    "path": ".nexus-cortex/audit/permissions.log"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "nexus-cortex-monorepo",
+  "version": "4.8.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "bash scripts/build.sh",
+    "clean": "rm -rf packages/*/dist",
+    "link": "bash scripts/link-global.sh",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "npm run build && changeset publish"
+  },
+  "devDependencies": {
+    "@types/html-to-text": "^9.0.4",
+    "@types/ws": "^8.18.1",
+    "@changesets/cli": "^2.27.0"
+  }
+}

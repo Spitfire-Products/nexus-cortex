@@ -1,0 +1,60 @@
+{
+  "name": "@nexus-cortex/server",
+  "version": "4.8.0",
+  "description": "Thin Express server wrapper for Nexus Cortex core library",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "cortex-server": "./bin/cortex-server.js",
+    "cortex-daemon": "./bin/cortex-daemon.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "clean": "rm -rf dist",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@nexus-cortex/core": "^4.8.0",
+    "@nexus-cortex/executors": "^4.8.0",
+    "chalk": "^5.3.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.5",
+    "@types/supertest": "^6.0.3",
+    "supertest": "^7.1.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Spitfire-Products/nexus-cortex.git",
+    "directory": "packages/server"
+  },
+  "homepage": "https://github.com/Spitfire-Products/nexus-cortex#readme",
+  "bugs": {
+    "url": "https://github.com/Spitfire-Products/nexus-cortex/issues"
+  },
+  "license": "MIT"
+}

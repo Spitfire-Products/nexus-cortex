@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AAPL Stock Chart</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 1200px;
+            width: 100%;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .ticker {
+            font-size: 48px;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        
+        .company-name {
+            font-size: 24px;
+            color: #666;
+            margin-bottom: 20px;
+        }
+        
+        .price-info {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        
+        .price-card {
+            background: #f8f9fa;
+            padding: 20px 30px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        
+        .price-label {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        
+        .price-value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .price-change {
+            font-size: 18px;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+        
+        .positive {
+            color: #22c55e;
+        }
+        
+        .negative {
+            color: #ef4444;
+        }
+        
+        .chart-container {
+            position: relative;
+            height: 400px;
+            margin-top: 20px;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+            font-size: 18px;
+        }
+        
+        .time-range {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .time-btn {
+            padding: 10px 20px;
+            border: 2px solid #667eea;
+            background: white;
+            color: #667eea;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        
+        .time-btn:hover {
+            background: #667eea;
+            color: white;
+        }
+        
+        .time-btn.active {
+            background: #667eea;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="ticker">$AAPL</div>
+            <div class="company-name">Apple Inc.</div>
+        </div>
+        
+        <div class="price-info" id="priceInfo">
+            <div class="loading">Loading stock data...</div>
+        </div>
+        
+        <div class="chart-container">
+            <canvas id="stockChart"></canvas>
+        </div>
+        
+        <div class="time-range">
+            <button class="time-btn" onclick="changeTimeRange('1M')">1M</button>
+            <button class="time-btn" onclick="changeTimeRange('3M')">3M</button>
+            <button class="time-btn active" onclick="changeTimeRange('6M')">6M</button>
+            <button class="time-btn" onclick="changeTimeRange('1Y')">1Y</button>
+            <button class="time-btn" onclick="changeTimeRange('5Y')">5Y</button>
+        </div>
+    </div>
+    
+    <script>
+        let chart = null;
+        let currentRange = '6M';
+        
+        // Generate sample data for demonstration
+        function generateSampleData(months) {
+            const data = [];
+            const labels = [];
+            const now = new Date();
+            const basePrice = 180;
+            let currentPrice = basePrice;
+            
+            const days = months * 30;
+            
+            for (let i = days; i >= 0; i--) {
+                const date = new Date(now);
+                date.setDate(date.getDate() - i);
+                
+                // Add some realistic price movement
+                const change = (Math.random() - 0.48) * 3;
+                currentPrice = Math.max(basePrice * 0.7, Math.min(basePrice * 1.3, currentPrice + change));
+                
+                data.push(currentPrice.toFixed(2));
+                
+                if (i % 7 === 0 || days <= 30) {
+                    labels.push(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+                } else {
+                    labels.push('');
+                }
+            }
+            
+            return { labels, data, currentPrice: parseFloat(data[data.length - 1]) };
+        }
+        
+        function updatePriceInfo(currentPrice, previousPrice) {
+            const change = currentPrice - previousPrice;
+            const changePercent = (change / previousPrice) * 100;
+            const isPositive = change >= 0;
+            
+            document.getElementById('priceInfo').innerHTML = `
+                <div class="price-card">
+                    <div class="price-label">Current Price</div>
+                    <div class="price-value">$${currentPrice.toFixed(2)}</div>
+                    <div class="price-change ${isPositive ? 'positive' : 'negative'}">
+                        ${isPositive ? '↑' : '↓'} $${Math.abs(change).toFixed(2)} (${changePercent.toFixed(2)}%)
+                    </div>
+                </div>
+                <div class="price-card">
+                    <div class="price-label">Volume</div>
+                    <div class="price-value">52.3M</div>
+                </div>
+                <div class="price-card">
+                    <div class="price-label">Market Cap</div>
+                    <div class="price-value">$2.81T</div>
+                </div>
+            `;
+        }
+        
+        function createChart(labels, data) {
+            const ctx = document.getElementById('stockChart').getContext('2d');
+            
+            if (chart) {
+                chart.destroy();
+            }
+            
+            const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+            gradient.addColorStop(0, 'rgba(102, 126, 234, 0.4)');
+            gradient.addColorStop(1, 'rgba(102, 126, 234, 0.0)');
+            
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Price (USD)',
+                        data: data,
+                        borderColor: '#667eea',
+                        backgroundColor: gradient,
+                        borderWidth: 3,
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 0,
+                        pointHoverRadius: 6,
+                        pointHoverBackgroundColor: '#667eea',
+                        pointHoverBorderColor: 'white',
+                        pointHoverBorderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                            padding: 12,
+                            titleColor: 'white',
+                            bodyColor: 'white',
+                            borderColor: '#667eea',
+                            borderWidth: 1,
+                            displayColors: false,
+                            callbacks: {
+                                label: function(context) {
+                                    return '$' + parseFloat(context.parsed.y).toFixed(2);
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: {
+                                display: false
+                            },
+                            ticks: {
+                                maxRotation: 0,
+                                autoSkip: true,
+                                maxTicksLimit: 8
+                            }
+                        },
+                        y: {
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.05)'
+                            },
+                            ticks: {
+                                callback: function(value) {
+                                    return '$' + value.toFixed(0);
+                                }
+                            }
+                        }
+                    },
+                    interaction: {
+                        mode: 'nearest',
+                        axis: 'x',
+                        intersect: false
+                    }
+                }
+            });
+        }
+        
+        function changeTimeRange(range) {
+            currentRange = range;
+            
+            // Update active button
+            document.querySelectorAll('.time-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+            
+            // Load data for the new range
+            loadData();
+        }
+        
+        function loadData() {
+            const monthsMap = {
+                '1M': 1,
+                '3M': 3,
+                '6M': 6,
+                '1Y': 12,
+                '5Y': 60
+            };
+            
+            const months = monthsMap[currentRange];
+            const { labels, data, currentPrice } = generateSampleData(months);
+            const previousPrice = parseFloat(data[Math.max(0, data.length - 30)]);
+            
+            updatePriceInfo(currentPrice, previousPrice);
+            createChart(labels, data);
+        }
+        
+        // Initialize on page load
+        loadData();
+    </script>
+</body>
+</html>

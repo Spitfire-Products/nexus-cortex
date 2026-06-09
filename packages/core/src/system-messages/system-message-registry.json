@@ -1,0 +1,233 @@
+{
+  "$schema": "./system-message-registry.schema.json",
+  "version": "1.0.0",
+  "description": "System Message Injection Registry - Defines when and how to inject system prompts",
+
+  "messages": [
+    {
+      "id": "system_prompt",
+      "name": "Core System Prompt",
+      "file": "messages/SYSTEM_PROMPT.md",
+      "conditions": {
+        "turnNumber": 0,
+        "sessionPhase": "start"
+      },
+      "injection": {
+        "position": "prepend",
+        "role": "system",
+        "priority": 1
+      },
+      "cache": true,
+      "description": "Core instructions about AI role, capabilities, and environment"
+    },
+
+    {
+      "id": "tool_usage_guide",
+      "name": "Tool Usage Guide",
+      "file": "messages/TOOL_USAGE_GUIDE.md",
+      "conditions": {
+        "hasTools": true,
+        "sessionPhase": ["start", "ongoing"]
+      },
+      "injection": {
+        "position": "prepend",
+        "role": "system",
+        "priority": 2
+      },
+      "cache": true,
+      "description": "Instructions on how to use tools properly"
+    },
+
+    {
+      "id": "active_discovery",
+      "name": "Active Discovery Methodology",
+      "file": "messages/ACTIVE_DISCOVERY.md",
+      "conditions": {
+        "hasTools": true,
+        "sessionPhase": ["start", "ongoing"]
+      },
+      "injection": {
+        "position": "prepend",
+        "role": "system",
+        "priority": 3
+      },
+      "cache": true,
+      "description": "Grounded research methodology - verify code by reading source, never infer from docs alone"
+    },
+
+    {
+      "id": "tool_examples",
+      "name": "Tool Usage Examples",
+      "file": "messages/EXAMPLES.md",
+      "conditions": {
+        "hasTools": true,
+        "turnNumber": 0
+      },
+      "injection": {
+        "position": "prepend",
+        "role": "system",
+        "priority": 3
+      },
+      "cache": true,
+      "description": "Concrete examples of proper tool usage patterns"
+    },
+
+    {
+      "id": "reasoning_guide",
+      "name": "Reasoning Model Guide",
+      "file": "messages/REASONING_GUIDE.md",
+      "conditions": {
+        "modelCapabilities": ["reasoning"],
+        "turnNumber": 0,
+        "apiPattern": ["messages", "chat/completions"]
+      },
+      "injection": {
+        "position": "prepend",
+        "role": "system",
+        "priority": 4
+      },
+      "cache": true,
+      "description": "Instructions for <thinking> tag format (Anthropic/OpenAI) - NOT for Gemini which uses native thought flags"
+    },
+
+    {
+      "id": "task_agent_guide",
+      "name": "Task Agent Guide",
+      "file": "messages/TASK_AGENT_GUIDE.md",
+      "conditions": {
+        "hasTools": true,
+        "turnNumber": 0
+      },
+      "injection": {
+        "position": "prepend",
+        "role": "system",
+        "priority": 4
+      },
+      "cache": true,
+      "description": "Guide for Task tool parallel execution and sub-agent permissions"
+    },
+
+    {
+      "id": "cortex",
+      "name": "CORTEX.md Project Context",
+      "file": "CORTEX.md",
+      "conditions": {
+        "turnNumber": 0
+      },
+      "injection": {
+        "position": "prepend",
+        "role": "system",
+        "priority": 6
+      },
+      "cache": true,
+      "description": "Auto-generated project context from CORTEX.md (loaded from .cortex/ directory)"
+    },
+
+    {
+      "id": "claude_md",
+      "name": "CLAUDE.md Project Instructions",
+      "file": "CLAUDE.md",
+      "conditions": {
+        "turnNumber": 0
+      },
+      "injection": {
+        "position": "prepend",
+        "role": "system",
+        "priority": 6
+      },
+      "cache": true,
+      "description": "Platform-agnostic project instructions (CLAUDE.md from project root or parent directories, falls back to AGENTS.md)"
+    },
+
+    {
+      "id": "agents_md",
+      "name": "AGENTS.md Project Instructions",
+      "file": "AGENTS.md",
+      "conditions": {
+        "turnNumber": 0
+      },
+      "injection": {
+        "position": "prepend",
+        "role": "system",
+        "priority": 6
+      },
+      "cache": true,
+      "description": "Platform-agnostic agent instructions (AGENTS.md from project root or parent directories)"
+    },
+
+    {
+      "id": "gemini_md",
+      "name": "GEMINI.md Project Instructions",
+      "file": "GEMINI.md",
+      "conditions": {
+        "turnNumber": 0
+      },
+      "injection": {
+        "position": "prepend",
+        "role": "system",
+        "priority": 6
+      },
+      "cache": true,
+      "description": "Gemini-specific project instructions (GEMINI.md from project root or parent directories)"
+    },
+
+    {
+      "id": "claude_memory",
+      "name": "Claude Memory Context",
+      "file": "MEMORY.md",
+      "conditions": {
+        "turnNumber": 0
+      },
+      "injection": {
+        "position": "prepend",
+        "role": "system",
+        "priority": 6
+      },
+      "cache": true,
+      "description": "Persistent cross-session memory (.claude/ MEMORY.md)"
+    },
+
+    {
+      "id": "periodic_reminder",
+      "name": "Periodic Tool Usage Reminder",
+      "file": "messages/PERIODIC_REMINDER.md",
+      "conditions": {
+        "hasTools": true,
+        "turnNumberModulo": {
+          "divisor": 10,
+          "remainder": 0
+        }
+      },
+      "injection": {
+        "position": "prepend",
+        "role": "system",
+        "priority": 10
+      },
+      "cache": true,
+      "description": "Periodic reminder about tool usage (every 10 turns)"
+    }
+  ],
+
+  "injection_rules": {
+    "deduplication": {
+      "enabled": true,
+      "strategy": "content_hash",
+      "description": "Don't inject same content twice in a row"
+    },
+
+    "reasoning_models": {
+      "interleaved_thinking": true,
+      "thinking_position": "before_response",
+      "description": "Handle <thinking> blocks in reasoning models"
+    },
+
+    "max_system_messages": 10,
+    "trim_strategy": "priority",
+
+    "position_mapping": {
+      "prepend": "Insert before canonical messages",
+      "append": "Insert after canonical messages",
+      "interleave": "Insert between user/assistant messages"
+    }
+  }
+}
