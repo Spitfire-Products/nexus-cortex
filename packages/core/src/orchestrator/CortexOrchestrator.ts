@@ -903,7 +903,7 @@ export class CortexOrchestrator {
 
       console.log(`[Orchestrator Phase 2] Tool context: ${totalCount} tools total`);
       if (mcpCount > 0) {
-        console.log(`[Orchestrator Phase 2.5] Including ${mcpCount} MCP tools (from MCP_CONFIG.md)`);
+        if (process.env.DEBUG === 'true') console.log(`[Orchestrator Phase 2.5] Including ${mcpCount} MCP tools (from MCP_CONFIG.md)`);
       }
       if (mgmtCount > 0) {
         console.log(`[Orchestrator Phase 2.6] Including ${mgmtCount} MCP management tools`);
@@ -1020,7 +1020,7 @@ export class CortexOrchestrator {
       console.log('[Orchestrator] API Pattern:', effectiveModel.api.pattern);
       console.log('[Orchestrator] Endpoint:', effectiveModel.api.endpoint);
       console.log('[Orchestrator] Messages:', preparedRequest.messages.length);
-      console.log('[Orchestrator] Tools:', toolsToUse ? toolsToUse.length : 0);
+      if (process.env.DEBUG === 'true') console.log('[Orchestrator] Tools:', toolsToUse ? toolsToUse.length : 0);
       console.log('[Orchestrator] Has previousResponseId:', !!preparedRequest.previousResponseId);
     }
 
@@ -4337,7 +4337,7 @@ export class CortexOrchestrator {
         Array.isArray((m as any).message?.content) &&
         (m as any).message.content.some((b: any) => b.type === 'tool_result')
       );
-      console.log(`[Orchestrator DEBUG getMessageHistory] Found ${toolResultMsgs.length} tool_result messages`);
+      if (process.env.DEBUG === 'true') console.log(`[Orchestrator DEBUG getMessageHistory] Found ${toolResultMsgs.length} tool_result messages`);
       toolResultMsgs.forEach((msg: any, idx) => {
         const content = msg.message?.content || [];
         content.filter((b: any) => b.type === 'tool_result').forEach((tr: any) => {
@@ -7072,7 +7072,7 @@ export class CortexOrchestrator {
               );
               console.log('[DEBUG Repair] Tool use IDs:', toolUseBlocks.map((b: any) => (b.toolUse || b).id));
               console.log('[DEBUG Repair] Tool result IDs found:', Array.from(toolResultIds));
-              console.log('[DEBUG Repair] Consecutive user messages scanned:', j - i - 1);
+              if (process.env.DEBUG === 'true') console.log('[DEBUG Repair] Consecutive user messages scanned:', j - i - 1);
             }
 
             const syntheticResults: any[] = orphanedToolUses.map((block: any) => {

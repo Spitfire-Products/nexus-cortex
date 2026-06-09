@@ -163,7 +163,7 @@ export class APIClient {
       try {
         const parsed = JSON.parse(attempt);
         if (typeof parsed === 'object' && parsed !== null) {
-          console.log(`[APIClient] Repaired truncated JSON (${raw.length} chars) by appending ${attempt.slice(trimmed.length)}`);
+          if (process.env.DEBUG === 'true') console.log(`[APIClient] Repaired truncated JSON (${raw.length} chars) by appending ${attempt.slice(trimmed.length)}`);
           return parsed;
         }
       } catch { /* continue */ }
@@ -1380,7 +1380,7 @@ export class APIClient {
                 console.log(`[DEBUG APIClient] Claude event: ${event.type}, delta.type: ${delta?.type}`);
               }
             } else if (event.type === 'content_block_start') {
-              console.log(`[DEBUG APIClient] Claude event: ${event.type}, content_block.type: ${(event as any).content_block?.type}, index: ${(event as any).index}`);
+              if (process.env.DEBUG === 'true') console.log(`[DEBUG APIClient] Claude event: ${event.type}, content_block.type: ${(event as any).content_block?.type}, index: ${(event as any).index}`);
             }
           }
 
@@ -2531,7 +2531,7 @@ export class APIClient {
           if (p.functionResponse) return `functionResponse(${p.functionResponse.name})`;
           return Object.keys(p).join(',');
         });
-        console.log(`[DEBUG APIClient HTTP] contents[${i}]: role=${c.role}, parts=[${partsInfo.join(', ')}]`);
+        if (process.env.DEBUG === 'true') console.log(`[DEBUG APIClient HTTP] contents[${i}]: role=${c.role}, parts=[${partsInfo.join(', ')}]`);
       }
       // Write full request body to file for inspection
       import('fs').then(fs => fs.writeFileSync('/tmp/gemini-request-' + modelId + '.json', JSON.stringify(requestBody, null, 2)));
@@ -2731,7 +2731,7 @@ export class APIClient {
         enhancedTool.description = enhancedTool.name ?
           `Execute ${enhancedTool.name} tool` :
           `Tool ${index}`;
-        console.log(`[XAI Validation] Added missing description for tool: ${enhancedTool.name}`);
+        if (process.env.DEBUG === 'true') console.log(`[XAI Validation] Added missing description for tool: ${enhancedTool.name}`);
       }
 
       // REQUIRED: Ensure input_schema exists
@@ -2760,7 +2760,7 @@ export class APIClient {
         for (const [key, prop] of Object.entries(properties) as [string, any][]) {
           if (!prop.description || typeof prop.description !== 'string') {
             prop.description = `Parameter ${key} for ${enhancedTool.name || 'tool'}`;
-            console.log(`[XAI Validation] Added missing description for parameter: ${key}`);
+            if (process.env.DEBUG === 'true') console.log(`[XAI Validation] Added missing description for parameter: ${key}`);
           }
         }
 
@@ -3105,7 +3105,7 @@ export class APIClient {
           if (lastChunk?.candidates) {
             console.log(`[DEBUG APIClient SDK] candidates length: ${lastChunk.candidates.length}`);
             if (lastChunk.candidates.length > 0) {
-              console.log(`[DEBUG APIClient SDK] candidates[0] keys: ${Object.keys(lastChunk.candidates[0] || {}).join(', ')}`);
+              if (process.env.DEBUG === 'true') console.log(`[DEBUG APIClient SDK] candidates[0] keys: ${Object.keys(lastChunk.candidates[0] || {}).join(', ')}`);
               console.log(`[DEBUG APIClient SDK] finishReason: ${lastChunk.candidates[0]?.finishReason || 'none'}`);
               if (lastChunk.candidates[0]?.content) {
                 console.log(`[DEBUG APIClient SDK] content.parts length: ${lastChunk.candidates[0].content.parts?.length || 0}`);
@@ -3115,7 +3115,7 @@ export class APIClient {
             console.warn(`[DEBUG APIClient SDK] No candidates in final chunk!`);
           }
           if (lastChunk?.usageMetadata) {
-            console.log(`[DEBUG APIClient SDK] Token usage: ${JSON.stringify(lastChunk.usageMetadata)}`);
+            if (process.env.DEBUG === 'true') console.log(`[DEBUG APIClient SDK] Token usage: ${JSON.stringify(lastChunk.usageMetadata)}`);
           }
         }
 
