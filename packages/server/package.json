@@ -45,7 +45,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "NOTICE"
   ],
   "repository": {
     "type": "git",
@@ -56,5 +57,5 @@
   "bugs": {
     "url": "https://github.com/Spitfire-Products/nexus-cortex/issues"
   },
-  "license": "MIT"
+  "license": "Apache-2.0"
 }

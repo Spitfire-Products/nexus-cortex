@@ -10,4 +10,4 @@ npm install @nexus-cortex/core
 
 See the [main README](https://github.com/Spitfire-Products/nexus-cortex#readme) for usage, architecture, and the full package list.
 
-MIT © Spitfire-Products
+Apache-2.0 © Spitfire-Products

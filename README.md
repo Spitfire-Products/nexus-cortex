@@ -2,7 +2,7 @@
 
 **Multi-provider AI agent harness — a direct library, an optional HTTP server, and terminal UIs.**
 
-Version: 4.8.0 · License: MIT
+Version: 4.8.0 · License: Apache-2.0
 
 ---
 
@@ -712,7 +712,7 @@ echo $OPENAI_API_KEY
 
 ## License
 
-MIT
+Apache-2.0 — see [LICENSE](LICENSE). Copyright 2026 Spitfire-Products.
 
 ---
 
