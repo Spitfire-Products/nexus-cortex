@@ -20,7 +20,8 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run copy-assets",
+    "copy-assets": "mkdir -p dist/implementations/addon && cp src/implementations/addon/terminal-client.html dist/implementations/addon/terminal-client.html",
     "test": "vitest",
     "test:run": "vitest run",
     "test:ci": "vitest run --coverage",
