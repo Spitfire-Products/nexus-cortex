@@ -66,6 +66,7 @@ export interface CreateArtifactToolParams {
   mode?: ArtifactMode;                 // NEW: oneshot, dev, persistent
   persistent?: boolean;
   enableVisualFeedback?: boolean;     // NEW: Enable visual feedback for model
+  enableReactIntrospection?: boolean;  // React fiber introspection in snapshots (sandbox_scan/grab/detect always available)
 
   devConfig?: {                        // NEW: Dev mode configuration
     hotReload?: boolean;               // Auto-reload on code changes
@@ -178,6 +179,10 @@ export class CreateArtifactToolExecutor extends BaseTool<CreateArtifactToolParam
         enableVisualFeedback: {
           type: 'boolean' as const,
           description: 'Enable comprehensive visual feedback system for you (the model) to see and iterate on your creations. Captures: (1) screenshots (base64 PNG) of actual UI rendering, (2) DOM structure (HTML), (3) console logs (runtime output), (4) network requests (API calls), (5) performance metrics. Visual data is included in response metadata, allowing you to analyze what you built, identify issues, and make improvements. Essential for iterative UI development.'
+        },
+        enableReactIntrospection: {
+          type: 'boolean' as const,
+          description: 'Include a framework report (React/Vue/Svelte detection, React version, renderer count) in the initial visual snapshot. The sandbox_scan / sandbox_grab / sandbox_detect_framework tools work regardless of this flag (they enable introspection on first use). Default: false.'
         },
         devConfig: {
           type: 'object' as const,
@@ -990,6 +995,12 @@ if __name__ == '__main__':
     try {
       // Initialize Playwright browser
       await visualBridge.initialize();
+
+      // Opt-in React introspection: inject the fiber pre-load BEFORE the first
+      // navigation so the initial snapshot carries the framework report.
+      if (params.enableReactIntrospection) {
+        await visualBridge.enableReactIntrospection();
+      }
 
       // Wait for server to be ready (give it 2 seconds)
       await new Promise(resolve => setTimeout(resolve, 2000));

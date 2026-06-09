@@ -17,6 +17,7 @@
 
 export * from './CreateArtifactTool.js';
 export * from './InspectSandboxTool.js';
+export * from './SandboxIntrospectionTools.js';
 export * from './InteractWithSandboxTool.js';
 export * from './ModifySandboxTool.js';
 export * from './StopSandboxTool.js';

@@ -1383,6 +1383,11 @@ Go API Server:
           description: 'Capture screenshots, DOM structure, console logs, and network activity. Use this to see your creation and iterate on the UI.',
           default: false
         },
+        enableReactIntrospection: {
+          type: 'boolean',
+          description: 'Include a framework report (React/Vue/Svelte detection, React version) in the initial visual snapshot. sandbox_scan/sandbox_grab/sandbox_detect_framework work regardless of this flag.',
+          default: false
+        },
         testCases: {
           type: 'array',
           items: {
@@ -1593,6 +1598,79 @@ WORKFLOW: create_artifact_tool → inspect_sandbox → modify_sandbox → inspec
       executionEnvironment: 'client',
       version: '1.0.0'
     }
+  },
+
+  {
+    name: 'SandboxScan',
+    description: `Discover elements in a running sandbox/artifact. Same contract as the nexus-browser scan tool: each element carries a unique cssSelector (reuse it with InteractWithSandbox), isInteractive, relevanceScore — and componentName on React artifacts.
+
+WORKFLOW (scan -> act -> scan): sandbox_scan -> interact_with_sandbox(click/type with cssSelector) -> sandbox_scan to verify.
+
+FILTERS: tagName, hasText, isInteractive, id, className, placeholder, name, componentName (React).`,
+    schema: {
+      type: 'object',
+      properties: {
+        sandboxId: { type: 'string', description: 'ID of the sandbox to scan' },
+        filter: {
+          type: 'object',
+          properties: {
+            tagName: { type: 'string', description: "Exact lowercase tag, e.g. 'button'" },
+            hasText: { type: 'string', description: 'Case-insensitive text substring' },
+            isInteractive: { type: 'boolean', description: 'Only interactive elements' },
+            id: { type: 'string', description: 'Exact id attribute' },
+            className: { type: 'string', description: 'classList contains' },
+            placeholder: { type: 'string', description: 'Placeholder substring' },
+            name: { type: 'string', description: 'Exact name attribute' },
+            componentName: { type: 'string', description: 'React component name' }
+          },
+          description: 'Optional element filters (AND-combined)'
+        },
+        limit: { type: 'number', description: 'Max elements (default 30, max 100)' },
+        includeOffscreen: { type: 'boolean', description: 'Include offscreen elements' }
+      },
+      required: ['sandboxId']
+    },
+    category: 'base',
+    discoveryTier: 'standard',
+    metadata: { immutable: true, executionEnvironment: 'client', version: '1.0.0' }
+  },
+
+  {
+    name: 'SandboxGrab',
+    description: `Query ONE element in a running sandbox by cssSelector or coordinates. Same contract as the nexus-browser grab tool. Returns DOM detail (attributes, rect, computed style, parent chain, HTML preview) and — on React artifacts — react: { componentName, componentStack, props, sourceLocation }.
+
+WHEN TO USE: after sandbox_scan to drill into a specific element, or with x/y after a click to learn WHICH component you hit.`,
+    schema: {
+      type: 'object',
+      properties: {
+        sandboxId: { type: 'string', description: 'ID of the sandbox' },
+        selector: { type: 'string', description: 'CSS selector (use cssSelector from sandbox_scan)' },
+        x: { type: 'number', description: 'X coordinate (alternative to selector)' },
+        y: { type: 'number', description: 'Y coordinate (alternative to selector)' },
+        maxLength: { type: 'number', description: 'Max text length (default 500)' }
+      },
+      required: ['sandboxId']
+    },
+    category: 'base',
+    discoveryTier: 'standard',
+    metadata: { immutable: true, executionEnvironment: 'client', version: '1.0.0' }
+  },
+
+  {
+    name: 'SandboxDetectFramework',
+    description: `Detect the frontend framework of a running sandbox/artifact. Same schema as the nexus-browser detect_framework tool: react, reactVersion, next, remix, gatsby, vue, svelte, angular, compiler, hasDevTools, rendererCount, heavyLibraries.
+
+WHEN TO USE: once after creating an artifact — if react=true, prefer sandbox_scan/sandbox_grab for component-level verification instead of screenshot-only inspection.`,
+    schema: {
+      type: 'object',
+      properties: {
+        sandboxId: { type: 'string', description: 'ID of the sandbox' }
+      },
+      required: ['sandboxId']
+    },
+    category: 'base',
+    discoveryTier: 'standard',
+    metadata: { immutable: true, executionEnvironment: 'client', version: '1.0.0' }
   },
 
   {

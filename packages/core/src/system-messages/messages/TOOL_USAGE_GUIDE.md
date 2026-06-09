@@ -100,3 +100,22 @@ Be decisive. Use the minimum tools needed to answer — not the maximum you can.
 - Never re-read or re-grep the same file/region you already saw. Re-running similar searches is a sign you should be synthesizing, not searching.
 - If the request is vague or under-specified, do NOT exhaustively investigate. State the most reasonable interpretation in one line and deliver a concrete answer for it.
 - A direct answer with a stated assumption beats an exhaustive investigation that never concludes. Always end the turn with a plain-text answer, never with an unfinished tool chain.
+
+## Sandbox introspection (scan -> act -> scan)
+
+Local sandboxes/artifacts expose the SAME element contract as the remote nexus-browser
+MCP, so the same loop works in both places:
+
+1. `sandbox_detect_framework` once after creating an artifact. If `react: true`, prefer
+   component-level inspection over screenshot-only inspection.
+2. `sandbox_scan` (filter: `{ isInteractive: true }`) to discover elements. Every element
+   includes a unique `cssSelector` — never guess selectors.
+3. `interact_with_sandbox` (click/type) using that exact `cssSelector`.
+4. `sandbox_scan` again to verify the action changed state; `sandbox_grab` on one
+   selector for deep detail — on React artifacts it returns
+   `react: { componentName, componentStack, props, sourceLocation }`, which tells you
+   WHICH component you touched and where its source lives.
+
+The names map 1:1 to nexus-browser tools (`scan`, `grab`, `detect_framework`) — only the
+`sandbox_` prefix and the `sandboxId` parameter differ. Skills learned on one surface
+transfer to the other.

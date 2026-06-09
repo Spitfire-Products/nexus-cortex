@@ -17,6 +17,7 @@ import { chromium, Browser, Page } from 'playwright';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { getChromiumBinary } from '../../utils/ChromiumBrowserManager.js';
+import { PRELOAD_SCRIPT, DETECT_SCRIPT, SCAN_SCRIPT, GRAB_SCRIPT } from './injectables/reactIntrospection.js';
 
 export interface VisualBridgeConfig {
   headless?: boolean;        // Browser visibility (default: true)
@@ -32,6 +33,23 @@ export interface VisualSnapshot {
   network: NetworkRequest[]; // Network activity
   performance: PerformanceMetrics;
   accessibility: AccessibilityTree;
+  react?: FrameworkReport;   // Present when React introspection is enabled
+}
+
+/** detect_framework-compatible report (same schema as the nexus-browser MCP tool). */
+export interface FrameworkReport {
+  react: boolean;
+  reactVersion: string | null;
+  next: boolean;
+  remix: boolean;
+  gatsby: boolean;
+  vue: boolean;
+  svelte: boolean;
+  angular: boolean;
+  compiler: boolean;
+  hasDevTools: boolean;
+  rendererCount: number;
+  heavyLibraries: string[];
 }
 
 export interface NetworkRequest {
@@ -179,6 +197,61 @@ export class VisualFeedbackBridge {
   private page: Page | null = null;
   private consoleLogs: string[] = [];
   private networkRequests: NetworkRequest[] = [];
+  private reactIntrospection = false;
+
+  /**
+   * Enable React introspection for all SUBSEQUENT navigations: installs the
+   * DevTools-hook shim + fiber utilities via addInitScript (must run before the
+   * page's React loads — addInitScript guarantees pre-script execution).
+   * Idempotent; safe to call lazily because captureSnapshot/sandboxScan/etc.
+   * always navigate after this.
+   */
+  async enableReactIntrospection(): Promise<void> {
+    if (this.reactIntrospection) return;
+    if (!this.page) throw new Error('Browser not initialized');
+    await this.page.addInitScript(PRELOAD_SCRIPT);
+    this.reactIntrospection = true;
+  }
+
+  isReactIntrospectionEnabled(): boolean {
+    return this.reactIntrospection;
+  }
+
+  /** Ensure the page is on the given URL (navigates only when needed). */
+  private async ensureOnUrl(url: string): Promise<void> {
+    if (!this.page) throw new Error('Browser not initialized');
+    if (this.page.url() !== url) {
+      await this.page.goto(url, { waitUntil: 'networkidle' });
+      await this.page.waitForTimeout(300);
+    }
+  }
+
+  /** detect_framework against the given sandbox URL (nexus-browser schema). */
+  async sandboxDetect(url: string): Promise<FrameworkReport> {
+    await this.enableReactIntrospection();
+    await this.ensureOnUrl(url);
+    return (await this.page!.evaluate(DETECT_SCRIPT)) as FrameworkReport;
+  }
+
+  /**
+   * Element discovery (nexus-browser scan contract): elements carry a unique
+   * cssSelector + isInteractive/relevanceScore, and componentName on React pages.
+   */
+  async sandboxScan(url: string, args: Record<string, unknown> = {}): Promise<any> {
+    await this.enableReactIntrospection();
+    await this.ensureOnUrl(url);
+    return await this.page!.evaluate(`(${SCAN_SCRIPT})(${JSON.stringify(args)})`);
+  }
+
+  /**
+   * Single-element query by selector or coordinates (nexus-browser grab contract),
+   * auto-enriched with react:{componentName,componentStack,props,sourceLocation}.
+   */
+  async sandboxGrab(url: string, args: Record<string, unknown>): Promise<any> {
+    await this.enableReactIntrospection();
+    await this.ensureOnUrl(url);
+    return await this.page!.evaluate(`(${GRAB_SCRIPT})(${JSON.stringify(args)})`);
+  }
 
   /**
    * Initialize browser for visual feedback
@@ -316,7 +389,16 @@ export class VisualFeedbackBridge {
     // Get accessibility tree
     const accessibilityTree = await this.captureAccessibilityTree();
 
+    // Framework detection (only when React introspection is enabled)
+    let frameworkReport: FrameworkReport | undefined;
+    if (this.reactIntrospection) {
+      try {
+        frameworkReport = (await this.page.evaluate(DETECT_SCRIPT)) as FrameworkReport;
+      } catch { /* introspection is optional — never fail the snapshot */ }
+    }
+
     return {
+      ...(frameworkReport ? { react: frameworkReport } : {}),
       screenshot: screenshot.toString('base64'),
       dom,
       console: this.consoleLogs,
@@ -930,6 +1012,22 @@ export class VisualFeedbackBridge {
     lines.push('');
     lines.push('*Note: Full screenshot available as base64 in metadata*');
     lines.push('');
+
+    // Framework report (when React introspection is enabled)
+    if (snapshot.react) {
+      const r = snapshot.react;
+      lines.push('## Framework');
+      lines.push('');
+      if (r.react) {
+        lines.push(`React ${r.reactVersion ?? '(version unknown)'} detected (${r.rendererCount} renderer${r.rendererCount === 1 ? '' : 's'})${r.next ? ' + Next.js' : ''}`);
+        lines.push('Use sandbox_scan / sandbox_grab for component-level inspection (componentName, props, source).');
+      } else {
+        const other = (['vue', 'svelte', 'angular'] as const).filter((k) => r[k]);
+        lines.push(other.length ? `Framework: ${other.join(', ')}` : 'No framework detected (vanilla page)');
+      }
+      if (r.heavyLibraries.length) lines.push(`Heavy libraries: ${r.heavyLibraries.join(', ')}`);
+      lines.push('');
+    }
 
     // Structured data the model can easily parse
     lines.push('## Page Structure');
