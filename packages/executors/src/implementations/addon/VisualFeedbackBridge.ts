@@ -222,7 +222,19 @@ export class VisualFeedbackBridge {
     if (!this.page) throw new Error('Browser not initialized');
     if (this.page.url() !== url) {
       await this.page.goto(url, { waitUntil: 'networkidle' });
-      await this.page.waitForTimeout(300);
+      // Settle for client-side frameworks: React/Vue/etc. mount asynchronously after
+      // networkidle. Wait for the conventional #root/#app mount point to gain children
+      // (up to ~1.2s), falling back to a short fixed delay for plain/SSR pages.
+      await this.page
+        .waitForFunction(
+          () => {
+            const m = document.querySelector('#root, #app, [data-reactroot]');
+            return !m || m.childElementCount > 0;
+          },
+          { timeout: 1200 }
+        )
+        .catch(() => {});
+      await this.page.waitForTimeout(200);
     }
   }
 

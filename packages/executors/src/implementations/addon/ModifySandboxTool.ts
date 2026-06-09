@@ -3,6 +3,7 @@ import type { ToolResult } from '../../base/ToolResult.js';
 import { CreateArtifactToolExecutor } from './CreateArtifactTool.js';
 import { visualBridge } from './VisualFeedbackBridge.js';
 import { broadcaster } from './SandboxEventBroadcaster.js';
+import { rebuildReactBundle } from './ReactArtifactBuilder.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 
@@ -134,7 +135,9 @@ export class ModifySandboxExecutor extends BaseTool<ModifySandboxParams, ToolRes
         );
       }
 
-      const sandboxPath = join(this.sandboxDir, params.sandboxId);
+      // Prefer the session's real served/built directory (the workspace). Fall back to the
+      // legacy reconstructed path only if the session didn't record one.
+      const sandboxPath = session.path || join(this.sandboxDir, params.sandboxId);
 
       // Verify sandbox directory exists
       try {
@@ -160,6 +163,17 @@ export class ModifySandboxExecutor extends BaseTool<ModifySandboxParams, ToolRes
 
       // Emit file changed event
       broadcaster.emitFileChange(params.sandboxId, params.file, 'modified');
+
+      // React bundled artifacts: re-run esbuild so the served bundle reflects the edit
+      // (the static http-server has no process to hot-reload). No-op for CDN/non-React.
+      let reactRebuilt = false;
+      const rebuild = await rebuildReactBundle(sandboxPath);
+      if (rebuild.rebuilt) {
+        reactRebuilt = true;
+        broadcaster.emitHotReload(params.sandboxId, params.file);
+      } else if (rebuild.error) {
+        console.warn(`[ModifySandbox] React re-bundle failed: ${rebuild.error}`);
+      }
 
       // Determine if we should wait for reload
       const waitForReload = params.waitForReload ?? (session.mode === 'dev');
@@ -209,7 +223,8 @@ export class ModifySandboxExecutor extends BaseTool<ModifySandboxParams, ToolRes
         params,
         snapshotAfter,
         visualDiff,
-        reloadWaitTime
+        reloadWaitTime,
+        reactRebuilt
       );
 
       return {
@@ -222,7 +237,8 @@ export class ModifySandboxExecutor extends BaseTool<ModifySandboxParams, ToolRes
           waitedForReload: waitForReload,
           reloadWaitTime,
           capturedSnapshot: !!snapshotAfter,
-          hasVisualDiff: !!visualDiff
+          hasVisualDiff: !!visualDiff,
+          reactRebuilt
         }
       };
     } catch (error) {
@@ -245,7 +261,8 @@ export class ModifySandboxExecutor extends BaseTool<ModifySandboxParams, ToolRes
     params: ModifySandboxParams,
     snapshotAfter: any,
     visualDiff: any,
-    reloadWaitTime: number
+    reloadWaitTime: number,
+    reactRebuilt?: boolean
   ): string {
     const lines: string[] = [];
 
@@ -255,6 +272,13 @@ export class ModifySandboxExecutor extends BaseTool<ModifySandboxParams, ToolRes
     lines.push(`**File Modified**: ${params.file}`);
     lines.push(`**Bytes Written**: ${params.content.length}`);
     lines.push('');
+
+    if (reactRebuilt) {
+      lines.push('##  React Re-bundle');
+      lines.push('');
+      lines.push('[OK] esbuild re-bundled the React source; the served bundle now reflects your edit.');
+      lines.push('');
+    }
 
     if (params.waitForReload) {
       lines.push('##  Hot Reload');

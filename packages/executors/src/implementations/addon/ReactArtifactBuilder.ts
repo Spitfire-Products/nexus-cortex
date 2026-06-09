@@ -144,10 +144,50 @@ async function buildCdn(
   await fs.writeFile(join(artifactPath, 'index.html'), html);
 }
 
-async function buildBundled(artifactPath: string, opts: ReactBuildOptions): Promise<void> {
-  // Lazy-load: esbuild is an optionalDependency.
+/** Re-run esbuild for an already-scaffolded bundled artifact (src/main.tsx present). */
+async function runEsbuild(artifactPath: string): Promise<void> {
   const esbuild = require_('esbuild') as typeof import('esbuild');
+  // Resolve react/react-dom from THIS package's node_modules — never per-artifact install.
+  const reactNodeModules = join(dirname(require_.resolve('react/package.json')), '..');
+  await esbuild.build({
+    entryPoints: [join(artifactPath, 'src', 'main.tsx')],
+    bundle: true,
+    outfile: join(artifactPath, 'dist', 'bundle.js'),
+    sourcemap: true,                 // dist/bundle.js.map references src/*.tsx
+    jsx: 'automatic',
+    jsxDev: true,                    // emit jsxDEV(...) with __source -> grab.sourceLocation
+    format: 'iife',
+    target: 'es2020',
+    define: { 'process.env.NODE_ENV': '"development"' },
+    nodePaths: [reactNodeModules],   // bare 'react'/'react-dom' resolve here
+    logLevel: 'silent'
+  });
+}
 
+/**
+ * Re-bundle a bundled React artifact after a source edit (Phase 3). No-op for CDN or
+ * non-React artifacts. Returns whether a bundle was produced.
+ */
+export async function rebuildReactBundle(
+  artifactPath: string
+): Promise<{ rebuilt: boolean; error?: string }> {
+  try {
+    await fs.access(join(artifactPath, 'src', 'main.tsx'));
+  } catch {
+    return { rebuilt: false };               // not a bundled React artifact
+  }
+  if (!isBundledAvailable()) {
+    return { rebuilt: false, error: 'esbuild not available' };
+  }
+  try {
+    await runEsbuild(artifactPath);
+    return { rebuilt: true };
+  } catch (err) {
+    return { rebuilt: false, error: (err as Error).message };
+  }
+}
+
+async function buildBundled(artifactPath: string, opts: ReactBuildOptions): Promise<void> {
   const srcDir = join(artifactPath, 'src');
   await fs.mkdir(srcDir, { recursive: true });
   await fs.writeFile(join(srcDir, 'App.tsx'), ensureDefaultExport(opts.code));
@@ -164,22 +204,7 @@ async function buildBundled(artifactPath: string, opts: ReactBuildOptions): Prom
     await fs.writeFile(dest, f.code);
   }
 
-  // Resolve react/react-dom from THIS package's node_modules — never per-artifact install.
-  const reactNodeModules = join(dirname(require_.resolve('react/package.json')), '..');
-
-  await esbuild.build({
-    entryPoints: [join(srcDir, 'main.tsx')],
-    bundle: true,
-    outfile: join(artifactPath, 'dist', 'bundle.js'),
-    sourcemap: true,                 // dist/bundle.js.map references src/*.tsx
-    jsx: 'automatic',
-    jsxDev: true,                    // emit jsxDEV(...) with __source -> grab.sourceLocation
-    format: 'iife',
-    target: 'es2020',
-    define: { 'process.env.NODE_ENV': '"development"' },
-    nodePaths: [reactNodeModules],   // bare 'react'/'react-dom' resolve here
-    logLevel: 'silent'
-  });
+  await runEsbuild(artifactPath);
 
   const html = `<!DOCTYPE html>
 <html lang="en">

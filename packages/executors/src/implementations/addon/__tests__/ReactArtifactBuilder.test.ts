@@ -8,7 +8,7 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { createRequire } from 'module';
-import { buildReactArtifact } from '../ReactArtifactBuilder.js';
+import { buildReactArtifact, rebuildReactBundle } from '../ReactArtifactBuilder.js';
 
 const require_ = createRequire(import.meta.url);
 const HAS_ESBUILD = (() => { try { require_.resolve('esbuild'); require_.resolve('react'); return true; } catch { return false; } })();
@@ -75,6 +75,27 @@ describe.skipIf(!HAS_ESBUILD)('buildReactArtifact — bundled mode (Path C)', ()
     // Source written for the model to edit / for source-mapped grab
     expect(await fs.readFile(join(dir, 'src', 'App.tsx'), 'utf-8')).toContain('function App()');
     expect(await fs.readFile(join(dir, 'src', 'main.tsx'), 'utf-8')).toContain('createRoot');
+  });
+
+  it('rebuildReactBundle re-runs esbuild and reflects an edited source', async () => {
+    await buildReactArtifact(dir, { code: COMPONENT, reactMode: 'bundled' });
+    const before = await fs.readFile(join(dir, 'dist', 'bundle.js'), 'utf-8');
+    expect(before).not.toContain('REBUILT-MARKER');
+
+    // Edit the source as ModifySandbox would, then rebuild.
+    await fs.writeFile(join(dir, 'src', 'App.tsx'),
+      `function App(){ return <div id="REBUILT-MARKER">changed</div>; }\nexport default App;\n`);
+    const res = await rebuildReactBundle(dir);
+    expect(res.rebuilt).toBe(true);
+
+    const after = await fs.readFile(join(dir, 'dist', 'bundle.js'), 'utf-8');
+    expect(after).toContain('REBUILT-MARKER');
+  });
+
+  it('rebuildReactBundle is a no-op for a non-bundled (CDN) dir', async () => {
+    await buildReactArtifact(dir, { code: COMPONENT, reactMode: 'cdn' });
+    const res = await rebuildReactBundle(dir);
+    expect(res.rebuilt).toBe(false);
   });
 
   it('supports multi-file imports via additionalFiles', async () => {

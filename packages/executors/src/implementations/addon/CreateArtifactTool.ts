@@ -43,6 +43,7 @@ interface ArtifactSession {
   lastActivity: Date;
   watchers?: any[];
   visualSnapshot?: VisualSnapshot;  // NEW: Visual feedback for model
+  path?: string;                    // NEW: served/built artifact directory (workspace)
 }
 
 /**
@@ -785,7 +786,7 @@ if __name__ == '__main__':
       if (isReact || isHtml || params.implementation.language === 'html') {
         // HTML file - serve with http-server
         fileName = params.implementation.fileName || 'index.html';
-        command = `npx http-server -p ${params.artifactConfig?.ports?.[0] || 3000} --silent`;
+        command = `npx http-server -p ${params.artifactConfig?.ports?.[0] || 3000} -c-1 --silent`;
         runtime = 'tmux+http-server';
       } else if (params.implementation.language === 'javascript') {
         fileName = params.implementation.fileName || 'index.js';
@@ -879,7 +880,8 @@ if __name__ == '__main__':
       mode: params.mode || 'persistent',
       startTime: new Date(),
       lastActivity: new Date(),
-      watchers: []
+      watchers: [],
+      path: artifactPath  // served/built dir (the workspace) — edits + rebuilds target this
     };
 
     // Store session in memory
