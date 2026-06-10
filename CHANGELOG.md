@@ -42,13 +42,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- **Full feature-set documentation audit.** Replaced stale, drift-prone hardcoded counts
-  with live-command pointers (`cortex tools list` / `cortex models list`) and removed
-  stale model names (Claude 3 Opus, GPT-4 Turbo, Grok 2, …) in favor of the current
-  registry. Documented the previously-undocumented headline capabilities: sandboxed
-  artifacts + React introspection, sub-agents (`Task`), auto-research (`cortex
-  autoresearch`), the permission system, model router, mentorship, the git/PR tools, and
-  the structured `cortex <group>` command set. Fixed broken README links.
+- **Full feature-set documentation audit.** Removed stale model names (Claude 3 Opus,
+  GPT-4 Turbo, Grok 2, …) in favor of the current registry, and documented the
+  previously-undocumented headline capabilities: sandboxed artifacts + React
+  introspection, sub-agents (`Task`), auto-research (`cortex autoresearch`), the
+  permission system, model router, mentorship, the git/PR tools, and the structured
+  `cortex <group>` command set. Fixed broken README links.
+- **Auto-updating doc counts.** The README's tool / model / provider / slash-command
+  counts are generated from the live registries (`scripts/update-doc-counts.mjs`) rather
+  than hardcoded — refreshed on every build and enforced in CI, so they can never silently
+  drift. Run `npm run docs:counts` to refresh manually.
 - **Complete environment-variable reference** in the README — every supported variable,
   its default, and how to use it.
 - **Claude credential guide** — where to put the OAuth token
