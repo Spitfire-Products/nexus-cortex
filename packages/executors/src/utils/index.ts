@@ -15,3 +15,5 @@ export { SandboxRegistry } from './SandboxRegistry.js';
 export type { SandboxRegistryEntry, SandboxRegistryData } from './SandboxRegistry.js';
 export { ArtifactRegistry } from './ArtifactRegistry.js';
 export type { ArtifactMetadata, ArtifactRegistrySchema, ArtifactType, ArtifactRuntime, ArtifactMode } from './ArtifactRegistry.js';
+export { GitPolicy, ALL_GIT_ACTIONS } from './GitPolicy.js';
+export type { GitAction, GitPolicyConfig } from './GitPolicy.js';

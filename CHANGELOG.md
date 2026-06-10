@@ -55,6 +55,12 @@ Initial public release of the Nexus Cortex monorepo (Release 1: the engine).
   content-addressable file checkpoints.
 - **Permission system** — dev/test/prod profiles with whitelist, blacklist,
   file-operation, and command policies.
+- **Git/PR access control** — the PR-review and worktree tools shell out via
+  `execFile` (no shell) with validated inputs, and honor an opt-in allow-list:
+  `GIT_ALLOWED_REPOS`, `GIT_ALLOWED_ACTIONS`, `GIT_AUTH_TOKEN` (env-only, never on
+  argv/URL), and `GIT_HOST` (GitHub Enterprise). The `/v1/pr/webhook` endpoint
+  verifies GitHub's `X-Hub-Signature-256` HMAC (`GITHUB_WEBHOOK_SECRET`) and is
+  disabled unless a secret is set.
 - **System messages** — auto-loaded project context (`CORTEX.md`) and custom
   hot-reloaded system prompts.
 - **Optional model router** — task-aware model selection from recorded

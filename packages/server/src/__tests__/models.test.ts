@@ -249,8 +249,9 @@ describe('/models endpoint', () => {
 
       // Registry includes aliases that map different keys to the same model config,
       // so model.id values can repeat. Verify the unique count is stable.
-      expect(uniqueIds.size).toBe(85);
-      expect(ids.length).toBe(94);
+      // (86 unique / 95 total as of claude-fable-5 — bump when adding/removing models.)
+      expect(uniqueIds.size).toBe(86);
+      expect(ids.length).toBe(95);
     });
   });
 });

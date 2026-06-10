@@ -285,13 +285,47 @@ export interface EnvironmentVariables {
 
   /** Nvidia API Key */
   NVIDIA_API_KEY?: string;
+
+  // ============================================
+  // GIT / PR ACCESS CONTROL
+  // ============================================
+
+  /**
+   * Comma-separated allow-list of repositories the git/PR tools may operate on.
+   * Supports exact `owner/repo`, `owner/*` wildcards, and `*` (all). Unset → all
+   * repos allowed, with a one-time startup warning. Input format validation
+   * (which blocks shell/argument injection) is always enforced regardless.
+   */
+  GIT_ALLOWED_REPOS?: string;
+
+  /**
+   * Comma-separated allow-list of git/PR actions:
+   * review,list,create,post-review,clone,worktree,diff,cleanup,status.
+   * Unset or `*` → all actions allowed.
+   */
+  GIT_ALLOWED_ACTIONS?: string;
+
+  /**
+   * Auth token for gh/git operations. Injected into the subprocess environment
+   * as GH_TOKEN/GITHUB_TOKEN only — never placed on argv or in a clone URL.
+   */
+  GIT_AUTH_TOKEN?: string;
+
+  /** GitHub (Enterprise) host for git/PR tools. Default: github.com */
+  GIT_HOST?: string;
+
+  /**
+   * HMAC secret for the /v1/pr/webhook endpoint (GitHub X-Hub-Signature-256).
+   * Unset → the webhook is disabled (returns 401) rather than open.
+   */
+  GITHUB_WEBHOOK_SECRET?: string;
 }
 
 /**
  * Configuration Defaults
  */
 export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
-  'ANTHROPIC_API_KEY' | 'OPENAI_API_KEY' | 'GOOGLE_API_KEY' | 'GEMINI_API_KEY' | 'XAI_API_KEY' | 'DEEPSEEK_API_KEY' | 'INCEPTION_API_KEY' | 'DASHSCOPE_API_KEY' | 'ZHIPU_API_KEY' | 'MOONSHOT_API_KEY' | 'MINIMAX_API_KEY' | 'CLOUDFLARE_API_TOKEN' | 'CLOUDFLARE_ACCOUNT_ID' | 'CLAUDE_CODE_OAUTH_TOKEN' | 'NVIDIA_API_KEY'
+  'ANTHROPIC_API_KEY' | 'OPENAI_API_KEY' | 'GOOGLE_API_KEY' | 'GEMINI_API_KEY' | 'XAI_API_KEY' | 'DEEPSEEK_API_KEY' | 'INCEPTION_API_KEY' | 'DASHSCOPE_API_KEY' | 'ZHIPU_API_KEY' | 'MOONSHOT_API_KEY' | 'MINIMAX_API_KEY' | 'CLOUDFLARE_API_TOKEN' | 'CLOUDFLARE_ACCOUNT_ID' | 'CLAUDE_CODE_OAUTH_TOKEN' | 'NVIDIA_API_KEY' | 'GIT_AUTH_TOKEN' | 'GITHUB_WEBHOOK_SECRET'
 >> = {
   // Anthropic Authentication
   ANTHROPIC_AUTH_METHOD: 'auto',
@@ -384,6 +418,11 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   DEBUG_PAYLOAD: 'false',
   DEBUG_THINKING: 'false',
   ENABLE_SMOKE_TESTS: 'false',
+
+  // Git / PR access control (token + webhook secret are secrets — no default)
+  GIT_ALLOWED_REPOS: '',
+  GIT_ALLOWED_ACTIONS: '',
+  GIT_HOST: 'github.com',
 };
 
 /**
@@ -1088,6 +1127,54 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     type: 'boolean',
     category: 'system',
     default: 'false'
+  },
+
+  // ============================================
+  // GIT / PR ACCESS CONTROL
+  // ============================================
+  {
+    key: 'GIT_ALLOWED_REPOS',
+    displayName: 'Git Allowed Repos',
+    description:
+      'Comma list of owner/repo the git/PR tools may touch (supports owner/* and *). Unset = all repos allowed (with a startup warning). Input validation is always enforced.',
+    type: 'string',
+    category: 'runtime',
+    default: ''
+  },
+  {
+    key: 'GIT_ALLOWED_ACTIONS',
+    displayName: 'Git Allowed Actions',
+    description:
+      'Comma list of allowed git/PR actions: review,list,create,post-review,clone,worktree,diff,cleanup,status. Unset = all.',
+    type: 'string',
+    category: 'runtime',
+    default: ''
+  },
+  {
+    key: 'GIT_AUTH_TOKEN',
+    displayName: 'Git Auth Token',
+    description:
+      'Token for gh/git operations. Injected into the subprocess env as GH_TOKEN/GITHUB_TOKEN only — never on argv or in a URL.',
+    type: 'string',
+    category: 'runtime',
+    default: ''
+  },
+  {
+    key: 'GIT_HOST',
+    displayName: 'Git Host',
+    description: 'GitHub (Enterprise) host for git/PR tools.',
+    type: 'string',
+    category: 'runtime',
+    default: 'github.com'
+  },
+  {
+    key: 'GITHUB_WEBHOOK_SECRET',
+    displayName: 'GitHub Webhook Secret',
+    description:
+      'HMAC secret for /v1/pr/webhook (X-Hub-Signature-256). Unset = webhook disabled (401).',
+    type: 'string',
+    category: 'runtime',
+    default: ''
   },
 ];
 

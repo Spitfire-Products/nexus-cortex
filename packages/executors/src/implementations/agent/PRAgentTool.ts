@@ -4,11 +4,24 @@
  * Manages GitHub pull request operations — review, create, list, and post reviews.
  * Uses the gh CLI for all GitHub interactions.
  * Returns structured context for the LLM to dispatch Task calls to specialized agents.
+ *
+ * Security: all gh invocations use execFile with an argument array (no shell), and every
+ * repo/prNumber/action is validated through GitPolicy before use. See GitPolicy.ts.
  */
 
 import { BaseTool, type ToolResult } from '../../base/index.js';
 import type { ExecutorConfig } from '../../base/ToolRegistry.js';
-import { execSync } from 'child_process';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { GitPolicy } from '../../utils/GitPolicy.js';
+
+const execFileAsync = promisify(execFile);
+
+/** Pull the real failure reason out of an execFile rejection (stderr, then message). */
+function subprocessError(error: any): string {
+  const stderr = (error?.stderr || '').toString().trim();
+  return stderr || error?.message || 'unknown subprocess error';
+}
 
 export interface PRAgentParams {
   repo: string;
@@ -24,6 +37,8 @@ export interface PRAgentParams {
 }
 
 export class PRAgentToolExecutor extends BaseTool<PRAgentParams, ToolResult> {
+  private readonly policy: GitPolicy;
+
   constructor(_config: ExecutorConfig) {
     super(
       'PRAgent',
@@ -57,28 +72,46 @@ export class PRAgentToolExecutor extends BaseTool<PRAgentParams, ToolResult> {
         required: ['repo', 'mode'],
       },
     );
+    this.policy = GitPolicy.fromEnv();
   }
 
   validateToolParams(params: PRAgentParams): string | null {
-    if (!params.repo || !params.repo.includes('/')) {
-      return 'repo must be in "owner/repo" format';
-    }
+    const repoErr = this.policy.validateRepo(params.repo);
+    if (repoErr) return repoErr;
+
     if (!['review', 'create', 'list', 'post-review'].includes(params.mode)) {
       return 'mode must be one of: review, create, list, post-review';
     }
-    if (params.mode === 'review' && !params.prNumber) {
-      return 'prNumber is required for review mode';
+
+    // Map mode → policy action for the allow-list.
+    const actionForMode = params.mode === 'create' ? 'create' : params.mode;
+    const actionErr = this.policy.assertAction(actionForMode as any);
+    if (actionErr) return actionErr;
+
+    if (params.mode === 'review' || params.mode === 'post-review') {
+      const prErr = this.policy.validatePrNumber(params.prNumber);
+      if (prErr) return prErr;
     }
-    if (params.mode === 'post-review' && (!params.prNumber || !params.action)) {
-      return 'prNumber and action are required for post-review mode';
+    if (params.mode === 'post-review') {
+      if (!params.action) return 'action is required for post-review mode';
+      if (
+        (params.action === 'request-changes' || params.action === 'comment') &&
+        (!params.body || params.body.trim() === '')
+      ) {
+        return `body is required for the "${params.action}" action`;
+      }
+    }
+    if (params.branch !== undefined) {
+      const branchErr = this.policy.validateBranch(params.branch);
+      if (branchErr) return branchErr;
     }
     return null;
   }
 
-  async execute(params: PRAgentParams, _signal: AbortSignal): Promise<ToolResult> {
+  async execute(params: PRAgentParams, signal: AbortSignal): Promise<ToolResult> {
     // Verify gh is available
     try {
-      execSync('gh --version', { stdio: 'pipe' });
+      await execFileAsync('gh', ['--version'], { signal });
     } catch {
       return this.createErrorResult(
         'GitHub CLI (gh) is not installed or not in PATH. Install it: https://cli.github.com/',
@@ -88,38 +121,54 @@ export class PRAgentToolExecutor extends BaseTool<PRAgentParams, ToolResult> {
     try {
       switch (params.mode) {
         case 'review':
-          return this.reviewPR(params);
+          return await this.reviewPR(params, signal);
         case 'create':
           return this.createPR(params);
         case 'list':
-          return this.listPRs(params);
+          return await this.listPRs(params, signal);
         case 'post-review':
-          return this.postReview(params);
+          return await this.postReview(params, signal);
         default:
           return this.createErrorResult(`Unknown mode: ${params.mode}`);
       }
     } catch (error: any) {
-      return this.createErrorResult(`PRAgent error: ${error.message}`);
+      return this.createErrorResult(`PRAgent error: ${subprocessError(error)}`);
     }
   }
 
-  private reviewPR(params: PRAgentParams): ToolResult {
-    const { repo, prNumber } = params;
+  /** Shared gh invocation: execFile (no shell), policy token/host env, large buffer. */
+  private gh(args: string[], signal: AbortSignal) {
+    return execFileAsync('gh', args, {
+      encoding: 'utf-8',
+      maxBuffer: 10 * 1024 * 1024,
+      signal,
+      env: this.policy.subprocessEnv(),
+    });
+  }
+
+  private async reviewPR(params: PRAgentParams, signal: AbortSignal): Promise<ToolResult> {
+    const { repo } = params;
+    const prNumber = this.policy.prNumber(params.prNumber);
     const maxLines = params.diffOptions?.maxLines || 5000;
 
     // Get PR metadata
-    const metadataRaw = execSync(
-      `gh pr view ${prNumber} --repo ${repo} --json number,title,author,body,baseRefName,headRefName,labels,reviewDecision,additions,deletions,changedFiles,commits,files`,
-      { stdio: 'pipe', encoding: 'utf-8' },
+    const { stdout: metadataRaw } = await this.gh(
+      [
+        'pr',
+        'view',
+        String(prNumber),
+        '--repo',
+        repo,
+        '--json',
+        'number,title,author,body,baseRefName,headRefName,labels,reviewDecision,additions,deletions,changedFiles,commits,files',
+      ],
+      signal,
     );
     const metadata = JSON.parse(metadataRaw);
 
     // Get PR diff
-    let diff = execSync(`gh pr diff ${prNumber} --repo ${repo}`, {
-      stdio: 'pipe',
-      encoding: 'utf-8',
-      maxBuffer: 10 * 1024 * 1024,
-    });
+    const { stdout: rawDiff } = await this.gh(['pr', 'diff', String(prNumber), '--repo', repo], signal);
+    let diff = rawDiff;
 
     // Apply path filter if specified
     if (params.diffOptions?.pathFilter) {
@@ -184,15 +233,24 @@ export class PRAgentToolExecutor extends BaseTool<PRAgentParams, ToolResult> {
     return this.createSuccessResult(JSON.stringify(result, null, 2));
   }
 
-  private listPRs(params: PRAgentParams): ToolResult {
+  private async listPRs(params: PRAgentParams, signal: AbortSignal): Promise<ToolResult> {
     const { repo } = params;
 
-    const output = execSync(
-      `gh pr list --repo ${repo} --json number,title,author,labels,reviewDecision,headRefName,createdAt,isDraft --limit 50`,
-      { stdio: 'pipe', encoding: 'utf-8' },
+    const { stdout } = await this.gh(
+      [
+        'pr',
+        'list',
+        '--repo',
+        repo,
+        '--json',
+        'number,title,author,labels,reviewDecision,headRefName,createdAt,isDraft',
+        '--limit',
+        '50',
+      ],
+      signal,
     );
 
-    const prs = JSON.parse(output);
+    const prs = JSON.parse(stdout);
     const result = {
       mode: 'list',
       repo,
@@ -212,8 +270,9 @@ export class PRAgentToolExecutor extends BaseTool<PRAgentParams, ToolResult> {
     return this.createSuccessResult(JSON.stringify(result, null, 2));
   }
 
-  private postReview(params: PRAgentParams): ToolResult {
-    const { repo, prNumber, action, body } = params;
+  private async postReview(params: PRAgentParams, signal: AbortSignal): Promise<ToolResult> {
+    const { repo, action, body } = params;
+    const prNumber = this.policy.prNumber(params.prNumber);
 
     // Map action to gh flag
     const actionFlags: Record<string, string> = {
@@ -227,13 +286,14 @@ export class PRAgentToolExecutor extends BaseTool<PRAgentParams, ToolResult> {
       return this.createErrorResult(`Invalid action: ${action}`);
     }
 
-    const bodyArg = body ? `-b "${body.replace(/"/g, '\\"')}"` : '';
+    // No shell escaping needed — body is a discrete argv element via execFile.
+    const args = ['pr', 'review', String(prNumber), '--repo', repo, flag];
+    if (body) {
+      args.push('--body', body);
+    }
 
     try {
-      execSync(`gh pr review ${prNumber} --repo ${repo} ${flag} ${bodyArg}`, {
-        stdio: 'pipe',
-        encoding: 'utf-8',
-      });
+      await this.gh(args, signal);
 
       const result = {
         mode: 'post-review',
@@ -245,7 +305,7 @@ export class PRAgentToolExecutor extends BaseTool<PRAgentParams, ToolResult> {
 
       return this.createSuccessResult(JSON.stringify(result, null, 2));
     } catch (error: any) {
-      return this.createErrorResult(`Failed to post review: ${error.message}`);
+      return this.createErrorResult(`Failed to post review: ${subprocessError(error)}`);
     }
   }
 }

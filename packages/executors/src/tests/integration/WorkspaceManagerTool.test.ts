@@ -267,9 +267,73 @@ describe('WorkspaceManagerTool', () => {
       expect(cleanupResult.success).toBe(true);
       const parsed = JSON.parse(cleanupResult.llmContent as string);
       expect(parsed.mode).toBe('cleanup');
-      expect(parsed.removed).toBe(true);
+      // `removed` is now the list of paths actually removed.
+      expect(Array.isArray(parsed.removed)).toBe(true);
+      expect(parsed.removed).toContain(worktreePath);
       expect(existsSync(worktreePath)).toBe(false);
       // Don't add to createdWorktrees since it's already cleaned up
+    });
+
+    it('should delete the branch it created so refs do not accumulate', async () => {
+      const branch = `cleanup-branch-${Date.now()}`;
+      const createResult = await tool.execute({
+        mode: 'create',
+        repo: testRepoDir,
+        branch,
+      }, signal);
+      const { worktreePath } = JSON.parse(createResult.llmContent as string);
+
+      // Branch exists after create
+      const before = execSync('git branch --list ' + branch, { cwd: testRepoDir, encoding: 'utf-8' });
+      expect(before.trim()).not.toBe('');
+
+      const cleanupResult = await tool.execute({ mode: 'cleanup', worktreePath }, signal);
+      const parsed = JSON.parse(cleanupResult.llmContent as string);
+      expect(parsed.branch).toBe(branch);
+
+      // Branch is gone after cleanup
+      const after = execSync('git branch --list ' + branch, { cwd: testRepoDir, encoding: 'utf-8' });
+      expect(after.trim()).toBe('');
+    });
+
+    it('should also remove the clone directory when provided (no orphan)', async () => {
+      // Simulate a clone-mode result: a separate clone dir plus a worktree under it.
+      const cloneDir = join(tmpdir(), `ws-clone-${Date.now()}`);
+      mkdirSync(cloneDir, { recursive: true });
+      execSync('git init', { cwd: cloneDir, stdio: 'pipe' });
+      execSync('git config user.email "t@t.com"', { cwd: cloneDir, stdio: 'pipe' });
+      execSync('git config user.name "T"', { cwd: cloneDir, stdio: 'pipe' });
+      writeFileSync(join(cloneDir, 'f.txt'), 'x');
+      execSync('git add . && git commit -m init', { cwd: cloneDir, stdio: 'pipe' });
+      execSync('git branch -M main', { cwd: cloneDir, stdio: 'pipe' });
+
+      const branch = `wt-${Date.now()}`;
+      const worktreePath = join(tmpdir(), `ws-wt-${Date.now()}`);
+      execSync(`git worktree add "${worktreePath}" -b "${branch}" main`, { cwd: cloneDir, stdio: 'pipe' });
+      expect(existsSync(cloneDir)).toBe(true);
+      expect(existsSync(worktreePath)).toBe(true);
+
+      const result = await tool.execute({ mode: 'cleanup', worktreePath, cloneDir }, signal);
+      const parsed = JSON.parse(result.llmContent as string);
+
+      expect(result.success).toBe(true);
+      expect(parsed.cloneDirRemoved).toBe(true);
+      expect(parsed.removed).toContain(cloneDir);
+      expect(existsSync(worktreePath)).toBe(false);
+      expect(existsSync(cloneDir)).toBe(false);
+    });
+
+    it('should reject an out-of-policy action', async () => {
+      const prev = process.env.GIT_ALLOWED_ACTIONS;
+      process.env.GIT_ALLOWED_ACTIONS = 'status'; // cleanup not allowed
+      try {
+        const restricted = new WorkspaceManagerTool({ workingDirectory: testRepoDir });
+        const err = restricted.validateToolParams({ mode: 'cleanup', worktreePath: '/tmp/x' } as any);
+        expect(err).toContain('not in the GIT_ALLOWED_ACTIONS');
+      } finally {
+        if (prev === undefined) delete process.env.GIT_ALLOWED_ACTIONS;
+        else process.env.GIT_ALLOWED_ACTIONS = prev;
+      }
     });
 
     it('should handle cleanup of already-removed worktree gracefully', async () => {

@@ -1799,15 +1799,15 @@ MODES:
 - create: Create a worktree from the current repo on a new branch
 - clone: Clone an external repo and optionally create a worktree branch
 - status: List all active worktrees
-- diff: Get diff between a worktree and its base branch
-- cleanup: Remove a worktree and its temp directory
+- diff: Get diff between a worktree and its base branch (requires worktreePath)
+- cleanup: Remove a worktree, the branch it created, and (if cloned) its clone directory
 
 WORKFLOW:
-1. workspace_manager(mode=create, branch=feature-x) → get worktree path
-2. Assign path to sub-agent via task tool prompt
+1. workspace_manager(mode=create, branch=feature-x) → returns { worktreePath, branch, cloneDir? }
+2. Assign worktreePath to sub-agent via task tool prompt
 3. Agent works in isolated worktree (no conflicts with main)
-4. workspace_manager(mode=diff) → review changes
-5. workspace_manager(mode=cleanup) → remove worktree`,
+4. workspace_manager(mode=diff, worktreePath=<path>) → review changes
+5. workspace_manager(mode=cleanup, worktreePath=<path>, cloneDir=<dir if from clone>) → remove worktree + branch + clone dir`,
     schema: {
       type: 'object',
       properties: {
@@ -1830,7 +1830,11 @@ WORKFLOW:
         },
         worktreePath: {
           type: 'string',
-          description: 'Path to specific worktree (for status/diff/cleanup)'
+          description: 'Path to specific worktree (required for diff/cleanup)'
+        },
+        cloneDir: {
+          type: 'string',
+          description: 'For cleanup: the clone directory to also remove (from a prior clone result)'
         },
         maxDiffLines: {
           type: 'number',
@@ -1856,7 +1860,7 @@ WORKFLOW:
     description: `Manage GitHub pull requests — review, create, list, and post reviews.
 
 MODES:
-- review: Check out a PR, extract diff + metadata for analysis
+- review: Fetch a PR's diff + metadata for analysis (read-only; does NOT check out the branch)
 - create: Set up workspace for creating a new PR
 - list: List open PRs for a repository
 - post-review: Post review comments (approve, request-changes, comment)

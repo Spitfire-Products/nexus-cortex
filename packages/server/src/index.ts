@@ -88,8 +88,17 @@ export class CortexV4Server {
   }
 
   private setupMiddleware(): void {
-    // Body parsing
-    this.app.use(express.json({ limit: '50mb' }));
+    // Body parsing. Capture the raw bytes so the PR webhook can verify its HMAC
+    // signature against the exact payload GitHub signed — re-serialized JSON would
+    // change the bytes and break the MAC.
+    this.app.use(
+      express.json({
+        limit: '50mb',
+        verify: (req: any, _res, buf) => {
+          req.rawBody = buf;
+        },
+      }),
+    );
     this.app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
     // CORS
