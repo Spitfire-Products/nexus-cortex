@@ -11,6 +11,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { Tool, Resource, Prompt } from '@modelcontextprotocol/sdk/types.js';
+import { logger } from '../utils/logger.js';
 
 export type McpTransportType = 'stdio' | 'http';
 
@@ -76,6 +77,8 @@ export enum McpConnectionStatus {
   DISCONNECTED = 'disconnected',
   CONNECTING = 'connecting',
   CONNECTED = 'connected',
+  /** Transient stream drop; the SDK is auto-reconnecting, client still usable. */
+  RECONNECTING = 'reconnecting',
   DISCONNECTING = 'disconnecting',
   ERROR = 'error',
 }
@@ -124,11 +127,24 @@ export class McpClient {
           throw new Error('http transport requires a url to be specified');
         }
 
+        // Disable undici's response body-inactivity timeout for the long-lived
+        // SSE stream. Without this, an idle server->client stream (no messages
+        // between tool calls) is terminated after undici's default (~300s),
+        // surfacing as "SSE stream disconnected: TypeError: terminated" and a
+        // needless reconnect every few minutes. The SDK's reconnection still
+        // covers genuine drops; this just stops the idle-timeout churn.
+        const dispatcher = await this.createNoIdleTimeoutDispatcher();
+
+        const requestInit: Record<string, unknown> = {
+          ...(this.config.headers ? { headers: this.config.headers } : {}),
+          ...(dispatcher ? { dispatcher } : {}),
+        };
+
         this.transport = new StreamableHTTPClientTransport(
           new URL(this.config.url),
           {
-            ...(this.config.headers
-              ? { requestInit: { headers: this.config.headers } }
+            ...(Object.keys(requestInit).length > 0
+              ? { requestInit: requestInit as RequestInit }
               : {}),
             reconnectionOptions: this.getResolvedReconnectionOptions(),
           },
@@ -160,10 +176,31 @@ export class McpClient {
         }
       }
 
-      // Setup error handler
+      // Setup error handler. HTTP/SSE transports drop the long-lived stream
+      // periodically (idle timeouts, key rotation, network blips); the SDK
+      // auto-reconnects per reconnectionOptions. Treat those as recoverable —
+      // a gated debug note, NOT a console.error stack that corrupts the TUI,
+      // and NOT a permanent ERROR state (which would make isConnected() throw
+      // mid-reconnect). Only a terminal "max retries exceeded" or a genuine
+      // protocol error flips the client to ERROR.
       this.client.onerror = (error) => {
-        console.error(`MCP Error (${this.config.name}):`, error);
-        this.status = McpConnectionStatus.ERROR;
+        const msg = error instanceof Error ? error.message : String(error);
+        // Errors fired while we are intentionally tearing the connection down
+        // (the SSE stream aborts on close) are expected noise — ignore them.
+        if (
+          this.status === McpConnectionStatus.DISCONNECTING ||
+          this.status === McpConnectionStatus.DISCONNECTED
+        ) {
+          logger.debug(`[MCP ${this.config.name}] error during teardown (ignored): ${msg}`);
+          return;
+        }
+        if (this.isRecoverableStreamError(msg)) {
+          this.status = McpConnectionStatus.RECONNECTING;
+          logger.debug(`[MCP ${this.config.name}] stream drop; auto-reconnecting: ${msg}`);
+        } else {
+          this.status = McpConnectionStatus.ERROR;
+          logger.warn(`[MCP ${this.config.name}] ${msg}`);
+        }
       };
 
       // Setup close handler
@@ -285,6 +322,10 @@ export class McpClient {
         name: toolName,
         arguments: args,
       });
+      // A successful call means the stream recovered — self-heal the status.
+      if (this.status === McpConnectionStatus.RECONNECTING) {
+        this.status = McpConnectionStatus.CONNECTED;
+      }
       return result;
     } catch (error) {
       throw new Error(
@@ -343,7 +384,13 @@ export class McpClient {
    * Check if connected
    */
   isConnected(): boolean {
-    return this.status === McpConnectionStatus.CONNECTED;
+    // RECONNECTING is a transient SSE drop the SDK is recovering from — the
+    // client is still usable (tool POSTs succeed and trigger reconnect), so
+    // it counts as connected. Only DISCONNECTED/ERROR/CONNECTING do not.
+    return (
+      this.status === McpConnectionStatus.CONNECTED ||
+      this.status === McpConnectionStatus.RECONNECTING
+    );
   }
 
   /**
@@ -360,6 +407,39 @@ export class McpClient {
 
   private getResolvedReconnectionOptions(): McpReconnectionOptions {
     return this.config.reconnectionOptions ?? DEFAULT_HTTP_RECONNECTION_OPTIONS;
+  }
+
+  /**
+   * Recoverable transport errors: transient SSE/network drops that the SDK's
+   * reconnection loop handles on its own. A terminal "Maximum reconnection
+   * attempts exceeded" is NOT recoverable and must surface as ERROR.
+   */
+  private isRecoverableStreamError(msg: string): boolean {
+    if (/maximum reconnection attempts/i.test(msg)) return false;
+    return /sse stream disconnected|failed to reconnect sse|terminated|socket hang ?up|econnreset|etimedout|epipe|other side closed|fetch failed|network|operation was aborted|aborted/i.test(
+      msg,
+    );
+  }
+
+  /**
+   * Build an undici dispatcher with the response body-inactivity timeout
+   * disabled (bodyTimeout: 0), so a long-lived idle SSE stream is not
+   * terminated mid-session. Returns undefined when undici is unavailable
+   * (e.g. a non-Node runtime) — the transport then uses the default fetch and
+   * relies on the SDK's reconnection.
+   */
+  private async createNoIdleTimeoutDispatcher(): Promise<unknown | undefined> {
+    try {
+      const undici = await import('undici');
+      return new undici.Agent({ bodyTimeout: 0 });
+    } catch (err) {
+      logger.debug(
+        `[MCP ${this.config.name}] undici unavailable; SSE keep-alive dispatcher skipped: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return undefined;
+    }
   }
 
   /**
