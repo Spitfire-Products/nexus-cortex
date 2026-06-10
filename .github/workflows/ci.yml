@@ -19,6 +19,7 @@ jobs:
       - name: Tests (fresh-clone mode, no API keys)
         run: |
           for p in core executors server cli tui; do
+            [ -d packages/$p ] || { echo "skip $p (not in this release)"; continue; }
             (cd packages/$p && npx vitest run --passWithNoTests)
           done
 
@@ -30,8 +31,10 @@ jobs:
         with:
           node-version: 20
       - name: React Doctor score gate (TUI)
-        working-directory: packages/tui
         run: |
+          # tui is a Release-2 package — absent in the engine-only (R1) repo.
+          [ -d packages/tui ] || { echo "packages/tui not present — skipping react-doctor gate"; exit 0; }
+          cd packages/tui
           # Pin the version so tool updates don't silently move the gate. Floor is a
           # no-regression ratchet at the current measured baseline (raise it as the
           # remaining real findings in the Ink UI are fixed — most current ones are

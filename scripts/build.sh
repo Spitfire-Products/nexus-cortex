@@ -90,9 +90,13 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "[7/7] Building Nexus Cortex TUI (React/Ink) — depends on cli"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-cd packages/tui
-npm run build
-cd ../..
+if [ -d packages/tui ]; then
+  cd packages/tui
+  npm run build
+  cd ../..
+else
+  echo "[SKIP] packages/tui not present (Release 2 package — engine-only checkout)"
+fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

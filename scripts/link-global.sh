@@ -11,7 +11,12 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GBIN="$(npm config get prefix 2>/dev/null)/bin"
-CMDS=(cortex cortex-cli cortex-launch cortex-dev neoncortex fuzzycortex fuzzycortex-cli fuzzycortex-dev)
+# cortex lives in cli (Release 1). The other 7 bins live in tui (Release 2) — only
+# expected when packages/tui is present (the engine-only extracted repo ships without it).
+CMDS=(cortex)
+if [ -d "$ROOT/packages/tui" ]; then
+  CMDS+=(cortex-cli cortex-launch cortex-dev neoncortex fuzzycortex fuzzycortex-cli fuzzycortex-dev)
+fi
 
 broken=0
 for c in "${CMDS[@]}"; do
@@ -20,7 +25,7 @@ for c in "${CMDS[@]}"; do
 done
 
 if [ "$broken" = 0 ]; then
-  echo "[OK] all 8 @nexus-cortex global commands already linked"
+  echo "[OK] all ${#CMDS[@]} @nexus-cortex global commands already linked"
   exit 0
 fi
 
@@ -28,7 +33,9 @@ echo "[INFO] re-linking @nexus-cortex global commands (cli + tui)..."
 # clear stale/dangling links first so `npm link` won't EEXIST
 for c in "${CMDS[@]}"; do rm -f "$GBIN/$c"; done
 ( cd "$ROOT/packages/cli" && npm link >/dev/null 2>&1 ) || { echo "[WARN] npm link @nexus-cortex/cli failed"; }
-( cd "$ROOT/packages/tui" && npm link >/dev/null 2>&1 ) || { echo "[WARN] npm link @nexus-cortex/tui failed"; }
+if [ -d "$ROOT/packages/tui" ]; then
+  ( cd "$ROOT/packages/tui" && npm link >/dev/null 2>&1 ) || { echo "[WARN] npm link @nexus-cortex/tui failed"; }
+fi
 
 # verify
 dead=0
@@ -36,5 +43,5 @@ for c in "${CMDS[@]}"; do
   t="$(readlink -f "$GBIN/$c" 2>/dev/null)"
   if [ -z "$t" ] || [ ! -e "$t" ]; then echo "[WARN] $c still unlinked"; dead=1; fi
 done
-[ "$dead" = 0 ] && echo "[OK] linked all 8 @nexus-cortex global commands (cli + tui)"
+[ "$dead" = 0 ] && echo "[OK] linked all ${#CMDS[@]} @nexus-cortex global commands"
 exit 0

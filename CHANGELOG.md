@@ -18,7 +18,7 @@ Initial public release of the Nexus Cortex monorepo.
 - `@nexus-cortex/executors` — built-in tool implementations
 - `@nexus-cortex/server` — optional Express HTTP server
 - `@nexus-cortex/cli` — headless command-line interface (`cortex`)
-- `@nexus-cortex/tui` — React/Ink terminal UI
+- `@nexus-cortex/tui` — React/Ink terminal UI (deferred to Release 2; not in this release)
 
 ### Features
 

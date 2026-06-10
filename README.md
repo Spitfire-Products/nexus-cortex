@@ -31,8 +31,7 @@ Nexus Cortex is a production-ready AI development CLI that provides direct acces
 # Headless harness — the `cortex` command (chat, autoresearch, scripting) + the HTTP server
 npm install -g @nexus-cortex/cli @nexus-cortex/server
 
-# Interactive terminal UIs — neoncortex (React/Ink), fuzzycortex-cli (chalk), launchers
-npm install -g @nexus-cortex/tui
+# Interactive terminal UIs (@nexus-cortex/tui — neoncortex, launchers): coming in Release 2
 
 # Or embed the library directly
 npm install @nexus-cortex/core @nexus-cortex/executors
@@ -41,7 +40,7 @@ npm install @nexus-cortex/core @nexus-cortex/executors
 ### Run
 
 ```bash
-neoncortex                                  # interactive React/Ink terminal UI
+# neoncortex (interactive React/Ink UI)     # Release 2
 cortex "What is this project?"              # headless natural-language query (auto-starts a server)
 cortex-server &                             # or run the HTTP server directly (port 4000)
 
@@ -497,7 +496,7 @@ The monorepo uses a strict build order due to dependencies:
 4. **@nexus-cortex/executors** - Complete build (depends on core)
 5. **@nexus-cortex/server** - HTTP server (depends on core)
 6. **@nexus-cortex/cli** - Headless CLI: `cortex` (chat, autoresearch, scripting; depends on core)
-7. **@nexus-cortex/tui** - Interactive React/Ink + chalk terminal UIs (depends on cli + core)
+7. **@nexus-cortex/tui** - Interactive React/Ink + chalk terminal UIs (Release 2 — not yet published)
 
 ### Adding New Features
 
@@ -621,10 +620,10 @@ docker run -p 4000:4000 -e ANTHROPIC_API_KEY=... nexus-cortex
 From npm:
 
 ```bash
-npm install -g @nexus-cortex/cli @nexus-cortex/tui
+npm install -g @nexus-cortex/cli
 ```
 
-From source — `npm run build` auto-links all global commands (both `cli` and `tui`):
+From source — `npm run build` auto-links the global commands:
 
 ```bash
 npm install && npm run build     # builds + links
@@ -632,8 +631,7 @@ npm run link                     # re-link any time (self-healing)
 
 # Then use from anywhere:
 cortex "your prompt"             # headless (chat, autoresearch, scripting)
-neoncortex                       # interactive React/Ink UI
-fuzzycortex-cli                  # interactive chalk REPL
+# Interactive UIs (neoncortex, fuzzycortex-cli) ship in Release 2
 ```
 
 ---
