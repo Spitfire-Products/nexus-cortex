@@ -42,13 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- **Full feature-set documentation audit.** Corrected the headline numbers to match the
-  code — **45 built-in tools** (was "17+"), **86 models across 11 providers** (was "65+ /
-  10"), and replaced stale model names (Claude 3 Opus, GPT-4 Turbo, Grok 2, …) with the
-  current registry. Documented the previously-undocumented headline capabilities:
-  sandboxed artifacts + React introspection, sub-agents (`Task`), auto-research
-  (`cortex autoresearch`), the permission system, model router, mentorship, the git/PR
-  tools, and the structured `cortex <group>` command set. Fixed broken README links.
+- **Full feature-set documentation audit.** Replaced stale, drift-prone hardcoded counts
+  with live-command pointers (`cortex tools list` / `cortex models list`) and removed
+  stale model names (Claude 3 Opus, GPT-4 Turbo, Grok 2, …) in favor of the current
+  registry. Documented the previously-undocumented headline capabilities: sandboxed
+  artifacts + React introspection, sub-agents (`Task`), auto-research (`cortex
+  autoresearch`), the permission system, model router, mentorship, the git/PR tools, and
+  the structured `cortex <group>` command set. Fixed broken README links.
 - **Complete environment-variable reference** in the README — every supported variable,
   its default, and how to use it.
 - **Claude credential guide** — where to put the OAuth token
@@ -72,12 +72,11 @@ Initial public release of the Nexus Cortex monorepo (Release 1: the engine).
 
 ### Features
 
-- **Multi-provider orchestration** — 86 models across 11 providers: Anthropic,
-  OpenAI, Google (Gemini / Vertex + Gemma), xAI, Cloudflare Workers AI, DeepSeek,
-  Zhipu/GLM, Qwen/DashScope, Moonshot, MiniMax, and Mercury (Inception) — via a
-  pluggable adapter layer (Messages, Chat Completions, GenerateContent, GenAI,
-  Responses).
-- **Built-in tool suite (45 tools)** — file operations, search (glob/grep), web
+- **Multi-provider orchestration** across Anthropic, OpenAI, Google (Gemini /
+  Vertex + Gemma), xAI, Cloudflare Workers AI, DeepSeek, Zhipu/GLM, Qwen/DashScope,
+  Moonshot, MiniMax, and Mercury (Inception) — via a pluggable adapter layer
+  (Messages, Chat Completions, GenerateContent, GenAI, Responses).
+- **Built-in tool suite** — file operations, search (glob/grep), web
   fetch/search, shell execution, sub-agent dispatch, conversation-history tools,
   and sandboxed artifacts, with a dual registry (immutable base tools + dynamic
   addon tools).

@@ -13,8 +13,8 @@ Nexus Cortex is a production-ready AI development CLI that provides direct acces
 ### Key Features
 
 - **Direct-Wired Architecture** — core library runs in-process for zero-latency tool execution; optional HTTP server for remote/web clients.
-- **Multi-Provider Support** — 86 models across 11 providers (Anthropic, OpenAI, Google/Gemini + Gemma, xAI, Cloudflare Workers AI, DeepSeek, Zhipu/GLM, Qwen, Moonshot, MiniMax, Mercury) via five pluggable format adapters.
-- **45 built-in tools** — file ops, search (glob/grep), shell, web fetch/search + headless browser, sub-agent dispatch (`Task`), conversation-history retrieval, MCP tool discovery, and a sandboxed-artifact toolset.
+- **Multi-Provider Support** — Anthropic, OpenAI, Google (Gemini + Gemma), xAI, Cloudflare Workers AI, DeepSeek, Zhipu/GLM, Qwen, Moonshot, MiniMax, and Mercury, through a pluggable adapter layer. Run `cortex models list` for the live set.
+- **Built-in tool suite** — file ops, search (glob/grep), shell, web fetch/search + headless browser, sub-agent dispatch (`Task`), conversation-history retrieval, MCP tool discovery, and a sandboxed-artifact toolset. Run `cortex tools list` for the live set.
 - **Sandboxed artifacts** — spin up runnable web/server apps (tmux-managed) with screenshot/DOM/console/network/accessibility snapshots, plus **React artifacts** and **React introspection senses** (live component tree, props, render-trace).
 - **Sub-agents** — parallel `Task` dispatch with per-agent permissions and optional tmux visual monitoring.
 - **Git & PR tooling** — PR review/create/list (`PRAgent`) and isolated git worktrees (`WorkspaceManager`), with an opt-in repo/action allow-list and HMAC-verified webhook.
@@ -252,8 +252,8 @@ nexus-cortex/
 │   ├── types/              # Shared TypeScript types
 │   ├── core/               # Core orchestration library
 │   │   ├── orchestrator/   # CortexOrchestrator (main engine) + sub-agents
-│   │   ├── adapters/       # 5 format adapters (Messages, ChatCompletions, …)
-│   │   ├── models/         # Model registry (86 models, 11 providers)
+│   │   ├── adapters/       # Format adapters (Messages, ChatCompletions, …)
+│   │   ├── models/         # Model registry (per-provider model cards)
 │   │   ├── tools/          # Tool definitions & registries
 │   │   ├── middleware/     # System-message, permissions, retry, mentorship, …
 │   │   ├── training/       # Auto-research: experiments, router matrix, gate
@@ -264,7 +264,7 @@ nexus-cortex/
 │   │   └── routes/         # REST API endpoints
 │   └── cli/                # Interactive CLI interface
 │       ├── commands/       # CLI command handlers
-│       ├── themes/         # 15 professional themes
+│       ├── themes/         # Built-in color themes
 │       └── ui/             # Terminal UI components
 ├── .cortex/                # Auto-generated project context
 │   ├── CORTEX.md           # Project context (auto-loaded)
@@ -324,29 +324,31 @@ const response = await orchestrator.processMessage({
 
 ### 2. Multi-Provider System
 
-**86 models across 11 providers**, reached through five format adapters (Messages,
+Models from every major provider, reached through a pluggable adapter layer (Messages,
 Chat Completions, GenerateContent, GenAI, Responses). Each provider is enabled by its
-API key — set only the ones you use. Run `cortex models list` for the live, exact set.
+API key — set only the ones you use. **Run `cortex models list` for the live, exact set;**
+the examples below are illustrative, not exhaustive.
 
-| Provider | Models | Examples (current) | API key |
-|----------|:------:|--------------------|---------|
-| Anthropic | 10 | `claude-fable-5`, `claude-opus-4-8`, `claude-sonnet-4-6`, `claude-haiku-4-5` | `ANTHROPIC_API_KEY` |
-| OpenAI | 21 | `gpt-5.x`, `gpt-5-codex`, `gpt-4.1`, `gpt-4o`, `o3` / `o4` | `OPENAI_API_KEY` |
-| Google (Gemini + Gemma) | 12 | `gemini-2.5-pro`, `gemini-3.5-flash`, `gemma-3-27b-it` | `GEMINI_API_KEY` / `GOOGLE_API_KEY` |
-| xAI | 11 | `grok-4.3`, `grok-4-fast`, `grok-build-0.1` | `XAI_API_KEY` |
-| Cloudflare Workers AI | 13 | `@cf/*` models | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` |
-| Zhipu / GLM | 5 | `glm-4.6`, `glm-4.5`, `glm-4-flash` | `ZHIPU_API_KEY` |
-| Qwen (DashScope) | 5 | `qwen-*` | `DASHSCOPE_API_KEY` |
-| DeepSeek | 4 | `deepseek-v4-pro`, `deepseek-reasoner`, `deepseek-chat` | `DEEPSEEK_API_KEY` |
-| Moonshot (Kimi) | 2 | `moonshot-*` / `kimi-*` | `MOONSHOT_API_KEY` |
-| MiniMax | 2 | `minimax-*` | `MINIMAX_API_KEY` |
-| Mercury (Inception) | 1 | `mercury-2` | `INCEPTION_API_KEY` |
+| Provider | Example models | API key |
+|----------|----------------|---------|
+| Anthropic | `claude-fable-5`, `claude-opus-4-8`, `claude-sonnet-4-6`, `claude-haiku-4-5` | `ANTHROPIC_API_KEY` |
+| OpenAI | `gpt-5.x`, `gpt-5-codex`, `gpt-4.1`, `gpt-4o`, `o3` / `o4` | `OPENAI_API_KEY` |
+| Google (Gemini + Gemma) | `gemini-2.5-pro`, `gemini-3.5-flash`, `gemma-3-27b-it` | `GEMINI_API_KEY` / `GOOGLE_API_KEY` |
+| xAI | `grok-4.3`, `grok-4-fast`, `grok-build-0.1` | `XAI_API_KEY` |
+| Cloudflare Workers AI | `@cf/*` models | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` |
+| Zhipu / GLM | `glm-4.6`, `glm-4.5`, `glm-4-flash` | `ZHIPU_API_KEY` |
+| Qwen (DashScope) | `qwen-*` | `DASHSCOPE_API_KEY` |
+| DeepSeek | `deepseek-v4-pro`, `deepseek-reasoner`, `deepseek-chat` | `DEEPSEEK_API_KEY` |
+| Moonshot (Kimi) | `moonshot-*` / `kimi-*` | `MOONSHOT_API_KEY` |
+| MiniMax | `minimax-*` | `MINIMAX_API_KEY` |
+| Mercury (Inception) | `mercury-2` | `INCEPTION_API_KEY` |
 
 ### 3. Tool System
 
-**45 built-in tools** with read-before-edit safety and a dual registry (immutable base
-tools + dynamic addon tools), plus any tools discovered from connected MCP servers. By
-category:
+A built-in tool suite with read-before-edit safety and a dual registry (immutable base
+tools + dynamic addon tools), plus any tools discovered from connected MCP servers. The
+groups below are illustrative — **run `cortex tools list` (or `/tools list`) for the live,
+authoritative set with descriptions.** By category:
 
 - **File & notebook** — `Read`, `Write`, `WriteBinary`, `Edit`, `NotebookEdit`
 - **Search** — `Glob`, `Grep`
@@ -363,9 +365,6 @@ category:
 - **Auto-research** — `ResearchBacklog`
 - **Skills & commands** — `Skill`, `SlashCommand`
 - **End-of-turn audit** — `EndTurn` (opt-in via `CORTEX_ENDTURN_GATE`)
-
-Run `cortex tools list` (or `/tools list` in the interactive UI) for the live set with
-descriptions.
 
 ### 4. System Message Management
 
@@ -550,8 +549,8 @@ Common ones:
 
 ### Theme System
 
-15 built-in themes — pick one with `/theme` in the interactive UI (it persists to
-`.cortex/config.json`):
+Pick a color theme with `/theme` in the interactive UI (it persists to
+`.cortex/config.json`). Built-in themes include:
 
 - `default`, `dracula`, `monokai`, `nord`, `solarized-dark`, `solarized-light`
 - `tokyo-night`, `gruvbox`, `one-dark`, `material`, `palenight`
@@ -957,7 +956,7 @@ Key differences:
 | Performance | ~15ms per operation | ~1ms per operation (direct mode) |
 | Context System | None | CORTEX.md auto-generation |
 | System Messages | Basic | Auto-loading with hot-reload |
-| Themes | 2 themes | 15 professional themes |
+| Themes | Basic | Full built-in theme system |
 | MCP Support | Limited | Full integration |
 | Tool Execution | HTTP requests | Direct library calls |
 
