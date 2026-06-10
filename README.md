@@ -12,14 +12,21 @@ Nexus Cortex is a production-ready AI development CLI that provides direct acces
 
 ### Key Features
 
-- **Direct-Wired Architecture** - Core library runs in-process for zero-latency tool execution
-- **Multi-Provider Support** - 10+ AI providers with 65+ model configurations
-- **Interactive CLI** - Rich terminal UI with slash commands, themes, and real-time feedback
-- **MCP Integration** - Full Model Context Protocol support for extended tool capabilities
-- **System Message Management** - Auto-loading project context via CORTEX.md and custom system messages
-- **Session Persistence** - JSONL-based conversation history with UUID tracking
-- **Tool Suite** - 17+ standard tools with context-aware execution
-- **Optional HTTP Server** - Run as REST API for remote/web clients
+- **Direct-Wired Architecture** — core library runs in-process for zero-latency tool execution; optional HTTP server for remote/web clients.
+- **Multi-Provider Support** — 86 models across 11 providers (Anthropic, OpenAI, Google/Gemini + Gemma, xAI, Cloudflare Workers AI, DeepSeek, Zhipu/GLM, Qwen, Moonshot, MiniMax, Mercury) via five pluggable format adapters.
+- **45 built-in tools** — file ops, search (glob/grep), shell, web fetch/search + headless browser, sub-agent dispatch (`Task`), conversation-history retrieval, MCP tool discovery, and a sandboxed-artifact toolset.
+- **Sandboxed artifacts** — spin up runnable web/server apps (tmux-managed) with screenshot/DOM/console/network/accessibility snapshots, plus **React artifacts** and **React introspection senses** (live component tree, props, render-trace).
+- **Sub-agents** — parallel `Task` dispatch with per-agent permissions and optional tmux visual monitoring.
+- **Git & PR tooling** — PR review/create/list (`PRAgent`) and isolated git worktrees (`WorkspaceManager`), with an opt-in repo/action allow-list and HMAC-verified webhook.
+- **Context management** — token-budget tracking, helper-model compaction, prompt caching, and deferred tool loading (~77% first-turn input-token reduction).
+- **Optional model router** — auto model selection from recorded benchmark history.
+- **Auto-research** — recursive self-improvement loop: run + grade task sets, compare harness versions, and gate keep/discard decisions (`cortex autoresearch`).
+- **Reactive mentorship** — opt-in AI-to-AI self-improvement on errors/keywords/intervals.
+- **Permission system** — dev/test/prod profiles with whitelist/blacklist/file/command policies.
+- **MCP integration** — connect Model Context Protocol servers with optional tool auto-injection.
+- **System messages & agents** — auto-loaded project context (CORTEX.md), hot-reloaded custom prompts, and task agents under `.cortex/agents/`.
+- **Session persistence** — append-only JSONL history with UUID message IDs and content-addressable file checkpoints.
+- **Rich CLI** — interactive terminal UI (slash commands, themes) plus a structured Commander.js command set (`cortex <group>`).
 
 ---
 
@@ -53,7 +60,7 @@ curl -s http://localhost:4000/v1/messages \
 ### From source
 
 ```bash
-npm install && npm run build               # 7-pass build of all 6 packages
+npm install && npm run build               # multi-pass build (core⇄executors need two passes)
 ```
 
 ### Credentials
@@ -185,6 +192,22 @@ curl -s http://localhost:4000/v1/messages \
 | `/sessions/:id/cache/metrics` | GET | Cache hit rate and savings |
 | `/health` | GET | Server status and available models |
 
+Additional REST surfaces (run the server and `curl` them): `/tools`, `/permissions/*`,
+`/middleware/*`, `/config/*`, `/mcp/*`, `/system-messages/*`, and `/v1/approval-mode`.
+Session routes also include `export`, `DELETE`, `checkpoints`, `load`, `resume`,
+`context`, and `compaction/boundaries`.
+
+### PR Review API
+
+When the git/PR tools are configured (see [Git / PR access control](#git--pr-access-control)):
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/pr/review` | POST | Run a PR review pipeline (`{repo, prNumber, options?}`) |
+| `/v1/pr/create` | POST | Drive PR creation in an isolated worktree (`{repo, branch?, description?}`) |
+| `/v1/pr/list` | GET | List open PRs (`?repo=owner/repo`) |
+| `/v1/pr/webhook` | POST | GitHub webhook — requires `GITHUB_WEBHOOK_SECRET` + a valid `X-Hub-Signature-256` (disabled, returns 401, if no secret is set) |
+
 ### Server Lifecycle
 
 The server does **not** auto-shutdown after responses. It runs until explicitly stopped:
@@ -228,10 +251,12 @@ nexus-cortex/
 ├── packages/
 │   ├── types/              # Shared TypeScript types
 │   ├── core/               # Core orchestration library
-│   │   ├── orchestrator/   # CortexOrchestrator (main engine)
-│   │   ├── providers/      # 10+ AI provider adapters
-│   │   ├── models/         # Model registry (65+ models)
-│   │   ├── tools/          # Tool definitions & executors
+│   │   ├── orchestrator/   # CortexOrchestrator (main engine) + sub-agents
+│   │   ├── adapters/       # 5 format adapters (Messages, ChatCompletions, …)
+│   │   ├── models/         # Model registry (86 models, 11 providers)
+│   │   ├── tools/          # Tool definitions & registries
+│   │   ├── middleware/     # System-message, permissions, retry, mentorship, …
+│   │   ├── training/       # Auto-research: experiments, router matrix, gate
 │   │   ├── mcp/            # MCP client & server integration
 │   │   ├── system-messages/# System message auto-loading
 │   │   └── session/        # JSONL session storage
@@ -299,28 +324,48 @@ const response = await orchestrator.processMessage({
 
 ### 2. Multi-Provider System
 
-10 AI providers with 65+ model configurations:
+**86 models across 11 providers**, reached through five format adapters (Messages,
+Chat Completions, GenerateContent, GenAI, Responses). Each provider is enabled by its
+API key — set only the ones you use. Run `cortex models list` for the live, exact set.
 
-- **Anthropic** - Claude 3.5 Sonnet, Claude 3 Opus, Haiku
-- **OpenAI** - GPT-4, GPT-4 Turbo, GPT-3.5 Turbo
-- **Google** - Gemini 2.0 Flash, Gemini 1.5 Pro
-- **XAI** - Grok 2, Grok Vision
-- **DeepSeek** - DeepSeek V3, DeepSeek Chat
-- **GLM** - GLM-4, GLM-4 Vision
-- **Qwen** - Qwen 2.5, Qwen Turbo
-- **Moonshot** - Moonshot V1
-- **MiniMax** - MiniMax models
-- **Gemma** - Google Gemma models
+| Provider | Models | Examples (current) | API key |
+|----------|:------:|--------------------|---------|
+| Anthropic | 10 | `claude-fable-5`, `claude-opus-4-8`, `claude-sonnet-4-6`, `claude-haiku-4-5` | `ANTHROPIC_API_KEY` |
+| OpenAI | 21 | `gpt-5.x`, `gpt-5-codex`, `gpt-4.1`, `gpt-4o`, `o3` / `o4` | `OPENAI_API_KEY` |
+| Google (Gemini + Gemma) | 12 | `gemini-2.5-pro`, `gemini-3.5-flash`, `gemma-3-27b-it` | `GEMINI_API_KEY` / `GOOGLE_API_KEY` |
+| xAI | 11 | `grok-4.3`, `grok-4-fast`, `grok-build-0.1` | `XAI_API_KEY` |
+| Cloudflare Workers AI | 13 | `@cf/*` models | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` |
+| Zhipu / GLM | 5 | `glm-4.6`, `glm-4.5`, `glm-4-flash` | `ZHIPU_API_KEY` |
+| Qwen (DashScope) | 5 | `qwen-*` | `DASHSCOPE_API_KEY` |
+| DeepSeek | 4 | `deepseek-v4-pro`, `deepseek-reasoner`, `deepseek-chat` | `DEEPSEEK_API_KEY` |
+| Moonshot (Kimi) | 2 | `moonshot-*` / `kimi-*` | `MOONSHOT_API_KEY` |
+| MiniMax | 2 | `minimax-*` | `MINIMAX_API_KEY` |
+| Mercury (Inception) | 1 | `mercury-2` | `INCEPTION_API_KEY` |
 
 ### 3. Tool System
 
-A rich tool suite with read-before-edit safety and context-aware execution:
+**45 built-in tools** with read-before-edit safety and a dual registry (immutable base
+tools + dynamic addon tools), plus any tools discovered from connected MCP servers. By
+category:
 
-**File Operations**: Read, Write, Edit, Glob, Grep
-**System**: Bash, TodoWrite, AskUserQuestion
-**MCP**: ListMcpResources, Mcp, ReadMcpResource, InitMcpConfig, ListMcpServers
-**Context**: InitCortexContext
-**Session**: Skill, SlashCommand
+- **File & notebook** — `Read`, `Write`, `WriteBinary`, `Edit`, `NotebookEdit`
+- **Search** — `Glob`, `Grep`
+- **Shell** — `Bash`, `BashOutput`, `KillShell` (foreground + background processes)
+- **Web & browser** — `WebFetch`, `WebSearch`, `Browse` (headless Chrome)
+- **Sub-agents** — `Task` (parallel agent dispatch)
+- **Git & PR** — `PRAgent` (review/create/list), `WorkspaceManager` (isolated git worktrees)
+- **Sandboxed artifacts** — `CreateArtifactTool`, `InspectSandbox`, `InteractWithSandbox`, `ModifySandbox`, `StopSandbox`, `SandboxTransfer`
+- **React introspection senses** — `SandboxScan`, `SandboxGrab`, `SandboxDetectFramework`, `SandboxComponentTree`, `SandboxRenderTrace`
+- **Conversation history** — `SearchConversationHistory`, `GetConversationSegment`, `RequestHistoricalContext`, `ListCompactionBoundaries`, `ListSessions`, `LoadSession`
+- **MCP & tool discovery** — `SearchTools` (deferred/progressive tool loading) + dynamically-registered MCP tools
+- **Planning & UI** — `TodoCreate`, `TodoUpdate`, `TodoList`, `AskUserQuestion`, `ExitPlanMode`
+- **Code & monitoring** — `CodeExecute`, `TmuxSession` (visual agent monitoring)
+- **Auto-research** — `ResearchBacklog`
+- **Skills & commands** — `Skill`, `SlashCommand`
+- **End-of-turn audit** — `EndTurn` (opt-in via `CORTEX_ENDTURN_GATE`)
+
+Run `cortex tools list` (or `/tools list` in the interactive UI) for the live set with
+descriptions.
 
 ### 4. System Message Management
 
@@ -388,7 +433,45 @@ JSONL-based conversation persistence with full state recovery:
 - **Checkpoints**: Content-addressable file history in `.cortex/file-history/`
 - **Compaction**: Helper model auto-compacts at configurable token threshold
 - **Auto-resume**: Server resumes most recent session on startup (see [Headless Mode](#server-lifecycle))
-- **REST API**: 7 session endpoints for listing, stats, model switching, and compaction (see [Session Management API](#session-management-api))
+- **REST API**: session endpoints for listing, stats, model switching, and compaction (see [Session Management API](#session-management-api))
+
+### 7. Sandboxed Artifacts & Visual Workspace
+
+`CreateArtifactTool` spins up a runnable web/server app in a tmux-managed sandbox, and the
+model iterates against it with real feedback:
+
+- **Snapshots** the model can inspect: screenshot, DOM, console, network, accessibility tree (`InspectSandbox`).
+- **Interaction**: click/type/navigate (`InteractWithSandbox`), hot-reload edits (`ModifySandbox`), file transfer (`SandboxTransfer`), teardown (`StopSandbox`).
+- **React artifacts**: `framework: "react"` builds a React app from a single component — zero-install CDN mode or an esbuild-bundled mode with source maps and rebuild-on-edit.
+- **React introspection senses**: `SandboxScan` (elements + stable `cssSelector` + `componentName`), `SandboxGrab` (DOM + React props/source location), `SandboxComponentTree` (fiber hierarchy), `SandboxRenderTrace` (per-component re-render counts/timings).
+
+### 8. Sub-Agents (Task)
+
+The `Task` tool dispatches work to isolated sub-agents that run in parallel, each with its
+own permission scope. Sub-agents are defined as profiles under `.cortex/agents/*.md` (YAML
+frontmatter + instructions; project agents override personal `~/.cortex/agents/`). Set
+`AGENT_TMUX_MONITOR=true` for a live tmux pane per agent.
+
+### 9. Auto-Research (recursive self-improvement)
+
+A closed-loop system to measure and improve the harness itself, driven by `cortex
+autoresearch`:
+
+- **`bench`** — run + grade a task set through the harness, writing scored records to `.cortex/router-matrix.jsonl`.
+- **`experiment`** — build + serve a base and a candidate harness, bench both (train + hold-out), then gate a keep/discard verdict (Monte-Carlo: bootstrap CI + permutation + N-aware significance) with a JSONL artifact.
+- **`evaluate` / `fix` / `list`** — score an experiment, apply a fix from the deficiency backlog, and review recorded keep/discard decisions.
+
+### 10. Permission System
+
+Tool execution is gated by a policy engine with three environment profiles in `.cortex/`
+(`permissions.dev.json` / `.test.json` / `.prod.json`) and four policy types — whitelist,
+blacklist, file-operation, and bash-command — with audit logging. `YOLO=true` bypasses all
+of it (use with care). Manage at runtime via `cortex permissions …` or `/permissions`.
+
+### 11. Model Router & Reactive Mentorship
+
+- **Model router** (opt-in, `MODEL_ROUTER_ENABLED`): routes `model="auto"` requests to the best model for the task type using recorded benchmark history, with a multi-entry exclude list (`MODEL_ROUTER_EXCLUDE`).
+- **Reactive mentorship** (opt-in, `MENTORSHIP_ENABLED`): an AI-to-AI self-improvement loop that triggers helper-model review on errors, keywords (`@ultrathink`/`@analyze`/`@rethink`), turn intervals, or repeated failure patterns. See the [mentorship env vars](#environment-variables).
 
 ---
 
@@ -403,7 +486,7 @@ $ cortex
 ║             Nexus Cortex - AI Development CLI           ║
 ╚══════════════════════════════════════════════════════════╝
 
-Model: claude-sonnet-4-5 | Session: abc-123 | Theme: monokai
+Model: deepseek-v4-pro | Session: abc-123 | Theme: monokai
 
 > You: /help
 
@@ -421,39 +504,55 @@ Available Commands:
 
 > You: Analyze the file structure```
 
+### Structured commands (`cortex <group>`)
+
+Beyond natural-language chat, `cortex` exposes a full Commander.js command set. Run
+`cortex --help`, or `cortex <group> --help` for any group:
+
+| Group | What it does |
+|-------|--------------|
+| `cortex "<prompt>"` | One-shot query (`-m/--model`, `--system`, `--max-tokens`, `--json`) |
+| `models` | `list` / `info` / `search` / `compare` / `cost` / `providers` / `switch` |
+| `sessions` | `list` / `view` / `export` / `resume` / `checkpoints` / `stats` / `search` / `compact` |
+| `config` | `get` / `set` / `categories` / `category` / `reset` |
+| `mcp` | `list` / `status` / `tools` / `enable` / `disable` / `init` / `validate` / `edit` |
+| `permissions` | `mode` / `set` / `grant` / `revoke` / `policies` / `tools` / `auto-approve` |
+| `autoresearch` | `bench` / `experiment` / `evaluate` / `fix` / `list` (see [Auto-Research](#9-auto-research-recursive-self-improvement)) |
+| `context` | `status` / `compact` / `boundaries` / `strategy` / `savings` |
+| `middleware` | `list` / `status` / `enable` / `disable` / `config` |
+| `artifact` | `list` / `status` / `restart` / `stop` |
+| `tmux` | `list` |
+| `tools` | `list` / `info` |
+| `cache` | `metrics` |
+| `system-messages` | `list` / `view` / `reload` |
+| `server` | `status` / `start` |
+
 ### Slash Commands
+
+The interactive UI has 40+ slash commands. Type `/help` to see the complete, live list.
+Common ones:
 
 | Command | Description |
 |---------|-------------|
-| `/models list` | List all available models |
-| `/models switch <id>` | Switch to a different model |
-| `/models info <id>` | Show model details |
-| `/session checkpoint [name]` | Create session checkpoint |
-| `/session list` | List all sessions |
-| `/continue` | Load and continue previous session |
-| `/cache metrics` | View cache statistics |
-| `/mcp list` | List MCP servers |
-| `/mcp enable <name>` | Enable MCP server |
-| `/tools list` | List available tools |
-| `/system-message` | Interactive system message manager |
-| `/init` | Generate CORTEX.md context |
-| `/debug` | Toggle debug log visibility |
-| `/yolo` | Enable auto-approve all tools |
-| `/clear` | Clear conversation history |
-| `/exit` | Exit CLI |
+| `/model` · `/models list\|switch\|info` | Pick / list / switch / inspect models |
+| `/session list\|resume\|info` · `/continue` · `/resume` | Session management |
+| `/config` · `/settings` | Interactive settings browser (writes `.env`) |
+| `/theme` | Pick a color theme |
+| `/agent` | Manage task agents (`.cortex/agents/`) |
+| `/mentorship` | Configure reactive mentorship |
+| `/permissions` · `/policies` | View / edit permission policies |
+| `/mcp list\|enable\|disable\|status` | MCP server management |
+| `/tools list\|info` | List / inspect tools |
+| `/cache metrics` · `/stats` · `/compress` | Cache metrics, usage stats, compact context |
+| `/system-message` · `/init` | System messages; generate CORTEX.md |
+| `/memory` · `/auth` · `/setup-github` | Memory, credentials, GitHub setup |
+| `/debug` · `/yolo` · `/clear` · `/exit` | Debug toggle, auto-approve, clear, exit |
 
 ### Theme System
 
-15 professional themes available:
+15 built-in themes — pick one with `/theme` in the interactive UI (it persists to
+`.cortex/config.json`):
 
-```bash
-# Configure theme in .cortex/settings.json
-{
-  "theme": "monokai"  // or tokyo-night, dracula, solarized-dark, etc.
-}
-```
-
-Available themes:
 - `default`, `dracula`, `monokai`, `nord`, `solarized-dark`, `solarized-light`
 - `tokyo-night`, `gruvbox`, `one-dark`, `material`, `palenight`
 - `ayu-dark`, `catppuccin`, `synthwave`, `cyberpunk`
@@ -597,7 +696,7 @@ Set the keys for the providers you use; leave the rest blank. A model is only av
 | `GEMINI_API_KEY` | — | Preferred Gemini key; falls back to `GOOGLE_API_KEY`. |
 | `XAI_API_KEY` | — | xAI Grok models. |
 | `DEEPSEEK_API_KEY` | — | DeepSeek models (the default model's provider). |
-| `NVIDIA_API_KEY` | — | NVIDIA-hosted models. |
+| `NVIDIA_API_KEY` | — | Reserved for NVIDIA-hosted models (no standalone NVIDIA cards are registered yet; NVIDIA models are currently reached via Cloudflare). |
 | `INCEPTION_API_KEY` | — | Inception Labs Mercury diffusion models (`mercury-2`). |
 | `CLOUDFLARE_API_TOKEN` | — | Cloudflare Workers AI (`@cf/*` models). Requires `CLOUDFLARE_ACCOUNT_ID`. |
 | `CLOUDFLARE_ACCOUNT_ID` | — | Cloudflare account ID (paired with the token above). |
@@ -605,7 +704,7 @@ Set the keys for the providers you use; leave the rest blank. A model is only av
 | `MINIMAX_API_KEY` | — | MiniMax — `minimax-*` models. |
 | `MOONSHOT_API_KEY` | — | Moonshot AI (Kimi) — `moonshot-*` / `kimi-*` models. |
 | `ZHIPU_API_KEY` | — | Zhipu AI (GLM) — `glm-*` models. |
-| `HUGGINGFACE_API_KEY` | — | Hugging Face Inference (`HUGGINGFACE_TOKEN` also accepted). |
+| `HUGGINGFACE_API_KEY` | — | Reserved for Hugging Face Inference (`HUGGINGFACE_TOKEN` also accepted; cards exist but are not registered in the default build yet). |
 | `ANTHROPIC_AUTH_METHOD` | `auto` | `auto` (oauth→key) \| `oauth` \| `api-key`. `.env.example` ships `api-key`; use `oauth` with a Claude.ai Max subscription. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | — | OAuth token override (alternative to `~/.claude/.credentials.json`). |
 
@@ -935,6 +1034,10 @@ Built as a clean-room TypeScript multi-provider harness.
 
 ## Links
 
-- [CORTEX.md](./.cortex/CORTEX.md) - Auto-generated project context
-- [Research Docs](./.claude/claude_research_analysis/) - Architecture research
+- [Changelog](./CHANGELOG.md) — release history
+- [Configuration reference](./.env.example) — every environment variable, annotated
+- [License](./LICENSE) — Apache-2.0 ([NOTICE](./NOTICE))
+- [Issues & source](https://github.com/Spitfire-Products/nexus-cortex) — report bugs, request features
+
+> `CORTEX.md` (project context) is generated on demand in your own project — run `/init` or the `InitCortexContext` tool; it is not shipped with the package.
 

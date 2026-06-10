@@ -1,6 +1,6 @@
 # @nexus-cortex/core
 
-Core orchestration library implementing Claude CLI architecture patterns
+Core orchestration library — the engine behind the Nexus Cortex agent harness (adapters, middleware, sessions, models, MCP, tools).
 
 Part of **[Nexus Cortex](https://github.com/Spitfire-Products/nexus-cortex)** — a multi-provider AI agent harness (direct library, optional HTTP server, terminal UIs).
 
