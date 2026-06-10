@@ -39,6 +39,7 @@ const counts = {
   tools: String(core.toolFactory.getAllTools().length),
   models: String(new Set(models.map((m) => m.id)).size), // unique canonical
   providers: String(new Set(models.map((m) => m.provider)).size),
+  slashCommands: String(core.slashCommandRegistry.getAllCommands().length),
 };
 
 const md = readFileSync(README, 'utf8');

@@ -529,7 +529,7 @@ Beyond natural-language chat, `cortex` exposes a full Commander.js command set. 
 
 ### Slash Commands
 
-The interactive UI has 40+ slash commands. Type `/help` to see the complete, live list.
+The interactive UI has <!--AUTO-COUNT:slashCommands-->41<!--/AUTO-COUNT--> slash commands. Type `/help` to see the complete, live list.
 Common ones:
 
 | Command | Description |
