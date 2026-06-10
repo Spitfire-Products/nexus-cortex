@@ -107,50 +107,66 @@ export class EndTurnToolExecutor extends BaseTool<EndTurnParams, ToolResult> {
               'Re-read your drafted answer as a skeptical reviewer. What did you NOT check? What is assumed or possibly wrong? What surface might you have missed? If you had one more tool call, what would you verify? Be specific — this pass exists to catch your own mistakes before they ship.',
           },
         },
-        required: [
-          'citations',
-          'verification',
-          'summary',
-          'open_items',
-          'self_review',
-        ],
+        // Only the two cheap, always-producible generative fields are required.
+        // The evidence arrays are legitimately empty on many turns ("empty =
+        // none"), so requiring them caused well-formed sparse attestations to
+        // loop-reject. Absent arrays normalize to [] in normalizeParams().
+        required: ['summary', 'self_review'],
       },
     );
   }
 
+  /**
+   * Coerce a raw attestation into a well-formed shape. Absent arrays become []
+   * ("empty = none" per the field docs); malformed array items are dropped
+   * rather than rejected. This makes EndTurn non-blocking at the executor level
+   * — the strict, MEANINGFUL rejection (a verbatim_source not grounded in this
+   * turn's tool output) is enforced by the orchestrator's Stage-2 grounding
+   * check when CORTEX_ENDTURN_GATE is on, where it belongs. A blunt
+   * validate-and-reject here only produced retry loops that ended in the model
+   * giving up with NO attestation at all — strictly worse than a sparse one.
+   */
+  private normalizeParams(params: EndTurnParams): EndTurnParams {
+    const p = (params && typeof params === 'object' ? params : {}) as Partial<EndTurnParams>;
+    // A citation is a (reference, verbatim_source) pair — drop any item missing
+    // either half (ungrounded evidence is not a citation). Same for verification.
+    const citations = (Array.isArray(p.citations) ? p.citations : [])
+      .filter(
+        (c) =>
+          c &&
+          typeof c.reference === 'string' &&
+          c.reference.trim() !== '' &&
+          typeof c.verbatim_source === 'string' &&
+          c.verbatim_source.trim() !== '',
+      )
+      .map((c) => ({ reference: c.reference, verbatim_source: c.verbatim_source }));
+    const verification = (Array.isArray(p.verification) ? p.verification : [])
+      .filter(
+        (v) =>
+          v &&
+          typeof v.command === 'string' &&
+          v.command.trim() !== '' &&
+          typeof v.observed_result === 'string' &&
+          v.observed_result.trim() !== '',
+      )
+      .map((v) => ({ command: v.command, observed_result: v.observed_result }));
+    const open_items = (Array.isArray(p.open_items) ? p.open_items : []).filter(
+      (o): o is string => typeof o === 'string' && o.trim() !== '',
+    );
+    return {
+      citations,
+      verification,
+      summary: typeof p.summary === 'string' ? p.summary : '',
+      open_items,
+      self_review: typeof p.self_review === 'string' ? p.self_review : '',
+    };
+  }
+
   validateToolParams(params: EndTurnParams): string | null {
+    // Non-blocking: any object is acceptable. Missing/empty fields normalize
+    // (absent arrays → [], "empty = none"). The only thing worth a hard reject
+    // is a payload that isn't an object at all.
     if (!params || typeof params !== 'object') return 'params object required';
-    if (!Array.isArray(params.citations)) {
-      return 'citations must be an array of {reference, verbatim_source} (use [] if none)';
-    }
-    for (const c of params.citations) {
-      if (!c || typeof c.reference !== 'string' || c.reference.trim() === '') {
-        return 'each citation needs a non-empty reference';
-      }
-      if (typeof c.verbatim_source !== 'string' || c.verbatim_source.trim() === '') {
-        return 'each citation needs a non-empty verbatim_source copied from this turn\'s tool output';
-      }
-    }
-    if (!Array.isArray(params.verification)) {
-      return 'verification must be an array of {command, observed_result} (use [] if none)';
-    }
-    for (const v of params.verification) {
-      if (!v || typeof v.command !== 'string' || v.command.trim() === '') {
-        return 'each verification entry needs a non-empty command';
-      }
-      if (typeof v.observed_result !== 'string' || v.observed_result.trim() === '') {
-        return 'each verification entry needs the observed_result you actually saw';
-      }
-    }
-    if (typeof params.summary !== 'string' || params.summary.trim() === '') {
-      return 'summary must be a non-empty string';
-    }
-    if (!Array.isArray(params.open_items)) {
-      return 'open_items must be an array (use [] if none)';
-    }
-    if (typeof params.self_review !== 'string' || params.self_review.trim() === '') {
-      return 'self_review must be a non-empty skeptical re-read of your work';
-    }
     return null;
   }
 
@@ -160,8 +176,8 @@ export class EndTurnToolExecutor extends BaseTool<EndTurnParams, ToolResult> {
     return `EndTurn attestation (${nCit} citation(s), ${nVer} verification(s))`;
   }
 
-  async execute(params: EndTurnParams, _signal: AbortSignal): Promise<ToolResult> {
-    const validationError = this.validateToolParams(params);
+  async execute(rawParams: EndTurnParams, _signal: AbortSignal): Promise<ToolResult> {
+    const validationError = this.validateToolParams(rawParams);
     if (validationError) {
       return {
         llmContent: `EndTurn rejected: ${validationError}. Fix the attestation and call EndTurn again.`,
@@ -169,6 +185,9 @@ export class EndTurnToolExecutor extends BaseTool<EndTurnParams, ToolResult> {
         error: validationError,
       };
     }
+
+    // Normalize: absent arrays → [], malformed items dropped, missing strings → ''.
+    const params = this.normalizeParams(rawParams);
 
     const cites =
       params.citations.length > 0

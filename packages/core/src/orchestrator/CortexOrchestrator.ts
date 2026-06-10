@@ -562,12 +562,21 @@ export class CortexOrchestrator {
         searchExecutor.setToolProvider(() => {
           const currentModel = this.modelRegistry?.getModel(this.currentModelId);
           const convention = currentModel?.tools?.namingConvention || 'PascalCase';
-          return toolFactory.getAllTools().map((t) => ({
-            name: namingHandler.convertName(t.name, convention),
-            description: t.description,
-            category: t.category,
-            schema: t.schema,
-          }));
+          // Apply the SAME EndTurn gate as the eager tool list (see sendMessage:
+          // factoryTools). Without this filter the deferred-discovery catalog
+          // re-exposed EndTurn even when CORTEX_ENDTURN_GATE was off, luring the
+          // model into calling a tool that the rest of the pipeline treats as
+          // disabled (no Stage-2/3 grounding wired) — wasted turns.
+          const endTurnGateOn = process.env.CORTEX_ENDTURN_GATE === 'true';
+          return toolFactory
+            .getAllTools()
+            .filter((t) => endTurnGateOn || t.name !== 'EndTurn')
+            .map((t) => ({
+              name: namingHandler.convertName(t.name, convention),
+              description: t.description,
+              category: t.category,
+              schema: t.schema,
+            }));
         });
       }
     }
