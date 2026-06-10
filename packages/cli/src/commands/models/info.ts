@@ -40,7 +40,8 @@ export async function modelInfo(
     if (!model) {
       console.error(theme.colors.error(`Model not found: ${modelId}`));
       console.log(theme.colors.muted('\nUse "cortex models list" to see available models'));
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
 
     // JSON output
@@ -60,7 +61,7 @@ export async function modelInfo(
 
     console.log(theme.colors.highlight('Capabilities:'));
     console.log(theme.colors.muted(` Context Window: ${formatContextWindow(model.contextWindow)}`));
-    console.log(theme.colors.muted(` Max Output: ${model.maxOutputTokens.toLocaleString()} tokens`));
+    console.log(theme.colors.muted(` Max Output: ${model.outputTokens.toLocaleString()} tokens`));
     console.log();
 
     console.log(theme.colors.highlight('Pricing:'));
@@ -70,6 +71,8 @@ export async function modelInfo(
 
   } catch (error: any) {
     console.error(theme.colors.error(`Error: ${error.message}`));
-    process.exit(1);
+    process.exitCode = 1;
+  } finally {
+    await client.disconnect();
   }
 }

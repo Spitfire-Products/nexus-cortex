@@ -40,7 +40,7 @@ export async function modelSwitch(
       console.error(theme.colors.error('Error: Model ID is required'));
       console.log(theme.colors.muted('\nUsage: cortex models switch <session-id> <model-id>'));
       console.log(theme.colors.muted('Example: cortex models switch current claude-sonnet-4'));
-      process.exit(1);
+      process.exitCode = 1;
       return;
     }
 
@@ -80,6 +80,8 @@ export async function modelSwitch(
 
   } catch (error: any) {
     console.error(theme.colors.error(`Error: ${error.message}`));
-    process.exit(1);
+    process.exitCode = 1;
+  } finally {
+    await client.disconnect();
   }
 }

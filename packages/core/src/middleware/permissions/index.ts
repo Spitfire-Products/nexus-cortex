@@ -68,3 +68,23 @@ export { PermissionPresets } from './PermissionConfig.js';
 
 export { PermissionConfigLoader } from './PermissionConfigLoader.js';
 export type { ConfigLoaderOptions } from './PermissionConfigLoader.js';
+
+// Profile path resolution + file-backed profile editing (headless CLI persistence)
+export { resolvePermissionProfilePath } from './profilePath.js';
+export type { PermissionProfileName } from './profilePath.js';
+export {
+  grantToolInProfile,
+  revokeToolInProfile,
+  listProfilePolicies,
+  getApprovalHandlerFromProfile,
+  setApprovalHandlerInProfile,
+  readProfile as readPermissionProfile,
+  resolveWriteTarget as resolvePermissionWriteTarget,
+  GRANT_PRIORITY,
+  REVOKE_PRIORITY,
+} from './PermissionProfileStore.js';
+export type {
+  PermissionProfile,
+  ProfilePolicyEntry,
+  ProfilePolicySummary,
+} from './PermissionProfileStore.js';

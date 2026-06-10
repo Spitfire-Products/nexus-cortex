@@ -44,7 +44,16 @@ export {
   PermissionAuditLogger,
   PermissionEvaluator,
   PermissionConfigLoader,
-  PermissionPresets
+  PermissionPresets,
+  // File-backed permission profile editing (headless CLI persistence)
+  resolvePermissionProfilePath,
+  grantToolInProfile,
+  revokeToolInProfile,
+  listProfilePolicies,
+  getApprovalHandlerFromProfile,
+  setApprovalHandlerInProfile,
+  readPermissionProfile,
+  resolvePermissionWriteTarget
 } from './middleware/index.js';
 export type {
   CostTracking,

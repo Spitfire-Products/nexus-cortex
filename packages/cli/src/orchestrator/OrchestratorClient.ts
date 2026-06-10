@@ -67,6 +67,13 @@ export interface MessageOptions {
   abortSignal?: AbortSignal;
 }
 
+/** Result of a file-backed permission grant/revoke. */
+export interface PermissionWriteResult {
+  path: string;
+  profile: string;
+  changed: boolean;
+}
+
 export class OrchestratorClient {
   private mode: ClientMode;
   private orchestrator?: CortexOrchestrator;
@@ -107,6 +114,22 @@ export class OrchestratorClient {
       await this.initializeDirect();
     } else {
       await this.initializeServer();
+    }
+  }
+
+  /**
+   * Release resources held by the orchestrator in direct mode (MCP sockets,
+   * file watchers). Without this, MCP TCP handles keep the event loop alive
+   * and short-lived commands (tools/models list) never exit. Safe to call
+   * multiple times and in server mode (no-op).
+   */
+  async disconnect(): Promise<void> {
+    if (this.mode === 'direct' && this.orchestrator) {
+      try {
+        await this.orchestrator.cleanup();
+      } catch {
+        // best-effort teardown — never let cleanup failure mask the result
+      }
     }
   }
 
@@ -154,6 +177,19 @@ export class OrchestratorClient {
    */
   static findProjectRoot(_startPath: string): string {
     return OrchestratorClient.findInstallRoot();
+  }
+
+  /**
+   * Resolve the project root + profile name used for file-backed permission
+   * edits. Profile honors PERMISSION_PROFILE (dev|test|prod), default 'dev'.
+   */
+  static resolvePermissionTarget(): { root: string; profile: 'dev' | 'test' | 'prod' } {
+    const raw = (process.env.PERMISSION_PROFILE || 'dev').toLowerCase();
+    const profile = (['dev', 'test', 'prod'].includes(raw) ? raw : 'dev') as
+      | 'dev'
+      | 'test'
+      | 'prod';
+    return { root: OrchestratorClient.findInstallRoot(), profile };
   }
 
   /**
@@ -523,39 +559,63 @@ export class OrchestratorClient {
   /**
    * Get approval mode
    */
-  async getApprovalMode(): Promise<{ autoApproveActions: boolean }> {
+  async getApprovalMode(): Promise<{ autoApproveActions: boolean; yoloMode?: boolean; context?: string }> {
     if (this.mode === 'direct' && this.orchestrator) {
+      // Live session — read the running orchestrator's runtime mode.
       return this.orchestrator.getApprovalMode();
-    } else {
-      const response = await fetch(`${this.serverUrl}/approval/mode`);
-      if (!response.ok) {
-        throw new Error('Failed to get approval mode');
-      }
-      return await response.json();
     }
+    if (this.mode === 'direct') {
+      // Headless — read the active profile's approvalHandler from disk.
+      const { root, profile } = OrchestratorClient.resolvePermissionTarget();
+      const { getApprovalHandlerFromProfile, resolvePermissionWriteTarget } =
+        await import('@nexus-cortex/core');
+      const handler = getApprovalHandlerFromProfile(root, profile);
+      return {
+        autoApproveActions: handler === 'auto-approve',
+        yoloMode: process.env.YOLO === 'true',
+        context: `profile:${profile} (${resolvePermissionWriteTarget(root, profile)})`,
+      };
+    }
+    const response = await fetch(`${this.serverUrl}/approval/mode`);
+    if (!response.ok) {
+      throw new Error('Failed to get approval mode');
+    }
+    return await response.json();
   }
 
   /**
    * Set approval mode
    */
-  async setApprovalMode(autoApprove: boolean): Promise<{ success: boolean; message?: string }> {
+  async setApprovalMode(autoApprove: boolean): Promise<{ success: boolean; message?: string; path?: string }> {
     if (this.mode === 'direct' && this.orchestrator) {
+      // Live session — toggle the running orchestrator's runtime mode.
       this.orchestrator.setApprovalMode({ autoApproveActions: autoApprove });
       return {
         success: true,
         message: `Auto-approve ${autoApprove ? 'enabled' : 'disabled'}`
       };
-    } else {
-      const response = await fetch(`${this.serverUrl}/approval/mode`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ autoApproveActions: autoApprove })
-      });
-      if (!response.ok) {
-        throw new Error('Failed to set approval mode');
-      }
-      return await response.json();
     }
+    if (this.mode === 'direct') {
+      // Headless — persist to the active profile's approvalHandler.
+      const { root, profile } = OrchestratorClient.resolvePermissionTarget();
+      const { setApprovalHandlerInProfile } = await import('@nexus-cortex/core');
+      const handler = autoApprove ? 'auto-approve' : 'cli';
+      const res = setApprovalHandlerInProfile(root, profile, handler);
+      return {
+        success: true,
+        message: `Profile '${profile}' approvalHandler -> ${handler}`,
+        path: res.path,
+      };
+    }
+    const response = await fetch(`${this.serverUrl}/approval/mode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ autoApproveActions: autoApprove })
+    });
+    if (!response.ok) {
+      throw new Error('Failed to set approval mode');
+    }
+    return await response.json();
   }
 
   /**
@@ -650,8 +710,12 @@ export class OrchestratorClient {
    * Get all registered permission policies
    */
   async getPolicies(): Promise<any[]> {
-    if (this.mode === 'direct' && this.orchestrator) {
-      return this.orchestrator.getPolicies() as any[];
+    if (this.mode === 'direct') {
+      // Headless: read the active permission profile file directly (the source
+      // of truth the orchestrator loads at startup). No orchestrator/MCP needed.
+      const { root, profile } = OrchestratorClient.resolvePermissionTarget();
+      const { listProfilePolicies } = await import('@nexus-cortex/core');
+      return listProfilePolicies(root, profile);
     } else {
       const response = await fetch(`${this.serverUrl}/permissions/policies`);
       if (!response.ok) {
@@ -716,12 +780,13 @@ export class OrchestratorClient {
    * Grant permission to a tool (convenience method)
    * Creates a WhitelistPolicy for the specified tool
    */
-  async grantToolPermission(toolName: string): Promise<void> {
-    if (this.mode === 'direct' && this.orchestrator) {
-      // Import WhitelistPolicy from core
-      const { WhitelistPolicy } = await import('@nexus-cortex/core');
-      const policy = new WhitelistPolicy([toolName], 40);
-      this.orchestrator.registerPolicy(policy);
+  async grantToolPermission(toolName: string): Promise<PermissionWriteResult | void> {
+    if (this.mode === 'direct') {
+      // Headless: persist to the active permission profile file so the grant
+      // survives across invocations (in-memory registerPolicy would evaporate).
+      const { root, profile } = OrchestratorClient.resolvePermissionTarget();
+      const { grantToolInProfile } = await import('@nexus-cortex/core');
+      return grantToolInProfile(root, profile, toolName);
     } else {
       const response = await fetch(`${this.serverUrl}/permissions/tool/${toolName}`, {
         method: 'POST',
@@ -738,12 +803,12 @@ export class OrchestratorClient {
    * Revoke permission from a tool (convenience method)
    * Creates a BlacklistPolicy for the specified tool
    */
-  async revokeToolPermission(toolName: string): Promise<void> {
-    if (this.mode === 'direct' && this.orchestrator) {
-      // Import BlacklistPolicy from core
-      const { BlacklistPolicy } = await import('@nexus-cortex/core');
-      const policy = new BlacklistPolicy([toolName], 100);
-      this.orchestrator.registerPolicy(policy);
+  async revokeToolPermission(toolName: string): Promise<PermissionWriteResult | void> {
+    if (this.mode === 'direct') {
+      // Headless: persist to the active permission profile file.
+      const { root, profile } = OrchestratorClient.resolvePermissionTarget();
+      const { revokeToolInProfile } = await import('@nexus-cortex/core');
+      return revokeToolInProfile(root, profile, toolName);
     } else {
       const response = await fetch(`${this.serverUrl}/permissions/tool/${toolName}`, {
         method: 'DELETE'
@@ -861,6 +926,7 @@ export class OrchestratorClient {
         id: model.id,
         owned_by: model.provider,
         displayName: model.displayName,
+        apiPattern: model.api.pattern,
         contextWindow: model.limits.contextWindow,
         outputTokens: model.limits.outputTokens,
         inputCostPer1M: model.cost?.inputPerMillion || 0,
@@ -943,7 +1009,7 @@ export class OrchestratorClient {
   async listTools(grouped?: boolean): Promise<any> {
     if (this.mode === 'direct' && this.orchestrator) {
       // Get tool definitions from orchestrator
-      const toolDefs = (this.orchestrator as any).getToolDefinitions?.() ?? [];
+      const toolDefs = this.orchestrator.getToolDefinitions();
 
       if (grouped) {
         // Group tools by category
@@ -983,7 +1049,7 @@ export class OrchestratorClient {
   async getToolInfo(toolName: string): Promise<any> {
     if (this.mode === 'direct' && this.orchestrator) {
       // Get all tool definitions and find the requested one
-      const toolDefs = (this.orchestrator as any).getToolDefinitions?.() ?? [];
+      const toolDefs = this.orchestrator.getToolDefinitions();
       const tool = toolDefs.find((t: any) => t.name === toolName);
 
       if (!tool) {

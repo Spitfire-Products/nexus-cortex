@@ -4174,6 +4174,14 @@ export class CortexOrchestrator {
   }
 
   /**
+   * List all base tool definitions (canonical names, schemas, categories).
+   * Surfaces the existing tools from the factory — does not create new ones.
+   */
+  getToolDefinitions(): ReturnType<typeof toolFactory.getAllTools> {
+    return toolFactory.getAllTools();
+  }
+
+  /**
    * Get adapter registry (for advanced use cases)
    */
   getAdapterRegistry(): AdapterRegistry {

@@ -12,17 +12,18 @@ export interface ListMcpServersOptions {
 
 export async function listMcpServers(options: ListMcpServersOptions): Promise<void> {
   const theme = ThemeManager.getTheme();
+
+  // Determine mode from environment
+  const envMode = (process.env.CORTEX_MODE);
+  const mode = envMode === 'server' ? 'server' : 'direct';
+
+  const client = new OrchestratorClient({
+    mode,
+    serverUrl: options.serverUrl || ConfigManager.get('serverUrl'),
+    debug: process.env.DEBUG === 'true'
+  });
+
   try {
-    // Determine mode from environment
-    const envMode = (process.env.CORTEX_MODE);
-    const mode = envMode === 'server' ? 'server' : 'direct';
-
-    const client = new OrchestratorClient({
-      mode,
-      serverUrl: options.serverUrl || ConfigManager.get('serverUrl'),
-      debug: process.env.DEBUG === 'true'
-    });
-
     await client.initialize();
     const response = await client.listMcpServers();
 
@@ -63,6 +64,8 @@ export async function listMcpServers(options: ListMcpServersOptions): Promise<vo
     }
   } catch (error: any) {
     console.error(theme.colors.error('✗ Error listing MCP servers:'), error.message);
-    process.exit(1);
+    process.exitCode = 1;
+  } finally {
+    await client.disconnect();
   }
 }

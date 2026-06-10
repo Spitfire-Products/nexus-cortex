@@ -54,6 +54,6 @@ export async function permissionsPolicies(
 
   } catch (error: any) {
     console.error(theme.colors.error(`Error: ${error.message}`));
-    process.exit(1);
+    process.exitCode = 1;
   }
 }

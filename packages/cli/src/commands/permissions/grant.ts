@@ -33,24 +33,28 @@ export async function permissionsGrant(
     if (!toolName) {
       console.error(theme.colors.error('Error: Tool name is required'));
       console.log(theme.colors.muted('\nUsage: cortex permissions grant <tool>'));
-      process.exit(1);
+      process.exitCode = 1;
       return;
     }
 
-    // Grant permission
-    await client.grantToolPermission(toolName);
+    // Grant permission (persists to the active permission profile file)
+    const result = await client.grantToolPermission(toolName);
 
     // JSON output
     if (options.json) {
-      console.log(JSON.stringify({ success: true, toolName }, null, 2));
+      console.log(JSON.stringify({ success: true, toolName, ...(result || {}) }, null, 2));
       return;
     }
 
     // Formatted output
-    console.log(theme.colors.success(`\n✓ Permission granted for tool: ${toolName}\n`));
+    console.log(theme.colors.success(`\n✓ Permission granted for tool: ${toolName}`));
+    if (result && 'path' in result) {
+      console.log(theme.colors.muted(` Profile: ${result.profile}  (${result.path})`));
+    }
+    console.log();
 
   } catch (error: any) {
     console.error(theme.colors.error(`Error: ${error.message}`));
-    process.exit(1);
+    process.exitCode = 1;
   }
 }

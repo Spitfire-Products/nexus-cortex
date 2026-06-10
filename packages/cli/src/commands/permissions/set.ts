@@ -2,7 +2,7 @@
  * Set permission mode (interactive/auto/disabled)
  */
 
-import { CortexClient } from '../../client/CortexClient.js';
+import { OrchestratorClient } from '../../orchestrator/OrchestratorClient.js';
 import { ConfigManager } from '../../config/ConfigManager.js';
 import { ThemeManager } from '../../themes/ThemeManager.js';
 
@@ -19,8 +19,13 @@ export async function permissionsSet(
   mode: PermissionMode,
   options: PermissionsSetOptions = {}
 ): Promise<void> {
-  const serverUrl = options.serverUrl || ConfigManager.get('serverUrl');
-  const client = new CortexClient(serverUrl);
+  const envMode = process.env.CORTEX_MODE;
+  const clientMode = envMode === 'server' ? 'server' : 'direct';
+  const client = new OrchestratorClient({
+    mode: clientMode,
+    serverUrl: options.serverUrl || ConfigManager.get('serverUrl'),
+    debug: process.env.DEBUG === 'true',
+  });
   const theme = ThemeManager.getTheme();
 
   // Validate mode
@@ -28,7 +33,8 @@ export async function permissionsSet(
   if (!validModes.includes(mode)) {
     console.error(theme.colors.error(`Invalid mode: ${mode}`));
     console.error(theme.colors.muted('Valid modes: interactive, auto, disabled'));
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   try {
@@ -63,6 +69,6 @@ export async function permissionsSet(
 
   } catch (error: any) {
     console.error(theme.colors.error(`Error: ${error.message}`));
-    process.exit(1);
+    process.exitCode = 1;
   }
 }

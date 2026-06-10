@@ -2,7 +2,7 @@
  * Toggle auto-approve actions mode
  */
 
-import { CortexClient } from '../../client/CortexClient.js';
+import { OrchestratorClient } from '../../orchestrator/OrchestratorClient.js';
 import { ConfigManager } from '../../config/ConfigManager.js';
 import { ThemeManager } from '../../themes/ThemeManager.js';
 
@@ -18,8 +18,13 @@ export interface PermissionsAutoApproveOptions {
 export async function permissionsAutoApprove(
   options: PermissionsAutoApproveOptions = {}
 ): Promise<void> {
-  const serverUrl = options.serverUrl || ConfigManager.get('serverUrl');
-  const client = new CortexClient(serverUrl);
+  const envMode = process.env.CORTEX_MODE;
+  const mode = envMode === 'server' ? 'server' : 'direct';
+  const client = new OrchestratorClient({
+    mode,
+    serverUrl: options.serverUrl || ConfigManager.get('serverUrl'),
+    debug: process.env.DEBUG === 'true',
+  });
   const theme = ThemeManager.getTheme();
 
   try {
@@ -55,6 +60,6 @@ export async function permissionsAutoApprove(
 
   } catch (error: any) {
     console.error(theme.colors.error(`Error: ${error.message}`));
-    process.exit(1);
+    process.exitCode = 1;
   }
 }

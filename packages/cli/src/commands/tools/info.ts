@@ -93,6 +93,8 @@ export async function toolsInfo(
     } else {
       console.error(theme.colors.error(`Error: ${error.message}`));
     }
-    process.exit(1);
+    process.exitCode = 1;
+  } finally {
+    await client.disconnect();
   }
 }

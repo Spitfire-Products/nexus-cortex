@@ -70,6 +70,9 @@ export async function listModels(options: {
     }
   } catch (error: any) {
     console.error(theme.colors.error('Error:'), error.message);
-    process.exit(1);
+    process.exitCode = 1;
+  } finally {
+    // Release MCP sockets / watchers so the process exits instead of hanging
+    await client.disconnect();
   }
 }

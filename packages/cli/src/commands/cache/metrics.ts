@@ -90,6 +90,8 @@ export async function cacheMetrics(
 
   } catch (error: any) {
     console.error(theme.colors.error(`Error: ${error.message}`));
-    process.exit(1);
+    process.exitCode = 1;
+  } finally {
+    await client.disconnect();
   }
 }
