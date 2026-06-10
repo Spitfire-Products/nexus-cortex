@@ -58,6 +58,19 @@ if (__firstPositional && COMMANDER_SUBCOMMANDS.has(__firstPositional)) {
   process.exit(res.status ?? 0);
 }
 
+// `cortex agent "<task>"` (alias: `cortex run`) — an autonomous one-shot agent run.
+// Same as the chat one-shot, but bundles the unattended defaults: auto-approve tools
+// (YOLO), a fresh session, server self-stop on idle, and an optional --cwd to target a
+// directory without `cd`. Defaults are applied after flag parsing (below).
+let __agentMode = false;
+{
+  const i = args.findIndex((a) => !a.startsWith('-'));
+  if (i !== -1 && (args[i] === 'agent' || args[i] === 'run')) {
+    __agentMode = true;
+    args.splice(i, 1); // drop the subcommand word; the rest is flags + the task
+  }
+}
+
 function hasFlag(name) {
   const idx = args.indexOf(name);
   if (idx !== -1) { args.splice(idx, 1); return true; }
@@ -77,7 +90,7 @@ function getFlagValue(name) {
 // Extract flags before consuming remaining args as prompt
 const showHelp = hasFlag('--help') || hasFlag('-h');
 const jsonOutput = hasFlag('--json');
-const newSession = hasFlag('--new');
+let newSession = hasFlag('--new');
 const showStats = hasFlag('--stats');
 const showSessions = hasFlag('--sessions');
 const doShutdown = hasFlag('--shutdown');
@@ -87,9 +100,36 @@ const modelId = getFlagValue('--model') || getFlagValue('-m');
 const resumeId = getFlagValue('--resume');
 const prMode = getFlagValue('--pr');
 const timeoutFlag = getFlagValue('--timeout');
-const idleTimeoutFlag = getFlagValue('--idle-timeout');
+let idleTimeoutFlag = getFlagValue('--idle-timeout');
+const cwdFlag = getFlagValue('--cwd');     // `cortex agent` target directory
+hasFlag('--yolo');                         // accepted but redundant — agent auto-approves by default
 const messageTimeoutMs = timeoutFlag ? parseInt(timeoutFlag, 10) : 600000; // 10 min default for messages
 let prompt = args.join(' ').trim();
+
+// Apply `cortex agent` autonomous defaults. Set BEFORE the server is auto-started so the
+// spawned server inherits the cwd (project path) + YOLO env.
+if (__agentMode) {
+  if (cwdFlag) {
+    try {
+      process.chdir(resolve(cwdFlag));
+    } catch (e) {
+      process.stderr.write(`[agent] --cwd: cannot enter ${cwdFlag}: ${e.message}\n`);
+      process.exit(1);
+    }
+  }
+  newSession = true;                                    // each task is independent
+  if (idleTimeoutFlag === null) idleTimeoutFlag = '60'; // server self-stops; no orphan
+  // Headless autonomous runs have NO interactive approver — there is no human in the loop
+  // to say yes/no to a tool. So the agent auto-approves all tools (the practical reality of
+  // unattended operation). Disclosed up front; scope `cortex agent` to a throwaway / worktree
+  // / sandbox directory on a real repo. (A future opt-in "agent-safe" profile would hard-deny
+  // destructive ops instead of auto-approving — see research/future_ideas.)
+  process.env.YOLO = 'true';
+  process.stderr.write(
+    '[agent] autonomous: auto-approving all tools (headless has no interactive approver). ' +
+    'Point it at a throwaway/worktree/sandbox dir if the files matter.\n',
+  );
+}
 
 // ── Help ──────────────────────────────────────────────────────────
 
@@ -99,6 +139,7 @@ cortex — Natural language interface to the Nexus Cortex library
 
 USAGE:
   cortex "your prompt here"              Send a message (continues current session)
+  cortex agent "<task>"                  Autonomous one-shot agent run (see below)
   cortex --new "start fresh"             Start new session, then send message
   cortex --model MODEL_ID "prompt"       Use a specific model
   cortex --resume SESSION_ID "prompt"    Resume a specific session
@@ -109,6 +150,16 @@ USAGE:
   cortex --shutdown                      Stop the running server
   cortex --idle-timeout 300 "prompt"     Auto-shutdown server after 300s idle
 
+AGENT (autonomous one-shot):
+  cortex agent "<task>"                  Run one autonomous agent task to completion, then exit.
+  cortex agent --cwd <dir> "<task>"      Target a directory (no need to cd into it first).
+                                         Autonomous & unattended: auto-approves all tools
+                                         (headless has no interactive approver), starts a fresh
+                                         session, and self-stops the server on idle. On a real
+                                         repo, point it at a throwaway/worktree/sandbox dir.
+                                         Combine with --json for scripting/agent pipelines.
+                                         (alias: cortex run "<task>")
+
 FLAGS:
   --help, -h          Show this help
   --model, -m ID      Model to use (overrides server default)
@@ -118,6 +169,7 @@ FLAGS:
   --quiet, -q         Response text only, no session info
   --timeout MS        Request timeout in ms (default: 600000 = 10 min)
   --idle-timeout SECS Auto-shutdown server after N seconds of inactivity
+  --cwd DIR           (agent) Run in DIR — the agent's file tools operate there
   --shutdown          Stop the running server and exit
   --tmux              List active tmux sessions with dashboard URLs
   --stats             Show current session statistics
@@ -208,6 +260,13 @@ async function startServer() {
     await new Promise(r => setTimeout(r, 500));
     if (await isServerUp()) {
       process.stderr.write(`[cortex] Server ready on ${BASE_URL}\n`);
+      // The server is detached + unref'd so it persists on its own. Its piped
+      // stdio handles, however, keep THIS short-lived client's event loop alive
+      // — so after a one-shot the client would hang until killed. Unref the
+      // pipes so the client can exit cleanly once its request completes while
+      // the background server keeps running.
+      serverProcess.stdout?.unref?.();
+      serverProcess.stderr?.unref?.();
       return;
     }
   }
