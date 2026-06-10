@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.10.0] - 2026-06-10
+
+### Added
+
+- **Claude Fable 5 model** (`claude-fable-5`) — Anthropic's top-tier model, registered
+  across the Anthropic provider with adaptive-thinking support (1M context, 128K output).
+
+### Changed
+
+- **Hardened the git/PR & worktree tools.** `PRAgent` and `WorkspaceManager` now shell
+  out without a shell (`execFile` with argument arrays) and validate every repo/branch/PR
+  input, closing shell- and argument-injection vectors. A new opt-in allow-list governs
+  what they can touch — `GIT_ALLOWED_REPOS`, `GIT_ALLOWED_ACTIONS`, `GIT_AUTH_TOKEN`
+  (kept in the subprocess env, never on argv or in a URL), and `GIT_HOST` (GitHub
+  Enterprise). The `/v1/pr/webhook` endpoint now verifies GitHub's `X-Hub-Signature-256`
+  HMAC (`GITHUB_WEBHOOK_SECRET`) and is disabled unless a secret is set.
+- **Cleaner worktree lifecycle** — `cleanup` removes the worktree, the branch it created,
+  and (for clones) the clone directory; uses the OS temp dir; surfaces real subprocess
+  errors; honors cancellation.
+
+### Fixed
+
+- **EndTurn no longer rejects valid attestations.** The end-of-turn audit tool stopped
+  looping on well-formed input that omitted optional evidence arrays, and it's no longer
+  surfaced to the model when its gate is disabled.
+
+### Security
+
+- **`.env` is now gitignored** so your API keys and `CLAUDE_CODE_OAUTH_TOKEN` are never
+  committed. Copy `.env.example` to `.env` to configure.
+- **`.cortex/config.json` (UI preferences) can never hold a secret** — a save-time guard
+  strips any secret-looking key before writing this tracked file.
+
+### Documentation
+
+- **Complete environment-variable reference** in the README — every supported variable,
+  its default, and how to use it.
+- **Claude credential guide** — where to put the OAuth token
+  (`~/.claude/.credentials.json` via `claude login`, or `CLAUDE_CODE_OAUTH_TOKEN`), the
+  resolution order, and the `ANTHROPIC_AUTH_METHOD` switch.
+
+---
+
 ## [4.9.0] - 2026-06-10
 
 Initial public release of the Nexus Cortex monorepo (Release 1: the engine).
