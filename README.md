@@ -735,12 +735,26 @@ Governs the `PRAgent` & `WorkspaceManager` tools and the `/v1/pr/*` routes. Inpu
 
 ### Editing settings
 
-There is no separate settings file — all configuration is the environment variables above, read from `.env` (or the process environment). Two ways to change them:
+The behavioral configuration above is all environment variables, read from `.env` (or the process environment). Two ways to change them:
 
 - **Edit `.env`** directly (copy from `.env.example`), or set the variable inline at launch.
 - **`/config`** in the CLI — an interactive editor that reads/writes `.env` against the schema in `packages/core/src/config/SettingsSchema.ts` (with validation and defaults). `cortex config reset` restores the proven-optimal defaults while preserving your API keys.
 
-Project-scoped resources (agents, slash commands, permissions, MCP servers, system messages) live under `.cortex/` — see those sections below.
+### UI preferences file (`.cortex/config.json`)
+
+Separately, the interactive terminal UIs persist your **theme** and **default model** to `.cortex/config.json` (in the project's `.cortex/` directory). You don't edit this by hand — it's written automatically when you pick a theme or model in the UI (`/theme`, the model picker). It supports a legacy flat shape and per-launcher overrides (`neoncortex`, `fuzzycortex`, `cortexserver`):
+
+```json
+{
+  "theme": "monokai",
+  "defaultModel": "claude-sonnet-4-6",
+  "neoncortex": { "theme": "dracula", "defaultModel": "grok-4.3" }
+}
+```
+
+A per-launcher entry overrides the flat values for that launcher. Behavioral settings (permissions, MCP auto-inject, debug, etc.) are **not** stored here — those are the `.env` variables above.
+
+Project-scoped resources (agents, slash commands, permissions, MCP servers, system messages) also live under `.cortex/` — see those sections below.
 
 ### MCP Configuration
 
