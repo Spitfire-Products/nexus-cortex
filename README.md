@@ -13,8 +13,8 @@ Nexus Cortex is a production-ready AI development CLI that provides direct acces
 ### Key Features
 
 - **Direct-Wired Architecture** — core library runs in-process for zero-latency tool execution; optional HTTP server for remote/web clients.
-- **Multi-Provider Support** — Anthropic, OpenAI, Google (Gemini + Gemma), xAI, Cloudflare Workers AI, DeepSeek, Zhipu/GLM, Qwen, Moonshot, MiniMax, and Mercury, through a pluggable adapter layer. Run `cortex models list` for the live set.
-- **Built-in tool suite** — file ops, search (glob/grep), shell, web fetch/search + headless browser, sub-agent dispatch (`Task`), conversation-history retrieval, MCP tool discovery, and a sandboxed-artifact toolset. Run `cortex tools list` for the live set.
+- **Multi-Provider Support** — <!--AUTO-COUNT:models-->86<!--/AUTO-COUNT--> models across <!--AUTO-COUNT:providers-->11<!--/AUTO-COUNT--> providers (Anthropic, OpenAI, Google/Gemini + Gemma, xAI, Cloudflare Workers AI, DeepSeek, Zhipu/GLM, Qwen, Moonshot, MiniMax, Mercury) through a pluggable adapter layer. Run `cortex models list` for the live set.
+- **<!--AUTO-COUNT:tools-->45<!--/AUTO-COUNT--> built-in tools** — file ops, search (glob/grep), shell, web fetch/search + headless browser, sub-agent dispatch (`Task`), conversation-history retrieval, MCP tool discovery, and a sandboxed-artifact toolset. Run `cortex tools list` for the live set.
 - **Sandboxed artifacts** — spin up runnable web/server apps (tmux-managed) with screenshot/DOM/console/network/accessibility snapshots, plus **React artifacts** and **React introspection senses** (live component tree, props, render-trace).
 - **Sub-agents** — parallel `Task` dispatch with per-agent permissions and optional tmux visual monitoring.
 - **Git & PR tooling** — PR review/create/list (`PRAgent`) and isolated git worktrees (`WorkspaceManager`), with an opt-in repo/action allow-list and HMAC-verified webhook.
@@ -324,10 +324,11 @@ const response = await orchestrator.processMessage({
 
 ### 2. Multi-Provider System
 
-Models from every major provider, reached through a pluggable adapter layer (Messages,
-Chat Completions, GenerateContent, GenAI, Responses). Each provider is enabled by its
-API key — set only the ones you use. **Run `cortex models list` for the live, exact set;**
-the examples below are illustrative, not exhaustive.
+**<!--AUTO-COUNT:models-->86<!--/AUTO-COUNT--> models across <!--AUTO-COUNT:providers-->11<!--/AUTO-COUNT--> providers**, reached through a pluggable adapter
+layer (Messages, Chat Completions, GenerateContent, GenAI, Responses). Each provider is
+enabled by its API key — set only the ones you use. **Run `cortex models list` for the
+live, exact set;** the examples below are illustrative, not exhaustive. (These counts
+auto-update from the registry — see `scripts/update-doc-counts.mjs`.)
 
 | Provider | Example models | API key |
 |----------|----------------|---------|
@@ -345,10 +346,10 @@ the examples below are illustrative, not exhaustive.
 
 ### 3. Tool System
 
-A built-in tool suite with read-before-edit safety and a dual registry (immutable base
-tools + dynamic addon tools), plus any tools discovered from connected MCP servers. The
-groups below are illustrative — **run `cortex tools list` (or `/tools list`) for the live,
-authoritative set with descriptions.** By category:
+**<!--AUTO-COUNT:tools-->45<!--/AUTO-COUNT--> built-in tools** with read-before-edit safety and a dual registry (immutable
+base tools + dynamic addon tools), plus any tools discovered from connected MCP servers.
+The groups below are illustrative — **run `cortex tools list` (or `/tools list`) for the
+live, authoritative set with descriptions.** By category:
 
 - **File & notebook** — `Read`, `Write`, `WriteBinary`, `Edit`, `NotebookEdit`
 - **Search** — `Glob`, `Grep`

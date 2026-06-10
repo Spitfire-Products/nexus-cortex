@@ -98,6 +98,11 @@ else
   echo "[SKIP] packages/tui not present (Release 2 package — engine-only checkout)"
 fi
 
+# Refresh auto-updating doc counts from the freshly-built registries (non-fatal).
+if [ -f scripts/update-doc-counts.mjs ]; then
+  node scripts/update-doc-counts.mjs || echo "[WARN] doc-count refresh skipped"
+fi
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "NEXUS CORTEX BUILD COMPLETE!"

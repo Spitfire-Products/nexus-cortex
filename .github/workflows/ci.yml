@@ -16,6 +16,14 @@ jobs:
       - name: Lint (fails on error-level issues; warnings are a tidy-up backlog)
         run: npm run lint
       - run: npm run build
+      - name: Doc counts up to date (build auto-refreshes them; fail if the commit was stale)
+        run: |
+          if ! git diff --quiet -- README.md; then
+            echo "::error::README registry counts are stale. Run 'npm run docs:counts' and commit."
+            git --no-pager diff -- README.md
+            exit 1
+          fi
+          echo "[OK] README counts match the registries"
       - name: Tests (fresh-clone mode, no API keys)
         run: |
           for p in core executors server cli tui; do

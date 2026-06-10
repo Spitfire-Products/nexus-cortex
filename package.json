@@ -10,6 +10,8 @@
     "build": "bash scripts/build.sh",
     "clean": "rm -rf packages/*/dist",
     "link": "bash scripts/link-global.sh",
+    "docs:counts": "node scripts/update-doc-counts.mjs",
+    "docs:counts:check": "node scripts/update-doc-counts.mjs --check",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "npm run build && changeset publish",
