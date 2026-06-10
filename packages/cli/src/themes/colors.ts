@@ -70,6 +70,28 @@ function loadCortexConfig(): CortexConfig {
 }
 
 /**
+ * `.cortex/config.json` is a TRACKED file (committed to git) holding only UI
+ * preferences — theme + default model. Its interface is open-ended
+ * (`[key: string]: unknown`), so this guard structurally prevents any
+ * secret-looking key (token/secret/key/password/oauth/credential) from ever
+ * being persisted here, even via a future regression or a hand-edited config.
+ * Secrets belong in `.env` / the environment / `~/.claude/.credentials.json`,
+ * never in a project-tracked file.
+ */
+const SECRET_KEY_RE = /token|secret|password|api[_-]?key|credential|oauth/i;
+
+function stripSecretKeys<T>(value: T): T {
+  if (!value || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map((v) => stripSecretKeys(v)) as unknown as T;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (SECRET_KEY_RE.test(k)) continue; // drop the secret-bearing key entirely
+    out[k] = stripSecretKeys(v);
+  }
+  return out as unknown as T;
+}
+
+/**
  * Save cortex config to .cortex/config.json
  */
 function saveCortexConfig(config: CortexConfig): boolean {
@@ -79,7 +101,9 @@ function saveCortexConfig(config: CortexConfig): boolean {
       mkdirSync(cortexDir, { recursive: true });
     }
     const configPath = getCortexConfigPath();
-    writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+    // Never let a secret-looking key reach this tracked file.
+    const safe = stripSecretKeys(config);
+    writeFileSync(configPath, JSON.stringify(safe, null, 2), 'utf-8');
     return true;
   } catch {
     return false;

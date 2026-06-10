@@ -7,8 +7,10 @@ dist/
 packages/*/dist/
 **/*.tsbuildinfo
 
-# Environment files (NOTE: .env is NOT ignored — it is the source of truth for all config)
-# .env
+# Environment files — your real secrets (API keys, CLAUDE_CODE_OAUTH_TOKEN) live in
+# .env, which is ignored so it is never committed. The tracked template is .env.example;
+# copy it to .env and fill it in. (Prefer ~/.claude/.credentials.json for Claude OAuth.)
+.env
 .env.local
 .env.*.local
 

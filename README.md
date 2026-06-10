@@ -56,6 +56,36 @@ curl -s http://localhost:4000/v1/messages \
 npm install && npm run build               # 7-pass build of all 6 packages
 ```
 
+### Credentials
+
+Configuration lives in a `.env` file that you create from the tracked template (`.env` itself is gitignored so your keys are never committed):
+
+```bash
+cp .env.example .env        # then edit .env and add the provider keys you use
+```
+
+Set only the keys for the providers you use — see [API keys & authentication](#api-keys--authentication) for the full list.
+
+**Claude (Anthropic) — API key _or_ OAuth.** Either works; pick one:
+
+- **API key:** set `ANTHROPIC_API_KEY=sk-ant-…` in `.env`.
+- **OAuth (Claude.ai Pro/Max subscription)** — two ways to provide the token, resolved in this order:
+  1. **`~/.claude/.credentials.json`** *(preferred)* — created automatically when you run `claude login` (Claude Code). If you've already done that, the harness reads it as-is; nothing else to do. It lives in your home directory (not the project), is written owner-only (`chmod 600`), and includes the refresh token so it renews itself. To create it by hand instead:
+     ```bash
+     mkdir -p ~/.claude && chmod 700 ~/.claude
+     cat > ~/.claude/.credentials.json <<'JSON'
+     { "claudeAiOauth": {
+         "accessToken": "sk-ant-oat01-…",
+         "refreshToken": "sk-ant-ort01-…",
+         "expiresAt": 1765400000000,
+         "scopes": ["user:inference"] } }
+     JSON
+     chmod 600 ~/.claude/.credentials.json
+     ```
+  2. **`CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-…`** in `.env` (or the environment) — a bare token, handy for headless/CI where there's no `claude login`.
+
+Resolution order is **`~/.claude/.credentials.json` → `CLAUDE_CODE_OAUTH_TOKEN` → `ANTHROPIC_API_KEY`**, and you can pin it with `ANTHROPIC_AUTH_METHOD=auto|oauth|api-key` (default `auto`). The OAuth token is **never** written to any project file — keep it in the home-dir credentials file or `.env`, both outside version control.
+
 See [Headless Mode](#headless-mode) for the full server workflow, or [CLI Interface](#cli-interface) for the interactive terminal UI.
 
 ---
@@ -748,11 +778,12 @@ Separately, the interactive terminal UIs persist your **theme** and **default mo
 {
   "theme": "monokai",
   "defaultModel": "claude-sonnet-4-6",
-  "neoncortex": { "theme": "dracula", "defaultModel": "grok-4.3" }
+  "neoncortex":  { "theme": "dracula", "defaultModel": "grok-4.3" },
+  "fuzzycortex": { "theme": "monokai" }
 }
 ```
 
-A per-launcher entry overrides the flat values for that launcher. Behavioral settings (permissions, MCP auto-inject, debug, etc.) are **not** stored here — those are the `.env` variables above.
+Each interactive launcher keeps its own theme/model — `neoncortex` (Ink UI), `fuzzycortex` (Chalk UI), `cortexserver` — and a per-launcher entry overrides the flat values for that launcher. **Only** UI preferences are stored here: behavioral settings (permissions, MCP auto-inject, debug, etc.) are `.env` variables, and secrets/tokens (e.g. `CLAUDE_CODE_OAUTH_TOKEN`) are **never** written to this tracked file — a save-time guard strips any secret-looking key.
 
 Project-scoped resources (agents, slash commands, permissions, MCP servers, system messages) also live under `.cortex/` — see those sections below.
 
