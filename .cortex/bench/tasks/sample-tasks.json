@@ -15,6 +15,6 @@
     "id": "registered-tool-count",
     "taskType": "T3",
     "prompt": "How many base tool executors are registered in packages/executors/src/ExecutorRegistry.ts? Reply with just the number.",
-    "verifier": { "type": "regex", "pattern": "\\b(2[5-9]|3[0-5])\\b" }
+    "verifier": { "type": "regex", "pattern": "\\b(4[0-9]|50)\\b" }
   }
 ]
