@@ -142,6 +142,13 @@ async function handleStart(message: IPCStartMessage): Promise<void> {
     // MCP is off by default but Browse subagents override MCP_AUTO_INJECT=true
     // via envOverrides — honour that so they get nexus-browser tools.
     const enableMcp = process.env.MCP_AUTO_INJECT === 'true';
+    // Enforce the agent definition's tool whitelist on the model-facing BASE
+    // tools. A declared `tools` array (e.g. browse-agent's [Read,Grep,Glob,
+    // Todo*]) restricts the base set so the sub-agent can't fall back to
+    // WebFetch/WebSearch/Browse — it must use its injected MCP tools. `'all'`
+    // or an omitted list leaves all base tools available (no restriction).
+    const agentTools = payload.agentDefinition.tools;
+    const allowedBaseTools = Array.isArray(agentTools) ? agentTools : undefined;
     const config: OrchestratorConfig = {
       defaultModelId: payload.modelId,
       projectPath: payload.projectPath,
@@ -150,6 +157,7 @@ async function handleStart(message: IPCStartMessage): Promise<void> {
       enableTimeline: false,
       debug: payload.debug ?? false,
       enableMcp,
+      allowedBaseTools,
     };
 
     // Create orchestrator with permissions enabled

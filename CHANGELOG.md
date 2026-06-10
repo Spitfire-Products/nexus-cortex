@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.11.0] - 2026-06-10
+
+### Added
+
+- **Project agents discoverable from any directory.** Agents shipped with the install
+  (under `$CORTEX_ROOT/.cortex/agents`) now load no matter where you launch from, and the
+  `project` tier walks up from the current directory to the nearest `.cortex/agents` — so a
+  project's agents resolve even when you start the tool from a subdirectory.
+- **Agent scope marker.** Listing agents (`Task` with `subagent_type: "list"`) now shows a
+  `Scope` column marking which agents are specific to the current project (`*`) versus
+  personal (`~/.cortex`) or shipped builtins.
+
+### Fixed
+
+- **CLI introspection commands repaired.** `cortex tools list` (was reporting zero tools),
+  `tools info`, `models list` / `info` / `switch`, `mcp list`, and `cache metrics` now
+  return correct data and exit cleanly instead of hanging on open MCP connections.
+  (`models info` also no longer crashes on a field-name mismatch.)
+- **`cortex permissions` works headless.** `grant`, `revoke`, `policies`, `tools`, `mode`,
+  `set`, and `auto-approve` now read and write the active permission profile file directly
+  — persisting across runs — instead of failing with "fetch failed" when no server is
+  running. Grants/revokes target the project-level profile only, never your global
+  `~/.cortex` one. Honors `PERMISSION_PROFILE` (default `dev`).
+- **Browse sub-agent uses the real browser tools.** The headless `browse` agent's tool
+  whitelist is now enforced, so it can no longer fall back to `WebFetch`/`WebSearch` and
+  drives the nexus-browser MCP tools as intended.
+- **nexus-browser MCP no longer floods the terminal UI.** Transient SSE stream drops are
+  handled quietly (the client auto-reconnects), and an HTTP keep-alive setting prevents the
+  idle stream from being terminated every few minutes — so the TUI is no longer spammed
+  with `SSE stream disconnected` errors.
+
+---
+
 ## [4.10.0] - 2026-06-10
 
 ### Added

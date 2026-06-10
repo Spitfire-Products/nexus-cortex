@@ -12,6 +12,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { EventEmitter } from 'events';
+import { resolveProjectAgentsDir } from './projectRoot.js';
 import type {
   AgentDefinition,
   AgentPermissions,
@@ -32,6 +33,14 @@ export interface AgentStoreConfig {
 
   /** Personal ~/.cortex/agents/ directory */
   personalDir?: string;
+
+  /**
+   * Built-in / shipped .cortex/agents/ directory (the install root). Defaults
+   * to `$CORTEX_ROOT/.cortex/agents` so the agents that ship with the install
+   * are discoverable regardless of the current working directory. Lowest
+   * priority — project and personal agents override builtins by name.
+   */
+  builtinDir?: string;
 
   /** Enable file watching for hot reload */
   enableWatching?: boolean;
@@ -75,6 +84,7 @@ export class AgentStore extends EventEmitter {
   private agentFileCache: Map<string, { agent: AgentDefinition; mtime: number }> = new Map();
   private projectDir: string;
   private personalDir: string;
+  private builtinDir?: string;
   private enableWatching: boolean;
   private debug: boolean;
   private watchers: fs.FileHandle[] = [];
@@ -82,8 +92,19 @@ export class AgentStore extends EventEmitter {
 
   constructor(config: AgentStoreConfig = {}) {
     super();
-    this.projectDir = config.projectDir || path.join(process.cwd(), '.cortex', 'agents');
+    // Walk up from cwd to the nearest project root containing .cortex/agents so
+    // project agents resolve when launched from a subdirectory.
+    this.projectDir = config.projectDir || resolveProjectAgentsDir(process.cwd());
     this.personalDir = config.personalDir || path.join(os.homedir(), '.cortex', 'agents');
+    // Built-in/shipped agents live under the install root ($CORTEX_ROOT). This
+    // makes them discoverable from any cwd — without it, the agents that ship
+    // with the install only appear when you happen to launch from the install
+    // directory. Undefined when CORTEX_ROOT is unset (no builtin tier).
+    this.builtinDir =
+      config.builtinDir ||
+      (process.env.CORTEX_ROOT
+        ? path.join(process.env.CORTEX_ROOT, '.cortex', 'agents')
+        : undefined);
     this.enableWatching = config.enableWatching ?? false;
     this.debug = config.debug ?? false;
   }
@@ -105,11 +126,35 @@ export class AgentStore extends EventEmitter {
   async loadAllAgents(): Promise<void> {
     this.agents.clear();
 
-    // Load personal agents first (lower priority)
-    await this.loadAgentsFromDir(this.personalDir, 'personal');
-
-    // Load project agents (higher priority, overwrites personal)
-    await this.loadAgentsFromDir(this.projectDir, 'project');
+    // Priority order (lowest first; each tier overwrites the previous by name):
+    //   builtin (shipped/$CORTEX_ROOT) < personal (~/.cortex) < project (cwd)
+    // Skip a tier whose directory duplicates a higher-priority one so the same
+    // file isn't loaded twice under the wrong location label.
+    const loaded = new Set<string>();
+    const tiers: Array<[string | undefined, 'builtin' | 'personal' | 'project']> = [
+      [this.builtinDir, 'builtin'],
+      [this.personalDir, 'personal'],
+      [this.projectDir, 'project'],
+    ];
+    for (let i = 0; i < tiers.length; i++) {
+      const tier = tiers[i];
+      if (!tier) continue;
+      const [dir, location] = tier;
+      if (!dir) continue;
+      const abs = path.resolve(dir);
+      // Skip if a later (higher-priority) tier points at the same directory.
+      let shadowed = false;
+      for (let j = i + 1; j < tiers.length; j++) {
+        const later = tiers[j];
+        if (later && later[0] && path.resolve(later[0]) === abs) {
+          shadowed = true;
+          break;
+        }
+      }
+      if (shadowed || loaded.has(abs)) continue;
+      loaded.add(abs);
+      await this.loadAgentsFromDir(dir, location);
+    }
 
     this.log(`Loaded ${this.agents.size} agents`);
   }
@@ -119,7 +164,7 @@ export class AgentStore extends EventEmitter {
    */
   private async loadAgentsFromDir(
     dir: string,
-    location: 'project' | 'personal'
+    location: 'project' | 'personal' | 'builtin'
   ): Promise<void> {
     try {
       await fs.access(dir);
@@ -162,7 +207,7 @@ export class AgentStore extends EventEmitter {
    */
   private async loadAgentFile(
     filePath: string,
-    location: 'project' | 'personal'
+    location: 'project' | 'personal' | 'builtin'
   ): Promise<AgentDefinition | null> {
     const content = await fs.readFile(filePath, 'utf-8');
     const parsed = this.parseAgentFile(content, filePath);
@@ -483,7 +528,7 @@ export class AgentStore extends EventEmitter {
   /**
    * Get agents by location
    */
-  getByLocation(location: 'project' | 'personal'): AgentDefinition[] {
+  getByLocation(location: 'project' | 'personal' | 'builtin'): AgentDefinition[] {
     return this.getAll().filter((a) => a.location === location);
   }
 
@@ -757,7 +802,7 @@ export function createAgentStore(
   options: { enableWatching?: boolean; debug?: boolean } = {}
 ): AgentStore {
   return new AgentStore({
-    projectDir: path.join(projectRoot, '.cortex', 'agents'),
+    projectDir: resolveProjectAgentsDir(projectRoot),
     personalDir: path.join(os.homedir(), '.cortex', 'agents'),
     enableWatching: options.enableWatching,
     debug: options.debug,

@@ -1,9 +1,10 @@
 import { BaseTool } from '../../base/BaseTool.js';
 import type { ToolResult } from '../../base/ToolResult.js';
 import { promises as fs } from 'fs';
-import { join } from 'path';
+import { join, resolve as resolvePath } from 'path';
 import { homedir } from 'os';
 import { glob } from 'glob';
+import { resolveProjectAgentsDir } from '@nexus-cortex/core';
 
 /**
  * Parameters for Task tool
@@ -25,7 +26,7 @@ interface AgentDefinition {
   tools?: string[];
   model?: string;
   systemPrompt: string;
-  location: 'project' | 'personal';
+  location: 'project' | 'personal' | 'builtin';
   filePath: string;
 }
 
@@ -50,6 +51,7 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
   private agentsCache: Map<string, AgentDefinition> | null = null;
   private projectAgentsDir: string;
   private personalAgentsDir: string;
+  private builtinAgentsDir?: string;
 
   constructor(config: { workingDirectory: string }) {
     const schema = {
@@ -81,8 +83,16 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
 
     super('Task', 'Task', 'Launch a sub-agent to handle complex tasks', schema);
 
-    this.projectAgentsDir = join(config.workingDirectory, '.cortex', 'agents');
+    // Walk up from the working directory to the nearest project root with
+    // .cortex/agents so project agents resolve from any subdirectory.
+    this.projectAgentsDir = resolveProjectAgentsDir(config.workingDirectory);
     this.personalAgentsDir = join(homedir(), '.cortex', 'agents');
+    // Built-in/shipped agents under the install root ($CORTEX_ROOT) — keeps the
+    // agents that ship with the install discoverable from any cwd. Lowest
+    // priority; project/personal override by name.
+    this.builtinAgentsDir = process.env.CORTEX_ROOT
+      ? join(process.env.CORTEX_ROOT, '.cortex', 'agents')
+      : undefined;
   }
 
   validateToolParams(params: TaskParams): string | null {
@@ -248,11 +258,32 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
   private async loadAgents(signal: AbortSignal): Promise<void> {
     this.agentsCache = new Map();
 
-    // Load personal agents first (lower priority)
-    await this.loadAgentsFromDirectory(this.personalAgentsDir, 'personal', signal);
-
-    // Load project agents second (higher priority - will override personal)
-    await this.loadAgentsFromDirectory(this.projectAgentsDir, 'project', signal);
+    // Priority order (lowest first; later tiers override earlier by name):
+    //   builtin (shipped/$CORTEX_ROOT) < personal (~/.cortex) < project (cwd).
+    // Skip a tier whose directory duplicates a higher-priority one.
+    const tiers: Array<[string | undefined, 'builtin' | 'personal' | 'project']> = [
+      [this.builtinAgentsDir, 'builtin'],
+      [this.personalAgentsDir, 'personal'],
+      [this.projectAgentsDir, 'project'],
+    ];
+    for (let i = 0; i < tiers.length; i++) {
+      const tier = tiers[i];
+      if (!tier) continue;
+      const [dir, location] = tier;
+      if (!dir) continue;
+      const abs = resolvePath(dir);
+      // Skip if a later (higher-priority) tier points at the same directory.
+      let shadowed = false;
+      for (let j = i + 1; j < tiers.length; j++) {
+        const later = tiers[j];
+        if (later && later[0] && resolvePath(later[0]) === abs) {
+          shadowed = true;
+          break;
+        }
+      }
+      if (shadowed) continue;
+      await this.loadAgentsFromDirectory(dir, location, signal);
+    }
   }
 
   /**
@@ -260,7 +291,7 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
    */
   private async loadAgentsFromDirectory(
     baseDir: string,
-    location: 'personal' | 'project',
+    location: 'personal' | 'project' | 'builtin',
     signal: AbortSignal
   ): Promise<void> {
     try {
@@ -277,10 +308,9 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
         const agentDef = await this.parseAgentFile(agentPath, location);
 
         if (agentDef) {
-          // Project agents override personal agents
-          if (!this.agentsCache!.has(agentDef.name) || location === 'project') {
-            this.agentsCache!.set(agentDef.name, agentDef);
-          }
+          // Tiers are loaded lowest-priority first, so the later (higher-
+          // priority) tier always wins by name — always overwrite.
+          this.agentsCache!.set(agentDef.name, agentDef);
         }
       }
     } catch (error) {
@@ -296,7 +326,7 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
    */
   private async parseAgentFile(
     filePath: string,
-    location: 'personal' | 'project'
+    location: 'personal' | 'project' | 'builtin'
   ): Promise<AgentDefinition | null> {
     try {
       const content = await fs.readFile(filePath, 'utf-8');
@@ -372,7 +402,13 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
     lines.push(`# Agent: ${agent.name}`);
     lines.push('');
     lines.push(`**Description**: ${agent.description}`);
-    lines.push(`**Location**: ${agent.location} (${agent.location === 'project' ? '.cortex/agents/' : '~/.cortex/agents/'})`);
+    const locDir =
+      agent.location === 'project'
+        ? '.cortex/agents/'
+        : agent.location === 'builtin'
+          ? '$CORTEX_ROOT/.cortex/agents/'
+          : '~/.cortex/agents/';
+    lines.push(`**Location**: ${agent.location} (${locDir})`);
     lines.push(`**Model**: ${effectiveModel}`);
 
     if (agent.tools && agent.tools.length > 0) {
@@ -413,14 +449,24 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
 
     if (this.agentsCache && this.agentsCache.size > 0) {
       parts.push('## From .cortex/agents/\n');
-      parts.push('| Agent | Description | Model | Tools |');
-      parts.push('|-------|-------------|-------|-------|');
+      parts.push(
+        '`*` = specific to THIS project (.cortex/agents in the current directory); ' +
+        'others are personal (~/.cortex) or shipped builtins.\n',
+      );
+      parts.push('| Agent | Scope | Description | Model | Tools |');
+      parts.push('|-------|-------|-------------|-------|-------|');
 
       for (const agent of this.agentsCache.values()) {
         const tools = agent.tools?.join(', ') || 'all';
         const model = agent.model || 'inherit';
         const desc = agent.description.split('\n')[0]!.substring(0, 120);
-        parts.push(`| \`${agent.name}\` | ${desc} | ${model} | ${tools} |`);
+        const scope =
+          agent.location === 'project'
+            ? 'project *'
+            : agent.location === 'personal'
+              ? 'personal'
+              : 'builtin';
+        parts.push(`| \`${agent.name}\` | ${scope} | ${desc} | ${model} | ${tools} |`);
       }
     } else {
       parts.push('No custom agents found in .cortex/agents/ or ~/.cortex/agents/');

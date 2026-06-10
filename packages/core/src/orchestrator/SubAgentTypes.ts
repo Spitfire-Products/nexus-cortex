@@ -96,8 +96,8 @@ export interface AgentDefinition {
   /** Model preference - 'inherit', alias, or full model ID */
   model: string;
 
-  /** Where the agent was loaded from */
-  location: 'project' | 'personal';
+  /** Where the agent was loaded from ('builtin' = shipped with the install) */
+  location: 'project' | 'personal' | 'builtin';
 
   /** Full path to the agent's .md file */
   filePath: string;

@@ -149,6 +149,16 @@ export interface OrchestratorConfig {
   /** Enable MCP integration (Phase 2.9) */
   enableMcp?: boolean;
 
+  /**
+   * Restrict the model-facing BASE/factory tools to this allowlist (case- and
+   * separator-insensitive). MCP, management, and context tools are NEVER
+   * filtered by this — they're added on top. Used by forked sub-agents to
+   * enforce their `tools` whitelist (e.g. the browse-agent gets only its
+   * read tools + the injected nexus-browser MCP tools, with no WebFetch/
+   * WebSearch/Browse fallback). Undefined = no restriction (all base tools).
+   */
+  allowedBaseTools?: string[];
+
   /** Working directory for tool execution (Phase 2.5) */
   workingDirectory?: string;
 
@@ -704,9 +714,11 @@ export class CortexOrchestrator {
 
     // Phase 1 & Phase 2: Get tools (used for both injection context and API request)
     const endTurnGateOn = (process.env.CORTEX_ENDTURN_GATE) === 'true';
-    const factoryTools = endTurnGateOn
-      ? toolFactory.getAllTools()
-      : toolFactory.getAllTools().filter(t => t.name !== 'EndTurn');
+    const factoryTools = this.applyBaseToolAllowlist(
+      endTurnGateOn
+        ? toolFactory.getAllTools()
+        : toolFactory.getAllTools().filter(t => t.name !== 'EndTurn'),
+    );
     const mcpTools = this.mcpAutoInject ? this.getMcpToolsAsCanonical() : [];
     const mcpManagementTools = this.getMcpManagementTools();
     const contextManagementTools = this.getContextManagementTools();
@@ -2706,9 +2718,11 @@ export class CortexOrchestrator {
 
     // Get tools (needed for middleware injection decision)
     const endTurnGateOn2 = (process.env.CORTEX_ENDTURN_GATE) === 'true';
-    const factoryTools = endTurnGateOn2
-      ? toolFactory.getAllTools()
-      : toolFactory.getAllTools().filter(t => t.name !== 'EndTurn');
+    const factoryTools = this.applyBaseToolAllowlist(
+      endTurnGateOn2
+        ? toolFactory.getAllTools()
+        : toolFactory.getAllTools().filter(t => t.name !== 'EndTurn'),
+    );
     const mcpTools = this.mcpAutoInject ? this.getMcpToolsAsCanonical() : [];
     const mcpManagementTools = this.getMcpManagementTools();
     const contextManagementTools = this.getContextManagementTools();
@@ -4179,6 +4193,28 @@ export class CortexOrchestrator {
    */
   getToolDefinitions(): ReturnType<typeof toolFactory.getAllTools> {
     return toolFactory.getAllTools();
+  }
+
+  /**
+   * Normalize a tool name for whitelist matching: lowercase + strip non-
+   * alphanumerics so PascalCase canonical names match the lower/snake_case
+   * names used in agent definitions (e.g. `WebSearch` ≡ `web_search`).
+   */
+  private static normalizeToolName(name: string): string {
+    return name.toLowerCase().replace(/[^a-z0-9]/g, '');
+  }
+
+  /**
+   * Apply `config.allowedBaseTools` to the factory/base tool list. Returns the
+   * list unchanged when no allowlist is configured. MCP/management/context
+   * tools are filtered elsewhere — never here — so an allowlisted sub-agent
+   * still receives its injected MCP tools on top of its base whitelist.
+   */
+  private applyBaseToolAllowlist<T extends { name: string }>(tools: T[]): T[] {
+    const allow = this.config.allowedBaseTools;
+    if (!allow || allow.length === 0) return tools;
+    const allowed = new Set(allow.map((t) => CortexOrchestrator.normalizeToolName(t)));
+    return tools.filter((t) => allowed.has(CortexOrchestrator.normalizeToolName(t.name)));
   }
 
   /**
