@@ -34,7 +34,14 @@ describe.skipIf(!RUN)('React senses (tree + render trace) integration', () => {
     dir = await fs.mkdtemp(join(tmpdir(), 'react-senses-'));
     await buildReactArtifact(dir, { code: COUNTER_APP, reactMode: 'bundled' });
     srv = spawn('npx', ['http-server', dir, '-p', String(PORT), '-c-1', '--silent'], { stdio: 'ignore' });
-    await new Promise((r) => setTimeout(r, 2500));
+    // Poll until the server accepts connections — a fixed wait breaks on fresh installs
+    // where npx must first DOWNLOAD http-server (it is not a package dependency).
+    const deadline = Date.now() + 45000;
+    for (;;) {
+      try { await fetch(`http://localhost:${PORT}/`); break; } catch { /* not up yet */ }
+      if (Date.now() > deadline) throw new Error('http-server did not start within 45s');
+      await new Promise((r) => setTimeout(r, 500));
+    }
     bridge = new VisualFeedbackBridge();
     await bridge.initialize();
   }, 60000);
