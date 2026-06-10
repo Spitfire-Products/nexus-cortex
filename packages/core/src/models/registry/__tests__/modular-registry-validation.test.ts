@@ -48,6 +48,30 @@ describe('Modular Registry Validation', () => {
       expect(anthropicModels.length).toBeGreaterThan(0);
       expect(anthropicModels.some(m => m.id === 'claude-sonnet-4-5-20250929')).toBe(true);
       expect(anthropicModels.some(m => m.id === 'claude-haiku-4-5')).toBe(true);
+      expect(anthropicModels.some(m => m.id === 'claude-fable-5')).toBe(true);
+    });
+
+    it('claude-fable-5 card should match the live Models API spec', () => {
+      // Verified against GET /v1/models/claude-fable-5 (2026-06-10):
+      // max_input_tokens 1M, max_tokens 128K, thinking adaptive-only.
+      const registry = new ModularModelRegistry();
+      const model = registry.getModel('claude-fable-5');
+
+      expect(model.provider).toBe('anthropic');
+      expect(model.displayName).toBe('Claude Fable 5');
+      // The family gates the adaptive-thinking-only request surface in APIClient —
+      // thinking.type 'enabled'/budget_tokens (and explicit 'disabled') 400 on Fable 5.
+      expect(model.family).toBe('claude-fable-5');
+      expect(model.limits.contextWindow).toBe(1000000);
+      expect(model.limits.outputTokens).toBe(128000);
+      expect(model.cost?.inputPerMillion).toBe(10.0);
+      expect(model.cost?.outputPerMillion).toBe(50.0);
+      expect(model.reasoning?.supported).toBe(true);
+      expect(model.reasoning?.pattern).toBe('interleaved');
+      // Sampling params are rejected by Fable 5 — the card must not opt into a
+      // fixed temperature default (GatewayTranslationLayer only sends temperature
+      // when a default or per-request value exists).
+      expect(model.parameters.temperature.default).toBeUndefined();
     });
 
     it('should load expected Google Gemini models', () => {

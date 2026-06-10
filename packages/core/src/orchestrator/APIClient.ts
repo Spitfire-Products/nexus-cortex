@@ -20,6 +20,19 @@ import {
 } from '../config/AnthropicCredentialService.js';
 
 /**
+ * Anthropic families on the adaptive-thinking-only request surface — sending
+ * thinking.type 'enabled'/budget_tokens returns a 400 (sampling params are
+ * rejected too, but cards opt out by leaving temperature.default unset).
+ * Fable 5 is stricter still: an explicit {type:'disabled'} also 400s — both
+ * request paths already OMIT thinking instead of disabling it explicitly.
+ */
+const ANTHROPIC_ADAPTIVE_THINKING_FAMILIES = new Set([
+  'claude-4.7',
+  'claude-4.8',
+  'claude-fable-5'
+]);
+
+/**
  * API Response (provider-agnostic)
  */
 export interface APIResponse {
@@ -356,10 +369,10 @@ export class APIClient {
     // reasoningEffort scales budget_tokens: none/undefined=10000 (default), low=5000, medium=10000, high=50000
     // Note: 'none' means "no extra effort" = default budget. Thinking is always on for supported models.
     if (modelConfig.reasoning?.supported && modelConfig.reasoning?.pattern === 'interleaved' && !disableThinking) {
-      // Opus 4.7 and 4.8 REMOVED thinking.type=enabled / budget_tokens (400). They
-      // require thinking.type=adaptive (+ optional output_config.effort). Older
+      // Opus 4.7/4.8 and Fable 5 REMOVED thinking.type=enabled / budget_tokens (400).
+      // They require thinking.type=adaptive (+ optional output_config.effort). Older
       // Claude families still accept enabled.
-      const useAdaptive = modelConfig.family === 'claude-4.7' || modelConfig.family === 'claude-4.8';
+      const useAdaptive = ANTHROPIC_ADAPTIVE_THINKING_FAMILIES.has(modelConfig.family);
       if (useAdaptive) {
         // Opus 4.7/4.8 adaptive thinking defaults to display:'omitted' (empty thinking
         // blocks, $0 reasoning tokens). DEBUG_THINKING opts into 'summarized' to surface
@@ -1277,9 +1290,9 @@ export class APIClient {
       // reasoningEffort scales budget_tokens: none/undefined=10000 (default), low=5000, medium=10000, high=50000
       // 'none' = default budget (thinking stays on). Anthropic thinking always enabled for supported models.
       if (modelConfig.reasoning?.supported && modelConfig.reasoning?.pattern === 'interleaved' && !disableThinking) {
-        // Opus 4.7 / 4.8 require adaptive thinking — enabled/budget_tokens 400s (parity
-        // with the non-streaming path above).
-        const useAdaptive = modelConfig.family === 'claude-4.7' || modelConfig.family === 'claude-4.8';
+        // Opus 4.7/4.8 and Fable 5 require adaptive thinking — enabled/budget_tokens
+        // 400s (parity with the non-streaming path above).
+        const useAdaptive = ANTHROPIC_ADAPTIVE_THINKING_FAMILIES.has(modelConfig.family);
         if (useAdaptive) {
           // display:'summarized' surfaces reasoning in the CLI but costs extra output
           // tokens; default 'omitted' streams empty thinking blocks for $0. Gated on

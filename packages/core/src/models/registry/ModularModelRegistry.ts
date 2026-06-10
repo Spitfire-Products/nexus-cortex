@@ -83,7 +83,8 @@ export class ModularModelRegistry implements ModelRegistry {
       deepseekModels.deepseekReasoner,
       deepseekModels.deepseekChat,
 
-      // Anthropic models (9 models)
+      // Anthropic models (10 models)
+      anthropicModels.claudeFable5,
       anthropicModels.claudeOpus48,
       anthropicModels.claudeOpus47,
       anthropicModels.claudeOpus46,
