@@ -35,6 +35,7 @@ export async function configSet(
       }
       console.log(theme.colors.muted('\nUse "cortex config list" to see all keys'));
       process.exit(1);
+      return; // guard: process.exit is mockable in tests — never fall through to a write
     }
 
     const validation = validateSetting(key as keyof EnvironmentVariables, value);
@@ -44,6 +45,7 @@ export async function configSet(
         console.log(theme.colors.muted(`Valid values: ${meta.choices.join(', ')}`));
       }
       process.exit(1);
+      return; // guard: do not write an invalid value if exit is mocked
     }
 
     const projectPath = findProjectRoot();
@@ -53,6 +55,7 @@ export async function configSet(
     if (!result.success) {
       console.error(theme.colors.error(`Failed to set ${key}: ${result.error}`));
       process.exit(1);
+      return;
     }
 
     process.env[key] = value;

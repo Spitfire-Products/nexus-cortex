@@ -85,10 +85,17 @@ function buildConfig(loader: SettingsLoader): CLIConfig {
 export class ConfigManager {
   private static cachedConfig: CLIConfig | null = null;
   private static loader: SettingsLoader | null = null;
+  /** Override for the project root that holds `.env` (test isolation). */
+  private static overrideRoot: string | null = null;
+
+  /** The directory whose `.env` ConfigManager reads/writes. */
+  private static rootDir(): string {
+    return this.overrideRoot ?? findProjectRoot();
+  }
 
   private static getLoader(): SettingsLoader {
     if (!this.loader) {
-      this.loader = new SettingsLoader(findProjectRoot());
+      this.loader = new SettingsLoader(this.rootDir());
     }
     return this.loader;
   }
@@ -157,10 +164,17 @@ export class ConfigManager {
   }
 
   static getConfigPath(): string {
-    return join(findProjectRoot(), '.env');
+    return join(this.rootDir(), '.env');
   }
 
-  static setConfigPath(_path: string): void {
+  /**
+   * Redirect where ConfigManager reads/writes its `.env`. Pass the path to a
+   * `.env` file (its directory becomes the project root) or `null` to restore
+   * auto-detection. Primarily for test isolation, so tests never mutate the
+   * real project `.env`.
+   */
+  static setConfigPath(envFilePath: string | null): void {
+    this.overrideRoot = envFilePath ? dirname(envFilePath) : null;
     this.clearCache();
   }
 }
