@@ -2,7 +2,7 @@
 
 **Multi-provider AI agent harness — a direct library, an optional HTTP server, and terminal UIs.**
 
-Version: 4.8.0 · License: Apache-2.0
+Version: 4.9.0 · License: Apache-2.0
 
 ---
 
