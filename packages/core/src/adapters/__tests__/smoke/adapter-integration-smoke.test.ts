@@ -512,10 +512,10 @@ const grok4FastConfig: ModelConfig = {
 };
 
 const deepseekReasonerConfig: ModelConfig = {
-  id: 'deepseek-reasoner',
+  id: 'deepseek-v4-pro',
   provider: 'deepseek',
-  family: 'deepseek',
-  displayName: 'DeepSeek Reasoner',
+  family: 'deepseek-v4',
+  displayName: 'DeepSeek V4 Pro',
   api: {
     pattern: 'chat/completions',
     endpoint: 'https://api.deepseek.com/v1/chat/completions',
@@ -1268,7 +1268,7 @@ describeIf('Adapter Integration Smoke Tests', () => {
     });
 
     describe('DeepSeek Reasoner', () => {
-      it('should work with deepseek-reasoner via ChatCompletionsAPIAdapter', async () => {
+      it('should work with deepseek-v4-pro via ChatCompletionsAPIAdapter', async () => {
         if (!process.env.DEEPSEEK_API_KEY) {
           console.log('⏭️  Skipping DeepSeek Reasoner test (no DeepSeek API key)');
           return;
@@ -1298,7 +1298,7 @@ describeIf('Adapter Integration Smoke Tests', () => {
         const openaiMessages = adapter.toProviderMessages(canonicalMessages, deepseekReasonerConfig);
 
         const response = await client.chat.completions.create({
-          model: 'deepseek-reasoner',
+          model: 'deepseek-v4-pro',
           max_tokens: 100,
           messages: openaiMessages,
         });
@@ -1307,7 +1307,7 @@ describeIf('Adapter Integration Smoke Tests', () => {
         expect(response.choices.length).toBeGreaterThan(0);
 
         console.log('✅ DeepSeek Reasoner test successful');
-        console.log(`   Model: deepseek-reasoner (128K context)`);
+        console.log(`   Model: deepseek-v4-pro (128K context)`);
         console.log(`   Adapter: ChatCompletionsAPIAdapter`);
         console.log(`   Provider: DeepSeek (OpenAI-compatible)`);
       }, 15000);

@@ -75,13 +75,13 @@ export class ModularModelRegistry implements ModelRegistry {
       xaiModels.grokBuild01,             // grok-build-0.1 via Messages API (canonical)
       xaiModels.grokBuild01Responses,    // grok-build-0.1 via Responses API
 
-      // DeepSeek models (4 — parity with nexus-terminal CORTEX 2026-05-13;
-      // api.deepseek.com only accepts these 4 model names. v3.x family,
-      // r1-0528, and deepseek-coder were rejected by the live API.)
+      // DeepSeek models (2). deepseek-chat and deepseek-reasoner removed 2026-06-10
+      // (DeepSeek deprecating both 2026-07-24); deepseek-v4-flash supersedes chat and
+      // deepseek-v4-pro supersedes reasoner. The old names redirect to the V4 pair via
+      // ModelAliasResolver for back-compat. (v3.x / r1-0528 / deepseek-coder were
+      // already rejected by the live API as of 2026-05-13.)
       deepseekModels.deepseekV4Pro,
       deepseekModels.deepseekV4Flash,
-      deepseekModels.deepseekReasoner,
-      deepseekModels.deepseekChat,
 
       // Anthropic models (10 models)
       anthropicModels.claudeFable5,
@@ -194,9 +194,21 @@ export class ModularModelRegistry implements ModelRegistry {
     this.registerAliases();
 
     if (this.options.debug) {
-      console.log(`[ModularModelRegistry] Loaded ${this.models.size} models (100% modular)`);
-      console.log(` - XAI: 9 | DeepSeek: 9 | Anthropic: 7 | Gemma: 4 | Google: 6`);
-      console.log(` - OpenAI: 21 | GLM: 5 | Qwen: 5 | Moonshot: 2 | MiniMax: 2 | Mercury: 1`);
+      // Counts computed from the canonical cards (alias entries — where the map key
+      // differs from the config's own id — are skipped) so the breakdown never drifts.
+      const byProvider = new Map<string, number>();
+      let canonical = 0;
+      for (const [id, model] of this.models) {
+        if (id !== model.id) continue;
+        canonical++;
+        byProvider.set(model.provider, (byProvider.get(model.provider) ?? 0) + 1);
+      }
+      const breakdown = [...byProvider.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([provider, n]) => `${provider}: ${n}`)
+        .join(' | ');
+      console.log(`[ModularModelRegistry] Loaded ${canonical} models (100% modular)`);
+      console.log(` - ${breakdown}`);
     }
   }
 

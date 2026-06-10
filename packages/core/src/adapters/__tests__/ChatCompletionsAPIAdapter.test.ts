@@ -32,10 +32,10 @@ describe('ChatCompletionsAPIAdapter', () => {
     } as ModelConfig;
 
     mockDeepSeekConfig = {
-      id: 'deepseek-chat',
+      id: 'deepseek-v4-flash',
       provider: 'deepseek',
-      displayName: 'DeepSeek Chat',
-      family: 'deepseek',
+      displayName: 'DeepSeek V4 Flash',
+      family: 'deepseek-v4',
       tools: {
         supported: true,
         adapter: 'ChatCompletionsAPIAdapter',

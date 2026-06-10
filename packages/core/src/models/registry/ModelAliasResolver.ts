@@ -72,12 +72,15 @@ export const MODEL_ALIASES: Record<string, string> = {
 
   // ─────────────────────────────────────────────────────────────────
   // DeepSeek Models
+  // deepseek-chat / deepseek-reasoner are deprecated by DeepSeek on 2026-07-24
+  // (cards removed 2026-06-10). The old names redirect to their V4 successors so
+  // existing agent configs and sessions keep resolving. 'deepseek-coder' was never
+  // a registered card, so its self-alias is dropped.
   // ─────────────────────────────────────────────────────────────────
-  'deepseek': 'deepseek-chat',
-  'deepseek-chat': 'deepseek-chat',
-  'deepseek-coder': 'deepseek-coder',
-  'reasoner': 'deepseek-reasoner',
-  'deepseek-reasoner': 'deepseek-reasoner',
+  'deepseek': 'deepseek-v4-pro',
+  'deepseek-chat': 'deepseek-v4-flash',
+  'reasoner': 'deepseek-v4-pro',
+  'deepseek-reasoner': 'deepseek-v4-pro',
 
   // ─────────────────────────────────────────────────────────────────
   // Mistral Models

@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.12.0] - 2026-06-10
+
+### Added
+
+- **`cortex agent` (alias `cortex run`).** A one-shot, autonomous headless agent: point it at a
+  task and a working directory, and it runs to completion and exits. Because a headless run has
+  no interactive approver, it auto-approves tool actions by default. Supports `--cwd`, `--model`,
+  and `--json` (machine-readable result) — the building block for running Cortex as a callable
+  agent in CI or a container.
+
+### Changed
+
+- **DeepSeek lineup trimmed to V4.** Removed `deepseek-chat` and `deepseek-reasoner` — DeepSeek
+  retires both on 2026-07-24. `deepseek-v4-flash` supersedes chat and `deepseek-v4-pro` supersedes
+  reasoner; the old names now resolve to those successors, so existing model selections keep
+  working. The default helper model is now `deepseek-v4-flash`.
+- **Public README reframed** around what Cortex is — a headless, multi-provider agent harness:
+  added a peer-harness comparison, provider maturity tiers (which providers are proven end-to-end
+  vs. preview), and a tour of the advanced tooling surfaces. The full environment-variable
+  reference moved to `docs/configuration.md`.
+- **`GIT_ALLOWED_REPOS` no longer warns on startup.** When unset (all repos permitted) the git/PR
+  tools used to print a warning on every launch; that is gone. The trade-off and how to restrict
+  access are documented in `.env.example`.
+
+### Fixed
+
+- **`cortex` one-shot commands no longer hang.** When a one-shot invocation auto-starts a
+  background server, the client now detaches that server's stdio pipes once it is healthy, so the
+  command exits cleanly instead of blocking on the open pipe.
+
+---
+
 ## [4.11.0] - 2026-06-10
 
 ### Added

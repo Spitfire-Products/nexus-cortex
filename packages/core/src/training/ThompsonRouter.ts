@@ -45,7 +45,7 @@ export interface ThompsonOptions {
 
 /** Exact match, or prefix match when the exclude entry ends in '*'. Each entry of
  *  the (comma-split) exclude list is matched independently, so multiple models or
- *  providers can be banned at once — e.g. ['grok*', 'gpt-4o', 'deepseek-reasoner']. */
+ *  providers can be banned at once — e.g. ['grok*', 'gpt-4o']. */
 export function isExcluded(modelId: string, exclude: string[]): boolean {
   for (const e of exclude) {
     if (e.endsWith('*')) { if (modelId.startsWith(e.slice(0, -1))) return true; }

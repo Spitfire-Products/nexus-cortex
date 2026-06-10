@@ -7000,7 +7000,7 @@ export class CortexOrchestrator {
     //    - Think WHILE acting (tool calls during reasoning)
     //    - NO mentorship needed [ERROR]
     //
-    // 2. Upfront thinking models (o1, o3, deepseek-reasoner):
+    // 2. Upfront thinking models (o1, o3):
     //    - Think BEFORE acting (all reasoning upfront)
     //    - YES mentorship helpful [OK] (can't think during tool use)
     //

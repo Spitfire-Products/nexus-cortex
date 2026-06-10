@@ -9,8 +9,9 @@
  *  - Validation (repo/branch/prNumber regexes) is ALWAYS enforced — there is no opt-out.
  *    Combined with execFile (no shell), this closes the shell/argument-injection class.
  *  - The repo/action allow-list is opt-in defense-in-depth. Unset GIT_ALLOWED_REPOS means
- *    "allow all" (with a one-time startup warning) so existing single-user setups keep
- *    working after an upgrade; multi-tenant/shared deployments set it to restrict.
+ *    "allow all" so existing single-user setups keep working after an upgrade;
+ *    multi-tenant/shared deployments set it to restrict. (No startup warning — the
+ *    trade-off is documented in .env.example so the TUI/CLI don't print noise on launch.)
  *  - The auth token is exposed to gh/git ONLY through the subprocess environment
  *    (GH_TOKEN / GITHUB_TOKEN). It is never interpolated into argv or a clone URL.
  *
@@ -63,8 +64,6 @@ const REPO_RE = /^[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*$/;
 // metacharacters. Allows nested refs like `feature/foo-bar`.
 const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 
-let warnedAllowAll = false;
-
 export class GitPolicy {
   /** Parsed allow-list patterns: `*`, `owner/*`, or exact `owner/repo`. */
   private readonly repoPatterns: string[];
@@ -76,14 +75,10 @@ export class GitPolicy {
   constructor(cfg: GitPolicyConfig = {}) {
     const reposRaw = (cfg.allowedRepos ?? '').trim();
     if (reposRaw === '' || reposRaw === '*') {
+      // Unset / `*` = all repos permitted. The trade-off (and how to restrict it) is
+      // documented in `.env.example` under GIT_ALLOWED_REPOS — no startup warning so the
+      // TUI/CLI don't print noise on every launch.
       this.repoPatterns = ['*'];
-      if (reposRaw === '' && !warnedAllowAll) {
-        warnedAllowAll = true;
-        console.warn(
-          '[WARN] GIT_ALLOWED_REPOS is unset — all repositories are permitted for git/PR tools. ' +
-            'Set it to a comma list (e.g. "me/app,me/*") to restrict access.',
-        );
-      }
     } else {
       this.repoPatterns = reposRaw
         .split(',')

@@ -98,8 +98,8 @@ export const HELPER_MODEL_REGISTRY: Record<string, string> = {
   // XAI: -> grok-4.3 (the live model; grok-4 family incl. -1-fast-* deprecated → redirects here anyway)
   xai: 'grok-4.3',
 
-  // DeepSeek: DeepSeek Coder -> DeepSeek Chat ($0.14/1M tokens)
-  deepseek: 'deepseek-chat',
+  // DeepSeek: -> DeepSeek V4 Flash ($0.14/1M tokens; supersedes the deprecated deepseek-chat)
+  deepseek: 'deepseek-v4-flash',
 
   // Mistral: Use same model (cost-effective already)
   mistral: 'mistral-small',
@@ -885,25 +885,8 @@ export class HelperModelMiddleware {
       }
     };
     // DeepSeek — current cheap helper (OpenAI-compatible chat/completions).
-    helperConfigs['deepseek-chat'] = {
-      id: 'deepseek-chat',
-      displayName: 'DeepSeek Chat',
-      provider: 'deepseek',
-      family: 'deepseek',
-      api: {
-        pattern: 'chat/completions',
-        endpoint: 'https://api.deepseek.com/chat/completions',
-        apiKeyEnvVar: 'DEEPSEEK_API_KEY',
-        authHeader: 'Authorization',
-        authPrefix: 'Bearer'
-      },
-      limits: {
-        contextWindow: 64000,
-        outputTokens: 8192,
-        requestsPerMinute: 1000,
-        tokensPerMinute: 1000000
-      }
-    };
+    // (deepseek-chat removed 2026-06-10 — DeepSeek deprecating it 2026-07-24;
+    // deepseek-v4-flash supersedes it at the same price.)
     helperConfigs['deepseek-v4-flash'] = {
       id: 'deepseek-v4-flash',
       displayName: 'DeepSeek V4 Flash',

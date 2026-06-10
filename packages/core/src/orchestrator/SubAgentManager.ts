@@ -303,7 +303,7 @@ export class SubAgentManager implements ISubAgentManager {
       // routes to a banned (MODEL_ROUTER_EXCLUDE) or unresolvable model.
       // MODEL_ROUTER_EXCLUDE is a comma-separated ban list — each entry is an exact
       // model ID or a 'prefix*' wildcard, so multiple models/providers can be excluded
-      // at once (e.g. "grok*,gpt-4o,deepseek-reasoner"). Applied to BOTH routing paths.
+      // at once (e.g. "grok*,gpt-4o"). Applied to BOTH routing paths.
       const exclude = (process.env.MODEL_ROUTER_EXCLUDE ?? '')
         .split(',').map(s => s.trim()).filter(Boolean);
       const explore = process.env.MODEL_ROUTER_EXPLORATION === 'true';

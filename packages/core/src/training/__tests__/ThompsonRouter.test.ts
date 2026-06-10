@@ -39,7 +39,7 @@ describe('ThompsonRouter — explore/exploit posterior sampling', () => {
       expect(thompsonSelect(scores, { rng: mulberry32(s), exclude: ['grok*'] })).toBe('deepseek-v4-flash');
     }
     // a non-grok model is untouched by the grok* rule
-    expect(thompsonSelect([score('deepseek-chat', 80, 100)], { rng: mulberry32(1), exclude: ['grok*'] })).toBe('deepseek-chat');
+    expect(thompsonSelect([score('deepseek-v4-flash', 80, 100)], { rng: mulberry32(1), exclude: ['grok*'] })).toBe('deepseek-v4-flash');
   });
 
   it('exploits: a high-mean, well-sampled model wins the large majority of draws', () => {

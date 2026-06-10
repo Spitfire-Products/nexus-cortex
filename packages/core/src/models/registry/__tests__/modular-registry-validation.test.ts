@@ -37,8 +37,8 @@ describe('Modular Registry Validation', () => {
       const deepseekModels = registry.getModelsByProvider('deepseek');
 
       expect(deepseekModels.length).toBeGreaterThan(0);
-      expect(deepseekModels.some(m => m.id === 'deepseek-chat')).toBe(true);
-      expect(deepseekModels.some(m => m.id === 'deepseek-reasoner')).toBe(true);
+      expect(deepseekModels.some(m => m.id === 'deepseek-v4-pro')).toBe(true);
+      expect(deepseekModels.some(m => m.id === 'deepseek-v4-flash')).toBe(true);
     });
 
     it('should load expected Anthropic models', () => {

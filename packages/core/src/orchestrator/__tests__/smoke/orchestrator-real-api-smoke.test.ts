@@ -139,13 +139,13 @@ describeSmoke('Orchestrator Real API Integration (Smoke Tests)', () => {
     it('should send a simple message to DeepSeek Chat and get a response', async () => {
       const response = await orchestrator.sendMessage(
         'Say hello in one word',
-        { modelId: 'deepseek-chat' }
+        { modelId: 'deepseek-v4-flash' }
       );
 
       expect(response).toBeDefined();
       expect(response.messageId).toBeDefined();
       expect(response.content).toBeDefined();
-      expect(response.model.id).toBe('deepseek-chat');
+      expect(response.model.id).toBe('deepseek-v4-flash');
       expect(response.model.provider).toBe('deepseek');
       expect(response.usage.totalTokens).toBeGreaterThan(0);
 

@@ -8,7 +8,7 @@
  * 1. Grok (XAI) - MessagesAPI with grok-4-fast
  * 2. Gemini (Google) - GenerateContentAPI with gemini-2.5-flash-lite
  * 3. OpenAI - ResponsesAPI with gpt-5-codex
- * 4. DeepSeek - ChatCompletionsAPI with deepseek-chat
+ * 4. DeepSeek - ChatCompletionsAPI with deepseek-v4-flash
  * 5. Gemma (Google) - GoogleGenAPI with gemma-3-27b-it (no streaming)
  *
  * Run with: ENABLE_SMOKE_TESTS=true npm test
@@ -173,7 +173,7 @@ describeSmoke('Pattern-Based Routing Validation (All 5 Patterns)', () => {
 
       const response = await orchestrator.sendMessage(
         'Say "Hello from DeepSeek" in exactly 5 words.',
-        { modelId: 'deepseek-chat' }
+        { modelId: 'deepseek-v4-flash' }
       );
 
       // Validate response
@@ -195,7 +195,7 @@ describeSmoke('Pattern-Based Routing Validation (All 5 Patterns)', () => {
 
       const stream = orchestrator.streamMessage(
         'Count from 1 to 3.',
-        { modelId: 'deepseek-chat' }
+        { modelId: 'deepseek-v4-flash' }
       );
 
       for await (const chunk of stream) {
@@ -275,7 +275,7 @@ describeSmoke('Pattern-Based Routing Validation (All 5 Patterns)', () => {
           adapter: 'ResponsesAPIAdapter'
         },
         {
-          modelId: 'deepseek-chat',
+          modelId: 'deepseek-v4-flash',
           pattern: 'chat/completions',
           provider: 'deepseek',
           adapter: 'ChatCompletionsAPIAdapter'
