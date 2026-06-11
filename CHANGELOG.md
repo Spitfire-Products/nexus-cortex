@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.14.0] - 2026-06-11
+
+### Added
+
+- **`cortex autoresearch experiment` runs on any project, not just the cortex harness.**
+  An `ExperimentTarget` seam lets `--run-cmd`/`--build-cmd`/`--accept-exit` grade a shell
+  command per arm instead of building+serving a cortex server, so a library, CLI, test
+  suite, or backtest gets the same base-vs-candidate statistical gate. Off-git arm dirs
+  fall back to a basename label.
+- **`cortex autoresearch loop` — the autonomous loop.** Fix → measure base-vs-candidate →
+  keep only what verifies → advance the base → repeat, until a success metric, max rounds,
+  or a dry backlog. Each round runs in a throwaway worktree off a dedicated `autoresearch/loop-*`
+  branch, so **your branch and working tree are never touched** (accepted commits are anchored
+  to the loop branch; merge it when satisfied). `--fixer-cmd` plugs any transformer in place of
+  the LLM Fixer; `--holdout-set` gates merges on out-of-sample verification (without it, merges
+  are train-only and flagged unverified); `--success-metric <taskId:threshold>` stops early.
+
+---
+
 ## [4.13.0] - 2026-06-11
 
 ### Added

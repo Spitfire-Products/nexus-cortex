@@ -15,8 +15,9 @@
  * so a task prompt cannot inject shell syntax. The `template` itself is operator-supplied
  * (the experiment spec) and trusted.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import type { HarnessRunner, HarnessRunResult } from '@nexus-cortex/core';
+import type { ExperimentTarget, PreparedArm, PrepareArmOptions } from './harnessProcess.js';
 
 export interface CommandRunnerOptions {
   /** Working directory the command runs in (e.g. the candidate worktree). */
@@ -74,4 +75,33 @@ export function commandRunner(opts: CommandRunnerOptions): HarnessRunner {
       });
     },
   };
+}
+
+/**
+ * CommandTarget — the non-cortex `ExperimentTarget`. An optional one-shot build command,
+ * then grade a shell command per task via `commandRunner`. Nothing to serve, nothing to
+ * tear down — so `cortex autoresearch experiment` can run base-vs-candidate on any project
+ * (a library, CLI, test suite, backtest) through the same statistical gate as the harness.
+ */
+export class CommandTarget implements ExperimentTarget {
+  readonly kind = 'command';
+  constructor(
+    private readonly cfg: { template: string; buildCmd?: string; acceptExitCodes?: number[]; timeoutMs?: number },
+  ) {}
+
+  async prepare(dir: string, opts: PrepareArmOptions): Promise<PreparedArm> {
+    if (opts.build && this.cfg.buildCmd) {
+      opts.log(`build: ${this.cfg.buildCmd}  (cwd ${dir})`);
+      const b = spawnSync('sh', ['-c', this.cfg.buildCmd], { cwd: dir, stdio: ['ignore', 'ignore', 'inherit'] });
+      if (b.status !== 0) throw new Error(`build command failed (exit ${b.status}) in ${dir}`);
+    }
+    const runner = commandRunner({
+      cwd: dir,
+      template: this.cfg.template,
+      acceptExitCodes: this.cfg.acceptExitCodes,
+      timeoutMs: this.cfg.timeoutMs,
+      log: opts.log,
+    });
+    return { runner, stop: () => { /* nothing to tear down */ } };
+  }
 }

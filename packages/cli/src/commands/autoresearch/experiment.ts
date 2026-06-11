@@ -16,7 +16,7 @@
  * use the lower-level `bench` + `evaluate` directly.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import {
   ModelRouterMatrix,
   ExperimentLedger,
@@ -26,7 +26,8 @@ import {
 } from '@nexus-cortex/core';
 import { ThemeManager } from '../../themes/ThemeManager.js';
 import { findProjectRoot } from '../config/utils.js';
-import { serverRunner, startServer, freePort, gitShortSha, buildDir, type ServerHandle } from './harnessProcess.js';
+import { freePort, gitShortSha, CortexTarget, type ExperimentTarget, type PreparedArm } from './harnessProcess.js';
+import { CommandTarget } from './commandRunner.js';
 
 export interface AutoResearchExperimentOptions {
   experimentTag?: string;
@@ -52,6 +53,12 @@ export interface AutoResearchExperimentOptions {
   epsilon?: string;
   minRuns?: string;
   json?: boolean;
+  /** Non-cortex target: grade a shell command per task (with --build-cmd/--accept-exit)
+   *  instead of building+serving a cortex server. Both arms use the same command; the
+   *  base/candidate difference is the worktree the command runs in. */
+  runCmd?: string;
+  buildCmd?: string;
+  acceptExit?: string;
 }
 
 function num(v: string | undefined): number | undefined {
@@ -86,46 +93,58 @@ export async function autoResearchExperiment(options: AutoResearchExperimentOpti
   if (!options.taskSet) missing.push('--task-set');
   if (missing.length) { console.error(theme.colors.error(`Error: missing ${missing.join(', ')}`)); process.exit(1); }
 
-  const servers: ServerHandle[] = [];
+  const arms: PreparedArm[] = [];
   try {
     const trainTasks = loadTasks(options.taskSet!);
     const holdoutTasks = options.holdoutSet ? loadTasks(options.holdoutSet) : undefined;
     if (trainTasks.length === 0) { console.error(theme.colors.error('Error: empty --task-set')); process.exit(1); }
 
-    const baseRef = options.baseRef ?? gitShortSha(baseDir);
-    const candidateRef = options.candidateRef ?? gitShortSha(candidateDir!);
+    // Distinct arm labels: git SHA when the dir is a checkout, else its basename.
+    const refFor = (dir: string, override?: string) => {
+      if (override) return override;
+      const sha = gitShortSha(dir);
+      return sha !== 'unknown' ? sha : basename(dir);
+    };
+    const baseRef = refFor(baseDir, options.baseRef);
+    const candidateRef = refFor(candidateDir!, options.candidateRef);
     if (baseRef === candidateRef) {
-      console.error(theme.colors.error(`Error: base and candidate resolve to the same ref (${baseRef}) — a harness-code experiment needs two distinct builds. Pass --base-ref/--candidate-ref to label, or use a real candidate worktree.`));
+      console.error(theme.colors.error(`Error: base and candidate resolve to the same ref (${baseRef}) — an experiment needs two distinct arms. Pass --base-ref/--candidate-ref to label, or use a real candidate worktree.`));
       process.exit(1);
     }
 
-    if (!json) {
-      console.log();
-      console.log(` ${theme.colors.highlight('Experiment')}  ${options.experimentTag}  ${baseRef} → ${candidateRef}`);
-    }
-
-    // 1. Build (candidate always unless --no-build; base only with --build-base).
-    if (!options.noBuild) {
-      if (options.buildBase) await buildDir(baseDir, log);
-      await buildDir(candidateDir!, log);
-    }
-
-    // 2. Serve each build on its own port.
-    const basePort = num(options.basePort) ?? await freePort();
-    const candPort = num(options.candidatePort) ?? await freePort();
-    const baseServer = await startServer(baseDir, basePort, log);
-    servers.push(baseServer);
-    const candServer = await startServer(candidateDir!, candPort, log);
-    servers.push(candServer);
-
-    // 3. Bench both arms + gate (shared store at cortexDir/.cortex).
-    const matrix = new ModelRouterMatrix(cortexDir);
-    const ledger = new ExperimentLedger(cortexDir);
     const model = options.model ?? process.env.DEFAULT_MODEL_ID;
 
+    // Select the target: a shell-command target (any project) or the default cortex server.
+    const target: ExperimentTarget = options.runCmd
+      ? new CommandTarget({
+          template: options.runCmd,
+          buildCmd: options.buildCmd,
+          acceptExitCodes: (options.acceptExit ?? '0').split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n)),
+        })
+      : new CortexTarget();
+
+    if (!json) {
+      console.log();
+      console.log(` ${theme.colors.highlight('Experiment')}  ${options.experimentTag}  ${baseRef} → ${candidateRef}  [${target.kind}]`);
+    }
+
+    // Prepare each arm (build if asked + start its runner). Candidate builds unless
+    // --no-build; base builds only with --build-base. Each arm gets its own reserved port
+    // (server targets bind it; command targets ignore it).
+    const basePort = num(options.basePort) ?? await freePort();
+    const candPort = num(options.candidatePort) ?? await freePort();
+    const baseArm = await target.prepare(baseDir, { port: basePort, model, build: !options.noBuild && !!options.buildBase, log });
+    arms.push(baseArm);
+    const candArm = await target.prepare(candidateDir!, { port: candPort, model, build: !options.noBuild, log });
+    arms.push(candArm);
+
+    // Bench both arms + gate (shared store at cortexDir/.cortex).
+    const matrix = new ModelRouterMatrix(cortexDir);
+    const ledger = new ExperimentLedger(cortexDir);
+
     const result = await runExperiment(matrix, ledger, {
-      baseRunner: serverRunner(baseServer.url, model),
-      candidateRunner: serverRunner(candServer.url, model),
+      baseRunner: baseArm.runner,
+      candidateRunner: candArm.runner,
     }, {
       experimentTag: options.experimentTag!,
       baseRef, candidateRef,
@@ -174,6 +193,6 @@ export async function autoResearchExperiment(options: AutoResearchExperimentOpti
     else console.error(theme.colors.error(`Error: ${error.message}`));
     process.exitCode = 1;
   } finally {
-    for (const s of servers) s.stop();
+    for (const a of arms) a.stop();
   }
 }

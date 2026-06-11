@@ -47,6 +47,7 @@ import { autoResearchList } from './commands/autoresearch/list.js';
 import { autoResearchBench } from './commands/autoresearch/bench.js';
 import { autoResearchExperiment } from './commands/autoresearch/experiment.js';
 import { autoResearchFix } from './commands/autoresearch/fix.js';
+import { autoResearchLoop } from './commands/autoresearch/loop.js';
 import { tmuxList } from './commands/tmux/list.js';
 import { middlewareList } from './commands/middleware/list.js';
 import { middlewareStatus } from './commands/middleware/status.js';
@@ -614,6 +615,9 @@ autoresearch
   .option('--alpha <a>', 'family-wise significance level')
   .option('--epsilon <e>', 'regression dead-band (0-100)')
   .option('--min-runs <n>', 'min runs per arm for a task to count')
+  .option('--run-cmd <template>', 'NON-CORTEX target: grade a shell command per task in each arm dir ({prompt}/{case} substituted) instead of building+serving a cortex server')
+  .option('--build-cmd <cmd>', 'build command run in each arm dir before benching a --run-cmd target (subject to --build-base/--no-build)')
+  .option('--accept-exit <codes>', 'comma list of exit codes whose stdout is graded (default 0)', '0')
   .action(async (opts) => {
     const globalOpts = program.opts();
     await autoResearchExperiment({ ...opts, json: globalOpts.json });
@@ -638,6 +642,31 @@ autoresearch
   .action(async (opts) => {
     const globalOpts = program.opts();
     await autoResearchBench({ ...opts, json: globalOpts.json });
+  });
+
+autoresearch
+  .command('loop')
+  .description('Autonomous loop: fix → measure → keep-if-verified → advance → repeat, on an isolated loop branch')
+  .requiredOption('--repo <path>', 'git repo to improve (worktrees are made off a dedicated loop branch; your branch is untouched)')
+  .requiredOption('--task-set <path>', 'train task-set JSON file or directory')
+  .option('--holdout-set <path>', 'holdout task-set — REQUIRED for verified merges (else accepts on train-only, unverified)')
+  .option('--prompt <goal>', 'fixed improvement directive each round (default: pull the highest-priority backlog deficiency)')
+  .option('--fixer-cmd <cmd>', 'run THIS in the candidate worktree as the mutation step ({prompt} substituted) instead of the LLM Fixer')
+  .option('--run-cmd <template>', 'non-cortex target: grade a shell command per task (else build+serve a cortex server per arm)')
+  .option('--build-cmd <cmd>', 'build command run in each candidate worktree before benching')
+  .option('--accept-exit <codes>', 'comma list of exit codes whose stdout is graded (default 0)', '0')
+  .option('--runs <n>', 'bench runs per task per arm', '3')
+  .option('--model <id>', 'model for cortex targets / the LLM Fixer')
+  .option('--max-rounds <n>', 'maximum rounds', '10')
+  .option('--max-stale <n>', 'stop after this many consecutive non-merge rounds (default: max-rounds)')
+  .option('--success-metric <taskId:threshold>', 'stop early when the candidate mean score for taskId reaches the threshold')
+  .option('--base-ref <ref>', 'starting ref (default: repo HEAD)')
+  .option('--branch <name>', 'loop branch name (default: autoresearch/loop-<sha>)')
+  .option('--cortex-dir <path>', 'shared .cortex store + JSONL artifacts (default: repo)')
+  .option('--keep-worktrees', 'do not remove rejected candidate worktrees (debugging)')
+  .action(async (opts) => {
+    const globalOpts = program.opts();
+    await autoResearchLoop({ ...opts, json: globalOpts.json });
   });
 
 autoresearch

@@ -135,3 +135,43 @@ export async function startServer(
   stop();
   throw new Error(`server (${dir}) did not become healthy within timeout: ${stderr.slice(-400)}`);
 }
+
+// ---------------------------------------------------------------------------
+// ExperimentTarget — the seam that lets `experiment` bench ANY project, not just
+// the cortex harness. A target turns a checkout into a runnable, scoreable arm:
+// build it (if asked), start whatever it needs, and return a HarnessRunner + a
+// teardown. CortexTarget (below) is the default (npm build → cortex server →
+// /v1/messages); CommandTarget (commandRunner.ts) grades a shell command instead.
+// ---------------------------------------------------------------------------
+
+export interface PreparedArm {
+  /** The runner the bench drives for this arm. */
+  runner: HarnessRunner;
+  /** Tear down anything the arm started (server process, etc.). Idempotent. */
+  stop(): void;
+}
+
+export interface PrepareArmOptions {
+  /** Port reserved for this arm — server targets bind it, command targets ignore it. */
+  port: number;
+  /** Model id for endpoint targets (ignored by command targets). */
+  model?: string;
+  /** Build the checkout before running it. */
+  build: boolean;
+  log: (m: string) => void;
+}
+
+export interface ExperimentTarget {
+  readonly kind: string;
+  prepare(dir: string, opts: PrepareArmOptions): Promise<PreparedArm>;
+}
+
+/** Default target: build with `npm run build`, serve the cortex server, drive /v1/messages. */
+export class CortexTarget implements ExperimentTarget {
+  readonly kind = 'cortex';
+  async prepare(dir: string, opts: PrepareArmOptions): Promise<PreparedArm> {
+    if (opts.build) await buildDir(dir, opts.log);
+    const server = await startServer(dir, opts.port, opts.log);
+    return { runner: serverRunner(server.url, opts.model), stop: () => server.stop() };
+  }
+}
