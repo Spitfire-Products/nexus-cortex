@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { ModelRouterMatrix } from '../ModelRouterMatrix.js';
+import { ResearchBacklog } from '../ResearchBacklog.js';
 import {
   gradeRun, runBench, parseTaskSet,
   type HarnessRunner, type HarnessRunResult, type TaskSpec, type Verifier,
@@ -38,6 +39,42 @@ describe('gradeRun — deterministic verifiers', () => {
     await expect(gradeRun('x', { type: 'llm-judge', rubric: 'is it good' })).rejects.toThrow(/requires an injected/);
     const g = await gradeRun('x', { type: 'llm-judge', rubric: 'r' }, async () => ({ pass: true, qualitativeScore: 88 }));
     expect(g.qualitativeScore).toBe(88);
+  });
+
+  it('numeric: maximize with best/worst maps value → 0-100 (clamped)', async () => {
+    const v: Verifier = { type: 'numeric', direction: 'maximize', best: 100, worst: 0 };
+    expect((await gradeRun('score: 75', v)).qualitativeScore).toBe(75);
+    expect((await gradeRun('250', v)).qualitativeScore).toBe(100);   // above best → clamped
+    expect((await gradeRun('-10', v)).qualitativeScore).toBe(0);     // below worst → clamped
+  });
+
+  it('numeric: minimize — a lower value scores higher', async () => {
+    const v: Verifier = { type: 'numeric', direction: 'minimize', best: 0, worst: 100 };
+    expect((await gradeRun('latency 10ms', v)).qualitativeScore).toBe(90);
+    expect((await gradeRun('latency 90ms', v)).qualitativeScore).toBe(10);
+  });
+
+  it('numeric: target sets pass/fail (no normalization needed)', async () => {
+    const v: Verifier = { type: 'numeric', direction: 'maximize', target: 1.0 };
+    expect((await gradeRun('sharpe 1.5', v)).pass).toBe(true);
+    expect((await gradeRun('sharpe 0.5', v)).pass).toBe(false);
+    expect((await gradeRun('sharpe 1.5', v)).qualitativeScore).toBe(1.5);  // raw oriented value
+  });
+
+  it('numeric: a non-numeric / crashed output fails (score 0 → seeds the backlog)', async () => {
+    const g = await gradeRun('crashed, no metric printed', { type: 'numeric', direction: 'maximize' });
+    expect(g.pass).toBe(false);
+    expect(g.qualitativeScore).toBe(0);
+  });
+
+  it('numeric: custom extract regex uses capture group 1', async () => {
+    const v: Verifier = { type: 'numeric', direction: 'maximize', extract: 'ROI=(-?\\d+\\.?\\d*)' };
+    expect((await gradeRun('case 7 → ROI=12.5 (done)', v)).detail).toBe('value=12.5');
+  });
+
+  it('numeric: default extraction takes the LAST number (the printed metric)', async () => {
+    const v: Verifier = { type: 'numeric', direction: 'maximize' };
+    expect((await gradeRun('case 7 of 10 → 88', v)).detail).toBe('value=88');
   });
 });
 
@@ -100,6 +137,80 @@ describe('runBench — execute, grade, record REAL scores', () => {
     await runBench([task], mockRunner(['STOP']), matrix, { experimentTag: 'e', runs: 1, split: 'holdout' });
     expect(matrix.getRecords({ split: 'holdout' })).toHaveLength(1);
     expect(matrix.getRecords({ split: 'train' })).toHaveLength(0);
+  });
+});
+
+// A capturing mock backlog sink (implements DeficiencySink's add()).
+function mockSink() {
+  const added: any[] = [];
+  return { added, add(d: any) { added.push(d); return d; } };
+}
+
+describe('runBench — deterministic backlog seeding on verifier failure', () => {
+  let root: string;
+  let matrix: ModelRouterMatrix;
+  beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'benchseed-')); matrix = new ModelRouterMatrix(root); });
+  afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
+
+  const failing: TaskSpec = {
+    id: 'needs-all-three', taskType: 'T1',
+    prompt: 'Quote STOP, null, softBudget.',
+    verifier: { type: 'contains', all: ['STOP', 'null', 'softBudget'] },
+  };
+
+  it('seeds one deficiency for a task the harness fails every run', async () => {
+    const sink = mockSink();
+    const summary = await runBench([failing], mockRunner(['only STOP here']), matrix,
+      { experimentTag: 'e', runs: 2, split: 'train', backlog: sink, discoveredRound: 'R99', discoveredRef: 'sha123' });
+    expect(summary.seededDeficiencies).toBe(1);
+    expect(sink.added).toHaveLength(1);
+    const d = sink.added[0];
+    expect(d.title).toBe('Bench failure: needs-all-three');
+    expect(d.affectedTaskFingerprints).toEqual([summary.tasks[0]!.taskFingerprint]);
+    expect(d.affectedModels).toEqual(['deepseek-v4-flash']);
+    expect(d.discoveredRound).toBe('R99');
+    expect(d.discoveredRef).toBe('sha123');
+    expect(d.confidence).toBeGreaterThan(0.3);
+  });
+
+  it('does NOT seed when the task fully passes', async () => {
+    const sink = mockSink();
+    const summary = await runBench([failing], mockRunner(['STOP null softBudget']), matrix,
+      { experimentTag: 'e', runs: 2, split: 'train', backlog: sink });
+    expect(summary.seededDeficiencies).toBe(0);
+    expect(sink.added).toHaveLength(0);
+  });
+
+  it('never seeds on the holdout split (verification, not discovery)', async () => {
+    const sink = mockSink();
+    const summary = await runBench([failing], mockRunner(['nope']), matrix,
+      { experimentTag: 'e', runs: 2, split: 'holdout', backlog: sink });
+    expect(summary.seededDeficiencies).toBe(0);
+    expect(sink.added).toHaveLength(0);
+  });
+
+  it('no sink ⇒ no seeding (back-compat), seededDeficiencies is 0', async () => {
+    const summary = await runBench([failing], mockRunner(['miss']), matrix, { experimentTag: 'e', runs: 2, split: 'train' });
+    expect(summary.seededDeficiencies).toBe(0);
+  });
+
+  it('confidence scales with failure consistency (total-fail > flaky)', async () => {
+    const totalSink = mockSink();
+    await runBench([failing], mockRunner(['miss', 'miss']), matrix,                  // 0/2 → total failure
+      { experimentTag: 'a', runs: 2, split: 'train', backlog: totalSink });
+    const flakySink = mockSink();
+    await runBench([failing], mockRunner(['STOP null softBudget', 'miss']), matrix,  // 1/2 → flaky
+      { experimentTag: 'b', runs: 2, split: 'train', backlog: flakySink });
+    expect(totalSink.added[0].confidence).toBeGreaterThan(flakySink.added[0].confidence);
+  });
+
+  it('end-to-end: a real ResearchBacklog receives + triages the seeded deficiency', async () => {
+    const backlog = new ResearchBacklog(root);
+    const summary = await runBench([failing], mockRunner(['miss']), matrix,
+      { experimentTag: 'e', runs: 3, split: 'train', backlog });
+    expect(summary.seededDeficiencies).toBe(1);
+    const open = backlog.list({ status: ['open', 'triaged'] });
+    expect(open.some(r => r.title === 'Bench failure: needs-all-three')).toBe(true);
   });
 });
 

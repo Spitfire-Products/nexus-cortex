@@ -10,16 +10,20 @@
  * and the candidate worktree, then calls `evaluate --base … --candidate …`.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
   ModelRouterMatrix,
   runBench,
   parseTaskSet,
+  ResearchBacklog,
   type TaskSpec,
+  type HarnessRunner,
 } from '@nexus-cortex/core';
 import { ThemeManager } from '../../themes/ThemeManager.js';
 import { findProjectRoot } from '../config/utils.js';
 import { serverRunner } from './harnessProcess.js';
+import { commandRunner } from './commandRunner.js';
 
 export interface AutoResearchBenchOptions {
   taskSet?: string;
@@ -31,6 +35,20 @@ export interface AutoResearchBenchOptions {
   benchmarkSource?: string;
   serverUrl?: string;
   json?: boolean;
+  /** Seed a deficiency for every failing task into .cortex/research-backlog.jsonl
+   *  (default true; holdout split never seeds). Pass false for candidate-worktree
+   *  benches so a not-yet-fixed task doesn't re-stamp the discovery record. */
+  seedBacklog?: boolean;
+  /** Non-cortex target: grade a shell command per task instead of POSTing to a cortex
+   *  server. `runCmd` is the per-task template ({prompt}/{case} substituted). Pair with
+   *  `numeric` verifiers in the task set. */
+  runCmd?: string;
+  /** Optional one-shot build, run once in --cwd before benching the command target. */
+  buildCmd?: string;
+  /** Working dir for --run-cmd / --build-cmd (default: project root). */
+  cwd?: string;
+  /** Comma list of exit codes whose stdout is graded (default "0"). */
+  acceptExit?: string;
 }
 
 /** Load tasks from a file (array or single object) or a directory of *.json. */
@@ -65,13 +83,31 @@ export async function autoResearchBench(options: AutoResearchBenchOptions): Prom
     if (tasks.length === 0) { console.error(theme.colors.error(`Error: no tasks found in ${options.taskSet}`)); process.exit(1); }
 
     const matrix = new ModelRouterMatrix(projectRoot);
-    const serverUrl = options.serverUrl ?? process.env.CORTEX_SERVER_URL ?? 'http://localhost:4000';
     const model = options.model ?? process.env.DEFAULT_MODEL_ID;
-    const runner = serverRunner(serverUrl, model);
+    const log = (m: string) => { if (!options.json) console.log(theme.colors.muted(` ${m}`)); };
+
+    let runner: HarnessRunner;
+    let source: string;
+    if (options.runCmd) {
+      // Non-cortex command target: optionally build once, then grade a shell command per task.
+      const cwd = options.cwd ? resolve(options.cwd) : projectRoot;
+      const acceptExit = (options.acceptExit ?? '0').split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n));
+      if (options.buildCmd) {
+        log(`Building target: ${options.buildCmd}  (cwd ${cwd})`);
+        const b = spawnSync('sh', ['-c', options.buildCmd], { cwd, stdio: options.json ? 'ignore' : 'inherit' });
+        if (b.status !== 0) { console.error(theme.colors.error(`Error: build command failed (exit ${b.status})`)); process.exit(1); }
+      }
+      runner = commandRunner({ cwd, template: options.runCmd, acceptExitCodes: acceptExit, log });
+      source = `cmd "${options.runCmd}" (cwd ${cwd})`;
+    } else {
+      const serverUrl = options.serverUrl ?? process.env.CORTEX_SERVER_URL ?? 'http://localhost:4000';
+      runner = serverRunner(serverUrl, model);
+      source = serverUrl;
+    }
 
     if (!options.json) {
       console.log();
-      console.log(theme.colors.muted(` Benching ${tasks.length} task(s) × ${options.runs ?? 2} run(s) via ${serverUrl} [${split}]  tag=${options.experimentTag}`));
+      console.log(theme.colors.muted(` Benching ${tasks.length} task(s) × ${options.runs ?? 2} run(s) via ${source} [${split}]  tag=${options.experimentTag}`));
     }
 
     const summary = await runBench(tasks, runner, matrix, {
@@ -81,6 +117,9 @@ export async function autoResearchBench(options: AutoResearchBenchOptions): Prom
       modelId: model,
       benchmarkSource: options.benchmarkSource,
       harnessRef: options.harnessRef,
+      backlog: options.seedBacklog === false ? undefined : new ResearchBacklog(projectRoot),
+      discoveredRound: options.experimentTag,
+      discoveredRef: options.harnessRef,
       onRun: options.json ? undefined : (info) => {
         const mark = info.pass ? theme.colors.success('[OK]') : theme.colors.error('[FAIL]');
         console.log(theme.colors.muted(` ${mark} ${info.taskId} run ${info.run}: ${info.qualitativeScore}`));
@@ -98,6 +137,9 @@ export async function autoResearchBench(options: AutoResearchBenchOptions): Prom
     }
     console.log();
     console.log(theme.colors.muted(` ${summary.totalRuns} run(s) recorded → ${projectRoot}/.cortex/router-matrix.jsonl  (harnessRef ${summary.harnessRef ?? 'auto'})`));
+    if (summary.seededDeficiencies > 0) {
+      console.log(theme.colors.muted(` ${summary.seededDeficiencies} deficiency(ies) seeded → ${projectRoot}/.cortex/research-backlog.jsonl  (ResearchBacklog list / next)`));
+    }
     console.log(theme.colors.muted(` Next: cortex autoresearch evaluate --experiment-tag ${options.experimentTag} --base <ref> --candidate <ref> --branch <wt>`));
     console.log();
 

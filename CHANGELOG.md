@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.13.0] - 2026-06-11
+
+### Added
+
+- **Auto-research can now measure any project, not just the cortex harness.**
+  `cortex autoresearch bench` gained `--run-cmd <template>` (plus `--build-cmd`, `--cwd`,
+  `--accept-exit`) to grade a **shell command** per task instead of a cortex server — so a
+  library, CLI, test suite, or backtest runs through the same statistically-gated bench.
+  The command's stdout is graded by the task's verifier; a non-accepted exit code fails the
+  task (and seeds the backlog).
+- **Numeric verifier** for task sets: `{ "type": "numeric", "direction": "maximize" | "minimize",
+  "extract"?, "best"?, "worst"?, "target"? }`. Extracts a number from the output (a custom
+  regex capture group, or the last number by default) and scores it continuously, so any
+  metric — ROI, latency, accuracy, tour length — can drive keep/discard. `target` sets the
+  pass threshold; `best`/`worst` map the value to 0–100.
+- **Deterministic backlog seeding.** A failing benchmark verifier now auto-records a
+  deficiency in `.cortex/research-backlog.jsonl` (idempotent per task, confidence scaled by
+  how consistently it failed), so a failure is captured even when nothing thought to log it.
+  `--no-seed-backlog` opts out; the holdout split never seeds.
+
+---
+
 ## [4.12.0] - 2026-06-10
 
 ### Added

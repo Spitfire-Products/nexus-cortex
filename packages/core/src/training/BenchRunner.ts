@@ -22,6 +22,7 @@
 
 import { ModelRouterMatrix } from './ModelRouterMatrix.js';
 import { classifyTask } from './TaskClassifier.js';
+import type { NewDeficiency, Severity } from './ResearchBacklog.js';
 
 // ---------------------------------------------------------------------------
 // Task set + verifier schema (the JSON format a task file uses)
@@ -37,7 +38,16 @@ export type Verifier =
    *  bootstrap/permutation gate real signal to separate base from candidate. */
   | { type: 'contains'; all: string[]; caseInsensitive?: boolean }
   /** delegated to an injected judge fn (e.g. the deepseek helper). */
-  | { type: 'llm-judge'; rubric: string };
+  | { type: 'llm-judge'; rubric: string }
+  /** Extract a NUMBER from the output and score it — the continuous-metric path for
+   *  non-cortex targets (ROI, latency, accuracy, tour length, …). `extract` is a regex
+   *  whose capture group 1 (or whole match) is the number; default = the LAST number in
+   *  the output (evals usually print the metric last). `direction` orients "better".
+   *  `best`/`worst` linearly map value→0-100 (omit → the raw oriented value is the score;
+   *  the gate is relative either way). `target` sets the pass threshold (>= for maximize,
+   *  <= for minimize); omit → any extracted number passes, so a crashed/non-numeric run
+   *  fails (score 0) and seeds the backlog. */
+  | { type: 'numeric'; direction: 'maximize' | 'minimize'; extract?: string; best?: number; worst?: number; target?: number };
 
 export interface TaskSpec {
   id: string;
@@ -90,6 +100,35 @@ export async function gradeRun(output: string, verifier: Verifier, judge?: Judge
       if (!judge) throw new Error("gradeRun: verifier type 'llm-judge' requires an injected JudgeFn");
       return judge(output, verifier.rubric);
     }
+    case 'numeric': {
+      let value = NaN;
+      if (verifier.extract) {
+        const m = output.match(new RegExp(verifier.extract));
+        if (m) value = parseFloat(m[1] ?? m[0]);
+      } else {
+        const all = output.match(/-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/g);
+        if (all && all.length) value = parseFloat(all[all.length - 1]!);
+      }
+      if (!Number.isFinite(value)) {
+        return { pass: false, qualitativeScore: 0, detail: 'numeric: no number extracted' };
+      }
+      // Orient so higher = better, then optionally linear-map [worst,best] → [0,100].
+      const oriented = verifier.direction === 'minimize' ? -value : value;
+      let score: number;
+      if (verifier.best != null && verifier.worst != null) {
+        const bestO = verifier.direction === 'minimize' ? -verifier.best : verifier.best;
+        const worstO = verifier.direction === 'minimize' ? -verifier.worst : verifier.worst;
+        score = bestO === worstO
+          ? (oriented >= bestO ? 100 : 0)
+          : Math.max(0, Math.min(100, ((oriented - worstO) / (bestO - worstO)) * 100));
+      } else {
+        score = oriented; // raw oriented value; the gate compares base vs candidate relatively
+      }
+      const pass = verifier.target == null
+        ? true
+        : (verifier.direction === 'minimize' ? value <= verifier.target : value >= verifier.target);
+      return { pass, qualitativeScore: Math.round(score * 100) / 100, detail: `value=${value}` };
+    }
     default: {
       const _exhaustive: never = verifier;
       throw new Error(`gradeRun: unknown verifier ${JSON.stringify(_exhaustive)}`);
@@ -114,6 +153,15 @@ export interface HarnessRunner {
   run(prompt: string, opts?: { model?: string }): Promise<HarnessRunResult>;
 }
 
+/**
+ * Deterministic backlog seeding sink. `ResearchBacklog` satisfies this directly
+ * (its `add(d: NewDeficiency)`); injected (not imported) so `runBench` stays pure
+ * and fs/network-free for unit tests.
+ */
+export interface DeficiencySink {
+  add(d: NewDeficiency): unknown;
+}
+
 // ---------------------------------------------------------------------------
 // runBench — execute + grade + record
 // ---------------------------------------------------------------------------
@@ -129,6 +177,21 @@ export interface RunBenchOptions {
   judge?: JudgeFn;
   /** progress callback (one per graded run). */
   onRun?: (info: { taskId: string; run: number; pass: boolean; qualitativeScore: number }) => void;
+  /**
+   * Deterministic backlog seeding. When provided, any task whose pass-rate < 1 across
+   * its runs idempotently seeds a deficiency here — so a failing verifier records a
+   * harness weakness even if the model never calls the ResearchBacklog tool. Confidence
+   * scales with failure consistency × run count, so a flaky one-off lands low-priority
+   * (and triage's confidence weighting sinks it) rather than as a false positive. Omit
+   * the sink ⇒ no seeding (unchanged behavior). Only the `train` split seeds — a holdout
+   * failure is verification signal for a specific fix, not a newly-discovered deficiency.
+   */
+  backlog?: DeficiencySink;
+  /** Provenance stamped onto seeded deficiencies (e.g. the bench round / harness SHA). */
+  discoveredRound?: string;
+  discoveredRef?: string;
+  /** Harness area for seeded deficiencies (ResearchBacklog `bugClass`; default 'Other'). */
+  deficiencyBugClass?: string;
 }
 
 export interface BenchTaskSummary {
@@ -146,6 +209,8 @@ export interface BenchSummary {
   harnessRef?: string;
   totalRuns: number;
   tasks: BenchTaskSummary[];
+  /** Number of deficiencies seeded into `opts.backlog` this run (0 when no sink). */
+  seededDeficiencies: number;
 }
 
 /**
@@ -164,16 +229,21 @@ export async function runBench(
   const split = opts.split ?? 'train';
   const taskSummaries: BenchTaskSummary[] = [];
   let totalRuns = 0;
+  let seededDeficiencies = 0;
 
   for (const task of tasks) {
     const taskType = task.taskType ?? classifyTask(task.prompt).taskType;
     const taskFingerprint = ModelRouterMatrix.fingerprintTask(task.prompt, JSON.stringify(task.verifier));
     let passes = 0;
     let scoreSum = 0;
+    let sampleFailure: string | undefined;
+    let observedModelId: string | undefined = opts.modelId;
 
     for (let i = 0; i < runs; i++) {
       const res = await runner.run(task.prompt, { model: opts.modelId });
       const grade = await gradeRun(res.text, task.verifier, opts.judge);
+      if (!grade.pass && sampleFailure === undefined) sampleFailure = res.text;
+      observedModelId = res.modelId ?? observedModelId;
       passes += grade.pass ? 1 : 0;
       scoreSum += grade.qualitativeScore;
       totalRuns++;
@@ -197,14 +267,45 @@ export async function runBench(
       opts.onRun?.({ taskId: task.id, run: i + 1, pass: grade.pass, qualitativeScore: grade.qualitativeScore });
     }
 
-    taskSummaries.push({
-      taskId: task.id,
-      taskFingerprint,
-      taskType,
-      runs,
-      passRate: Math.round((passes / runs) * 1000) / 1000,
-      meanScore: Math.round((scoreSum / runs) * 100) / 100,
-    });
+    const passRate = Math.round((passes / runs) * 1000) / 1000;
+    const meanScore = Math.round((scoreSum / runs) * 100) / 100;
+
+    // Deterministic backlog seeding: a sub-100% pass-rate is direct evidence of a
+    // harness weakness, so seed it here rather than relying on the model to call the
+    // ResearchBacklog tool. Idempotent by title (`Bench failure: <taskId>`), so a
+    // re-run updates the same record. Confidence = how consistently it failed × how
+    // many runs back it, so a flaky one-off (or a possibly-too-strict verifier on a
+    // near-miss) sinks in triage instead of registering as a confident false positive.
+    if (opts.backlog && split !== 'holdout' && passRate < 1) {
+      const failRate = 1 - passRate;
+      const sampleWeight = Math.min(1, runs / 3); // 1 run = weak evidence; ~3+ = solid
+      const confidence = Math.round(Math.min(0.9, Math.max(0.25, 0.3 + 0.6 * failRate * sampleWeight)) * 100) / 100;
+      const severity: Severity = meanScore <= 10 ? 'high' : meanScore < 60 ? 'medium' : 'low';
+      const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '…' : s);
+      try {
+        opts.backlog.add({
+          title: `Bench failure: ${task.id}`,
+          description:
+            `Harness failed benchmark task "${task.id}" (${task.verifier.type} verifier). ` +
+            `passRate=${passes}/${runs}, meanScore=${meanScore}. Prompt: ${clip(task.prompt, 200)}`,
+          bugClass: opts.deficiencyBugClass ?? 'Other',
+          severity,
+          impact: 3,
+          effort: 3,
+          confidence,
+          discoveredRound: opts.discoveredRound,
+          discoveredRef: opts.discoveredRef,
+          affectedModels: observedModelId ? [observedModelId] : undefined,
+          affectedTaskFingerprints: [taskFingerprint],
+          notes: `taskType=${taskType}; split=${split}; sample output: ${clip(sampleFailure ?? '(empty output)', 300)}`,
+        });
+        seededDeficiencies++;
+      } catch {
+        // A backlog write error must never fail the benchmark itself.
+      }
+    }
+
+    taskSummaries.push({ taskId: task.id, taskFingerprint, taskType, runs, passRate, meanScore });
   }
 
   return {
@@ -213,6 +314,7 @@ export async function runBench(
     harnessRef: opts.harnessRef,
     totalRuns,
     tasks: taskSummaries,
+    seededDeficiencies,
   };
 }
 
@@ -226,7 +328,7 @@ export function parseTaskSet(raw: unknown, source = '<task-set>'): TaskSpec[] {
     if (typeof o.prompt !== 'string' || !o.prompt) throw new Error(`${source}[${i}] (${o.id}): missing 'prompt'`);
     if (!o.verifier || typeof o.verifier !== 'object') throw new Error(`${source}[${i}] (${o.id}): missing 'verifier'`);
     const v = o.verifier as Record<string, unknown>;
-    const validTypes = ['exact', 'regex', 'contains', 'llm-judge'];
+    const validTypes = ['exact', 'regex', 'contains', 'llm-judge', 'numeric'];
     if (typeof v.type !== 'string' || !validTypes.includes(v.type)) {
       throw new Error(`${source}[${i}] (${o.id}): verifier.type must be one of ${validTypes.join('|')}`);
     }

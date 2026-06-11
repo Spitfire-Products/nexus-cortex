@@ -630,6 +630,11 @@ autoresearch
   .option('--harness-ref <ref>', 'override the auto-stamped git SHA (single-box base/candidate sim)')
   .option('--benchmark-source <src>', 'benchmark source label (default: cortex-bench)')
   .option('--server-url <url>', 'cortex server URL (default: $CORTEX_SERVER_URL or http://localhost:4000)')
+  .option('--run-cmd <template>', 'NON-CORTEX target: grade a shell command per task ({prompt}/{case} substituted) instead of a cortex server — pair with numeric verifiers')
+  .option('--build-cmd <cmd>', 'one-shot build, run once in --cwd before benching a --run-cmd target')
+  .option('--cwd <dir>', 'working dir for --run-cmd/--build-cmd (default: project root)')
+  .option('--accept-exit <codes>', 'comma list of exit codes whose stdout is graded (default 0)', '0')
+  .option('--no-seed-backlog', 'do not auto-seed a deficiency for each failing task (use for candidate-worktree benches)')
   .action(async (opts) => {
     const globalOpts = program.opts();
     await autoResearchBench({ ...opts, json: globalOpts.json });
