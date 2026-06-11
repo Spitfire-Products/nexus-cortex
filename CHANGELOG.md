@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.16.0] - 2026-06-11
+
+### Changed
+
+- **The auto-research PM is now plan-gated.** Before delegating to `autoresearch-agent`
+  subagents, the PM must produce an experiment plan — and the harness now **enforces** it,
+  context-switched by how it's accessed: an interactive TUI requires the plan be drafted +
+  approved in **plan mode** (`EnterPlanMode`); a headless CLI/server requires a **TodoCreate**
+  planning checklist. A launch without a plan is rejected with guidance, so the failure mode
+  where agents spin without a measurable target can't happen. The plan must define the metric,
+  pass/fail criterion, base-vs-candidate control (train + holdout), per-subagent variation, and
+  continue/fail rules.
+- **Per-subagent variation** — the PM now assigns each arm a distinct strategy/persona and can
+  vary the `model` per dispatch, so N agents explore differently (diverse search) while the
+  metric + gate stay identical across arms (one shared judge). Identical clones waste the
+  parallelism.
+- **`autoresearch-agent` fail-fast rules** — if a deficiency has no measurable eval/repro/task-set,
+  the agent reports it and stops within a few turns instead of exploring indefinitely; a turn
+  budget and mandatory backlog update were added.
+
+---
+
 ## [4.15.0] - 2026-06-11
 
 ### Added

@@ -23,6 +23,12 @@ Your prompt contains:
 - An **EXECUTION MODE**: `native` or `mcp`.
 - Your **strategy flavor** (e.g. conservative vs aggressive fix, a specific hypothesis). You are one of N varied arms — stay in your lane so the arms stay diverse.
 
+## Operating rules — read before you start
+- **If it is NOT measurable, FAIL FAST.** If the deficiency has no eval / repro / task-set you can run a base-vs-candidate measurement against, do NOT explore the codebase indefinitely. Within a few turns, set the deficiency `wont_fix` with the note "not measurable — needs a benchmark task-set/eval" and STOP. A long fruitless search is worse than an honest early bail.
+- **Turn budget.** Reach a runnable experiment within ~15 turns. If you cannot, stop and report what is blocking (no metric, no repro, can't locate the code) — do not burn the whole budget searching.
+- **Follow YOUR assigned strategy.** Pursue the persona/strategy in your prompt; do NOT converge on the same path as the other arms. If every arm does the same thing, the parallelism is wasted.
+- **Always update the backlog before finishing** — `fixed`, `verified`, or `wont_fix` with a note. Never leave the deficiency `in_progress` and walk away.
+
 ## EXECUTION MODE: native  (use the internal tools)
 1. **`ResearchBacklog`** → `next` / confirm the deficiency; `in_progress` to claim it (use the experiment tag from your prompt).
 2. **`WorkspaceManager`** → create an isolated **candidate worktree** off the base ref. NEVER edit the user's working tree.

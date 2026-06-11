@@ -5,6 +5,7 @@ import { join, resolve as resolvePath } from 'path';
 import { homedir } from 'os';
 import { glob } from 'glob';
 import { resolveProjectAgentsDir } from '@nexus-cortex/core';
+import { checkAutoResearchPlanGate } from '../../utils/autoResearchPlanGate.js';
 
 /**
  * Parameters for Task tool
@@ -172,6 +173,12 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
     try {
       // Load agent definition
       const agent = await this.loadAgent(params.subagent_type.trim(), signal);
+
+      // Plan-gate: an autoresearch-agent launch requires the PM to have produced an
+      // experiment plan first (plan mode in a TUI, a TodoCreate checklist headless).
+      // Reject here so no subagent is forked without a plan.
+      const planBlock = checkAutoResearchPlanGate(agent.name);
+      if (planBlock) return this.createErrorResult(planBlock);
 
       // Determine effective model
       const effectiveModel = params.model || agent.model || 'inherit';

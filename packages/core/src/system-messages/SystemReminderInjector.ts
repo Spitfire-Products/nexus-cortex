@@ -157,13 +157,30 @@ export class SystemReminderInjector {
       : 'run experiments with the internal tools (ResearchBacklog, WorkspaceManager, and the `cortex autoresearch fix/experiment/loop` CLI via Bash)';
     return (
       '<harness-note source="automated-harness" from-user="false">\n' +
-      '# Auto-research is ENABLED — you are the PM, do NOT run experiments yourself\n' +
-      'For self-improvement / benchmark / "auto-research" / "set up an experiment" requests: do NOT load the\n' +
-      'auto-research tools into your own context or run experiments here. Instead pick or confirm ONE backlog\n' +
-      'deficiency, then delegate to ~4-5 `autoresearch-agent` subagents via the Task tool (subagent_type:\n' +
-      '"autoresearch-agent"), ALL on that SAME deficiency, each with a slightly varied strategy. Tell each one:\n' +
-      `"EXECUTION MODE: ${mode}" — i.e. ${exec}. Collect their candidate verdicts and pick the holdout-verified\n` +
-      'winner (mergeEligible). The tool surface + workflow live in those subagents, keeping your context clean.\n' +
+      '# Auto-research is ENABLED — you are the PM. PLAN, then delegate. Do NOT run experiments yourself.\n' +
+      'For self-improvement / benchmark / "auto-research" / "set up an experiment" requests, do NOT load the\n' +
+      'auto-research tool surface into your own context or run experiments here. Follow this workflow:\n' +
+      '\n' +
+      '1. PLAN FIRST — the harness BLOCKS the launch until you do (interactive TUI: draft the plan and get it\n' +
+      '   approved in PLAN MODE via EnterPlanMode; headless: create a TodoCreate planning checklist). The plan covers:\n' +
+      '   - Evaluate the backlog (ResearchBacklog list/next); triage the SINGLE highest-value deficiency.\n' +
+      '   - Define a MEASURABLE experiment: the metric + how it is measured (an eval/command), the pass/fail\n' +
+      '     threshold + verifier, the control (base ref vs candidate, train + a HELD-OUT set), and the\n' +
+      '     subagents’ continue/fail rules (a turn budget; fail-fast — if the deficiency has no eval/repro/\n' +
+      '     task-set, report it is NOT MEASURABLE and stop; never self-merge).\n' +
+      '   - NO MEASURABLE METRIC → DO NOT LAUNCH. State exactly what is missing (an eval / repro / task-set) and stop.\n' +
+      '2. DIVERSIFY the arms (there is no swarm generator here — YOU craft the variety; identical agents waste\n' +
+      '   the parallelism). Assign each subagent a DISTINCT strategy/persona — e.g. #1 minimal/conservative fix,\n' +
+      '   #2 aggressive refactor, #3/#4 different root-cause hypotheses, #5 high-creativity. Also vary the `model`\n' +
+      '   per Task dispatch (Task accepts a `model` override) for real decorrelation, within cost/no-xAI limits.\n' +
+      '   (Per-arm temperature is not a dispatch param yet — approximate via persona + model.) Keep N small with\n' +
+      '   SHARP distinctions (4-5 genuinely different approaches beat many near-duplicates).\n' +
+      '3. DELEGATE: spawn ~4-5 `autoresearch-agent` subagents via the Task tool (subagent_type: "autoresearch-agent"),\n' +
+      '   ALL on that SAME deficiency, one per strategy. Each prompt = the plan + that agent’s persona/strategy +\n' +
+      `   "EXECUTION MODE: ${mode}" (i.e. ${exec}).\n` +
+      '4. ARBITRATE: collect every candidate + verdict and keep ONLY the holdout-verified winner (mergeEligible).\n' +
+      '   Diversify the SEARCH; the metric + gate are IDENTICAL across all arms (the single shared judge).\n' +
+      'The full tool surface + experiment workflow live in those subagents, keeping your context clean.\n' +
       '</harness-note>'
     );
   }

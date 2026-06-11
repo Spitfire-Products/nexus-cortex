@@ -27,7 +27,18 @@ describe('SystemReminderInjector — auto-research PM capability hint (AUTORESEA
     expect(note).toContain('EXECUTION MODE: native');
     expect(note).toContain('internal tools');
     expect(note).toContain('autoresearch-agent');
-    expect(note).toContain('do NOT run experiments yourself');
+    expect(note).toContain('NOT run experiments yourself');
+  });
+
+  it('native → plan-gated workflow with per-arm variation', () => {
+    process.env.AUTORESEARCH_AGENTS = 'native';
+    const note = inj.buildAutoResearchCapabilitySection()!;
+    expect(note).toContain('PLAN FIRST');               // must plan before delegating
+    expect(note).toContain('NO MEASURABLE METRIC');     // no-metric-no-launch gate
+    expect(note).toContain('DIVERSIFY');                // varied arms, not clones
+    expect(note).toContain('DISTINCT strategy');        // per-subagent persona/strategy
+    expect(note).toContain('`model` override');         // model variation lever
+    expect(note).toContain('single shared judge');      // diverse search, unified evaluation
   });
 
   it('mcp → hint routes experiment-running to the MCP', () => {

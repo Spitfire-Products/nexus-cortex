@@ -8,6 +8,7 @@
 import { BaseTool, type ToolResult } from '../../base/index.js';
 import { SchemaValidator } from '../../utils/SchemaValidator.js';
 import type { ExecutorConfig } from '../../base/ToolRegistry.js';
+import { markAutoResearchPlanMode } from '../../utils/autoResearchPlanGate.js';
 
 /**
  * Parameters for the ExitPlanMode tool
@@ -126,6 +127,9 @@ Before using this tool, ensure your plan is clear and unambiguous. If there are 
           },
         };
       }
+
+      // A valid plan was presented — satisfies the interactive auto-research plan-gate.
+      markAutoResearchPlanMode();
 
       // Format the plan for presentation
       const formattedOutput = this.formatPlan(params.plan);
