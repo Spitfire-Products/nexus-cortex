@@ -858,6 +858,7 @@ export class CortexOrchestrator {
 
     // Repository state (git + cross-agent staleness) — every turn.
     this.injectRepoStateNote(injectedContent);
+    this.injectAutoResearchCapability(injectedContent);
 
     // 2. Create user message for history (use ORIGINAL content, not injected)
     // System-reminder tags are ephemeral and should NOT be saved to persistent storage
@@ -2848,6 +2849,7 @@ export class CortexOrchestrator {
 
     // Repository state (git + cross-agent staleness) — every turn.
     this.injectRepoStateNote(injectedContent);
+    this.injectAutoResearchCapability(injectedContent);
 
     // Create user message (turn number will be current value, then incremented by 2 at end)
     // Save ORIGINAL content (not injected) to persistent storage
@@ -7651,6 +7653,17 @@ export class CortexOrchestrator {
       this.config.workingDirectory ||
       process.cwd();
     const note = this.systemReminderInjector.buildGitContextSection(gitRoot);
+    if (note) (injectedContent as any[]).unshift({ type: 'text', text: note });
+  }
+
+  /**
+   * Inject the PM delegation hint for the auto-research subagent feature
+   * (AUTORESEARCH_AGENTS). No-op when off or inside a subagent — the injector gates it.
+   * Keeps the main model a clean PM: it learns it can delegate, not the tool surface.
+   */
+  private injectAutoResearchCapability(injectedContent: unknown): void {
+    if (!Array.isArray(injectedContent)) return;
+    const note = this.systemReminderInjector.buildAutoResearchCapabilitySection();
     if (note) (injectedContent as any[]).unshift({ type: 'text', text: note });
   }
 

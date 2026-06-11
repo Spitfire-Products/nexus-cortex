@@ -152,6 +152,12 @@ export interface EnvironmentVariables {
   /** Enable MCP auto-injection */
   MCP_AUTO_INJECT?: string; // 'true' | 'false'
 
+  /** Auto-research subagent feature. off = disabled (PM never told about it; main context
+   *  stays clean). native = the PM delegates to autoresearch-agent subagents that run
+   *  experiments with the INTERNAL tools. mcp = the subagents route experiment-running to
+   *  the external nexus-cortex/autoresearch MCP server instead. */
+  AUTORESEARCH_AGENTS?: string; // 'off' | 'native' | 'mcp'
+
   /** Per-doc byte cap for injected project docs (CLAUDE.md, MEMORY.md, etc.). 0/unset = unlimited. */
   SYSTEM_MESSAGE_DOC_MAX_BYTES?: string; // integer as string
 
@@ -364,6 +370,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   // Session Configuration
   SESSION_STORAGE_DIR: '.cortex/sessions',
   MCP_AUTO_INJECT: 'false',
+  AUTORESEARCH_AGENTS: 'off',
   SYSTEM_MESSAGE_DOC_MAX_BYTES: '0',
 
   // Loop Control
@@ -776,6 +783,15 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     type: 'boolean',
     category: 'session',
     default: 'false'
+  },
+  {
+    key: 'AUTORESEARCH_AGENTS',
+    displayName: 'Auto-Research Subagents',
+    description: 'Delegate auto-research to subagents. off = disabled. native = subagents run experiments with internal tools. mcp = subagents route to the nexus-cortex/autoresearch MCP. The PM (main model) only gets a delegation hint — the tool surface lives in the subagents.',
+    type: 'choice',
+    category: 'session',
+    choices: ['off', 'native', 'mcp'],
+    default: 'off'
   },
   {
     key: 'SYSTEM_MESSAGE_DOC_MAX_BYTES',

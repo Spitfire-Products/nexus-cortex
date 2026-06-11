@@ -142,6 +142,33 @@ export class SystemReminderInjector {
   }
 
   /**
+   * PM delegation hint for the auto-research subagent feature (AUTORESEARCH_AGENTS).
+   * Returns null when the feature is off, or when running INSIDE a subagent
+   * (CORTEX_AGENT_MODE) so the hint never recurses. Keeps the MAIN model's context clean:
+   * it learns only that it can delegate — the full auto-research tool surface + workflow
+   * live in the autoresearch-agent subagent, not here.
+   */
+  buildAutoResearchCapabilitySection(): string | null {
+    const mode = (process.env.AUTORESEARCH_AGENTS ?? 'off').trim().toLowerCase();
+    if (mode !== 'native' && mode !== 'mcp') return null;        // 'off' / unset / invalid
+    if (process.env.CORTEX_AGENT_MODE === 'true') return null;   // already a subagent — no recursion
+    const exec = mode === 'mcp'
+      ? 'route experiment-running to the nexus-cortex/autoresearch MCP tools (do NOT run the internal CLI)'
+      : 'run experiments with the internal tools (ResearchBacklog, WorkspaceManager, and the `cortex autoresearch fix/experiment/loop` CLI via Bash)';
+    return (
+      '<harness-note source="automated-harness" from-user="false">\n' +
+      '# Auto-research is ENABLED — you are the PM, do NOT run experiments yourself\n' +
+      'For self-improvement / benchmark / "auto-research" / "set up an experiment" requests: do NOT load the\n' +
+      'auto-research tools into your own context or run experiments here. Instead pick or confirm ONE backlog\n' +
+      'deficiency, then delegate to ~4-5 `autoresearch-agent` subagents via the Task tool (subagent_type:\n' +
+      '"autoresearch-agent"), ALL on that SAME deficiency, each with a slightly varied strategy. Tell each one:\n' +
+      `"EXECUTION MODE: ${mode}" — i.e. ${exec}. Collect their candidate verdicts and pick the holdout-verified\n` +
+      'winner (mergeEligible). The tool surface + workflow live in those subagents, keeping your context clean.\n' +
+      '</harness-note>'
+    );
+  }
+
+  /**
    * Generate content hash for deduplication
    * Same content = same hash = same message ID
    */

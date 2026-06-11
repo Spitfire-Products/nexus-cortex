@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.15.0] - 2026-06-11
+
+### Added
+
+- **Auto-research subagents** — a `.env`-gated CLI feature (`AUTORESEARCH_AGENTS` = `off` |
+  `native` | `mcp`, default `off`). When enabled, the main model acts as a **PM**: for
+  self-improvement / "set up an experiment" requests it **delegates to ~4–5 dedicated
+  `autoresearch-agent` subagents** on one backlog deficiency, instead of running the
+  experiments itself. The auto-research tool surface + workflow live in those subagents, so
+  the main model's context stays clean (the same isolation as the browse-agent). `native`
+  runs experiments with the internal tools; `mcp` routes experiment-running to the external
+  `nexus-cortex/autoresearch` MCP server. Off by default — the PM is never even told about it.
+
+---
+
 ## [4.14.0] - 2026-06-11
 
 ### Added
