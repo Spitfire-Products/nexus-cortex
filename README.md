@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/nexus-cortex-hero.svg" alt="Nexus Cortex — headless multi-provider AI agent harness" width="606">
+</p>
+
 # Nexus Cortex
 
 > **A headless, multi-provider AI agent harness — embed it as a library, script it from the CLI, or run it as a stateful agent server.**
@@ -6,7 +10,7 @@
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
 [![node](https://img.shields.io/badge/node-%E2%89%A518-green)](https://nodejs.org)
 
-<!-- hero: asciinema/GIF of `cortex "read package.json and bump the patch version"` running a real tool loop -->
+<!-- future: asciinema/GIF of `cortex "read package.json and bump the patch version"` running a real tool loop -->
 
 Nexus Cortex is the engine *underneath* the agent — not another interactive terminal app, but the harness you build on. One orchestrator drives many models across many providers through a pluggable adapter layer, with sub-agents, MCP, sandboxed artifacts, a permission engine, context management, and append-only session history built in. Run it three ways:
 
@@ -99,7 +103,7 @@ See [Headless Mode](#headless-mode) for the full server workflow, or [CLI (headl
 
 Beyond the core agent loop, the harness ships power-user surfaces you'd otherwise have to build yourself. Each is detailed in [Core Systems](#core-systems) below.
 
-- **Visual agent monitoring (tmux).** Run parallel sub-agents each in a live tmux pane (`AGENT_TMUX_MONITOR`), plus a built-in dashboard (port 4001) to watch sandbox + tmux sessions — the `TmuxSession` tool and the `tmux` / `artifact` CLI groups.
+- **Visual agent monitoring (tmux).** Run parallel sub-agents each in a live tmux pane (`AGENT_TMUX_MONITOR`), plus an opt-in dashboard (`ENABLE_DASHBOARD=true`, port `DASHBOARD_PORT`/4001) to watch sandbox + tmux sessions — the `TmuxSession` tool and the `tmux` / `artifact` CLI groups.
 - **Git PR agent.** `PRAgent` runs review / create / list pipelines (and the `/v1/pr/*` routes), shelling out safely (`execFile`, no shell) behind an opt-in repo/action allow-list and an HMAC-verified webhook.
 - **Isolated git worktrees.** `WorkspaceManager` hands each agent a clean, isolated worktree (clone → branch → work → cleanup) so parallel agents never clobber each other's tree.
 - **Helper-model middleware.** A cheaper secondary model auto-compacts the conversation as it nears the context limit — *compaction first, windowing last* — so long sessions keep going without losing the thread.
@@ -127,7 +131,7 @@ DEFAULT_MODEL_ID=grok-4-1-fast-reasoning node packages/server/dist/index.js &
 cd packages/server && npm run dev
 ```
 
-Port 4000 = API server. Port 4001 = HTML dashboard (sandbox/tmux viewer, same process).
+Port 4000 = API server. The HTML dashboard (sandbox/tmux viewer, port 4001) is opt-in: set `ENABLE_DASHBOARD=true` — it's a master switch, so when off no second port is ever bound.
 
 ### Cortex CLI
 
@@ -250,6 +254,7 @@ The variables you'll reach for most when starting the server:
 | `DEBUG` | `false` | Verbose logging (system messages, routes) |
 | `YOLO` | `false` | Auto-approve all tool executions (bypasses permissions) |
 | `CORTEX_MODE` | `persistent` | `stateless` for clean per-request sessions; `server` for HTTP-client mode |
+| `ENABLE_DASHBOARD` | `false` | Master switch for the sandbox/tmux web dashboard (binds `DASHBOARD_PORT`, default 4001) |
 
 **Every** variable is documented in [Configuration → Environment Variables](#environment-variables) below and in `.env.example`. Run `node packages/server/dist/index.js --help` for the server's own summary.
 
