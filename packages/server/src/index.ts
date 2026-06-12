@@ -429,8 +429,11 @@ export class CortexV4Server {
   }
 }
 
-// Start server if run directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Start the server. Exported so the npm bin wrappers (bin/cortex-server.js) can
+// invoke it explicitly — when the module is loaded via the bin's dynamic import,
+// import.meta.url no longer matches argv[1], so the direct-run guard below won't
+// fire (that silent no-op shipped once; caught by the local-registry dry-run).
+export function main(): void {
 
   // --help flag
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -539,4 +542,16 @@ ${chalk.bold.underline('Response Fields:')}
     await server.stop();
     process.exit(0);
   });
+}
+
+// Run directly (node dist/index.js)? Compare realpaths so the check also holds
+// when the entry is reached through a symlink (npm global bins, npm link).
+const __entryArg = process.argv[1];
+if (__entryArg) {
+  try {
+    const entryReal = fs.realpathSync(__entryArg);
+    if (path.resolve(__filename) === entryReal) main();
+  } catch {
+    /* argv[1] not a resolvable file — a wrapper will call main() explicitly */
+  }
 }
