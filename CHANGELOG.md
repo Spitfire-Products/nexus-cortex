@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.23.1] - 2026-06-12
+
+### Removed
+
+- The five `spacetimedb-*` reference skills no longer ship — they are platform tooling for a
+  separate project, not part of the cortex harness. The shipped skill library is now:
+  `autoresearch` (+ the persona library), `cortex`, `cortex-bench`, `best-of-n`, `verify-work`,
+  `docx`, `xlsx`, `pptx`, `pdf-documents`, `resume-analyst`.
+
+---
+
 ## [4.23.0] - 2026-06-12
 
 ### Fixed
