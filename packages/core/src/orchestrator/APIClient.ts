@@ -197,6 +197,17 @@ export class APIClient {
    * @returns Provider response
    */
   async sendRequest(request: PreparedRequest, modelConfig: ModelConfig): Promise<APIResponse> {
+    // Clamp any requested temperature to THIS model's valid range before dispatch — the
+    // cross-provider gate (e.g. Anthropic is 0–1, OpenAI/DeepSeek 0–2). Lets a per-subagent
+    // temperature (an auto-research diversity lever) vary freely without 400-ing a model whose
+    // range is narrower. Applies to every API pattern below.
+    const tRange = (modelConfig as any).parameters?.temperature;
+    const t = (request as any).parameters?.temperature;
+    if (typeof t === 'number' && Number.isFinite(t) && tRange) {
+      const clamped = Math.max(tRange.min ?? 0, Math.min(tRange.max ?? 2, t));
+      if (clamped !== t) (request as any).parameters.temperature = clamped;
+    }
+
     const apiPattern = modelConfig.api.pattern;
 
     switch (apiPattern) {

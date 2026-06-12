@@ -15,6 +15,7 @@ export interface TaskParams {
   prompt: string;       // The task for the agent to perform
   subagent_type: string; // Type of specialized agent to use
   model?: string;       // Optional model override
+  temperature?: number; // Optional per-subagent sampling temperature (clamped to the model's range)
   resume?: string;      // Optional session ID to resume
 }
 
@@ -73,6 +74,10 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
         model: {
           type: 'string' as const,
           description: 'Optional model override. Accepts Claude aliases (sonnet, opus, haiku), "inherit", or any full model ID (e.g., "deepseek-v4-pro", "grok-4.3") for cross-provider dispatch.'
+        },
+        temperature: {
+          type: 'number' as const,
+          description: 'Optional sampling temperature for this subagent — a diversity lever when running parallel arms (e.g. step by tenths across agents). Clamped to the chosen model\'s valid range. Higher = more varied/creative, lower = more deterministic.'
         },
         resume: {
           type: 'string' as const,
@@ -183,6 +188,13 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
       // Determine effective model
       const effectiveModel = params.model || agent.model || 'inherit';
 
+      // Per-subagent sampling temperature → fork env-override (a parallel-arm diversity lever).
+      // Sanity-clamp to a broad 0–2 here; the APIClient clamps to the model's exact range.
+      const envOverrides: Record<string, string> = {};
+      if (typeof params.temperature === 'number' && Number.isFinite(params.temperature)) {
+        envOverrides.CORTEX_SUBAGENT_TEMPERATURE = String(Math.max(0, Math.min(2, params.temperature)));
+      }
+
       // Format output for LLM
       const output = this.formatAgentOutput(agent, params, effectiveModel);
 
@@ -190,6 +202,7 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
         ...this.createSuccessResult(output),
         metadata: {
           executionTime: Date.now() - startTime,
+          ...(Object.keys(envOverrides).length ? { envOverrides } : {}),
           agentName: agent.name,
           location: agent.location,
           model: effectiveModel,

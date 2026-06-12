@@ -343,8 +343,15 @@ async function executeTask(prompt: string): Promise<SubAgentResult> {
   let accumulatedText = '';
 
   try {
+    // Per-subagent sampling temperature: set by the PM's Task dispatch via envOverrides →
+    // CORTEX_SUBAGENT_TEMPERATURE (a parallel-arm diversity lever). The APIClient clamps it to
+    // the chosen model's valid range; here we just forward it as a request parameter.
+    const subTemp = process.env.CORTEX_SUBAGENT_TEMPERATURE !== undefined
+      ? Number(process.env.CORTEX_SUBAGENT_TEMPERATURE) : NaN;
+    const streamOpts = Number.isFinite(subTemp) ? { parameters: { temperature: subTemp } } : undefined;
+
     // Use streaming to get real-time tool call updates
-    const stream = orchestrator.streamMessage(prompt);
+    const stream = orchestrator.streamMessage(prompt, streamOpts);
 
     for await (const chunk of stream) {
       // Check for abort during streaming

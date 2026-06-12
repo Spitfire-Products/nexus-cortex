@@ -37,7 +37,8 @@ describe('SystemReminderInjector — auto-research PM capability hint (AUTORESEA
     expect(note).toContain('NO MEASURABLE METRIC');     // no-metric-no-launch gate
     expect(note).toContain('DIVERSIFY');                // varied arms, not clones
     expect(note).toContain('DISTINCT strategy');        // per-subagent persona/strategy
-    expect(note).toContain('`model` override');         // model variation lever
+    expect(note).toContain('`model`');                  // model variation lever
+    expect(note).toContain('`temperature`');            // temperature variation lever
     expect(note).toContain('single shared judge');      // diverse search, unified evaluation
   });
 

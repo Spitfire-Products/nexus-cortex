@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.17.0] - 2026-06-12
+
+### Added
+
+- **Per-subagent temperature** — the `Task` tool gains a `temperature` param, so a PM running
+  parallel auto-research arms can vary sampling temperature per agent (a real diversity lever
+  alongside the `model` override). It threads to the forked subagent's request, and is
+  **clamped to the chosen model's valid range** in the shared API path (e.g. Anthropic 0–1,
+  OpenAI/DeepSeek 0–2) so a high temperature can't 400 a narrow-range model.
+
+---
+
 ## [4.16.0] - 2026-06-11
 
 ### Changed

@@ -172,8 +172,8 @@ export class SystemReminderInjector {
       '2. DIVERSIFY the arms (there is no swarm generator here — YOU craft the variety; identical agents waste\n' +
       '   the parallelism). Assign each subagent a DISTINCT strategy/persona — e.g. #1 minimal/conservative fix,\n' +
       '   #2 aggressive refactor, #3/#4 different root-cause hypotheses, #5 high-creativity. Also vary the `model`\n' +
-      '   per Task dispatch (Task accepts a `model` override) for real decorrelation, within cost/no-xAI limits.\n' +
-      '   (Per-arm temperature is not a dispatch param yet — approximate via persona + model.) Keep N small with\n' +
+      '   per Task dispatch (Task accepts `model` AND `temperature` overrides) for real decorrelation — vary\n' +
+      '   temperature by tenths across arms (auto-clamped to each model’s range), within cost/no-xAI limits. Keep N small with\n' +
       '   SHARP distinctions (4-5 genuinely different approaches beat many near-duplicates).\n' +
       '3. DELEGATE: spawn ~4-5 `autoresearch-agent` subagents via the Task tool (subagent_type: "autoresearch-agent"),\n' +
       '   ALL on that SAME deficiency, one per strategy. Each prompt = the plan + that agent’s persona/strategy +\n' +
