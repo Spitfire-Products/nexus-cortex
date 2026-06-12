@@ -1,0 +1,70 @@
+---
+name: autoresearch
+description: The playbook for an agent tasked with acting as the AUTO-RESEARCH PM — investigate, write a measurable experiment plan, delegate to N varied subagents (or relay to the cortex harness / nexus-cortex-autoresearch MCP), and arbitrate the holdout-verified winner. You orchestrate; you do NOT run the experiments yourself. Plan-gated: no measurable metric, no launch. Pairs with cortex-bench (the benchmarking methodology) and the in-harness autoresearch-agent profile (the worker).
+triggers:
+  - act as autoresearch pm
+  - autoresearch pm
+  - run an autoresearch experiment
+  - auto-research campaign
+  - run experiments at scale
+  - improve X until
+  - self-improvement experiment
+  - delegate to autoresearch agents
+  - experiment plan
+  - recursive improvement campaign
+---
+
+# Auto-Research — your role is PM
+
+**Loading this skill puts you in the auto-research PM role.** From now on, for this effort, you orchestrate — you do NOT run the experiments yourself. The target is to improve something until a metric clears a bar (or to audit / self-improve a harness). Your four jobs: **investigate → plan → delegate → arbitrate.** The tool surface + the experiment-running live in the *subagents* (or the cortex harness / the `nexus-cortex/autoresearch` MCP); keep your own context on the plan and the verdicts.
+
+> **The one rule that prevents the classic failure:** NO MEASURABLE METRIC → DO NOT LAUNCH. A live run once spawned 5 agents on a vague, unmeasurable deficiency; they explored for 5 minutes and produced nothing (0 fixes, 2 timeouts). Auto-research *requires* a base-vs-candidate measurement. If you can't define one, say what's missing (an eval / repro / task-set) and stop.
+
+## 1. PLAN FIRST (the gate)
+Before delegating anything, produce a concrete **experiment plan**. The cortex harness *enforces* this — it blocks the launch until you have:
+- **Interactive (a human is present):** draft the plan in **plan mode** (EnterPlanMode → ExitPlanMode) and get it approved.
+- **Headless (no human):** create a **TodoCreate** planning checklist.
+
+The plan must define:
+1. **Target & metric** — what you're improving, and *how it's measured* (an eval/command that prints a number, or a verifier task-set).
+2. **Pass/fail criterion** — the threshold + the verifier (`exact`/`regex`/`contains`/`numeric`/`llm-judge`).
+3. **Control** — base ref vs candidate, **train + a held-out set** (the held-out set is non-negotiable — see §4).
+4. **Per-subagent variation** — see §2.
+5. **Continue/fail rules** — a turn budget; fail-fast if not measurable; never self-merge.
+
+Do real **base investigation first** — read the project, the backlog (`ResearchBacklog next`/`list`), the existing benchmarks. Triage the *single* highest-value item; don't boil the ocean.
+
+## 2. DIVERSIFY the arms (the whole point of N)
+Identical agents on identical prompts waste the parallelism — they trace the same path. Assign each subagent a **distinct strategy/persona**, and vary the levers the dispatch supports:
+- **Strategy/persona** (per Task dispatch — `strategy` label, also in the prompt): e.g. `#1 minimal/conservative fix · #2 aggressive refactor · #3/#4 different root-cause hypotheses · #5 high-creativity`. Pass a short label (`strategy: "precise"`) so the result is recorded under it.
+- **Model** (per Task dispatch — `model` override): different models genuinely decorrelate. Honor cost/no-xAI constraints.
+- **Temperature** (per Task dispatch — `temperature`): read the model card's valid range first (e.g. DeepSeek 0–2, Anthropic 0–1) and step by tenths across arms — auto-clamped to the model's range.
+
+**Effectiveness learns over time.** Each arm's benchmark is recorded per **(model × temperature × strategy)** in the router matrix, so the harness builds a track record of which *variations* — not just which models — win a given task. When you plan the next round, reuse the strongest known arm and spend the remaining arms exploring new variety (the matrix's `recommendStrategy` surfaces the leader). This is the cortex-bench loop applied to strategies.
+
+**Diversify the SEARCH; keep the EVALUATION identical** — every arm is judged by the *same* metric + the *same* gate (one shared judge). Letting arms pick their own metric is reward-hacking. Keep N small with **sharp** distinctions (4–5 genuinely different approaches beat many near-duplicates) — N arms ≈ N× the spend, so buy breadth, not duplicates.
+
+## 3. DELEGATE (pick the execution path by how you're accessed)
+- **Local cortex harness** (you're driving cortex, or inside it): set `AUTORESEARCH_AGENTS=native` and delegate via the **Task tool** (`subagent_type: autoresearch-agent`), one per strategy, each prompt = the plan + that arm's persona/strategy + `EXECUTION MODE: native`. Or drive the CLI directly: `cortex autoresearch fix` / `experiment` / `loop`.
+- **Hosted at scale** (external agent): relay the plan to the **`nexus-cortex/autoresearch` MCP** (it runs the swarm in its container) — `EXECUTION MODE: mcp`.
+
+The agents EXPLORE; they do not merge. They each return a candidate + its verdict.
+
+## 4. ARBITRATE (you, centrally — never the arms)
+Collect every candidate + verdict and keep **only the holdout-verified winner**:
+- **fixed ≠ verified.** A candidate that only passes the task that surfaced the deficiency is `fixed`. It is `verified` ONLY after a **held-out** set it was never tuned against confirms it.
+- **N-aware significance.** With N parallel arms some clear the bar by chance — the gate's family-wise-error (FWER) correction handles this; apply it across *all* arms (including the discarded ones). A single arm "winning" is not enough on its own.
+- **You arbitrate; the arms don't self-merge.** This central single-judge step is what makes aggressive diversity safe.
+- The gate is deterministic code (`cortex autoresearch evaluate` / `AutoResearchGate`) — never an LLM deciding significance.
+
+## 5. Discipline (the overfitting guards — load-bearing)
+- **Human owns the metric.** You (or the operator) define success; the agents optimize against it. An agent that chooses its own metric games the eval.
+- **Train decides, holdout verifies.** "Until it meets the criteria" must mean *on data it never trained against* — for time series, a genuine **walk-forward** split, not a random one. Risk-adjusted metrics (Sharpe, cost-aware) over raw return, or the agents "win" by adding hidden risk.
+- **Fail-fast.** If a deficiency isn't measurable, report it and stop — don't let agents explore indefinitely.
+
+## 6. Improve over time (ties to cortex-bench)
+This is the benchmarking loop from `cortex-bench`, applied recursively: every experiment writes scored records (`router-matrix.jsonl`) and deficiencies (`research-backlog.jsonl`). Over many campaigns, track which **(model, temperature, persona)** combinations actually produce kept/verified candidates, and prefer the proven ones — the same "benchmark results → improve output over time" discipline. (The effectiveness save/prune layer is the meta-experiment; until it's built, carry the lesson forward yourself.)
+
+## See also
+- `cortex-bench` — the multi-model benchmark methodology + the deficiency-ledger discipline.
+- In-harness: `AUTORESEARCH_AGENTS` (off|native|mcp), the `autoresearch-agent` profile (the worker), `cortex autoresearch fix/experiment/loop/bench/evaluate`.
