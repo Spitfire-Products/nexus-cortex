@@ -51,6 +51,15 @@ for (const f of SCAFFOLD_FILES) {
   copied++;
 }
 
+// Fresh-install onboarding memory: ship the seed as MEMORY.md (never the dev MEMORY.md,
+// which is project-private). Injected on turn 1; tells the first agent how to /init,
+// discover skills/agents, and then replace it with real project memory.
+const memorySeed = join(rootCortex, 'MEMORY.seed.md');
+if (existsSync(memorySeed)) {
+  copyFileSync(memorySeed, join(dest, 'MEMORY.md'));
+  copied++;
+}
+
 if (copied === 0) {
   console.error('[copy-pkg-cortex-scaffold] nothing copied — scaffold dirs missing from repo-root .cortex');
   process.exit(1);

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.22.0] - 2026-06-12
+
+### Added
+
+- **Fresh-install onboarding memory.** A new install now ships `.cortex/MEMORY.md` seeded
+  with a first-agent orientation — injected on the very first turn, it explains how to run
+  `/init` (generates `CORTEX.md` + project memory), how to discover the shipped skills
+  (`Skill` → `list`) and agent profiles (`Task` → `list`), where configuration lives, and the
+  memory-maintenance discipline — then instructs the agent to replace it with real project
+  memory. The `/init` auto-created memory template carries the same capability-discovery
+  pointers for installs that start without the seed.
+
+---
+
 ## [4.21.0] - 2026-06-12
 
 ### Added

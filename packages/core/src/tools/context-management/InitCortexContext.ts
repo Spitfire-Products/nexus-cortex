@@ -336,8 +336,16 @@ export class InitCortexContext {
       if (!memoryExists && !dryRun) {
         const memoryTemplate = `# Memory
 
-Persistent cross-session memory for this project. Updated as patterns emerge.
-Injected as a system message on every conversation turn.
+Persistent cross-session memory for this project — injected as a system message
+on every conversation turn. Maintain it with your file tools: keep it small,
+current, and factual (it costs context every turn). Record patterns as they
+emerge; delete what turns out to be wrong.
+
+Capability discovery (for a first session here): \`Skill\` with
+\`command: "list"\` shows the installed skill library (autoresearch,
+cortex-bench, best-of-n, verify-work, the document skills, …); \`Task\` with
+\`subagent_type: "list"\` shows the agent profiles. Remove this paragraph once
+you know the install.
 
 ## Project Patterns
 
