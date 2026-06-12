@@ -65,7 +65,7 @@ cortex --new "Search your conversation history for what we discussed about cachi
 ### Introspection (no prompt needed)
 ```
 --list-models        Models grouped by provider
---list-tools         All 31 tools with descriptions
+--list-tools         All registered tools with descriptions
 --sessions           All sessions with age/message counts
 --stats              Current session stats
 --context            Token budget utilization
@@ -136,9 +136,14 @@ curl -s http://localhost:4000/v1/messages \
 | `/v1/pr/list` | GET | List open PRs (`?repo=owner/repo`) |
 | `/v1/pr/webhook` | POST | GitHub webhook (future: auto-review on PR open) |
 
-## Tools (31)
+## Tools
 
-Read, Write, Edit, Bash, BashOutput, KillShell, Grep, Glob, WebSearch, WebFetch, Task, TodoWrite, AskUserQuestion, ExitPlanMode, NotebookEdit, SlashCommand, Skill, SearchConversationHistory, GetConversationSegment, ListCompactionBoundaries, RequestHistoricalContext, ListSessions, LoadSession, CreateArtifactTool, InteractWithSandbox, ModifySandbox, InspectSandbox, StopSandbox, WorkspaceManager, PRAgent, TmuxSession
+Run `cortex --list-tools` (or `GET /tools`) for the authoritative registered list. Categories:
+file ops (Read/Write/Edit/Glob/Grep), execution (Bash/BashOutput/KillShell/TmuxSession),
+web (WebSearch/WebFetch), agents (Task/WorkspaceManager/PRAgent), session history
+(ListSessions/LoadSession/SearchConversationHistory/...), sandbox/artifacts, planning
+(TodoWrite/ExitPlanMode), extensions (Skill/SlashCommand), and auto-research
+(ResearchBacklog + the `cortex autoresearch` CLI).
 
 ## .env Configuration
 
@@ -158,9 +163,9 @@ CLAUDE_CODE_OAUTH_TOKEN=     # sk-ant-oat01-... (Claude.ai Max subscription)
 # PROMPT CACHING
 ANTHROPIC_PROMPT_CACHING=true
 
-# MODELS
-DEFAULT_MODEL_ID=claude-4-5-sonnet
-HELPER_MODEL_ID=gemini-2.5-flash-lite-sdk
+# MODELS (example values — run `cortex --list-models` for the registered IDs)
+DEFAULT_MODEL_ID=deepseek-v4-pro
+HELPER_MODEL_ID=deepseek-v4-flash
 WEB_TOOLS_MODEL=gemini-2.5-flash   # Gemini model for WebSearch/WebFetch tools (free built-in googleSearch/urlContext)
 
 # SYSTEM
@@ -249,7 +254,7 @@ Layer 1: Workspace Isolation
 | **PRAgent executor** | `packages/executors/src/implementations/agent/PRAgentTool.ts` | GitHub PR operations via `gh` CLI |
 | **Tool definitions** | `packages/core/src/tools/registries/BaseToolRegistry.ts` | Schema registration for both tools |
 | **Executor registration** | `packages/executors/src/ExecutorRegistry.ts` | Executor registration for both tools |
-| **Guidance injection (sub-agent)** | `packages/cli/src/agent-mode.ts` lines 52, 92-99 | `pendingGuidance` queue + `orchestrator.injectGuidance()` call |
+| **Guidance injection (sub-agent)** | `packages/cli/src/agent-mode.ts` | `pendingGuidance` queue + `orchestrator.injectGuidance()` call |
 | **injectGuidance (orchestrator)** | `packages/core/src/orchestrator/CortexOrchestrator.ts` | Public method reusing `injectThinkingBlock()` dual-path |
 | **broadcastGuidance** | `packages/core/src/orchestrator/SubAgentProcessManager.ts` | Sends IPC guidance to all active agents except excluded |
 | **Team briefing** | `packages/core/src/orchestrator/CortexOrchestrator.ts` | `injectTeamBriefing()` — prepends briefing to Task prompts when >1 Task tools dispatched |
@@ -455,13 +460,12 @@ cortex --pr create owner/repo --branch feature-x  # Create PR workflow
 
 ### Test Coverage
 
-168 tests across 5 test suites, all passing:
+The team-workspace system is covered by dedicated test suites:
 
-| Test File | Tests | What It Covers |
-|-----------|-------|---------------|
-| `packages/core/src/orchestrator/__tests__/TeamWorkspace.test.ts` | 26 | Team briefing (6), guidance injection (2), broadcast guidance (5), tmux binary resolution (2), AGENT_TMUX_MONITOR env (3), result broadcasting trigger (4), ephemeral message lifecycle (2), agent-mode guidance handler (2) |
-| `packages/core/src/orchestrator/__tests__/AgentDispatchLifecycle.test.ts` | 43 | Solo dispatch (4), parallel dispatch (3), agent teams briefing (4) + cross-agent broadcasting (4) + event routing (2), agent team workspace (3), IPC protocol messages (5) + guidance flow (2), error handling (4), ephemeral message lifecycle (3), SubAgentProcessManager state (4), tmux monitoring (5) |
-| 3 pre-existing test suites | 99 | Existing orchestrator, adapter, and middleware tests |
+| Test File | What It Covers |
+|-----------|---------------|
+| `packages/core/src/orchestrator/__tests__/TeamWorkspace.test.ts` | Team briefing, guidance injection, broadcast guidance, tmux binary resolution, `AGENT_TMUX_MONITOR` env handling, result broadcasting, ephemeral message lifecycle, agent-mode guidance handler |
+| `packages/core/src/orchestrator/__tests__/AgentDispatchLifecycle.test.ts` | Solo + parallel dispatch, team briefing + cross-agent broadcasting + event routing, IPC protocol messages + guidance flow, error handling, SubAgentProcessManager state, tmux monitoring |
 
 **Run tests (from the repo root):**
 ```bash
@@ -490,7 +494,7 @@ Full agent documentation: `.cortex/agents/README.md`
 |------|------|
 | `packages/core/src/adapters/ServerSideToolDetection.ts` | `shouldUseServerSideTools()` — checks env + model + tools, returns endpoint override |
 | `packages/core/src/models/configurators/XAIConfigurator.ts` | Static config from `XAI_API_MODE`, defaults from `SettingsSchema` |
-| `packages/core/src/orchestrator/CortexOrchestrator.ts` lines 554-694 | Server-side tool injection + detection + `effectiveModel` override |
+| `packages/core/src/orchestrator/CortexOrchestrator.ts` | Server-side tool injection + detection + `effectiveModel` override |
 | `packages/core/src/orchestrator/APIClient.ts` `extractSystemRemindersForResponsesAPI()` | System message extraction for `instructions` param |
 | `packages/core/src/adapters/ResponsesAPIAdapter.ts` | Format adapter: `function_call` as top-level items, `function_call_output` for tool results |
 | `packages/core/src/tools/ServerSideTools.ts` | `web_search`, `x_search`, `code_execution` definitions + `separateTools()` |
@@ -727,10 +731,10 @@ grep -nE "API Pattern|response ID tracked|previous_response_id|has_instructions|
 - **`.env` alone won't test Responses API.** `ENABLE_SERVER_SIDE_TOOLS=true` must be set at server launch. It's NOT in the default `.env`. Without it, XAI requests go through Messages API even with tools.
 - **`pkill -f "packages/server/dist/index.js"` is WRONG and fails silently.** A launcher that `cd`s into packages/server runs argv `node dist/index.js` (relative path) — that pattern never matches it, the old server survives, and the "new" one loses the port race. You then benchmark the *stale* server without knowing. Use `pkill -9 -f "node dist/index.js"` and ALWAYS verify with `ps -eo pid,args | grep "[d]ist/index.js"` (must be empty). Tell that you're hitting a zombie: the same `conversationId` survives a "restart" (impossible for a fresh process).
 - **Benchmarking REQUIRES `CORTEX_MODE=stateless` at server launch.** The default is *persistent*: every `/v1/messages` request is appended as the next turn of ONE shared, monotonically-growing session (input balloons run-over-run, cache-hit rates are fake, a later answer can leak from an earlier one). The `/v1/messages` route has no per-request "new session" param in persistent mode, so the only lever is the launch env var. Stateless = fresh ephemeral orchestrator + session per request (server-side equivalent of `cortex --new`). Verify isolation before trusting any number: fire two identical tiny probes — different `conversationId` + identical `inputTokens` = isolated. (`/clear` is NOT equivalent and is CLI-only: it wipes messages but keeps the conversationId → the provider prompt-cache key stays warm → cross-iteration cache bleed survives it.)
-- **Telemetry caveat.** `usage.outputTokens` is under-reported for Gemini (generateContent) and xAI on `/v1/messages`; Gemini's path surfaces no cache metrics (cacheHitRate 0). `usage.inputTokens` is the reliable cross-provider cost proxy. `usage.cost_in_usd_ticks` only exists on the XAI Responses path. Fresh-session floor ≈ 16k input tokens (system messages + 31 tool schemas) — every isolated request pays this; subtract it when reasoning about task-specific cost.
+- **Telemetry caveat.** `usage.outputTokens` is under-reported for Gemini (generateContent) and xAI on `/v1/messages`; Gemini's path surfaces no cache metrics (cacheHitRate 0). `usage.inputTokens` is the reliable cross-provider cost proxy. `usage.cost_in_usd_ticks` only exists on the XAI Responses path. Fresh-session floor ≈ 16k input tokens (system messages + tool schemas) — every isolated request pays this; subtract it when reasoning about task-specific cost.
 - **Server boot is ~20s on a cold start, not 5s.** Poll `/health` in a loop; never fixed-sleep-5 then assume up.
 - **Sessions are stateful (the root cause of the two bullets above).** Use `--new` (CLI) or `CORTEX_MODE=stateless` (HTTP) for benchmark runs, otherwise context leaks between tests and corrupts comparisons.
-- **Don't run `vitest` on this Replit environment — it crashes the repl.** Prefer `tsc --noEmit` for typecheck validation and `npm run build` for end-to-end validation.
+- **On resource-constrained hosts, prefer `npm run build` + `tsc --noEmit` over the full `vitest` suite** for quick validation — the watch-mode test runner can be heavy in small containers/sandboxes.
 - **Debug logs are overwritten on each server restart.** Rename or copy `/tmp/cortex-server.log` before restarting if you need to compare across runs.
 - **Ground-truth commands must be as thorough as the agents.** A `jq '.dependencies | keys'` that ignores `devDependencies` will make agents look wrong when they're right. Always re-check your ground-truth query against whatever fields the agents referenced.
 
