@@ -192,6 +192,15 @@ export interface RunBenchOptions {
   discoveredRef?: string;
   /** Harness area for seeded deficiencies (ResearchBacklog `bugClass`; default 'Other'). */
   deficiencyBugClass?: string;
+  /**
+   * Effectiveness-layer arm identity. When the auto-research PM dispatches a varied
+   * arm (a distinct persona/strategy at a chosen temperature), pass them here so each
+   * scored record carries the arm — getStrategyScores/recommendStrategy then rank the
+   * (model × temperature × strategy) combinations, not just models. Both optional and
+   * back-compatible; omit them and records score exactly as before.
+   */
+  temperature?: number;
+  strategy?: string;
 }
 
 export interface BenchTaskSummary {
@@ -262,6 +271,8 @@ export async function runBench(
         split,
         benchmarkSource: opts.benchmarkSource,
         ...(opts.harnessRef ? { harnessRef: opts.harnessRef } : {}),
+        ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+        ...(opts.strategy ? { strategy: opts.strategy } : {}),
       });
 
       opts.onRun?.({ taskId: task.id, run: i + 1, pass: grade.pass, qualitativeScore: grade.qualitativeScore });

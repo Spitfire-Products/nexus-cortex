@@ -62,6 +62,16 @@ export interface BenchmarkRecord {
    *  to 'cortex-bench'. An external runner records under its own source + the
    *  instance id as taskFingerprint, and pass/qualitativeScore from its grader. */
   benchmarkSource?: string;
+  // --- Effectiveness layer: the (model × temperature × strategy) arm dimension. ---
+  // The auto-research PM diversifies arms by persona/strategy + temperature, then
+  // reads getStrategyScores/recommendStrategy to assign FUTURE per-arm variation
+  // from empirical quality instead of guessing. Both optional + back-compatible:
+  // a record with neither collapses to the same single arm it always was, and
+  // getScores/recommend (model routing) ignore them entirely.
+  /** dispatch temperature this run used (auto-stamped from CORTEX_SUBAGENT_TEMPERATURE). */
+  temperature?: number;
+  /** the PM-assigned arm persona/strategy label (auto-stamped from CORTEX_ARM_STRATEGY). */
+  strategy?: string;
 }
 
 export interface ModelScore {
@@ -82,6 +92,10 @@ export interface ModelScore {
   avgOutputTokens: number;
   avgLatencyMs: number;
   avgCostCents: number;
+  /** Set ONLY by getStrategyScores/recommendStrategy (the arm dimension). The
+   *  model-routing path (getScores/recommend) leaves these undefined. */
+  temperature?: number;
+  strategy?: string;
 }
 
 export interface CostEfficiencyProfile {
@@ -258,6 +272,7 @@ export class ModelRouterMatrix {
   private readonly maxBytes: number;
   private readonly weights: typeof DEFAULT_COMPOSITE_WEIGHTS;
   private scoreCache: Map<string, ModelScore[]> = new Map();
+  private strategyScoreCache: Map<string, ModelScore[]> = new Map();
   private _harnessRef?: string;
 
   /** Stable 16-char fingerprint of a task's exact prompt (+ optional verifier).
@@ -308,12 +323,16 @@ export class ModelRouterMatrix {
       experimentTag: entry.experimentTag ?? process.env.CORTEX_EXPERIMENT_TAG,
       split: entry.split ?? (process.env.CORTEX_BENCH_HOLDOUT === 'true' ? 'holdout' : 'train'),
       benchmarkSource: entry.benchmarkSource ?? process.env.CORTEX_BENCH_SOURCE ?? 'cortex-bench',
+      // Effectiveness arm — stamp from the dispatch env when the caller didn't pass it.
+      temperature: entry.temperature ?? envTemperature(),
+      strategy: entry.strategy ?? process.env.CORTEX_ARM_STRATEGY ?? undefined,
       _ts: Date.now(),
     };
     fs.mkdirSync(path.dirname(this.storePath), { recursive: true });
     this.rotateIfNeeded();
     fs.appendFileSync(this.storePath, JSON.stringify(record) + '\n', 'utf-8');
     this.scoreCache.clear();
+    this.strategyScoreCache.clear();
   }
 
   getScores(taskType: string): ModelScore[] {
@@ -420,6 +439,39 @@ export class ModelRouterMatrix {
     return thompsonSelect(this.getScores(taskType), opts);
   }
 
+  /**
+   * The (model × temperature × strategy) ARM scores for a task, ranked best-first.
+   * Same composite scoring as getScores, but grouped by the arm dimension so the
+   * auto-research PM can see WHICH variation — not just which model — has produced
+   * the best work, and assign future arms from data. This is the cortex-bench loop
+   * over strategies, not only models. Each returned ModelScore carries `temperature`
+   * + `strategy`. No cold-start defaults: arms are empirical-only (returns [] when
+   * the task has no real observations) so the PM falls back to its own diversity
+   * heuristics rather than a fabricated recommendation.
+   */
+  getStrategyScores(taskType: string): ModelScore[] {
+    const cached = this.strategyScoreCache.get(taskType);
+    if (cached) return cached;
+    const records = this.loadRecords().filter(r => r.taskType === taskType);
+    const scores = records.length === 0 ? [] : this.aggregateScores(records, true);
+    this.strategyScoreCache.set(taskType, scores);
+    return scores;
+  }
+
+  /**
+   * Best-scoring arm for a task, or null when the task has no empirical arms yet (or
+   * the top arm has fewer than `minSamples` observations — the same trust gate as
+   * recommendTrusted, so a single lucky run can't anoint a strategy). The PM reads
+   * this to seed the strongest known (model, temperature, strategy) for the next
+   * round while still diversifying the remaining arms.
+   */
+  recommendStrategy(taskType: string, minSamples = 1): ModelScore | null {
+    const arms = this.getStrategyScores(taskType);
+    const top = arms[0];
+    if (!top || top.sampleCount < minSamples) return null;
+    return top;
+  }
+
   getMatrix(): ScoringMatrix {
     const allRecords = this.loadRecords();
     const taskTypes = this.collectTaskTypes(allRecords);
@@ -522,7 +574,10 @@ export class ModelRouterMatrix {
   }
 
   private compactToSummaries(records: StoredRecord[]): StoredRecord[] {
-    const groups = this.groupBy(records, r => `${r.modelId}::${r.taskType}`);
+    // Include temp-bucket + strategy in the key so compaction never collapses
+    // distinct arms into one summary (records without them bucket to '::' → the
+    // exact same per-model+task summary as before, preserving back-compat).
+    const groups = this.groupBy(records, r => `${r.modelId}::${r.taskType}::${tempBucket(r.temperature)}::${r.strategy ?? ''}`);
     const summaries: StoredRecord[] = [];
 
     for (const recs of Object.values(groups)) {
@@ -544,6 +599,8 @@ export class ModelRouterMatrix {
       summaries.push({
         modelId: recs[0]!.modelId,
         taskType: recs[0]!.taskType,
+        temperature: recs[0]!.temperature,
+        strategy: recs[0]!.strategy,
         toolCallCount: round2(sumTools / weight),
         inputTokens: Math.round(sumIn / weight),
         outputTokens: Math.round(sumOut / weight),
@@ -590,11 +647,17 @@ export class ModelRouterMatrix {
     return out;
   }
 
-  private aggregateScores(records: StoredRecord[]): ModelScore[] {
-    const groups = this.groupBy(records, r => r.modelId);
+  private aggregateScores(records: StoredRecord[], byStrategy = false): ModelScore[] {
+    // Model routing groups by modelId. The effectiveness layer (byStrategy) groups
+    // by the (model × temp-bucket × strategy) ARM, so the same model can hold several
+    // scored arms. Same weighted-average math either way — only the key differs.
+    const groups = byStrategy
+      ? this.groupBy(records, r => `${r.modelId}::${tempBucket(r.temperature)}::${r.strategy ?? ''}`)
+      : this.groupBy(records, r => r.modelId);
     const results: ModelScore[] = [];
 
-    for (const [modelId, recs] of Object.entries(groups)) {
+    for (const recs of Object.values(groups)) {
+      const modelId = recs[0]!.modelId;
       // Weight summary records by their _sampleCount so compacted history
       // isn't diluted by a handful of new observations.
       let totalWeight = 0;
@@ -650,6 +713,7 @@ export class ModelRouterMatrix {
         avgOutputTokens: Math.round(avgOut),
         avgLatencyMs: Math.round(avgLat),
         avgCostCents: round3(avgCost),
+        ...(byStrategy ? { temperature: recs[0]!.temperature, strategy: recs[0]!.strategy } : {}),
       });
     }
 
@@ -698,6 +762,23 @@ export class ModelRouterMatrix {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Quantize a continuous dispatch temperature to a stable 0.1 bucket so near-identical
+ *  temps (0.69 / 0.71) score as one arm instead of fragmenting. Undefined → '' (the
+ *  default arm), which keeps temp-less records grouping exactly as they did before. */
+function tempBucket(t: number | undefined): string {
+  if (t === undefined || !Number.isFinite(t)) return '';
+  return (Math.round(t * 10) / 10).toFixed(1);
+}
+
+/** Read CORTEX_SUBAGENT_TEMPERATURE (the per-arm dispatch temp) as a number, or
+ *  undefined when unset/unparseable — so record() only stamps a real value. */
+function envTemperature(): number | undefined {
+  const raw = process.env.CORTEX_SUBAGENT_TEMPERATURE;
+  if (raw === undefined || raw === '') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
 
 function isValidRecord(parsed: unknown): parsed is StoredRecord {
   if (typeof parsed !== 'object' || parsed === null) return false;

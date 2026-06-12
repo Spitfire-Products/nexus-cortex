@@ -171,13 +171,16 @@ export class SystemReminderInjector {
       '   - NO MEASURABLE METRIC → DO NOT LAUNCH. State exactly what is missing (an eval / repro / task-set) and stop.\n' +
       '2. DIVERSIFY the arms (there is no swarm generator here — YOU craft the variety; identical agents waste\n' +
       '   the parallelism). Assign each subagent a DISTINCT strategy/persona — e.g. #1 minimal/conservative fix,\n' +
-      '   #2 aggressive refactor, #3/#4 different root-cause hypotheses, #5 high-creativity. Also vary the `model`\n' +
-      '   per Task dispatch (Task accepts `model` AND `temperature` overrides) for real decorrelation — vary\n' +
-      '   temperature by tenths across arms (auto-clamped to each model’s range), within cost/no-xAI limits. Keep N small with\n' +
-      '   SHARP distinctions (4-5 genuinely different approaches beat many near-duplicates).\n' +
+      '   #2 aggressive refactor, #3/#4 different root-cause hypotheses, #5 high-creativity. Vary the `model` and\n' +
+      '   `temperature` per Task dispatch for real decorrelation (Task accepts `model`, `temperature`, and a\n' +
+      '   `strategy` label) — step temperature by tenths across arms (auto-clamped to each model’s range), within\n' +
+      '   cost/no-xAI limits. Pass each arm’s `strategy` (a short persona label like "precise"/"aggressive-refactor")\n' +
+      '   so the result is RECORDED per (model × temperature × strategy) and the harness learns which variations win\n' +
+      '   over time — reuse the strongest known arm and diversify the rest. Keep N small with SHARP distinctions\n' +
+      '   (4-5 genuinely different approaches beat many near-duplicates).\n' +
       '3. DELEGATE: spawn ~4-5 `autoresearch-agent` subagents via the Task tool (subagent_type: "autoresearch-agent"),\n' +
-      '   ALL on that SAME deficiency, one per strategy. Each prompt = the plan + that agent’s persona/strategy +\n' +
-      `   "EXECUTION MODE: ${mode}" (i.e. ${exec}).\n` +
+      '   ALL on that SAME deficiency, one per strategy — each with its own `model`/`temperature`/`strategy`. Each\n' +
+      `   prompt = the plan + that agent’s persona/strategy + "EXECUTION MODE: ${mode}" (i.e. ${exec}).\n` +
       '4. ARBITRATE: collect every candidate + verdict and keep ONLY the holdout-verified winner (mergeEligible).\n' +
       '   Diversify the SEARCH; the metric + gate are IDENTICAL across all arms (the single shared judge).\n' +
       'The full tool surface + experiment workflow live in those subagents, keeping your context clean.\n' +

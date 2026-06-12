@@ -16,6 +16,7 @@ export interface TaskParams {
   subagent_type: string; // Type of specialized agent to use
   model?: string;       // Optional model override
   temperature?: number; // Optional per-subagent sampling temperature (clamped to the model's range)
+  strategy?: string;    // Optional arm persona/strategy label — recorded with benchmarks for (model×temp×strategy) effectiveness scoring
   resume?: string;      // Optional session ID to resume
 }
 
@@ -78,6 +79,10 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
         temperature: {
           type: 'number' as const,
           description: 'Optional sampling temperature for this subagent — a diversity lever when running parallel arms (e.g. step by tenths across agents). Clamped to the chosen model\'s valid range. Higher = more varied/creative, lower = more deterministic.'
+        },
+        strategy: {
+          type: 'string' as const,
+          description: 'Optional short label for this arm\'s persona/strategy (e.g. "risk-first", "mvp-first", "precise"). Recorded alongside the model and temperature so the auto-research effectiveness layer can rank which (model × temperature × strategy) combinations produce the best work over time. Use distinct labels for distinct parallel arms.'
         },
         resume: {
           type: 'string' as const,
@@ -193,6 +198,11 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
       const envOverrides: Record<string, string> = {};
       if (typeof params.temperature === 'number' && Number.isFinite(params.temperature)) {
         envOverrides.CORTEX_SUBAGENT_TEMPERATURE = String(Math.max(0, Math.min(2, params.temperature)));
+      }
+      // Per-subagent arm persona/strategy → fork env-override. Recorded with any
+      // benchmark the arm runs, so the effectiveness layer ranks (model×temp×strategy).
+      if (typeof params.strategy === 'string' && params.strategy.trim()) {
+        envOverrides.CORTEX_ARM_STRATEGY = params.strategy.trim().slice(0, 64);
       }
 
       // Format output for LLM

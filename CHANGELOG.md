@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.18.0] - 2026-06-12
+
+### Added
+
+- **Strategy-aware effectiveness tracking** — the router matrix now scores benchmark results per
+  **(model × temperature × strategy)** arm, not just per model. The auto-research PM can see *which
+  variation* — a given model at a given temperature running a given persona/strategy — has produced
+  the best work on a task, and reuse the strongest known arm while diversifying the rest. New matrix
+  methods `getStrategyScores` / `recommendStrategy` surface the ranked arms; this is the cortex-bench
+  benchmarking loop applied to strategies, reusing the existing composite scoring + compaction (no
+  new store).
+- **`Task` `strategy` param** — a short persona/strategy label (e.g. `"precise"`, `"aggressive-refactor"`)
+  recorded alongside the `model` and `temperature` of each parallel arm, so the effectiveness layer
+  learns over time. Both axes auto-capture from the dispatched subagent — no manual logging.
+
+### Notes
+
+- Fully back-compatible: records without a temperature/strategy collapse to the single arm they
+  always were, and **model routing (`recommend`) is unchanged** — it still groups by model only.
+
+---
+
 ## [4.17.0] - 2026-06-12
 
 ### Added
