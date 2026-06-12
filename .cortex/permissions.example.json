@@ -26,7 +26,7 @@
       "enabled": true,
       "config": {
         "allowedPaths": [
-          "/home/runner/workspace/nexus-cortex"
+          "."
         ],
         "blockedPaths": [
           "/etc",
