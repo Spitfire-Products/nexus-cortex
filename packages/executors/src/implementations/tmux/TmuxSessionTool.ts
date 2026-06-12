@@ -9,6 +9,7 @@ import { BaseTool, type ToolResult } from '../../base/index.js';
 import { SchemaValidator } from '../../utils/SchemaValidator.js';
 import { TmuxManager, SessionPersistence, SessionLock, TmuxCapture } from '../../utils/index.js';
 import { TmuxViewServer } from './TmuxViewServer.js';
+import { SandboxViewServer } from '../addon/SandboxViewServer.js';
 import type { ExecutorConfig } from '../../base/ToolRegistry.js';
 
 /**
@@ -125,19 +126,33 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
   }
 
   /**
-   * Ensure TmuxViewServer is initialized (auto-start on first use)
+   * Ensure TmuxViewServer is initialized (auto-start on first use).
+   * ENABLE_DASHBOARD is the MASTER SWITCH: when it is not "true" the viewer is
+   * never started (no port is bound) and tool results carry an instructive
+   * notice instead of view URLs. Returns the notice to surface to the agent,
+   * or null when the viewer is up.
    */
-  private async ensureViewServer(): Promise<void> {
+  private async ensureViewServer(): Promise<string | null> {
+    if (!SandboxViewServer.isEnabled()) {
+      return SandboxViewServer.DISABLED_NOTICE;
+    }
     if (this.viewServerInitialized) {
-      return;
+      return null;
     }
 
     try {
       await this.viewServer.initialize();
       this.viewServerInitialized = true;
+      return null;
     } catch (error: any) {
-      console.warn(`⚠  Failed to initialize TmuxViewServer: ${error.message}`);
-      // Don't throw - viewer is optional, tmux functionality still works
+      // Viewer is optional — tmux functionality still works. Tell the agent
+      // exactly what to check (the most common cause is a port conflict).
+      const notice =
+        `Tmux web dashboard failed to start: ${error.message}. ` +
+        `Check for a port conflict on DASHBOARD_PORT (default 4001 — it retries up to ` +
+        `10 consecutive ports), and confirm ENABLE_DASHBOARD=true is set.`;
+      console.warn(`[WARN] ${notice}`);
+      return notice;
     }
   }
 
@@ -259,27 +274,34 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
 
     updateOutput?.(`Session created: ${sessionId}\n`);
 
-    // Initialize web viewer and get URL
-    await this.ensureViewServer();
-    const viewUrl = this.viewServer.getTmuxViewUrl(sessionId);
-    const dashboardUrl = this.viewServer.getTmuxDashboardUrl();
+    // Initialize web viewer (ENABLE_DASHBOARD is the master switch) and get URLs,
+    // or carry the instructive notice when the dashboard is off/unavailable.
+    const viewerNotice = await this.ensureViewServer();
+    const viewUrl = viewerNotice ? null : this.viewServer.getTmuxViewUrl(sessionId);
+    const dashboardUrl = viewerNotice ? null : this.viewServer.getTmuxDashboardUrl();
 
-    updateOutput?.(`View URL: ${viewUrl}\n`);
+    if (viewUrl) updateOutput?.(`View URL: ${viewUrl}\n`);
+
+    const viewerSection = viewerNotice
+      ? ` WEB VIEWER UNAVAILABLE:\n ${viewerNotice}\n\n`
+      : ` LIVE WEB VIEWER:\n` +
+        ` View this session: ${viewUrl}\n` +
+        ` All sessions: ${dashboardUrl}\n\n`;
 
     return this.createSuccessResult(
       `Tmux session created successfully.\n\n` +
       `Session ID: ${sessionId}\n` +
       `Working directory: ${cwd}\n` +
       `Environment variables: ${params.env ? Object.keys(params.env).length : 0} set\n\n` +
-      ` LIVE WEB VIEWER:\n` +
-      ` View this session: ${viewUrl}\n` +
-      ` All sessions: ${dashboardUrl}\n\n` +
+      viewerSection +
       `You can now:\n` +
       `- Send commands: action='send', sessionId='${sessionId}', command='your command'\n` +
       `- Capture output: action='capture', sessionId='${sessionId}'\n` +
       `- Kill session: action='kill', sessionId='${sessionId}'\n\n` +
-      `Tip: Open the view URL in your browser to see real-time terminal output!`,
-      { sessionId, cwd, env: params.env, viewUrl, dashboardUrl }
+      (viewerNotice
+        ? `Tip: use action='capture' (optionally includeScreenshot=true) to read the terminal without the web viewer.`
+        : `Tip: Open the view URL in your browser to see real-time terminal output!`),
+      { sessionId, cwd, env: params.env, viewUrl, dashboardUrl, ...(viewerNotice ? { dashboardNotice: viewerNotice } : {}) }
     );
   }
 
@@ -351,11 +373,11 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
     const sessions = await this.tmux.listSessions();
     const metadata = await this.persistence.listSessions();
 
-    // Initialize web viewer
-    await this.ensureViewServer();
-    const dashboardUrl = this.viewServer.getTmuxDashboardUrl();
+    // Initialize web viewer (ENABLE_DASHBOARD is the master switch).
+    const viewerNotice = await this.ensureViewServer();
+    const dashboardUrl = viewerNotice ? null : this.viewServer.getTmuxDashboardUrl();
 
-    // Build session info list with view URLs
+    // Build session info list (view URLs only when the dashboard is up)
     const sessionInfos = sessions.map(sessionId => {
       const meta = metadata.find(m => m.sessionId === sessionId);
       return {
@@ -363,7 +385,7 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
         created: meta?.created?.toISOString() || 'unknown',
         lastUsed: meta?.lastUsed?.toISOString() || 'unknown',
         cwd: meta?.cwd || 'unknown',
-        viewUrl: this.viewServer.getTmuxViewUrl(sessionId)
+        viewUrl: viewerNotice ? null : this.viewServer.getTmuxViewUrl(sessionId)
       };
     });
 
@@ -371,7 +393,7 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
       return this.createSuccessResult(
         'No active tmux sessions.\n\n' +
         'Use action="create" to create a new session.',
-        { sessions: [], dashboardUrl }
+        { sessions: [], dashboardUrl, ...(viewerNotice ? { dashboardNotice: viewerNotice } : {}) }
       );
     }
 
@@ -381,22 +403,28 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
           `- ${info.sessionId}\n` +
           ` Created: ${info.created}\n` +
           ` Last used: ${info.lastUsed}\n` +
-          ` Working directory: ${info.cwd}\n` +
-          ` View: ${info.viewUrl}`
+          ` Working directory: ${info.cwd}` +
+          (info.viewUrl ? `\n View: ${info.viewUrl}` : '')
       )
       .join('\n\n');
 
     updateOutput?.(`Found ${sessions.length} session(s)\n`);
 
-    // Get API URL using dynamically assigned port
-    const apiUrl = this.viewServer.getTmuxApiUrl();
+    const viewerSection = viewerNotice
+      ? ` Web Viewer: UNAVAILABLE — ${viewerNotice}`
+      : ` Web Viewer:\n` +
+        ` Dashboard: ${dashboardUrl}\n` +
+        ` JSON API: ${this.viewServer.getTmuxApiUrl()}`;
 
     return this.createSuccessResult(
-      `Active tmux sessions (${sessions.length}):\n\n${sessionList}\n\n` +
-      ` Web Viewer:\n` +
-      ` Dashboard: ${dashboardUrl}\n` +
-      ` JSON API: ${apiUrl}`,
-      { sessions: sessionInfos, count: sessions.length, dashboardUrl, apiUrl }
+      `Active tmux sessions (${sessions.length}):\n\n${sessionList}\n\n` + viewerSection,
+      {
+        sessions: sessionInfos,
+        count: sessions.length,
+        dashboardUrl,
+        apiUrl: viewerNotice ? null : this.viewServer.getTmuxApiUrl(),
+        ...(viewerNotice ? { dashboardNotice: viewerNotice } : {})
+      }
     );
   }
 

@@ -264,11 +264,12 @@ export class CortexV4Server {
     }
 
     // Step 2: Initialize SandboxViewServer (unified dashboard) — opt-in, default off.
-    // Binds an extra port (DASHBOARD_PORT, default 4001); enable with ENABLE_DASHBOARD=true.
+    // MASTER SWITCH: ENABLE_DASHBOARD gates the dashboard everywhere (boot here AND the
+    // tools' demand-start paths). Binds an extra port (DASHBOARD_PORT, default 4001).
     if (process.env.ENABLE_DASHBOARD === 'true') {
     console.log(chalk.cyan('[INIT] Starting unified dashboard (sandbox + tmux viewer)...'));
     this.viewServer = SandboxViewServer.getInstance();
-    await this.viewServer.start(4001);
+    await this.viewServer.start();   // port: DASHBOARD_PORT > 4001, walks up to 10 on conflict
 
     // Initialize TmuxViewServer routes (piggybacks on SandboxViewServer)
     const tmuxViewer = TmuxViewServer.getInstance();

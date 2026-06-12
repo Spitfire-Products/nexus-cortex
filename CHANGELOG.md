@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.25.0] - 2026-06-13
+
+### Changed
+
+- **`ENABLE_DASHBOARD` is now a true master switch.** When `false` (the default), the
+  tmux/sandbox web dashboard never starts — not at server boot and not via the tools'
+  demand-start paths (`TmuxSession`, `CreateArtifact`), so no extra port is ever bound.
+  Tool results replace the view URLs with explicit guidance: set `ENABLE_DASHBOARD=true`
+  to enable, and check for a port conflict on `DASHBOARD_PORT` (default 4001; the server
+  retries up to 10 consecutive ports) if it then fails to start. Previously the flag only
+  controlled the boot-time start, and any tmux/artifact use would still demand-start the
+  dashboard — a surprise in headless/container deployments.
+
+---
+
 ## [4.24.1] - 2026-06-12
 
 ### Fixed

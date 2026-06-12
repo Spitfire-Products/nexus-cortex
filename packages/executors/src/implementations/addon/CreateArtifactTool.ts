@@ -10,7 +10,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { visualBridge, VisualSnapshot } from './VisualFeedbackBridge.js';
 import { broadcaster } from './SandboxEventBroadcaster.js';
-import { viewServer } from './SandboxViewServer.js';
+import { viewServer, SandboxViewServer } from './SandboxViewServer.js';
 import { SandboxRegistry } from '../../utils/SandboxRegistry.js';
 import { ArtifactRegistry, type ArtifactRuntime } from '../../utils/ArtifactRegistry.js';
 import { TmuxManager } from '../../utils/TmuxManager.js';
@@ -934,8 +934,10 @@ if __name__ == '__main__':
       }
     });
 
-    // Start view server if not already running
-    if (!viewServer.isServerRunning()) {
+    // Start view server if not already running. ENABLE_DASHBOARD is the master
+    // switch for the dashboard system — when off, skip silently (the sandbox
+    // itself works; only the web viewer is unavailable).
+    if (SandboxViewServer.isEnabled() && !viewServer.isServerRunning()) {
       await viewServer.start().catch(err => {
         console.warn('Could not start view server:', err);
       });

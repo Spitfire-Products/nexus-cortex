@@ -81,9 +81,32 @@ export class SandboxViewServer {
   }
 
   /**
+   * Master switch for the dashboard/view-server system (tmux viewer + sandbox
+   * viewer share this one server). When false, the dashboard NEVER binds a port —
+   * not at server boot and not via the tools' demand-start paths.
+   */
+  static isEnabled(): boolean {
+    return process.env.ENABLE_DASHBOARD === 'true';
+  }
+
+  /**
+   * Agent-facing guidance for when the dashboard is disabled or fails to start.
+   * Surfaced through tool results so the model knows exactly how to proceed.
+   */
+  static readonly DISABLED_NOTICE =
+    'Tmux/sandbox web dashboard is DISABLED (ENABLE_DASHBOARD is not "true"). ' +
+    'Live view URLs are unavailable. To use the dashboard: set ENABLE_DASHBOARD=true ' +
+    'in the .env (or environment) and restart the harness. If it still fails to start ' +
+    'after enabling, check for a port conflict on DASHBOARD_PORT (default 4001 — the ' +
+    'server retries up to 10 consecutive ports before giving up).';
+
+  /**
    * Start the server with dynamic port conflict resolution
    */
   async start(startPort?: number): Promise<void> {
+    if (!SandboxViewServer.isEnabled()) {
+      throw new Error(SandboxViewServer.DISABLED_NOTICE);
+    }
     if (this.isRunning) {
       console.log(` View server already running on http://localhost:${this.port}`);
       return;
