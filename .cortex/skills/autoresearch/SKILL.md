@@ -63,8 +63,15 @@ Collect every candidate + verdict and keep **only the holdout-verified winner**:
 - **Fail-fast.** If a deficiency isn't measurable, report it and stop — don't let agents explore indefinitely.
 
 ## 6. Improve over time (ties to cortex-bench)
-This is the benchmarking loop from `cortex-bench`, applied recursively: every experiment writes scored records (`router-matrix.jsonl`) and deficiencies (`research-backlog.jsonl`). Over many campaigns, track which **(model, temperature, persona)** combinations actually produce kept/verified candidates, and prefer the proven ones — the same "benchmark results → improve output over time" discipline. (The effectiveness save/prune layer is the meta-experiment; until it's built, carry the lesson forward yourself.)
+This is the benchmarking loop from `cortex-bench`, applied recursively: every experiment writes scored records (`router-matrix.jsonl`) and deficiencies (`research-backlog.jsonl`). The effectiveness layer is BUILT: every record carries its **(model × temperature × strategy)** arm, and the matrix ranks them per task (`getStrategyScores` / `recommendStrategy`; the bench/experiment/loop CLIs take `--temperature`/`--strategy`, and Task-dispatched arms are stamped automatically via `CORTEX_SUBAGENT_TEMPERATURE`/`CORTEX_ARM_STRATEGY`). When planning a round, reuse the strongest known arm and spend the remaining arms on new variety — benchmark results → improve output over time.
+
+## 7. Composing skills inside the pipeline
+- **`best-of-n` is the per-deficiency tactic.** When one deficiency deserves multiple competing fixes, each arm IS a tournament entrant: same plan, same metric, distinct strategy/model/temperature per arm, one central judge. Use its worktree + frozen-criteria discipline for any high-value single task, even outside a formal experiment.
+- **`verify-work` is the arbitration discipline.** Before accepting any arm's "fixed" claim, apply its refute-don't-confirm checklist: independent verifier, evidence-based per-claim verdicts, fixed ≠ verified. The holdout gate is the statistical form; verify-work is the structural form — use both.
+- **The document skills (`docx`/`xlsx`/`pptx`/`pdf-documents`) make excellent bench-task surfaces**: file deliverables are independently verifiable (re-open + assert contents), which is exactly what a graded task needs — real work, deterministic check.
 
 ## See also
 - `cortex-bench` — the multi-model benchmark methodology + the deficiency-ledger discipline.
+- `best-of-n` — the parallel tournament pattern (per-task form of the arms doctrine).
+- `verify-work` — the adversarial verification subagent (structural form of the holdout gate).
 - In-harness: `AUTORESEARCH_AGENTS` (off|native|mcp), the `autoresearch-agent` profile (the worker), `cortex autoresearch fix/experiment/loop/bench/evaluate`.
