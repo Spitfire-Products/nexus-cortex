@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.24.1] - 2026-06-12
+
+### Fixed
+
+- **`cortex-server` (and the npm bin path generally) now actually starts the server.** The
+  module's direct-run guard compared `import.meta.url` to `argv[1]`, which is the *bin
+  wrapper* when installed from npm — so `cortex-server` loaded the module and silently
+  exited 0. The server now exports `main()`, the bin invokes it explicitly, and the
+  direct-run check compares realpaths (robust to npm's symlinked global bins). Caught by a
+  full local-registry publish/install rehearsal before any public release.
+
+---
+
 ## [4.24.0] - 2026-06-12
 
 ### Fixed
