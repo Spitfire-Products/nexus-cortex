@@ -36,7 +36,7 @@ Do real **base investigation first** — read the project, the backlog (`Researc
 
 ## 2. DIVERSIFY the arms (the whole point of N)
 Identical agents on identical prompts waste the parallelism — they trace the same path. Assign each subagent a **distinct strategy/persona**, and vary the levers the dispatch supports:
-- **Strategy/persona** (per Task dispatch — `strategy` label, also in the prompt): e.g. `#1 minimal/conservative fix · #2 aggressive refactor · #3/#4 different root-cause hypotheses · #5 high-creativity`. Pass a short label (`strategy: "precise"`) so the result is recorded under it.
+- **Strategy/persona** (per Task dispatch — `strategy` label, also in the prompt): use the **arm persona library** in this skill's `personas/` directory (`precise`, `aggressive-refactor`, `root-cause`, `test-first`, `security-auditor`, `perf-hunter`, `creative`, `skeptic-reviewer` — see `personas/README.md`). Embed the chosen persona body in the arm's prompt after the shared plan, and pass its filename as the label (`strategy: "precise"`) so the result is recorded under it.
 - **Model** (per Task dispatch — `model` override): different models genuinely decorrelate. Honor cost/no-xAI constraints.
 - **Temperature** (per Task dispatch — `temperature`): read the model card's valid range first (e.g. DeepSeek 0–2, Anthropic 0–1) and step by tenths across arms — auto-clamped to the model's range.
 
