@@ -2,7 +2,7 @@
  * Tool Execution Result
  *
  * Standardized result format for all tool executions
- * Ported from OmniCode3 with adaptations for V4
+ * Adapted from Gemini CLI patterns for V4
  */
 
 import type { CanonicalContentBlock } from '@nexus-cortex/types';

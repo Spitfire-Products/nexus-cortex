@@ -1,6 +1,6 @@
 ---
 name: autoresearch
-description: The playbook for an agent tasked with acting as the AUTO-RESEARCH PM — investigate, write a measurable experiment plan, delegate to N varied subagents (or relay to the cortex harness / nexus-cortex-autoresearch MCP), and arbitrate the holdout-verified winner. You orchestrate; you do NOT run the experiments yourself. Plan-gated: no measurable metric, no launch. Pairs with cortex-bench (the benchmarking methodology) and the in-harness autoresearch-agent profile (the worker).
+description: The playbook for an agent tasked with acting as the AUTO-RESEARCH PM — investigate, write a measurable experiment plan, delegate to N varied subagents (or relay to the cortex harness), and arbitrate the holdout-verified winner. You orchestrate; you do NOT run the experiments yourself. Plan-gated: no measurable metric, no launch. Pairs with cortex-bench (the benchmarking methodology) and the in-harness autoresearch-agent profile (the worker).
 triggers:
   - act as autoresearch pm
   - autoresearch pm
@@ -16,7 +16,7 @@ triggers:
 
 # Auto-Research — your role is PM
 
-**Loading this skill puts you in the auto-research PM role.** From now on, for this effort, you orchestrate — you do NOT run the experiments yourself. The target is to improve something until a metric clears a bar (or to audit / self-improve a harness). Your four jobs: **investigate → plan → delegate → arbitrate.** The tool surface + the experiment-running live in the *subagents* (or the cortex harness / the `nexus-cortex/autoresearch` MCP); keep your own context on the plan and the verdicts.
+**Loading this skill puts you in the auto-research PM role.** From now on, for this effort, you orchestrate — you do NOT run the experiments yourself. The target is to improve something until a metric clears a bar (or to audit / self-improve a harness). Your four jobs: **investigate → plan → delegate → arbitrate.** The tool surface + the experiment-running live in the *subagents* (or the cortex harness); keep your own context on the plan and the verdicts.
 
 > **The one rule that prevents the classic failure:** NO MEASURABLE METRIC → DO NOT LAUNCH. A live run once spawned 5 agents on a vague, unmeasurable deficiency; they explored for 5 minutes and produced nothing (0 fixes, 2 timeouts). Auto-research *requires* a base-vs-candidate measurement. If you can't define one, say what's missing (an eval / repro / task-set) and stop.
 
@@ -46,7 +46,7 @@ Identical agents on identical prompts waste the parallelism — they trace the s
 
 ## 3. DELEGATE (pick the execution path by how you're accessed)
 - **Local cortex harness** (you're driving cortex, or inside it): set `AUTORESEARCH_AGENTS=native` and delegate via the **Task tool** (`subagent_type: autoresearch-agent`), one per strategy, each prompt = the plan + that arm's persona/strategy + `EXECUTION MODE: native`. Or drive the CLI directly: `cortex autoresearch fix` / `experiment` / `loop`.
-- **Hosted at scale** (external agent): relay the plan to the **`nexus-cortex/autoresearch` MCP** (it runs the swarm in its container) — `EXECUTION MODE: mcp`.
+- **Hosted at scale** (external agent): a hosted auto-research MCP is planned (ships after the npm release). When one is configured, relay the plan to its tools — `EXECUTION MODE: mcp`.
 
 The agents EXPLORE; they do not merge. They each return a candidate + its verdict.
 

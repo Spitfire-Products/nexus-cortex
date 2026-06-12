@@ -317,7 +317,7 @@ Most benchmarks compare JSON from `/v1/messages` — but that **cannot see what 
    - wrapping at the pane width, or overflow / truncation?
    - colors readable, spacing/padding sane, no doubled/garbled lines?
    - thinking & tool-call panes legible and not stealing the answer's space?
-6. Fix the renderer (`packages/cli/src/ink-ui/...`), rebuild, **re-capture, diff before/after** — same keep/discard discipline as the code loop. `TmuxSession kill` when done.
+6. Fix the TUI renderer (in the TUI package, where installed), rebuild, **re-capture, diff before/after** — same keep/discard discipline as the code loop. `TmuxSession kill` when done.
 
 *(Direct shell equivalent without the tool: `tmux new-session -d -s T -x 200 -y 50` → `tmux send-keys -t T '…' Enter` → `tmux capture-pane -p -e -t T > render.txt` (`-e` keeps ANSI color) → inspect → `tmux kill-session -t T`.)*
 

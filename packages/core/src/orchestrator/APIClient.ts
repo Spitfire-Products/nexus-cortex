@@ -996,7 +996,7 @@ export class APIClient {
     if (supportsReasoning && !disableThinking && effectiveReasoningEffort && effectiveReasoningEffort !== 'none') {
       // R20: OpenAI Responses API rejects 'xhigh' (XAI-only effort level).
       // Cross-provider sessions where the prior turn was XAI at xhigh would
-      // 400 on switch. Clamp at egress — same as nexus-terminal CORTEX harness.
+      // 400 on switch. Clamp at egress — standard cross-provider guard.
       const effort = (!isXAI && effectiveReasoningEffort === 'xhigh' as any) ? 'high' : effectiveReasoningEffort;
       responsesRequest.reasoning = { effort, summary: 'auto' };
     }
@@ -1022,7 +1022,7 @@ export class APIClient {
     // R27: XAI's /v1/responses route rejects the OpenAI SDK's request shape
     // (404 "No handler found on route") and, without server-side tools, returns
     // a body the SDK path surfaces as empty content. Use a raw fetch with
-    // Bearer auth — mirrors the working nexus-terminal ResponsesAPITransport.
+    // Bearer auth — standard Responses API transport auth.
     // OpenAI's own Responses API still uses the SDK (R20-proven, unaffected).
     if (isXAI) {
       const httpResponse = await fetch(modelConfig.api.endpoint, {

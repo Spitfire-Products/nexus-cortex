@@ -138,7 +138,7 @@ Natural language interface to the running server. No curl required.
 cortex "What is this project?"
 
 # Use a specific model
-cortex --model deepseek-chat "Explain TypeScript generics"
+cortex --model deepseek-v4-flash "Explain TypeScript generics"
 
 # Multi-turn conversation (session persists automatically)
 cortex "Remember the launch code is FALCON-42"
@@ -354,7 +354,7 @@ examples below are illustrative. (Counts auto-update from the registry — see
 | OpenAI | **Proven** | `gpt-5.x`, `gpt-5-codex`, `gpt-4.1`, `gpt-4o`, `o3` / `o4` | `OPENAI_API_KEY` |
 | Google (Gemini + Gemma) | **Proven** | `gemini-2.5-pro`, `gemini-3.5-flash`, `gemma-3-27b-it` | `GEMINI_API_KEY` / `GOOGLE_API_KEY` |
 | xAI | **Proven** | `grok-4.3`, `grok-4-fast`, `grok-build-0.1` | `XAI_API_KEY` |
-| DeepSeek | **Proven** | `deepseek-v4-pro`, `deepseek-reasoner`, `deepseek-chat` | `DEEPSEEK_API_KEY` |
+| DeepSeek | **Proven** | `deepseek-v4-pro`, `deepseek-v4-flash` | `DEEPSEEK_API_KEY` |
 | Cloudflare Workers AI | Preview | `@cf/*` models | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` |
 | Zhipu / GLM | Preview | `glm-4.6`, `glm-4.5`, `glm-4-flash` | `ZHIPU_API_KEY` |
 | Qwen (DashScope) | Preview | `qwen-*` | `DASHSCOPE_API_KEY` |
@@ -551,9 +551,6 @@ npm run test:ci
 
 # Lint code
 npm run lint
-
-# Format code
-npm run format
 ```
 
 ### Dev Workflow (Stateful Iteration)
@@ -638,7 +635,7 @@ this.register({
   usage: '/mycommand [args]'
 });
 
-// packages/cli/src/commands/chat/interactive.ts
+// packages/cli/src/commands/chat/AgenticChat.ts
 case 'mycommand':
   // Handle command
   break;

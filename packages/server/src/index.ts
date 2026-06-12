@@ -2,7 +2,7 @@
  * Nexus Cortex HTTP Server
  * Thin Express wrapper around @nexus-cortex/core library
  *
- * This server is intentionally minimal (~250 lines total across all files).
+ * This server is an intentionally thin HTTP wrapper over the core orchestrator.
  * All orchestration logic lives in @nexus-cortex/core.
  */
 import express from 'express';
@@ -199,7 +199,7 @@ export class CortexV4Server {
       const defaultModel = process.env.DEFAULT_MODEL_ID || 'gemini-2.5-flash';
 
       // PROJECT_PATH controls the file access boundary for tool execution.
-      // Defaults to monorepo root; set to a parent directory (e.g., /home/runner/workspace)
+      // Defaults to monorepo root; set to a parent directory (e.g., /path/to/projects)
       // to allow tools to access files outside the monorepo in headless mode.
       const projectPath = process.env.PROJECT_PATH || process.cwd();
 

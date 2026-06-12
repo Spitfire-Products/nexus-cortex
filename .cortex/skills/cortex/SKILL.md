@@ -501,7 +501,7 @@ Full agent documentation: `.cortex/agents/README.md`
 
 **Installed agents:** plan, explore, code-reviewer, context-research, doc-writer, test-writer, refactor, new-model-api-integrator-analyst, a-frontend-landing-page-designer, pr-security-auditor, pr-code-quality, pr-architecture-reviewer, pr-implementer, pr-test-writer
 
-**75+ models across 13 providers:** Anthropic, OpenAI, Google Gemini, XAI, DeepSeek, Gemma, GLM, Qwen, Moonshot, MiniMax, HuggingFace, Local, OpenRouter
+**Providers** (run `cortex --list-models` for the live registry): Anthropic, OpenAI, Google Gemini, XAI, DeepSeek, Gemma, GLM, Qwen, Moonshot, MiniMax, HuggingFace, Local, OpenRouter
 
 ## XAI Cache-Hit Contract (authoritative)
 

@@ -2,11 +2,11 @@
  * Cloudflare Workers AI Model Cards
  *
  * 13 models hosted by Cloudflare Workers AI, accessed via the OpenAI-compatible
- * Chat Completions endpoint. Parity with nexus-terminal CORTEX registry.
+ * Chat Completions endpoint. Verified against the live Workers AI catalog.
  *
  * Auth requires CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID in .env.
  *
- * Reference: research/future_ideas/cloud_deployment_architecture.md (Q1)
+ * Workers AI catalog: https://developers.cloudflare.com/workers-ai/models/
  */
 
 export { cfKimiK26 } from './kimi-k2-6.js';

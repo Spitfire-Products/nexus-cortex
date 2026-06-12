@@ -181,7 +181,7 @@ export const PRELOAD_SCRIPT = `
         sourceLocation: sourceLocation(fiber)
       };
     },
-    // Component hierarchy (nexus-sense 'tree' role): host fibers collapsed, components only.
+    // Component hierarchy (component-tree role): host fibers collapsed, components only.
     tree(el, maxDepth) {
       // The container DOM key can point at a stale double-buffer fiber whose .child is null,
       // and __lastRoot may not be set yet on the very first commit. Walk from a LIVE
@@ -429,7 +429,7 @@ export const GRAB_SCRIPT = `
 `;
 
 /**
- * Runtime: component hierarchy (nexus-sense `tree` role). Walks the React fiber tree from
+ * Runtime: component hierarchy (component-tree role). Walks the React fiber tree from
  * the root, host elements collapsed, components only. Args: { rootSelector?, maxDepth? }.
  */
 export const TREE_SCRIPT = `

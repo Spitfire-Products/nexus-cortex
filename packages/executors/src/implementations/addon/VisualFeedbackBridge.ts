@@ -302,7 +302,7 @@ export class VisualFeedbackBridge {
     return await this.page!.evaluate(`(${GRAB_SCRIPT})(${JSON.stringify(args)})`);
   }
 
-  /** Component hierarchy of the React tree (nexus-sense 'tree' role). */
+  /** Component hierarchy of the React tree (component-tree role). */
   async sandboxComponentTree(url: string, args: Record<string, unknown> = {}): Promise<any> {
     await this.enableReactIntrospection();
     await this.ensureOnUrl(url);

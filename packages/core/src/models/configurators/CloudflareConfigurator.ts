@@ -21,7 +21,7 @@
  * fields on each card are coarse placeholders for the cost-display layer; refer to
  * the CF dashboard for accurate consumption metrics.
  *
- * Reference: research/future_ideas/cloud_deployment_architecture.md (Q1)
+ * Workers AI catalog: https://developers.cloudflare.com/workers-ai/models/
  */
 
 import type { ModelConfig } from '../ModelConfig.interface.js';

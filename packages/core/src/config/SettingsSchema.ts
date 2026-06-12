@@ -155,7 +155,7 @@ export interface EnvironmentVariables {
   /** Auto-research subagent feature. off = disabled (PM never told about it; main context
    *  stays clean). native = the PM delegates to autoresearch-agent subagents that run
    *  experiments with the INTERNAL tools. mcp = the subagents route experiment-running to
-   *  the external nexus-cortex/autoresearch MCP server instead. */
+   *  a configured external auto-research MCP server instead. */
   AUTORESEARCH_AGENTS?: string; // 'off' | 'native' | 'mcp'
 
   /** Per-doc byte cap for injected project docs (CLAUDE.md, MEMORY.md, etc.). 0/unset = unlimited. */
@@ -458,7 +458,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
   {
     key: 'ANTHROPIC_API_KEY',
     displayName: 'Anthropic API Key',
-    description: 'API key for Claude models (claude-4-5-sonnet, etc.)',
+    description: 'API key for Claude models (claude-sonnet-4-5, claude-opus-4-8, etc.)',
     type: 'secret',
     category: 'api_keys',
     secret: true,
@@ -787,7 +787,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
   {
     key: 'AUTORESEARCH_AGENTS',
     displayName: 'Auto-Research Subagents',
-    description: 'Delegate auto-research to subagents. off = disabled. native = subagents run experiments with internal tools. mcp = subagents route to the nexus-cortex/autoresearch MCP. The PM (main model) only gets a delegation hint — the tool surface lives in the subagents.',
+    description: 'Delegate auto-research to subagents. off = disabled. native = subagents run experiments with internal tools. mcp = subagents route to the configured auto-research MCP. The PM (main model) only gets a delegation hint — the tool surface lives in the subagents.',
     type: 'choice',
     category: 'session',
     choices: ['off', 'native', 'mcp'],

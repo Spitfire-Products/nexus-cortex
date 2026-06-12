@@ -4,7 +4,7 @@
  * Executes shell commands via bash/cmd and captures output.
  * Supports background processes, timeouts, and abort handling.
  *
- * Ported and simplified from OmniCode3 (Gemini CLI)
+ * Adapted and simplified from Gemini CLI patterns
  * - Removed: Complex allow/block lists, summarization
  * - Kept: Core execution, background process detection, timeout enforcement
  * - Simplified: Security model (path-based only)

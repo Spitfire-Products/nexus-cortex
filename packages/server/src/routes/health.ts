@@ -1,6 +1,6 @@
 /**
  * /health endpoint - server status and diagnostics
- * HTML dashboard styled after Nexus Terminal holographic preset
+ * HTML dashboard, holographic preset
  */
 import { Router, Request, Response } from 'express';
 import { ModularModelRegistry } from '@nexus-cortex/core';
@@ -68,9 +68,9 @@ healthRouter.get('/health', (req: Request, res: Response) => {
 });
 
 /**
- * Nexus Terminal holographic-preset dashboard.
+ * Holographic-preset dashboard.
  *
- * Design tokens from nexus-terminal/theme/:
+ * Design tokens:
  *   Color: holographic preset (electric blue #00d4ff on near-black #050510)
  *   Style: holographic preset (thin border, subtle corners, pulsing glow,
  *          gradient dividers, holographic shimmer overlay, badge-outlined buttons)
@@ -114,7 +114,7 @@ function generateHolographicDashboard(data: any): string {
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700&family=Oxygen+Mono&display=swap" rel="stylesheet">
   <style>
     /* ═══════════════════════════════════════════════════════════════════════
-       HOLOGRAPHIC THEME — Nexus Terminal Preset
+       HOLOGRAPHIC THEME
        Colors: #00d4ff primary, #050510 bg, #e8f0ff text
        Style: thin borders, subtle corners, pulsing glow, gradient dividers
        ═══════════════════════════════════════════════════════════════════════ */
@@ -189,7 +189,7 @@ function generateHolographicDashboard(data: any): string {
     }
 
     /* ═══════════════════════════════════════════════════════════════════════
-       HEADER BAR — Nexus Terminal minimal header style
+       HEADER BAR — minimal header style
        ═══════════════════════════════════════════════════════════════════════ */
     .header-bar {
       display: flex;

@@ -3,7 +3,7 @@
  * Moonshot's 1T-param flagship — reasoning, vision, native tool calling.
  *
  * Routed via CF Workers AI OpenAI-compatible endpoint.
- * Parity with nexus-terminal CORTEX registry (2026-05-14).
+ * Registry parity verified 2026-05-14.
  */
 import { createCloudflareModelConfig } from '../../configurators/CloudflareConfigurator.js';
 import type { ModelConfig } from '../../ModelConfig.interface.js';

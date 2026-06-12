@@ -2,7 +2,7 @@
  * Base Tool Abstract Class
  *
  * Foundation for all tool executors in Nexus Cortex
- * Ported and adapted from OmniCode3 (Gemini CLI)
+ * Adapted from Gemini CLI patterns
  *
  * Key Principle: Definition ≠ Execution
  * - Tool definitions live in @nexus-cortex/core

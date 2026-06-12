@@ -8,7 +8,7 @@ metadata:
   upstream_source: "github.com/clockworklabs/SpacetimeDB/blob/master/skills/spacetimedb-concepts/SKILL.md"
   upstream_synced: "2026-04-25"
   release_notes: "https://github.com/clockworklabs/SpacetimeDB/releases/tag/v2.1.0"
-  local_additions: "AuthBridge integration section (Nexus Terminal multi-module)"
+  local_additions: ""
 ---
 
 
@@ -37,48 +37,9 @@ When implementing a feature that spans backend and client:
 3. **Client:** Subscribe to the table(s)
 4. **Client:** Call the reducer(s) from UI — **do not skip this step**
 5. **Client:** Render the data from the table(s)
-6. **Client:** Register with AuthBridge for cross-module identity sync (see below)
+6. **Client:** Wire identity/auth state into your app providers
 
 **Common mistake:** Building backend tables/reducers but forgetting to wire up the client to call them.
-
-### AuthBridge Integration (Nexus Terminal Multi-Module)
-
-When creating a new SpacetimeDB module that participates in the Nexus Terminal platform, **register it with the AuthBridge** (`shared/spacetimedb/AuthBridge.ts`). The bridge centralizes identity registration and tier/role sync across all connected modules — eliminating duplicated auth logic in each provider.
-
-**Every module MUST have:**
-- A `user_identity_links` table (maps SpacetimeDB identity → application user ID)
-- A `register_identity` reducer (called by the bridge on login)
-- A `sync_user_tier` reducer (called by the bridge on tier changes)
-
-**Client-side registration** (after the module service connects):
-```typescript
-import { authBridge } from '@/shared/spacetimedb';
-
-authBridge.register('nexus-my-module', {
-  getConnectionState: () => svc.isConnected() ? 'connected' : 'disconnected',
-  capabilities: {
-    registerIdentity: (uid) => svc.reducers.registerIdentity(uid),
-    syncTier: (tier) => svc.reducers.syncUserTier(tier),
-    disconnect: () => { resetMyModuleService(); },
-  },
-});
-
-// On cleanup:
-authBridge.unregister('nexus-my-module');
-```
-
-**What the bridge handles automatically:**
-- If user is already logged in when the module connects → immediate identity + tier push
-- If tier changes at runtime (admin promotion) → pushed to all connected modules
-- On logout → calls `disconnect()` on all modules that opt in
-
-**What the bridge does NOT handle:**
-- Connection management (each module connects independently)
-- Subscription setup (module-specific)
-- Module-specific data access
-
-**Security note:** The bridge only pushes the application `userId` and `tier` string — never credentials or tokens. Each module's `register_identity` reducer maps `ctx.sender()` (the SpacetimeDB connection identity) to the application user ID server-side. An anonymous attacker cannot forge `ctx.sender()`.
-
 
 ## Debugging Checklist
 

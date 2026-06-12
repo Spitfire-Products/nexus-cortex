@@ -1703,7 +1703,7 @@ WHEN TO USE: once after creating an artifact — if react=true, prefer sandbox_s
 
   {
     name: 'SandboxComponentTree',
-    description: `Return the React component hierarchy of a running sandbox (host elements collapsed, components only). Same role as the nexus-sense 'tree' tool.
+    description: `Return the React component hierarchy of a running sandbox (host elements collapsed, components only). Equivalent to a DevTools-style component-tree view.
 
 WHEN TO USE: understand a React artifact's structure — which components nest where, and (when available) each component's source file. Use after sandbox_detect_framework reports react:true.`,
     schema: {

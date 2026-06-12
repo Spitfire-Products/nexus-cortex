@@ -159,8 +159,8 @@ model: inherit
 | `gemini`, `gemini-pro`, `gemini-2.5` | gemini-2.5-pro |
 | `gemini-flash`, `flash` | gemini-2.5-flash |
 | `grok`, `grok-4`, `grok-fast` | grok-4.1-fast-reasoning |
-| `deepseek`, `deepseek-chat` | deepseek-chat |
-| `reasoner`, `deepseek-reasoner` | deepseek-reasoner |
+| `deepseek` | deepseek-v4-pro |
+| `reasoner` | deepseek-v4-pro |
 | `gpt4`, `gpt-4` | gpt-4.1 |
 | `o1`, `o3`, `o4-mini` | (OpenAI reasoning models) |
 

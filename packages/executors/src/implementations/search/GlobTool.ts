@@ -4,7 +4,7 @@
  * Finds files matching glob patterns with modification time sorting.
  * Fast pattern-based file discovery for large codebases.
  *
- * Ported and simplified from OmniCode3 (Gemini CLI)
+ * Adapted and simplified from Gemini CLI patterns
  * - Removed: FileDiscovery service, git-ignore filtering
  * - Kept: Core glob matching, modification time sorting, security
  */

@@ -1,6 +1,6 @@
 {
   "name": "@nexus-cortex/cli",
-  "version": "4.22.0",
+  "version": "4.23.0",
   "description": "Nexus Cortex CLI - Terminal interface for multi-provider LLM orchestration",
   "main": "dist/index.js",
   "type": "module",
@@ -12,7 +12,6 @@
     "dev": "tsx watch src/index.ts",
     "dev:build": "tsc --watch",
     "dev:chat": "tsx src/index.ts chat",
-    "dev:full": "node bin/launcher-dev.js",
     "test": "vitest --passWithNoTests",
     "test:run": "vitest run --passWithNoTests",
     "lint": "eslint src --ext .ts",
@@ -20,7 +19,7 @@
     "prepack": "node ../../scripts/copy-pkg-cortex-scaffold.mjs"
   },
   "dependencies": {
-    "@nexus-cortex/core": "^4.22.0",
+    "@nexus-cortex/core": "^4.23.0",
     "chalk": "^4.1.2",
     "cli-spinners": "^2.9.0",
     "commander": "^11.0.0",

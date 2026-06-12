@@ -2655,10 +2655,9 @@ export class CortexOrchestrator {
       throw new Error('No model specified and no current model set');
     }
 
-    const model = this.modelRegistry.getModel(modelId);
-    if (!model) {
-      throw new Error(`Model not found: ${modelId}`);
-    }
+    // Central lookup — includes the back-compat alias fallback (deprecated
+    // names like deepseek-chat resolve to their successor cards).
+    const model = this.getModel(modelId);
 
     // === MENTORSHIP HOOKS (mirroring sendMessage lines 501-538) ===
 
@@ -6535,7 +6534,7 @@ export class CortexOrchestrator {
   // ============================================
   // TRAINING PIPELINE — LOOKUP-BEFORE-ACTION
   // ============================================
-  // Ported from nexus-terminal cortex's `witty-tracing-narwhal` pipeline.
+  // Lookup-before-action decision priors.
   // SpacetimeDB → local JSONL backend for the standalone OSS harness.
   //
   // Reactive design: AFTER each tool execution, look up priors for the
@@ -6600,7 +6599,7 @@ export class CortexOrchestrator {
 
     // 1. Lookup priors (read side) — only emits reminder when failures exist.
     //    Fetch the 3 most recent matching decisions so the formatter can
-    //    surface specific past outcomes (matches nexus-terminal pattern).
+    //    surface specific past outcomes (prior-outcome surfacing).
     if (this.isLookupEnabled()) {
       try {
         const [stats, recent] = await Promise.all([
@@ -7063,6 +7062,8 @@ export class CortexOrchestrator {
    * Get model by ID (Phase 2.1 - Real ModelRegistry)
    */
   private getModel(modelId: string): ModelConfig {
+    // The registry resolves back-compat aliases internally (e.g. deepseek-chat →
+    // deepseek-v4-flash) and throws on a genuine miss.
     const model = this.modelRegistry.getModel(modelId);
     if (!model) {
       throw new Error(

@@ -15,6 +15,7 @@
  */
 
 import type { ModelConfig, ModelRegistry } from '../ModelConfig.interface.js';
+import { MODEL_ALIASES } from './ModelAliasResolver.js';
 
 // Import modular model cards (all providers)
 import * as xaiModels from '../cards/xai/index.js';
@@ -157,7 +158,7 @@ export class ModularModelRegistry implements ModelRegistry {
       minimaxModels.minimaxM2,
       minimaxModels.minimaxM2Stable,
 
-      // Cloudflare Workers AI models (13 — parity with nexus-terminal CORTEX
+      // Cloudflare Workers AI models (parity with the upstream CORTEX
       // 2026-05-14; OpenAI-compatible chat/completions endpoint, single auth
       // grants access to Moonshot, NVIDIA, Google Gemma 4, OpenAI OSS,
       // Qwen, Zhipu GLM, Mistral, Meta Llama, IBM Granite)
@@ -257,7 +258,15 @@ export class ModularModelRegistry implements ModelRegistry {
    * @throws Error if model not found
    */
   getModel(modelId: string): ModelConfig {
-    const model = this.models.get(modelId);
+    let model = this.models.get(modelId);
+    if (!model) {
+      // Back-compat aliases: deprecated names removed from the card set keep
+      // resolving (e.g. deepseek-chat → deepseek-v4-flash), so existing configs,
+      // sessions, and scripts auto-migrate to the successor models. MODEL_ALIASES
+      // is the single source of truth for these mappings.
+      const alias = MODEL_ALIASES[modelId.trim().toLowerCase()];
+      if (alias) model = this.models.get(alias);
+    }
     if (!model) {
       throw new Error(`Model not found: ${modelId}`);
     }

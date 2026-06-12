@@ -237,18 +237,3 @@ rustup target add wasm32-unknown-unknown
 - Use `--yes` flag in scripts to avoid interactive prompts
 - Dev mode watches files and auto-rebuilds on changes
 
-## Nexus Terminal — Workspace-Specific Deploy
-
-**Do NOT run `spacetime build` or `spacetime publish` directly in this workspace.** The Rust toolchain requires custom environment variables (GLIBC_TUNABLES, RUSTUP_TOOLCHAIN, custom PATH) that only the deploy scripts set up correctly.
-
-Use the npm wrapper scripts instead:
-
-```bash
-npm run stdb:deploy            # Build + generate types + publish (safe)
-npm run stdb:deploy:generate   # Generate TypeScript types only
-npm run stdb:deploy:publish    # Publish only (safe)
-npm run stdb:deploy:clear      # DESTRUCTIVE — wipe data + publish
-npm run stdb:logs              # Tail module logs
-```
-
-See the **spacetimedb-rust** skill "Nexus Terminal — Build & Deploy" section for full details on the custom toolchain, multi-module architecture, and schema change safety rules.

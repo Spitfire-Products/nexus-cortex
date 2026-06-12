@@ -3,7 +3,7 @@
  * Google's incremental 3.1 update — improvements over 3-pro-preview.
  *
  * Verified live 2026-05-13 against generativelanguage.googleapis.com.
- * Matches nexus-terminal CORTEX registry.
+ * Matches the upstream CORTEX registry.
  */
 
 import { createGeminiModelConfig } from '../../configurators/GoogleConfigurator.js';

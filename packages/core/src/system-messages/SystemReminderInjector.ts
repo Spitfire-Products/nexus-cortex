@@ -153,7 +153,7 @@ export class SystemReminderInjector {
     if (mode !== 'native' && mode !== 'mcp') return null;        // 'off' / unset / invalid
     if (process.env.CORTEX_AGENT_MODE === 'true') return null;   // already a subagent — no recursion
     const exec = mode === 'mcp'
-      ? 'route experiment-running to the nexus-cortex/autoresearch MCP tools (do NOT run the internal CLI)'
+      ? 'route experiment-running to the configured auto-research MCP tools (do NOT run the internal CLI)'
       : 'run experiments with the internal tools (ResearchBacklog, WorkspaceManager, and the `cortex autoresearch fix/experiment/loop` CLI via Bash)';
     return (
       '<harness-note source="automated-harness" from-user="false">\n' +

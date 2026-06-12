@@ -34,7 +34,7 @@ describe('Reactive Mentorship', () => {
   describe('Configuration', () => {
     it('should accept valid mentorship configuration', () => {
       const config: OrchestratorConfig = {
-        defaultModelId: 'claude-4-5-sonnet',
+        defaultModelId: 'claude-sonnet-4-5',
         projectPath: '/test',
         reactiveMentorship: {
           enabled: true,
@@ -53,7 +53,7 @@ describe('Reactive Mentorship', () => {
 
     it('should accept minimal mentorship configuration', () => {
       const config: OrchestratorConfig = {
-        defaultModelId: 'claude-4-5-sonnet',
+        defaultModelId: 'claude-sonnet-4-5',
         projectPath: '/test',
         reactiveMentorship: {
           enabled: true,
@@ -69,7 +69,7 @@ describe('Reactive Mentorship', () => {
 
     it('should work without mentorship configuration', () => {
       const config: OrchestratorConfig = {
-        defaultModelId: 'claude-4-5-sonnet',
+        defaultModelId: 'claude-sonnet-4-5',
         projectPath: '/test'
       };
 

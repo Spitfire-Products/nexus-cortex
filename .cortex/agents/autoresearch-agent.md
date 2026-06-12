@@ -38,7 +38,7 @@ Your prompt contains:
 6. **`ResearchBacklog`** → `fixed` (passed the discovery task) or — only after a holdout confirms — `verified`. Never `verified` on train alone.
 
 ## EXECUTION MODE: mcp  (offload to the hosted harness)
-Use the **`nexus-cortex/autoresearch` MCP** tools instead of the internal CLI: submit the experiment, poll its status, read the verdict. Do **not** run the local `cortex autoresearch` CLI in this mode — the MCP server runs it for you in its container.
+Use the configured **auto-research MCP** tools instead of the internal CLI: submit the experiment, poll its status, read the verdict. Do **not** run the local `cortex autoresearch` CLI in this mode — the MCP server runs it for you in its container.
 
 ## Discipline (do not break these)
 - **fixed ≠ verified.** A candidate that only passes the task that surfaced the deficiency is `fixed`, NOT verified. Only a HELD-OUT confirmation makes it `verified`.

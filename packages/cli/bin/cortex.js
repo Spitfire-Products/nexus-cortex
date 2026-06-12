@@ -5,7 +5,7 @@
  *
  * Usage:
  *   cortex "Read package.json and tell me the version"
- *   cortex --model deepseek-chat "Explain generics"
+ *   cortex --model deepseek-v4-flash "Explain generics"
  *   cortex --resume abc123 "Continue from where we left off"
  *   cortex --new "Start a fresh conversation"
  *   cortex --json "Give me raw response"
@@ -193,7 +193,7 @@ ENVIRONMENT:
 
 EXAMPLES:
   cortex "What is this project?"
-  cortex --model deepseek-chat "Explain TypeScript generics"
+  cortex --model deepseek-v4-flash "Explain TypeScript generics"
   cortex "Read package.json" && cortex "What was the version?"
   cortex --json "list files" | jq '.toolUses[].name'
   cortex --new "Let's start over"

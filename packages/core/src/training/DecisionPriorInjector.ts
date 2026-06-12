@@ -8,8 +8,8 @@
  * histories produce no output (no actionable signal, just noise).
  *
  * When `recent` is supplied, the reminder body includes up to 3 specific
- * recent outcomes (newest first) — matching the nexus-terminal
- * `witty-tracing-narwhal` "up to 3 prior outcomes" pattern. Specific
+ * recent outcomes (newest first) — matching the
+ * "up to 3 prior outcomes" pattern. Specific
  * recent entries give the model far more actionable signal than the
  * aggregate count alone (e.g. "the last 2 attempts both timed out").
  */

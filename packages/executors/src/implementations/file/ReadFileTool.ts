@@ -4,7 +4,7 @@
  * Reads and returns the content of a specified file from the local filesystem.
  * Handles text files with optional line range support and automatic truncation.
  *
- * Ported and adapted from OmniCode3 (Gemini CLI)
+ * Adapted from Gemini CLI patterns
  */
 
 import path from 'path';

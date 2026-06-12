@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.23.0] - 2026-06-12
+
+### Fixed
+
+- **Deprecated model names now auto-migrate.** The registry resolves back-compat aliases on
+  lookup (`deepseek-chat` → `deepseek-v4-flash`, `deepseek-reasoner` → `deepseek-v4-pro`),
+  so existing configs, sessions, and scripts using the deprecated DeepSeek names keep working
+  after the July-2026 removal. The alias map existed but was never consulted on the
+  server/orchestrator path — found by a pre-publish audit's behavioral probe.
+- **Pre-publish audit sweep** (6 parallel in-harness audit agents + ground-truth verification):
+  - Quickstart, provider table, agent-profile guide, and CLI help no longer reference the
+    removed DeepSeek model names.
+  - Removed internal project references and stale attribution comments from shipped source,
+    skills, and the health dashboard.
+  - Removed dead package scripts (`dev:full`, `demo:full`) that referenced unshipped files.
+  - Corrected stale claims: hardcoded model/provider counts in the cortex skill, a stale
+    line-count claim in the server header, a nonexistent file path in a README example,
+    an undocumented `npm run format`, legacy audit-log paths in two permission profiles,
+    and unregistered example model IDs in the settings schema.
+  - The spacetimedb skills no longer carry workspace-specific deploy/auth sections.
+  - References to the not-yet-published auto-research MCP are now generic ("the configured
+    auto-research MCP") until that server ships.
+
+---
+
 ## [4.22.0] - 2026-06-12
 
 ### Added

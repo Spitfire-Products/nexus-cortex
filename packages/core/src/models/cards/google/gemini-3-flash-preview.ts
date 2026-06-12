@@ -4,7 +4,7 @@
  *
  * Best for: High-throughput tool calling, quick reasoning, agent loops.
  * Verified live 2026-05-13 against generativelanguage.googleapis.com.
- * Matches nexus-terminal CORTEX registry.
+ * Matches the upstream CORTEX registry.
  */
 
 import { createGeminiModelConfig } from '../../configurators/GoogleConfigurator.js';

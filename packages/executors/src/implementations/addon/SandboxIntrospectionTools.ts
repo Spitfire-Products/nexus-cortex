@@ -241,7 +241,7 @@ export class SandboxComponentTreeExecutor extends BaseTool<SandboxComponentTreeP
     super(
       'SandboxComponentTree',
       'SandboxComponentTree',
-      'Return the React component hierarchy of a running sandbox (nexus-sense `tree` role)',
+      'Return the React component hierarchy of a running sandbox (component-tree role)',
       {
         type: 'object' as const,
         properties: {

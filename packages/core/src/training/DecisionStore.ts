@@ -1,7 +1,7 @@
 /**
  * DecisionStore — append-only JSONL log of tool-call decisions for the
- * lookup-before-action prior injection pattern (ported from nexus-terminal
- * cortex's `witty-tracing-narwhal` SpacetimeDB-backed pipeline, simplified
+ * lookup-before-action prior injection pattern (a lookup-before-action prior pipeline,
+ * simplified
  * for the standalone nexus-cortex OSS harness which has no STDB dependency).
  *
  * Each line is a self-contained Decision record:

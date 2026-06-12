@@ -4,7 +4,7 @@
  * Writes content to a specified file in the local filesystem.
  * Can create new files or overwrite existing ones.
  *
- * Ported and adapted from OmniCode3 (Gemini CLI)
+ * Adapted from Gemini CLI patterns
  */
 
 import fs from 'fs';

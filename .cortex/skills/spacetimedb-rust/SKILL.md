@@ -8,7 +8,7 @@ metadata:
   upstream_source: "github.com/clockworklabs/SpacetimeDB/blob/master/skills/spacetimedb-rust/SKILL.md"
   upstream_synced: "2026-04-25"
   release_notes: "https://github.com/clockworklabs/SpacetimeDB/releases/tag/v2.1.0"
-  local_additions: "What's new in 2.1.0 callout; Nexus Terminal Build & Deploy section (Replit toolchain, multi-module deploys, schema-change rules)"
+  local_additions: "What's new in 2.1.0 callout; schema-change safety rules"
 ---
 
 
@@ -466,7 +466,7 @@ pub struct ReactionRoomIndex {
 
 **Why not views for this:** query-builder views can't transform `Option<String>` to `String` (output is the source row type). Procedural views can transform shape but require full re-eval on every write and can't use `.iter()` to drive iteration over the source table. Index tables give incremental updates AND non-null projection in one move — the right tool for this specific limitation.
 
-This pattern was developed in the Nexus Terminal workspace's `shadowing-stork` plan; documenting here so other modules hitting the same wall don't have to rediscover it.
+Documented here so other modules hitting the same wall don't have to rediscover it.
 
 
 ## Lifecycle Reducers

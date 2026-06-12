@@ -65,7 +65,7 @@ export function validateSchema(schema: ToolSchema, params: any): string | null {
 }
 
 /**
- * Schema Validator class (for compatibility with OmniCode3 patterns)
+ * Schema Validator class (Gemini-CLI-compatible validation patterns)
  */
 export class SchemaValidator {
   static validate(schema: ToolSchema, params: any): string | null {

@@ -8,7 +8,7 @@ metadata:
   upstream_source: "github.com/clockworklabs/SpacetimeDB/blob/master/skills/spacetimedb-typescript/SKILL.md"
   upstream_synced: "2026-04-25"
   release_notes: "https://github.com/clockworklabs/SpacetimeDB/releases/tag/v2.1.0"
-  local_additions: "What's new in 2.1.0 callout; AuthBridge cross-module identity sync section (Nexus Terminal)"
+  local_additions: "What's new in 2.1.0 callout"
 ---
 
 
@@ -574,39 +574,3 @@ spacetime logs <module-name>
 
 ---
 
-## AuthBridge — Cross-Module Identity Sync (Nexus Terminal)
-
-When building a SpacetimeDB module that participates in the Nexus Terminal platform, use the **AuthBridge** (`shared/spacetimedb/AuthBridge.ts`) to receive identity and tier state from the platform auth system. This eliminates manual `useEffect` + `syncUserTier` logic in each module provider.
-
-### Registration Pattern
-
-```typescript
-import { authBridge } from '@/shared/spacetimedb';
-import { resetMyModuleService } from './MyModuleSpacetimeDBService';
-
-// After service connects:
-authBridge.register('nexus-my-module', {
-  getConnectionState: () => svc.isConnected() ? 'connected' : 'disconnected',
-  capabilities: {
-    registerIdentity: (uid) => svc.reducers.registerIdentity(uid),
-    syncTier: (tier) => svc.reducers.syncUserTier(tier),
-    disconnect: () => { resetMyModuleService(); },
-  },
-});
-
-// On cleanup (component unmount or disconnect):
-authBridge.unregister('nexus-my-module');
-```
-
-### What the Bridge Does
-
-- **Late-connecting modules**: If the user is already logged in when your module connects, the bridge immediately pushes `registerIdentity` + `syncUserTier`.
-- **Runtime tier changes**: Admin promotions push to all connected modules automatically.
-- **Logout**: Calls `disconnect()` on all registered modules that provide it.
-
-### Security Considerations
-
-- The bridge only passes `userId` (string) and `tier` (string) — no credentials or tokens.
-- Each module's `register_identity` reducer maps `ctx.sender()` → `user_id` server-side. `ctx.sender()` is unforgeable (set by SpacetimeDB runtime).
-- **Anonymous connections**: A module can connect without a userId (guest mode). The bridge skips identity sync for guests. Reducers MUST still validate `get_caller_user_id(ctx)` — the bridge does not replace server-side auth guards.
-- **Subscription scoping**: Always use `WHERE user_id = '${userId}'` in subscription queries. The bridge handles identity registration, but read protection depends on scoped subscriptions.

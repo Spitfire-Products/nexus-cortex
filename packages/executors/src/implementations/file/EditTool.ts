@@ -4,7 +4,7 @@
  * Performs exact string replacements within a file.
  * Requires precise matching of old_string for safety.
  *
- * Ported and simplified from OmniCode3 (Gemini CLI)
+ * Adapted and simplified from Gemini CLI patterns
  * - Removed: ModifiableTool interface, user approval, LLM-based correction
  * - Kept: Core string replacement, occurrence validation, diff generation
  *

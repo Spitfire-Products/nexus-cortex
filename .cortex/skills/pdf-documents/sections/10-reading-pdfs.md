@@ -14,13 +14,13 @@ Agents currently read PDFs via OCR or text extraction, which destroys:
 | Runtime | Best Tool | How |
 |---|---|---|
 | **Claude Code** | Built-in Read tool | `Read({ file_path: "doc.pdf", pages: "1-10" })` — up to 20 pages/request |
-| **CORTEX / NPC (Nexus Terminal)** | nexus-browser-sandbox | `run_command` with `pdf2html` utility or `pdf2htmlEX` (both pre-installed) |
+| **Agent with browser-MCP access** | nexus-browser-sandbox | `run_command` with `pdf2html` utility or `pdf2htmlEX` (both pre-installed) |
 | **Server-side / CLI** | PyMuPDF directly | `pip install pymupdf` then Python script |
 | **Browser-only (no sandbox)** | Vision model on screenshots | Browse PDF, screenshot pages, send to VLM |
 
 ---
 
-## Nexus Browser Sandbox (Preferred for CORTEX / NPC Agents)
+## Nexus Browser Sandbox (for agents with browser-MCP access)
 
 The `nexus-browser-sandbox` container has **PyMuPDF**, **pdf2htmlEX**, and a pre-built extraction utility installed. Any agent with nexus-browser MCP access can use them via `run_command` or `run_code` — no setup, no pip install.
 
@@ -480,7 +480,7 @@ pix.save('chart-page6.png')
 
 **Decision tree:**
 ```
-Agent in Nexus Terminal (CORTEX / NPC)?
+Agent with browser-MCP access?
   → run_command("pdf2html doc.pdf")              # structured extraction
   → run_command("pdf2html doc.pdf --lossless")    # visual fidelity
 

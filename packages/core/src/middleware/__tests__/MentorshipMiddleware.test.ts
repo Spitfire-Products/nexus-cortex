@@ -37,9 +37,9 @@ describe('MentorshipMiddleware', () => {
       sessionId: 'test-session-001',
       conversationId: 'conv-001',
       turnNumber: 1,
-      modelId: 'claude-4-5-sonnet',
+      modelId: 'claude-sonnet-4-5',
       config: {
-        defaultModelId: 'claude-4-5-sonnet',
+        defaultModelId: 'claude-sonnet-4-5',
         projectPath: '/test',
         reactiveMentorship: {
           enabled: true,
@@ -445,7 +445,7 @@ describe('MentorshipMiddleware', () => {
     it('should preserve existing response properties', () => {
       const response = {
         id: 'msg_123',
-        model: 'claude-4-5-sonnet',
+        model: 'claude-sonnet-4-5',
         content: [{ type: 'text', text: 'Response' }],
         usage: { input_tokens: 100, output_tokens: 50 }
       };
@@ -453,7 +453,7 @@ describe('MentorshipMiddleware', () => {
       const result = middleware.injectThinkingBlock(response, 'Guidance');
 
       expect(result.id).toBe('msg_123');
-      expect(result.model).toBe('claude-4-5-sonnet');
+      expect(result.model).toBe('claude-sonnet-4-5');
       expect(result.usage).toEqual({ input_tokens: 100, output_tokens: 50 });
     });
 

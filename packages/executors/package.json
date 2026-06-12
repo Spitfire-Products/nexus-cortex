@@ -1,6 +1,6 @@
 {
   "name": "@nexus-cortex/executors",
-  "version": "4.22.0",
+  "version": "4.23.0",
   "description": "Tool execution layer for Nexus Cortex",
   "type": "module",
   "main": "./dist/index.js",
@@ -25,14 +25,13 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:ci": "vitest run --coverage",
-    "typecheck": "tsc --noEmit",
-    "demo:full": "npm run build && node demo/realtime-viewing-demo.ts"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@google/genai": "^1.27.0",
     "@modelcontextprotocol/sdk": "^1.20.2",
-    "@nexus-cortex/core": "^4.22.0",
-    "@nexus-cortex/types": "^4.22.0",
+    "@nexus-cortex/core": "^4.23.0",
+    "@nexus-cortex/types": "^4.23.0",
     "@types/diff": "^7.0.2",
     "ajv": "^8.12.0",
     "diff": "^8.0.2",
