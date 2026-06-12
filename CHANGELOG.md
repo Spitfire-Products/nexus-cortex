@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.19.0] - 2026-06-12
+
+### Added
+
+- **`--temperature` / `--strategy` flags on `autoresearch bench`, `experiment`, and `loop`** — so a
+  CLI caller (not just an env-stamped subagent) can label a run's effectiveness arm. The labels are
+  recorded with every scored run (on both base and candidate in an experiment), feeding the
+  (model × temperature × strategy) ranking added in 4.18.0. Both fall back to the
+  `CORTEX_SUBAGENT_TEMPERATURE` / `CORTEX_ARM_STRATEGY` env stamp when omitted.
+
+---
+
 ## [4.18.0] - 2026-06-12
 
 ### Added

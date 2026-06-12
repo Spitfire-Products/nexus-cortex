@@ -59,6 +59,11 @@ export interface AutoResearchExperimentOptions {
   runCmd?: string;
   buildCmd?: string;
   acceptExit?: string;
+  /** Effectiveness-arm labels recorded on both base + candidate records (shared dispatch
+   *  config; the experiment isolates the harness-version variable). Fall back to the
+   *  CORTEX_SUBAGENT_TEMPERATURE / CORTEX_ARM_STRATEGY env stamp when omitted. */
+  temperature?: string;
+  strategy?: string;
 }
 
 function num(v: string | undefined): number | undefined {
@@ -153,6 +158,8 @@ export async function autoResearchExperiment(options: AutoResearchExperimentOpti
       runs: num(options.runs),
       nFamily: num(options.nFamily) ?? 1,
       modelId: model,
+      temperature: num(options.temperature),
+      strategy: options.strategy,
       deficiencyId: options.deficiencyId,
       benchmarkSource: options.benchmarkSource,
       gate: { alpha: num(options.alpha), seed: num(options.seed), minRunsPerArm: num(options.minRuns) },

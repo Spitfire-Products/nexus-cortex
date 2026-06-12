@@ -48,6 +48,10 @@ export interface AutoResearchLoopOptions {
   cortexDir?: string;
   keepWorktrees?: boolean;
   json?: boolean;
+  /** Effectiveness-arm labels passed through to each round's experiment, recorded with
+   *  every scored run so the matrix can rank (model × temperature × strategy). */
+  temperature?: string;
+  strategy?: string;
 }
 
 function shQuote(s: string): string { return `'${s.replace(/'/g, `'\\''`)}'`; }
@@ -143,6 +147,8 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
         '--cortex-dir', store, '--runs', options.runs ?? '3', '--json'];
       if (options.holdoutSet) expArgs.push('--holdout-set', resolve(options.holdoutSet));
       if (options.model) expArgs.push('--model', options.model);
+      if (options.temperature) expArgs.push('--temperature', options.temperature);
+      if (options.strategy) expArgs.push('--strategy', options.strategy);
       if (options.runCmd) {
         expArgs.push('--run-cmd', options.runCmd, '--accept-exit', options.acceptExit ?? '0');
         if (options.buildCmd) expArgs.push('--build-cmd', options.buildCmd);

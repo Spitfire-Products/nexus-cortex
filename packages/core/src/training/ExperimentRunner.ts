@@ -52,6 +52,12 @@ export interface RunExperimentOptions {
   gate?: { alpha?: number; seed?: number; minRunsPerArm?: number };
   epsilon?: number;
   onProgress?: (msg: string) => void;
+  /** Effectiveness-arm labels recorded on BOTH base + candidate records (the experiment
+   *  isolates the harness-version variable, so both arms share the same dispatch config).
+   *  Lets later queries ask "at this temperature / strategy, did the candidate win?".
+   *  Omitted ⇒ falls back to the CORTEX_SUBAGENT_TEMPERATURE / CORTEX_ARM_STRATEGY env stamp. */
+  temperature?: number;
+  strategy?: string;
 }
 
 export interface ExperimentBenchSummaries {
@@ -91,6 +97,8 @@ export async function runExperiment(
       modelId: opts.modelId,
       benchmarkSource: opts.benchmarkSource,
       harnessRef,
+      temperature: opts.temperature,
+      strategy: opts.strategy,
     });
 
   // 1. Train arms (drive keep/discard).

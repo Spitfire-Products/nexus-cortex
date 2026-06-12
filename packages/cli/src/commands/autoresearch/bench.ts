@@ -49,6 +49,11 @@ export interface AutoResearchBenchOptions {
   cwd?: string;
   /** Comma list of exit codes whose stdout is graded (default "0"). */
   acceptExit?: string;
+  /** Effectiveness-arm labels recorded with each scored run, so the matrix can rank
+   *  (model × temperature × strategy). Both fall back to the CORTEX_SUBAGENT_TEMPERATURE /
+   *  CORTEX_ARM_STRATEGY env stamp when omitted. */
+  temperature?: string;
+  strategy?: string;
 }
 
 /** Load tasks from a file (array or single object) or a directory of *.json. */
@@ -117,6 +122,8 @@ export async function autoResearchBench(options: AutoResearchBenchOptions): Prom
       modelId: model,
       benchmarkSource: options.benchmarkSource,
       harnessRef: options.harnessRef,
+      temperature: options.temperature !== undefined && Number.isFinite(Number(options.temperature)) ? Number(options.temperature) : undefined,
+      strategy: options.strategy,
       backlog: options.seedBacklog === false ? undefined : new ResearchBacklog(projectRoot),
       discoveredRound: options.experimentTag,
       discoveredRef: options.harnessRef,

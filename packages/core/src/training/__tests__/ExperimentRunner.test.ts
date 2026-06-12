@@ -90,6 +90,21 @@ describe('runExperiment — single-experiment measurement core', () => {
     expect(res.benchSummaries.candidate.holdout).toBeDefined();
   });
 
+  it('records the effectiveness-arm temperature + strategy on BOTH base and candidate', async () => {
+    const arms: ExperimentArms = { baseRunner: fixedRunner('alpha'), candidateRunner: fixedRunner('alpha beta gamma delta') };
+    await runExperiment(matrix, ledger, arms, {
+      experimentTag: 's-arm', baseRef: 'b', candidateRef: 'c', branch: 'x',
+      trainTasks: TRAIN, runs: 2, gate: { seed: 6 },
+      temperature: 0.3, strategy: 'precise',
+    });
+    const recs = matrix.getRecords({ split: 'train' });
+    expect(recs.length).toBeGreaterThan(0);
+    expect(recs.every(r => r.temperature === 0.3 && r.strategy === 'precise')).toBe(true);
+    // both harness arms carry the shared arm config
+    expect(matrix.getRecords({ harnessRef: 'b' }).every(r => r.strategy === 'precise')).toBe(true);
+    expect(matrix.getRecords({ harnessRef: 'c' }).every(r => r.strategy === 'precise')).toBe(true);
+  });
+
   it('progress callback fires for each phase', async () => {
     const msgs: string[] = [];
     const arms: ExperimentArms = { baseRunner: fixedRunner('alpha'), candidateRunner: fixedRunner('alpha beta gamma delta') };
