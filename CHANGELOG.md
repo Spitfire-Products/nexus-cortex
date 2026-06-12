@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.21.0] - 2026-06-12
+
+### Added
+
+- **15 skills out of the box** (`.cortex/skills/`, auto-vendored into npm tarballs):
+  - `autoresearch` (the PM playbook) + a new **arm persona library** — 8 named personas
+    (`precise`, `aggressive-refactor`, `root-cause`, `test-first`, `security-auditor`,
+    `perf-hunter`, `creative`, `skeptic-reviewer`), each a ready-made `strategy` label that
+    feeds the (model × temperature × strategy) effectiveness matrix
+  - `cortex-bench` (benchmark methodology), `cortex` (the headless-agent usage + debug reference)
+  - `best-of-n` (parallel implementation tournament) and `verify-work` (adversarial
+    verification subagent) — and both are now composed into the bench/autoresearch playbooks
+    (the FIX step can run as a tournament; the VERIFY step follows the refute-don't-confirm checklist)
+  - Document skills: `docx`, `xlsx`, `pptx`, `pdf-documents` (create/read/edit Word, Excel,
+    PowerPoint, and PDF deliverables with built-in verification steps — also ideal graded
+    bench-task surfaces)
+  - `resume-analyst` and five `spacetimedb-*` reference skills
+- **Root `test` / `test:ci` / `typecheck` scripts** — the commands the README documents now
+  exist (npm-workspaces delegation).
+- `ENABLE_BROWSER_TESTS` env (default false) — the Chromium browser-integration suite is now
+  opt-in, so the default `npm test` is deterministic on a fresh clone.
+
+### Fixed
+
+- `npm publish` would have failed: the `prepack` scaffold-vendoring script now ships in the
+  repo (`scripts/copy-pkg-cortex-scaffold.mjs`).
+- `/models` endpoint test no longer hardcodes a model count — it compares against the live
+  registry, so adding/removing models can't break the suite.
+- Scrubbed stale internals from shipped docs/skills: dead `OMNICLAUDE_*` env names →
+  `CORTEX_*`, unregistered example model IDs, hardcoded tool/test counts, absolute paths.
+
+### Verified
+
+- **Full end-to-end from a fresh clone**: install → multi-pass build → typecheck (0 errors) →
+  `npm test` green (2,000+ tests) → server `/health` → CLI introspection → `npm pack`
+  (scaffold vendored).
+- **Benchmark pipeline e2e**: deterministic graded bench (arm labels + backlog seeding) →
+  base-vs-candidate experiment (`keep`, p=0.003, FWER-adjusted, holdout-verified,
+  mergeEligible) → live-LLM bench through the server with real graded records.
+
+---
+
 ## [4.20.0] - 2026-06-12
 
 ### Added
