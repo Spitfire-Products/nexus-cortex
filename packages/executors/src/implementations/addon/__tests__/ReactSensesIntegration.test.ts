@@ -16,7 +16,11 @@ import { getChromiumBinary } from '../../../utils/ChromiumBrowserManager.js';
 const require_ = createRequire(import.meta.url);
 const HAS_ESBUILD = (() => { try { require_.resolve('esbuild'); require_.resolve('react'); return true; } catch { return false; } })();
 const HAS_CHROMIUM = !!getChromiumBinary();
-const RUN = HAS_ESBUILD && HAS_CHROMIUM;
+// Opt-in (ENABLE_BROWSER_TESTS=true), like ENABLE_SMOKE_TESTS: this suite drives a real
+// Chromium, downloads http-server via npx mid-test (network), and is sensitive to which
+// `react` build resolves in flattened installs — too environment-dependent for the
+// default `npm test` a fresh clone runs. Capability guards still apply when enabled.
+const RUN = HAS_ESBUILD && HAS_CHROMIUM && process.env.ENABLE_BROWSER_TESTS === 'true';
 
 const PORT = 3486;
 const COUNTER_APP = `import { useState } from 'react';

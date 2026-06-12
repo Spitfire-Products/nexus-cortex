@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
+import { ModularModelRegistry } from '@nexus-cortex/core';
 import { modelsRouter } from '../routes/models.js';
 
 describe('/models endpoint', () => {
@@ -248,10 +249,16 @@ describe('/models endpoint', () => {
       const uniqueIds = new Set(ids);
 
       // Registry includes aliases that map different keys to the same model config,
-      // so model.id values can repeat. Verify the unique count is stable.
-      // (86 unique / 95 total as of claude-fable-5 — bump when adding/removing models.)
-      expect(uniqueIds.size).toBe(86);
-      expect(ids.length).toBe(95);
+      // so model.id values can repeat. Compare the endpoint against the live registry
+      // rather than a hardcoded count (a literal here goes stale on every model
+      // add/remove): the endpoint must surface exactly one entry per registration,
+      // and its unique-id set must match the registry's.
+      const registry = new ModularModelRegistry();
+      const regModels = registry.getAllModels();
+      const regUnique = new Set(regModels.map((m) => m.id));
+      expect(ids.length).toBe(regModels.length);
+      expect(uniqueIds.size).toBe(regUnique.size);
+      expect(uniqueIds.size).toBeLessThanOrEqual(ids.length);
     });
   });
 });
