@@ -86,7 +86,7 @@ cd packages/server && \
   MENTORSHIP_ENABLED=false \
   ENABLE_SERVER_SIDE_TOOLS=true \
   XAI_API_MODE=messages \
-  OMNICLAUDE_MODE=stateless \
+  CORTEX_MODE=stateless \
   setsid nohup node dist/index.js > /tmp/cortex-server.log 2>&1 < /dev/null &
 
 # Poll for boot (~20s cold, not 5s)
