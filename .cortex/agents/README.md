@@ -148,7 +148,7 @@ cortex --quiet "Use WorkspaceManager to create 2 worktrees (branch auth-refactor
 cortex --pr review external-org/repo 42
 
 # Multi-repo workflow
-cortex --quiet "Clone nexus-terminal into a worktree AND create a local worktree for nexus-cortex changes. Dispatch agents to update SDK types in both."
+cortex --quiet "Clone owner/upstream-lib into a worktree AND create a local worktree for this repo's changes. Dispatch agents to update shared types in both."
 ```
 
 ### How It Works
