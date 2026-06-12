@@ -5,7 +5,7 @@
  * Phase 3: Complete Modular Implementation
  * - 100% model cards (no fallback)
  * - All providers: XAI, DeepSeek, Anthropic, Gemma, Google, OpenAI, GLM, Qwen, Moonshot, MiniMax, Mercury, Cloudflare
- * - Total: 75 models across 11 providers
+ * - The card files are the source of truth for the model count — run `cortex models list`
  *
  * Benefits:
  * - One model = one file = clear git history
@@ -63,7 +63,7 @@ export class ModularModelRegistry implements ModelRegistry {
   private loadModelCards(): void {
     // All models from modular cards (100% coverage)
     const allModelCards: ModelConfig[] = [
-      // XAI models (11 models)
+      // XAI models
       xaiModels.grok43,
       xaiModels.grok420Reasoning,
       xaiModels.grok420NonReasoning,
@@ -76,7 +76,7 @@ export class ModularModelRegistry implements ModelRegistry {
       xaiModels.grokBuild01,             // grok-build-0.1 via Messages API (canonical)
       xaiModels.grokBuild01Responses,    // grok-build-0.1 via Responses API
 
-      // DeepSeek models (2). deepseek-chat and deepseek-reasoner removed 2026-06-10
+      // DeepSeek models. deepseek-chat and deepseek-reasoner removed 2026-06-10
       // (DeepSeek deprecating both 2026-07-24); deepseek-v4-flash supersedes chat and
       // deepseek-v4-pro supersedes reasoner. The old names redirect to the V4 pair via
       // ModelAliasResolver for back-compat. (v3.x / r1-0528 / deepseek-coder were
@@ -84,7 +84,7 @@ export class ModularModelRegistry implements ModelRegistry {
       deepseekModels.deepseekV4Pro,
       deepseekModels.deepseekV4Flash,
 
-      // Anthropic models (10 models)
+      // Anthropic models
       anthropicModels.claudeFable5,
       anthropicModels.claudeOpus48,
       anthropicModels.claudeOpus47,
@@ -96,13 +96,13 @@ export class ModularModelRegistry implements ModelRegistry {
       anthropicModels.claudeSonnet4,
       anthropicModels.claudeOpus41,
 
-      // Gemma models (4 models)
+      // Gemma models
       gemmaModels.gemma327bIt,
       gemmaModels.gemma312bIt,
       gemmaModels.gemma34bIt,
       gemmaModels.gemma31bIt,
 
-      // Google Gemini models (8 — gemini-3.5-flash GA added 2026-05-27;
+      // Google Gemini models (gemini-3.5-flash GA added 2026-05-27;
       // gemini-3-pro-preview + gemini-3.1-flash-lite-preview discontinued)
       googleModels.gemini35Flash,
       googleModels.gemini3FlashPreview,
@@ -113,7 +113,7 @@ export class ModularModelRegistry implements ModelRegistry {
       googleModels.gemini25FlashLite,
       googleModels.gemini25ComputerUsePreview,
 
-      // OpenAI models (21 models)
+      // OpenAI models
       openaiModels.gpt4o,
       openaiModels.gpt4oMini,
       openaiModels.gpt55,
@@ -136,25 +136,25 @@ export class ModularModelRegistry implements ModelRegistry {
       openaiModels.o3Mini,
       openaiModels.o4Mini,
 
-      // GLM models (5 models)
+      // GLM models
       glmModels.glm46,
       glmModels.glm45,
       glmModels.glm45Air,
       glmModels.glm4,
       glmModels.glm4Flash,
 
-      // Qwen models (5 models)
+      // Qwen models
       qwenModels.qwen3Coder,
       qwenModels.qwen3MaxPreview,
       qwenModels.qwenTurbo,
       qwenModels.qwenPlus,
       qwenModels.qwenMax,
 
-      // Moonshot models (2 models)
+      // Moonshot models
       moonshotModels.kimiK2Instruct,
       moonshotModels.kimiK2Thinking,
 
-      // MiniMax models (2 models)
+      // MiniMax models
       minimaxModels.minimaxM2,
       minimaxModels.minimaxM2Stable,
 

@@ -1,12 +1,13 @@
 /**
  * Phase-3 React senses integration: SandboxComponentTree + SandboxRenderTrace against a
- * REAL bundled React app (esbuild) served by http-server and driven through Chromium.
- * Skips automatically when esbuild/react or Chromium are unavailable.
+ * REAL bundled React app (esbuild) served by an in-process static server and driven
+ * through Chromium. Skips automatically when esbuild/react or Chromium are unavailable.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawn, type ChildProcess } from 'child_process';
+import { createServer, type Server as HttpServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { promises as fs } from 'fs';
-import { join } from 'path';
+import { join, extname } from 'path';
 import { tmpdir } from 'os';
 import { createRequire } from 'module';
 import { buildReactArtifact } from '../ReactArtifactBuilder.js';
@@ -16,13 +17,11 @@ import { getChromiumBinary } from '../../../utils/ChromiumBrowserManager.js';
 const require_ = createRequire(import.meta.url);
 const HAS_ESBUILD = (() => { try { require_.resolve('esbuild'); require_.resolve('react'); return true; } catch { return false; } })();
 const HAS_CHROMIUM = !!getChromiumBinary();
-// Opt-in (ENABLE_BROWSER_TESTS=true), like ENABLE_SMOKE_TESTS: this suite drives a real
-// Chromium, downloads http-server via npx mid-test (network), and is sensitive to which
-// `react` build resolves in flattened installs — too environment-dependent for the
-// default `npm test` a fresh clone runs. Capability guards still apply when enabled.
+// Opt-in (ENABLE_BROWSER_TESTS=true), like ENABLE_SMOKE_TESTS: this suite launches a
+// real Chromium and esbuild-bundles a React app — heavyweight for the default
+// `npm test` a fresh clone runs. Capability guards still apply when enabled.
 const RUN = HAS_ESBUILD && HAS_CHROMIUM && process.env.ENABLE_BROWSER_TESTS === 'true';
 
-const PORT = 3486;
 const COUNTER_APP = `import { useState } from 'react';
 function Counter(){ const [n,setN]=useState(0); return <button id="c" onClick={()=>setN(n+1)}>Count: {n}</button>; }
 function App(){ return <div><h1>Demo</h1><Counter/></div>; }
@@ -30,29 +29,49 @@ export default App;`;
 
 describe.skipIf(!RUN)('React senses (tree + render trace) integration', () => {
   let dir: string;
-  let srv: ChildProcess;
+  let srv: HttpServer;
   let bridge: VisualFeedbackBridge;
-  const url = `http://localhost:${PORT}`;
+  let url: string;
 
   beforeAll(async () => {
     dir = await fs.mkdtemp(join(tmpdir(), 'react-senses-'));
     await buildReactArtifact(dir, { code: COUNTER_APP, reactMode: 'bundled' });
-    srv = spawn('npx', ['http-server', dir, '-p', String(PORT), '-c-1', '--silent'], { stdio: 'ignore' });
-    // Poll until the server accepts connections — a fixed wait breaks on fresh installs
-    // where npx must first DOWNLOAD http-server (it is not a package dependency).
-    const deadline = Date.now() + 45000;
-    for (;;) {
-      try { await fetch(`http://localhost:${PORT}/`); break; } catch { /* not up yet */ }
-      if (Date.now() > deadline) throw new Error('http-server did not start within 45s');
-      await new Promise((r) => setTimeout(r, 500));
-    }
+    // In-process static server on an EPHEMERAL port. The previous setup
+    // (`npx http-server` on a fixed port) had three failure modes that produced a
+    // phantom "regression": npx downloading http-server mid-test (network), the
+    // boot-poll accepting a response from ANY server on the port (a zombie from an
+    // interrupted earlier run served a deleted dir → blank page → "No React tree
+    // found"), and kill() orphaning the npx→sh→node grandchild, CREATING that
+    // zombie. An in-process server can't collide, can't be foreign, can't orphan.
+    const MIME: Record<string, string> = {
+      '.html': 'text/html', '.js': 'text/javascript', '.map': 'application/json',
+    };
+    srv = createServer(async (req, res) => {
+      try {
+        const reqPath = (req.url ?? '/').split('?')[0]!;
+        const rel = reqPath === '/' ? 'index.html' : reqPath.replace(/^\/+/, '');
+        const filePath = join(dir, rel);
+        if (!filePath.startsWith(dir)) { res.writeHead(403); res.end(); return; }
+        const body = await fs.readFile(filePath);
+        res.writeHead(200, { 'Content-Type': MIME[extname(filePath)] ?? 'application/octet-stream', 'Cache-Control': 'no-store' });
+        res.end(body);
+      } catch {
+        res.writeHead(404); res.end();
+      }
+    });
+    await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', resolve));
+    const addr = srv.address() as AddressInfo;
+    url = `http://127.0.0.1:${addr.port}`;
+    // Sanity: this exact server serves OUR artifact (not a fixed-port assumption).
+    const probe = await fetch(`${url}/dist/bundle.js`);
+    if (!probe.ok) throw new Error(`artifact server not serving the bundle (HTTP ${probe.status})`);
     bridge = new VisualFeedbackBridge();
     await bridge.initialize();
   }, 60000);
 
   afterAll(async () => {
     await bridge?.close();
-    srv?.kill('SIGKILL');
+    await new Promise<void>((resolve) => (srv ? srv.close(() => resolve()) : resolve()));
     if (dir) await fs.rm(dir, { recursive: true, force: true });
   });
 

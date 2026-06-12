@@ -4,7 +4,6 @@
  * Qwen (通义千问) models from Alibaba Cloud.
  * Strong Chinese language support, various sizes.
  *
- * Total: 5 models
  */
 
 export { qwenTurbo } from './qwen-turbo.js';

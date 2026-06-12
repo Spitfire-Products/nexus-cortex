@@ -50,7 +50,11 @@ export async function listModels(options: {
       byProvider[model.owned_by]!.push(model);
     }
 
-    console.log(theme.colors.secondary(`\n Available Models (${filtered.length} total)\n`));
+    // Headline = unique canonical models (matches the README's auto-counted total);
+    // alias registrations (same config under a back-compat name) are noted separately.
+    const uniqueIds = new Set(filtered.map((m) => m.id)).size;
+    const aliasNote = filtered.length > uniqueIds ? ` + ${filtered.length - uniqueIds} aliases` : '';
+    console.log(theme.colors.secondary(`\n Available Models (${uniqueIds}${aliasNote})\n`));
 
     for (const [provider, providerModels] of Object.entries(byProvider)) {
       console.log(theme.colors.primary(`${provider} (${providerModels.length} models):`));

@@ -2,7 +2,7 @@
  * Google Gemini Model Cards
  * Auto-exported for easy discovery
  *
- * Total: 9 models (includes SDK test variant)
+ * Includes an SDK test variant.
  * Gemini 3.x preview models added 2026-05-13. gemini-3.5-flash GA added 2026-05-27.
  * Discontinued: gemini-3-pro-preview, gemini-3.1-flash-lite-preview (404 as of 2026-05-27).
  */

@@ -3,7 +3,6 @@
  *
  * Kimi K2 models — latest generation.
  *
- * Total: 2 models
  */
 
 export { kimiK2Instruct } from './kimi-k2-instruct.js';

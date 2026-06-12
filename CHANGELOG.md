@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.24.0] - 2026-06-12
+
+### Fixed
+
+- **Browser-integration suite repaired** (`ENABLE_BROWSER_TESTS=true` → 4/4): the apparent
+  React-introspection regression was a test-infrastructure fault — an orphaned static server
+  on a fixed port from an interrupted run. The suite now uses an in-process server on an
+  ephemeral port (no external download, no port collisions, no orphanable processes). The
+  introspection feature itself was verified healthy.
+- **`models list` headline count** now reports unique models with aliases noted separately
+  (e.g. "84 + 9 aliases"), matching the README's auto-counted total.
+- Numeric model-count comments removed from card index files and the registry (the registry
+  is self-describing; literals drift).
+
+### Removed
+
+- Internal archive/backup directories and stale per-package lockfiles (npm workspaces use
+  the root lockfile) no longer ship.
+
+---
+
 ## [4.23.1] - 2026-06-12
 
 ### Removed

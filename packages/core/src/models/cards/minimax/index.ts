@@ -4,7 +4,6 @@
  * MiniMax models with Anthropic-compatible Messages API.
  * Strong Chinese language support with very long context windows.
  *
- * Total: 2 models
  */
 
 export { minimaxM2 } from './minimax-m2.js';

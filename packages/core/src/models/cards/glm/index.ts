@@ -4,7 +4,6 @@
  * GLM (General Language Model) from Zhipu AI (智谱AI).
  * Strong Chinese language support with vision capabilities.
  *
- * Total: 5 models
  */
 
 export { glm4 } from './glm-4.js';

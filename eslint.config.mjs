@@ -10,7 +10,6 @@ export default [
       '**/dist/**',
       '**/node_modules/**',
       '**/coverage/**',
-      'packages/archive/**',
       '**/*.test.ts',
       '**/*.test.tsx',
       '**/*.spec.ts',

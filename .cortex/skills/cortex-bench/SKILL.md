@@ -66,7 +66,7 @@ Same exact prompt
 ## Cardinal Rules (learned the hard way)
 
 1. **n ≥ 2, different tasks.** One task agreeing three ways is a false positive. Run at least two different tasks in fresh sessions.
-2. **Ground-truth against the real artifact, not an agent.** The parallel sub-agent is a reference that fails differently, not an oracle. The only truth is direct shell/grep/python on actual files.
+2. **Ground-truth against the real artifact, not an agent.** The parallel sub-agent is a reference that fails differently, not an oracle. The only truth is direct shell/grep/python on actual files. **Existence/resolution claims need a behavioral probe**: an agent asserting "X is registered / X resolves / the alias works" must demonstrate it (run the lookup, hit the endpoint) — in a live audit, 2 of 6 agents asserted a nonexistent alias from a comment they'd read, and only the probe refuted it (which then exposed a real bug).
 3. **Fresh server + fresh session per model probe.** `--new` on every prompt; restart the server between models. Prompt cache and debug logs bleed across models.
 4. **Discard confounded runs.** After every run: `grep -nE "429|capacity|exhausted|rate.?limit|overloaded|quota" /tmp/cortex-server.log`. If it hits, the model was throttled, not benchmarked. Throw it away.
 5. **Real work surface, not toy prompts.** The task must (a) move the harness/platform forward AND (b) have an independently verifiable answer. "Count imports in file X" is verifiable but worthless; "refactor module Z" is real but unverifiable. Find tasks that are BOTH.

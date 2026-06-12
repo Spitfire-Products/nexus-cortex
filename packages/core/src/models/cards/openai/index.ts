@@ -2,12 +2,11 @@
  * OpenAI Model Cards
  *
  * All OpenAI models available in the system:
- * - GPT-4o family (2 models)
- * - GPT-5 family (11 models)
- * - GPT-4.1 family (3 models)
- * - O-series reasoning models (5 models)
+ * - GPT-4o family
+ * - GPT-5 family
+ * - GPT-4.1 family
+ * - O-series reasoning models
  *
- * Total: 21 models
  */
 
 // GPT-4o family

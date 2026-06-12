@@ -8,7 +8,6 @@ export default defineConfig({
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
-      'packages/archive/**',
       'tests/sandbox-transfer.test.mjs',
       'packages/cli/src/ink-ui/**/*.test.{ts,tsx}',
     ],
