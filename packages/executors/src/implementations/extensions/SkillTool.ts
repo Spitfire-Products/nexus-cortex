@@ -30,7 +30,7 @@ interface SkillDefinition {
   description: string;
   allowedTools?: string[];
   content: string;
-  location: 'personal' | 'project' | 'central';
+  location: 'personal' | 'project' | 'central' | 'builtin';
   path: string;
 }
 
@@ -63,7 +63,7 @@ interface SkillDefinition {
  */
 export class SkillToolExecutor extends BaseTool<SkillParams, ToolResult> {
   private skillsCache: Map<string, SkillDefinition> | null = null;
-  private skillsDirs: { path: string; location: 'project' | 'central' | 'personal' }[];
+  private skillsDirs: { path: string; location: 'project' | 'central' | 'personal' | 'builtin' }[];
 
   constructor(config: { workingDirectory: string }) {
     super('Skill', 'Skill', 'Invoke specialized skills', {
@@ -84,6 +84,13 @@ export class SkillToolExecutor extends BaseTool<SkillParams, ToolResult> {
       // central universal master list (shared across all cwds) + nexus-cortex personal
       { path: join(homedir(), '.agents', 'skills'), location: 'central' },
       { path: join(homedir(), '.cortex', 'skills'), location: 'personal' },
+      // shipped/builtin tier (lowest priority) — $CORTEX_ROOT/.cortex/skills, the
+      // skills packed with the install (git clone root, or the npm package's vendored
+      // scaffold). Mirrors AgentStore's builtin agent tier. Absent when CORTEX_ROOT
+      // is unset; a missing dir is skipped harmlessly at load time.
+      ...(process.env.CORTEX_ROOT
+        ? [{ path: join(process.env.CORTEX_ROOT, '.cortex', 'skills'), location: 'builtin' as const }]
+        : []),
     ];
   }
 
@@ -229,7 +236,7 @@ export class SkillToolExecutor extends BaseTool<SkillParams, ToolResult> {
    */
   private async loadSkillsFromDirectory(
     baseDir: string,
-    location: 'personal' | 'project' | 'central',
+    location: 'personal' | 'project' | 'central' | 'builtin',
     signal: AbortSignal,
   ): Promise<void> {
     try {
@@ -291,7 +298,7 @@ export class SkillToolExecutor extends BaseTool<SkillParams, ToolResult> {
   private async parseSkillFile(
     filePath: string,
     skillDir: string,
-    location: 'personal' | 'project' | 'central',
+    location: 'personal' | 'project' | 'central' | 'builtin',
   ): Promise<SkillDefinition | null> {
     try {
       const content = await fs.readFile(filePath, 'utf-8');

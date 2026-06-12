@@ -32,6 +32,16 @@ const __cortex_dirname = dirname(realpathSync(__cortex_filename));
 const MONOREPO_ROOT = resolve(__cortex_dirname, '..', '..', '..');
 const SERVER_ENTRY = join(MONOREPO_ROOT, 'packages', 'server', 'dist', 'index.js');
 
+// Resolve CORTEX_ROOT (the install root holding the shipped .cortex scaffold —
+// builtin agents/skills) when the user hasn't set it. Git clone → the monorepo
+// root; npm install → this package's root, where prepack vendored the scaffold.
+// Inherited by the spawned server, so AgentStore/SkillTool builtin tiers resolve.
+const CLI_PKG_ROOT = resolve(__cortex_dirname, '..');
+if (!process.env.CORTEX_ROOT) {
+  if (existsSync(join(MONOREPO_ROOT, '.cortex'))) process.env.CORTEX_ROOT = MONOREPO_ROOT;
+  else if (existsSync(join(CLI_PKG_ROOT, '.cortex'))) process.env.CORTEX_ROOT = CLI_PKG_ROOT;
+}
+
 const BASE_PORT = process.env.PORT || '4000';
 const BASE_URL = process.env.CORTEX_URL || `http://localhost:${BASE_PORT}`;
 

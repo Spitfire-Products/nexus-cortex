@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.20.0] - 2026-06-12
+
+### Added
+
+- **The `.cortex/` scaffold now ships in npm installs.** Previously the builtin agent
+  profiles (including `autoresearch-agent`), skill playbooks, sample bench tasks, and
+  permission examples only existed in a git clone — npm tarballs shipped bare `dist`+`bin`,
+  so an `npm install`ed user silently had no builtin agents or skills. Now:
+  - `prepack` vendors the shippable scaffold (agents, skills, commands, system-messages,
+    bench/tasks, permission profiles) into the `@nexus-cortex/cli` and `@nexus-cortex/server`
+    tarballs.
+  - The `cortex` bin and the server entry resolve `CORTEX_ROOT` automatically — the monorepo
+    root in a git clone, or the package's own vendored scaffold under `node_modules`. An
+    explicitly set `CORTEX_ROOT` always wins.
+  - The `Skill` tool gains a **builtin tier** (`$CORTEX_ROOT/.cortex/skills`, lowest
+    priority — project and personal skills override by name), mirroring the agent store's
+    existing builtin tier.
+- All *runtime* state (sessions, artifacts, tmux metadata, training records, the JSONL
+  ledgers, config.json) continues to be created on demand — no install step required.
+
+---
+
 ## [4.19.0] - 2026-06-12
 
 ### Added

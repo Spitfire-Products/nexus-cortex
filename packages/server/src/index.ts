@@ -10,6 +10,7 @@ import { config } from 'dotenv';
 import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import fs from 'fs';
 
 // Resolve paths for .env loading
 const __filename = fileURLToPath(import.meta.url);
@@ -19,6 +20,17 @@ const packageRoot = path.join(__dirname, '..', '..', '..');
 // PROJECT_ROOT = where the user launched from (the launch-cwd model)
 if (!process.env.PROJECT_ROOT) {
   process.env.PROJECT_ROOT = process.cwd();
+}
+
+// CORTEX_ROOT = the install root holding the shipped .cortex scaffold (builtin
+// agents/skills). Git clone → the monorepo root (3 levels up from dist); npm
+// install → this package's root, where prepack vendored the scaffold. Only set
+// when unset so an explicit CORTEX_ROOT (or the cortex bin's resolution,
+// inherited through spawn) always wins.
+const serverPkgRoot = path.join(__dirname, '..');
+if (!process.env.CORTEX_ROOT) {
+  if (fs.existsSync(path.join(packageRoot, '.cortex'))) process.env.CORTEX_ROOT = packageRoot;
+  else if (fs.existsSync(path.join(serverPkgRoot, '.cortex'))) process.env.CORTEX_ROOT = serverPkgRoot;
 }
 
 // Load .env from cwd first (user's project), then package root (dev/monorepo).
