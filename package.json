@@ -9,6 +9,9 @@
   "scripts": {
     "build": "bash scripts/build.sh",
     "clean": "rm -rf packages/*/dist",
+    "test": "npm run test:run -ws --if-present",
+    "test:ci": "npm run test:ci -ws --if-present",
+    "typecheck": "npm run typecheck -ws --if-present",
     "link": "bash scripts/link-global.sh",
     "docs:counts": "node scripts/update-doc-counts.mjs",
     "docs:counts:check": "node scripts/update-doc-counts.mjs --check",
