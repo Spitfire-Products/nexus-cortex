@@ -35,11 +35,17 @@ jobs:
         with:
           node-version: 20.18.1
           registry-url: 'https://registry.npmjs.org'
-      - name: Install deps (retry-safe; assert local tsc is linked)
+      # `npm ci` reify intermittently aborts on this runner with "Exit handler never
+      # called!" (npm-internal, not version-specific — runner uses npm 10.8.2). Self-heal
+      # through alternate install paths so bins link and the build uses the LOCAL tsc 5.9.3
+      # (not the runner's global tsc 6.x). Build is `tsc` only → --ignore-scripts is safe.
+      - name: Install deps (self-healing; assert local tsc is linked)
         run: |
           node -v && npm -v
+          clean() { rm -rf node_modules packages/*/node_modules 2>/dev/null || true; }
           npm ci --no-audit --no-fund \
-            || { echo "npm ci aborted — clean retry"; rm -rf node_modules packages/*/node_modules; npm ci --no-audit --no-fund; }
+            || { echo "npm ci aborted — retry with --ignore-scripts"; clean; npm ci --no-audit --no-fund --ignore-scripts; } \
+            || { echo "retry with npm install"; clean; npm install --no-audit --no-fund --no-save; }
           test -x node_modules/.bin/tsc || { echo "::error::tsc not linked after install"; exit 1; }
       # Ordered two-pass build (scripts/build.sh) — breaks the core<->executors cycle.
       - run: npm run build

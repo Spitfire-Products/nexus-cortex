@@ -24,11 +24,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20.18.1
-      - name: Install deps (retry-safe; assert local tsc is linked)
+      # `npm ci` reify intermittently aborts on this runner with "Exit handler never
+      # called!" (npm-internal, NOT version-specific — the runner runs npm 10.8.2, the same
+      # version that installs cleanly locally). When it aborts, bins aren't linked and the
+      # build's `tsc` would fall through to the runner's global tsc 6.x (TS5107). Self-heal
+      # through alternate install paths; the build is `tsc` only, so `--ignore-scripts`
+      # (skips playwright/native postinstalls) still yields a complete type-check toolchain.
+      - name: Install deps (self-healing; assert local tsc is linked)
         run: |
           node -v && npm -v
+          clean() { rm -rf node_modules packages/*/node_modules 2>/dev/null || true; }
           npm ci --no-audit --no-fund \
-            || { echo "npm ci aborted — clean retry"; rm -rf node_modules packages/*/node_modules; npm ci --no-audit --no-fund; }
+            || { echo "npm ci aborted — retry with --ignore-scripts"; clean; npm ci --no-audit --no-fund --ignore-scripts; } \
+            || { echo "retry with npm install"; clean; npm install --no-audit --no-fund --no-save; }
           test -x node_modules/.bin/tsc || { echo "::error::tsc not linked after install — would fall through to global tsc"; exit 1; }
       - name: Lint (fails on error-level issues; warnings are a tidy-up backlog)
         run: npm run lint
