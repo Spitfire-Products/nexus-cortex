@@ -40,20 +40,16 @@ jobs:
       # fallbacks on whether tsc linked, NOT exit code; lead with --ignore-scripts (skips
       # the playwright/native postinstall that triggers the crash). Build is `tsc` only, and
       # publish-time `prepack` is unaffected by install-time --ignore-scripts.
-      # See ci.yml: runner reify aborts ("Exit handler never called!") then exits 0, leaving
-      # bins unlinked. Serialize with --maxsockets 1, gate on tsc-linked, lead with
-      # --ignore-scripts (build is tsc-only; publish-time prepack is unaffected).
-      - name: Install deps (serialized, result-checked, self-healing)
+      # Build is `tsc` only → --ignore-scripts (skips playwright/native postinstalls) is
+      # sufficient; publish-time `prepack` is unaffected. The deploy script sanitizes the
+      # lockfile's tarball URLs to the public registry (Replit's internal proxy host is
+      # unreachable here). Assert the LOCAL tsc bin linked so the build uses tsc 5.9.3.
+      - name: Install deps
         run: |
           node -v && npm -v
-          linked() { test -x node_modules/.bin/tsc; }
-          clean() { rm -rf node_modules packages/*/node_modules 2>/dev/null || true; }
-          echo "::group::attempt 1 — npm ci --ignore-scripts --maxsockets 1"; npm ci --no-audit --no-fund --ignore-scripts --maxsockets 1 || true; echo "::endgroup::"
-          if ! linked; then echo "::group::attempt 2 — npm install --ignore-scripts --maxsockets 1"; clean; npm install --no-audit --no-fund --no-save --ignore-scripts --maxsockets 1 || true; echo "::endgroup::"; fi
-          if ! linked; then
-            echo "::group::npm debug log"; tail -n 60 /home/runner/.npm/_logs/*-debug-0.log 2>/dev/null || echo "(no debug log)"; echo "::endgroup::"
-            echo "::error::tsc not linked after install"; exit 1
-          fi
+          npm ci --no-audit --no-fund --ignore-scripts \
+            || { echo "retry"; rm -rf node_modules packages/*/node_modules; npm ci --no-audit --no-fund --ignore-scripts; }
+          test -x node_modules/.bin/tsc || { echo "::error::tsc not linked after install"; exit 1; }
           echo "[ok] local tsc $(node_modules/.bin/tsc --version)"
       # Ordered two-pass build (scripts/build.sh) — breaks the core<->executors cycle.
       - run: npm run build
