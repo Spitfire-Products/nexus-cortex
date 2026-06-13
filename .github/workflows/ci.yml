@@ -18,6 +18,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      # Pin npm: the runner's bundled npm (11.x) intermittently crashes `npm ci` with
+      # "Exit handler never called!", leaving bins unlinked — `tsc`/`eslint` then fall
+      # through to the runner's GLOBAL tools (global tsc is 6.x → TS5107 on our locked
+      # config; eslint absent → "not found"). 10.8.2 installs the locked toolchain cleanly.
+      - run: npm install -g npm@10.8.2
       - run: npm ci --no-audit --no-fund
       - name: Lint (fails on error-level issues; warnings are a tidy-up backlog)
         run: npm run lint

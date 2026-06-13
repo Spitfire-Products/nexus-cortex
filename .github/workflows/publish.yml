@@ -31,6 +31,10 @@ jobs:
         with:
           node-version: 20
           registry-url: 'https://registry.npmjs.org'
+      # Pin npm — the runner's bundled npm 11.x intermittently crashes `npm ci`
+      # ("Exit handler never called!"), leaving bins unlinked and the build falling
+      # through to the runner's global tsc 6.x. 10.8.2 installs the locked toolchain.
+      - run: npm install -g npm@10.8.2
       - run: npm ci --no-audit --no-fund
       # Ordered two-pass build (scripts/build.sh) — breaks the core<->executors cycle.
       - run: npm run build
