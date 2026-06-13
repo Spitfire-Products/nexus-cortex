@@ -7,12 +7,18 @@ on:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    # executors depends on the full `playwright` package, whose install downloads browser
+    # binaries — that OOM-crashed `npm ci` ("Exit handler never called!") and the install
+    # never linked bins (the misleading "eslint: not found" downstream). CI runs no browser
+    # tests, so skip the download.
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       - name: Lint (fails on error-level issues; warnings are a tidy-up backlog)
         run: npm run lint
       - run: npm run build

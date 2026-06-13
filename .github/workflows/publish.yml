@@ -1,0 +1,63 @@
+name: Publish to npm
+
+# Fires when the deploy script pushes a version tag (deploy-nexus-cortex.sh --release),
+# or manually via the Actions tab. Publishes the engine packages to npm in dependency
+# order. Idempotent: versions already on the registry are skipped, so re-runs and
+# partial-failure recovery are safe. The TUI (@nexus-cortex/tui) is Release 2 — never
+# published here.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run — pack and validate, but do not publish'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      # executors -> playwright downloads browsers on install and OOM-crashes npm ci.
+      # No browser tests here, so skip it.
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm ci --no-audit --no-fund
+      # Ordered two-pass build (scripts/build.sh) — breaks the core<->executors cycle.
+      - run: npm run build
+      - name: Publish types -> core -> executors -> server -> cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          for pkg in types core executors server cli; do
+            dir="packages/$pkg"
+            if [ ! -d "$dir" ]; then
+              echo "::notice::skip $pkg (not in this release)"
+              continue
+            fi
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "::notice::$name@$version already on the registry — skipping"
+              continue
+            fi
+            if [ "${DRY_RUN:-false}" = "true" ]; then
+              echo "::notice::[dry-run] would publish $name@$version"
+              ( cd "$dir" && npm publish --access public --dry-run )
+            else
+              echo "::notice::publishing $name@$version"
+              ( cd "$dir" && npm publish --access public )
+            fi
+          done
+          echo "Done."

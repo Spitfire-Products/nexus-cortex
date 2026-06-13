@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.26.1] - 2026-06-13
+
+### Fixed
+
+- **`cortex --version` / `-v` now works standalone.** It prints the version and exits
+  immediately, with no server required. Previously `--version` was treated as a prompt and
+  tried to auto-start a server, printing a confusing "Server not built" error.
+- **`cortex` resolves the server from an npm install.** When run outside the monorepo, it
+  now locates `@nexus-cortex/server` through `node_modules` instead of only looking at the
+  monorepo build path. If the server still isn't found, the message points to the right fix
+  for each case (`npm install @nexus-cortex/server` for npm users, `npm run build` from
+  source).
+
 ## [4.26.0] - 2026-06-13
 
 ### Added

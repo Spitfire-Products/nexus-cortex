@@ -25,12 +25,28 @@
 import { spawn, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
-import { existsSync, realpathSync } from 'fs';
+import { existsSync, readFileSync, realpathSync } from 'fs';
+import { createRequire } from 'module';
 
+const __cortex_require = createRequire(import.meta.url);
 const __cortex_filename = fileURLToPath(import.meta.url);
 const __cortex_dirname = dirname(realpathSync(__cortex_filename));
 const MONOREPO_ROOT = resolve(__cortex_dirname, '..', '..', '..');
-const SERVER_ENTRY = join(MONOREPO_ROOT, 'packages', 'server', 'dist', 'index.js');
+
+// Locate the server entry. From a git clone it's the monorepo's built server;
+// from an npm install (`@nexus-cortex/cli` alongside `@nexus-cortex/server`) it's
+// resolved through node_modules. Falls back to the monorepo path so the
+// "not found" guidance in startServer() still fires when neither exists.
+function resolveServerEntry() {
+  const monorepoServer = join(MONOREPO_ROOT, 'packages', 'server', 'dist', 'index.js');
+  if (existsSync(monorepoServer)) return monorepoServer;
+  try {
+    return __cortex_require.resolve('@nexus-cortex/server');
+  } catch {
+    return monorepoServer;
+  }
+}
+const SERVER_ENTRY = resolveServerEntry();
 
 // Resolve CORTEX_ROOT (the install root holding the shipped .cortex scaffold —
 // builtin agents/skills) when the user hasn't set it. Git clone → the monorepo
@@ -50,6 +66,19 @@ let serverProcess = null;
 // ── Argument parsing ──────────────────────────────────────────────
 
 const args = process.argv.slice(2);
+
+// ── Version ───────────────────────────────────────────────────────
+// Standalone — no server needed. Reads this package's own package.json.
+if (args.includes('--version') || args.includes('-v')) {
+  let version = 'unknown';
+  try {
+    version = JSON.parse(
+      readFileSync(join(__cortex_dirname, '..', 'package.json'), 'utf8'),
+    ).version;
+  } catch { /* leave 'unknown' */ }
+  console.log(`cortex ${version}`);
+  process.exit(0);
+}
 
 // ── Headless Commander delegation ─────────────────────────────────
 // `cortex` is primarily the HTTP chat/PR client; the headless Commander program
@@ -172,6 +201,7 @@ AGENT (autonomous one-shot):
 
 FLAGS:
   --help, -h          Show this help
+  --version, -v       Print the cortex version and exit
   --model, -m ID      Model to use (overrides server default)
   --new               Start a fresh session before sending
   --resume ID         Resume a specific session by UUID
@@ -243,7 +273,9 @@ async function shutdownServer() {
 
 async function startServer() {
   if (!existsSync(SERVER_ENTRY)) {
-    console.error(`Server not built. Run: npm run build`);
+    console.error('[cortex] Nexus Cortex server not found.');
+    console.error('  npm install:  npm install @nexus-cortex/server');
+    console.error('  from source:  npm run build  (from the monorepo root)');
     process.exit(1);
   }
   process.stderr.write(`[cortex] No server on ${BASE_URL} -- starting one...\n`);
