@@ -32,15 +32,23 @@ jobs:
       # postinstall artifacts — so this yields a complete toolchain. If bins never link, the
       # build would silently fall through to the runner's global tsc 6.x (TS5107); the final
       # assert fails the job loudly instead.
-      - name: Install deps (result-checked self-healing install)
+      # `npm ci` reify aborts on this runner with "Exit handler never called!" then exits 0,
+      # leaving an INCOMPLETE install (bins unlinked → build falls through to global tsc 6.x
+      # → TS5107). Same npm 10.8.2 installs cleanly locally, so it's the runner's reify
+      # concurrency race; the documented fix is to serialize with --maxsockets 1. We gate
+      # fallbacks on whether tsc linked (NOT exit code), lead with --ignore-scripts (build is
+      # tsc-only), and dump the npm debug log if all attempts fail.
+      - name: Install deps (serialized, result-checked, self-healing)
         run: |
           node -v && npm -v
           linked() { test -x node_modules/.bin/tsc; }
           clean() { rm -rf node_modules packages/*/node_modules 2>/dev/null || true; }
-          echo "::group::install attempt 1 — npm ci --ignore-scripts"; npm ci --no-audit --no-fund --ignore-scripts || true; echo "::endgroup::"
-          if ! linked; then echo "::group::attempt 2 — npm install --ignore-scripts"; clean; npm install --no-audit --no-fund --no-save --ignore-scripts || true; echo "::endgroup::"; fi
-          if ! linked; then echo "::group::attempt 3 — npm ci (full)"; clean; npm ci --no-audit --no-fund || true; echo "::endgroup::"; fi
-          linked || { echo "::error::tsc not linked after 3 install attempts — would fall through to global tsc"; exit 1; }
+          echo "::group::attempt 1 — npm ci --ignore-scripts --maxsockets 1"; npm ci --no-audit --no-fund --ignore-scripts --maxsockets 1 || true; echo "::endgroup::"
+          if ! linked; then echo "::group::attempt 2 — npm install --ignore-scripts --maxsockets 1"; clean; npm install --no-audit --no-fund --no-save --ignore-scripts --maxsockets 1 || true; echo "::endgroup::"; fi
+          if ! linked; then
+            echo "::group::npm debug log"; tail -n 60 /home/runner/.npm/_logs/*-debug-0.log 2>/dev/null || echo "(no debug log)"; echo "::endgroup::"
+            echo "::error::tsc not linked after install — would fall through to global tsc"; exit 1
+          fi
           echo "[ok] local tsc $(node_modules/.bin/tsc --version)"
       - name: Lint (fails on error-level issues; warnings are a tidy-up backlog)
         run: npm run lint

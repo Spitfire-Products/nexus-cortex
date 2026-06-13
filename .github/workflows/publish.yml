@@ -40,15 +40,20 @@ jobs:
       # fallbacks on whether tsc linked, NOT exit code; lead with --ignore-scripts (skips
       # the playwright/native postinstall that triggers the crash). Build is `tsc` only, and
       # publish-time `prepack` is unaffected by install-time --ignore-scripts.
-      - name: Install deps (result-checked self-healing install)
+      # See ci.yml: runner reify aborts ("Exit handler never called!") then exits 0, leaving
+      # bins unlinked. Serialize with --maxsockets 1, gate on tsc-linked, lead with
+      # --ignore-scripts (build is tsc-only; publish-time prepack is unaffected).
+      - name: Install deps (serialized, result-checked, self-healing)
         run: |
           node -v && npm -v
           linked() { test -x node_modules/.bin/tsc; }
           clean() { rm -rf node_modules packages/*/node_modules 2>/dev/null || true; }
-          echo "::group::install attempt 1 — npm ci --ignore-scripts"; npm ci --no-audit --no-fund --ignore-scripts || true; echo "::endgroup::"
-          if ! linked; then echo "::group::attempt 2 — npm install --ignore-scripts"; clean; npm install --no-audit --no-fund --no-save --ignore-scripts || true; echo "::endgroup::"; fi
-          if ! linked; then echo "::group::attempt 3 — npm ci (full)"; clean; npm ci --no-audit --no-fund || true; echo "::endgroup::"; fi
-          linked || { echo "::error::tsc not linked after 3 install attempts"; exit 1; }
+          echo "::group::attempt 1 — npm ci --ignore-scripts --maxsockets 1"; npm ci --no-audit --no-fund --ignore-scripts --maxsockets 1 || true; echo "::endgroup::"
+          if ! linked; then echo "::group::attempt 2 — npm install --ignore-scripts --maxsockets 1"; clean; npm install --no-audit --no-fund --no-save --ignore-scripts --maxsockets 1 || true; echo "::endgroup::"; fi
+          if ! linked; then
+            echo "::group::npm debug log"; tail -n 60 /home/runner/.npm/_logs/*-debug-0.log 2>/dev/null || echo "(no debug log)"; echo "::endgroup::"
+            echo "::error::tsc not linked after install"; exit 1
+          fi
           echo "[ok] local tsc $(node_modules/.bin/tsc --version)"
       # Ordered two-pass build (scripts/build.sh) — breaks the core<->executors cycle.
       - run: npm run build
