@@ -73,27 +73,9 @@ Configuration lives in a `.env` file that you create from the tracked template (
 cp .env.example .env        # then edit .env and add the provider keys you use
 ```
 
-Set only the keys for the providers you use — see [API keys & authentication](#api-keys--authentication) for the full list.
+Set only the keys for the providers you use — `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`, and more. Claude also supports a Claude.ai Pro/Max OAuth subscription as an alternative to an API key.
 
-**Claude (Anthropic) — API key _or_ OAuth.** Either works; pick one:
-
-- **API key:** set `ANTHROPIC_API_KEY=sk-ant-…` in `.env`.
-- **OAuth (Claude.ai Pro/Max subscription)** — two ways to provide the token, resolved in this order:
-  1. **`~/.claude/.credentials.json`** *(preferred)* — created automatically when you run `claude login` (Claude Code). If you've already done that, the harness reads it as-is; nothing else to do. It lives in your home directory (not the project), is written owner-only (`chmod 600`), and includes the refresh token so it renews itself. To create it by hand instead:
-     ```bash
-     mkdir -p ~/.claude && chmod 700 ~/.claude
-     cat > ~/.claude/.credentials.json <<'JSON'
-     { "claudeAiOauth": {
-         "accessToken": "sk-ant-oat01-…",
-         "refreshToken": "sk-ant-ort01-…",
-         "expiresAt": 1765400000000,
-         "scopes": ["user:inference"] } }
-     JSON
-     chmod 600 ~/.claude/.credentials.json
-     ```
-  2. **`CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-…`** in `.env` (or the environment) — a bare token, handy for headless/CI where there's no `claude login`.
-
-Resolution order is **`~/.claude/.credentials.json` → `CLAUDE_CODE_OAUTH_TOKEN` → `ANTHROPIC_API_KEY`**, and you can pin it with `ANTHROPIC_AUTH_METHOD=auto|oauth|api-key` (default `auto`). The OAuth token is **never** written to any project file — keep it in the home-dir credentials file or `.env`, both outside version control.
+See **[docs/authentication.md](docs/authentication.md)** for the full provider list and Claude OAuth setup.
 
 See [Headless Mode](#headless-mode) for the full server workflow, or [CLI (headless)](#cli-headless) for the structured command set.
 
