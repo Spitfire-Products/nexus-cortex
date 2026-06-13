@@ -27,15 +27,20 @@ jobs:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
     steps:
       - uses: actions/checkout@v4
+      # Pin EXACT node so its bundled npm is 10.8.2 — the runner's newer npm intermittently
+      # aborts `npm ci` ("Exit handler never called!"), unlinking bins so the build falls
+      # through to the runner's global tsc 6.x (TS5107). A `npm install -g npm@…` step does
+      # not change the npm the next step runs.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 20.18.1
           registry-url: 'https://registry.npmjs.org'
-      # Pin npm — the runner's bundled npm 11.x intermittently crashes `npm ci`
-      # ("Exit handler never called!"), leaving bins unlinked and the build falling
-      # through to the runner's global tsc 6.x. 10.8.2 installs the locked toolchain.
-      - run: npm install -g npm@10.8.2
-      - run: npm ci --no-audit --no-fund
+      - name: Install deps (retry-safe; assert local tsc is linked)
+        run: |
+          node -v && npm -v
+          npm ci --no-audit --no-fund \
+            || { echo "npm ci aborted — clean retry"; rm -rf node_modules packages/*/node_modules; npm ci --no-audit --no-fund; }
+          test -x node_modules/.bin/tsc || { echo "::error::tsc not linked after install"; exit 1; }
       # Ordered two-pass build (scripts/build.sh) — breaks the core<->executors cycle.
       - run: npm run build
       - name: Publish types -> core -> executors -> server -> cli

@@ -15,15 +15,21 @@ jobs:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
     steps:
       - uses: actions/checkout@v4
+      # Pin the EXACT node (not "20") so its bundled npm is 10.8.2. The runner's newer npm
+      # intermittently aborts `npm ci` with "Exit handler never called!", leaving bins
+      # unlinked — `tsc`/`eslint` then fall through to the runner's GLOBAL tools (global tsc
+      # is 6.x → TS5107 on our locked config; eslint absent → "not found"). A bare
+      # `npm install -g npm@…` step does NOT change the npm the next step runs, so we pin
+      # node instead.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-      # Pin npm: the runner's bundled npm (11.x) intermittently crashes `npm ci` with
-      # "Exit handler never called!", leaving bins unlinked — `tsc`/`eslint` then fall
-      # through to the runner's GLOBAL tools (global tsc is 6.x → TS5107 on our locked
-      # config; eslint absent → "not found"). 10.8.2 installs the locked toolchain cleanly.
-      - run: npm install -g npm@10.8.2
-      - run: npm ci --no-audit --no-fund
+          node-version: 20.18.1
+      - name: Install deps (retry-safe; assert local tsc is linked)
+        run: |
+          node -v && npm -v
+          npm ci --no-audit --no-fund \
+            || { echo "npm ci aborted — clean retry"; rm -rf node_modules packages/*/node_modules; npm ci --no-audit --no-fund; }
+          test -x node_modules/.bin/tsc || { echo "::error::tsc not linked after install — would fall through to global tsc"; exit 1; }
       - name: Lint (fails on error-level issues; warnings are a tidy-up backlog)
         run: npm run lint
       - run: npm run build
