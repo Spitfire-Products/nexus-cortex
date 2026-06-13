@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.26.0] - 2026-06-13
+
+### Added
+
+- **Splash-screen tooling for branding the terminal UIs.** A guided interactive
+  configurator (`packages/cli/themes/chalk/splash_configurator.py`) builds the startup
+  splash — the microprocessor "chip" art with a word inside it and a large title banner
+  below — and writes it directly into the TUI. Run it with no arguments for a numbered
+  menu that previews the whole splash, lets you change the chip word and banner text, pick
+  a banner style, resize it, and save.
+- **Vector-font banner rasterizer.** Banners are rendered from a real vector font
+  (Orbitron) into terminal character art in three styles: solid half-blocks, an LED
+  dot-matrix (with optional coverage shading), and fine braille dots. This replaces the
+  single hand-drawn figlet banner and lets the title use the same letterforms as the
+  README hero.
+- **Per-brand splash screens.** `fuzzycortex` and `neoncortex` now have independent splash
+  art — each can carry its own chip word, banner, and style — selectable in the
+  configurator. The splash text is plain characters; all colors come from the active theme
+  at render time, so switching themes in the theme picker recolors the whole splash.
+- **README hero artwork.** A self-contained SVG hero (`docs/assets/nexus-cortex-hero.svg`)
+  rendered from the same chip art plus an outlined Orbitron banner, with a generator
+  (`svg_hero_generator.py`) supporting multiple color palettes.
+
+---
+
 ## [4.25.0] - 2026-06-13
 
 ### Changed
