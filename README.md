@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/nexus-cortex-hero.svg" alt="Nexus Cortex — headless multi-provider AI agent harness" width="606">
+  <img src="docs/assets/nexus-cortex-hero.svg" alt="Nexus Cortex — headless multi-provider AI agent harness" width="688">
 </p>
 
 # Nexus Cortex

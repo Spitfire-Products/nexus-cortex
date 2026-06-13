@@ -1,226 +1,140 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="606" height="547" viewBox="0 0 606 547" role="img" aria-label="Nexus Cortex">
-<rect width="606" height="547" rx="12" fill="#050510"/>
-<g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" xml:space="preserve">
-<text x="134.1" y="37" fill="#98C379">●</text>
-<text x="240.3" y="37" fill="#98C379">●</text>
-<text x="298.2" y="37" fill="#98C379">●</text>
-<text x="356.1" y="37" fill="#98C379">●</text>
-<text x="462.2" y="37" fill="#98C379">●</text>
-<text x="134.1" y="56" fill="#E5C07B">│</text>
-<text x="240.3" y="56" fill="#E5C07B">╰──╮</text>
-<text x="298.2" y="56" fill="#E5C07B">│</text>
-<text x="327.1" y="56" fill="#E5C07B">╭──╯</text>
-<text x="462.2" y="56" fill="#E5C07B">│</text>
-<text x="95.5" y="75" fill="#98C379">●</text>
-<text x="105.2" y="75" fill="#E5C07B">───╯</text>
-<text x="163.1" y="75" fill="#98C379">●</text>
-<text x="172.7" y="75" fill="#E5C07B">──╮</text>
-<text x="269.2" y="75" fill="#E5C07B">│</text>
-<text x="298.2" y="75" fill="#E5C07B">│</text>
-<text x="327.1" y="75" fill="#E5C07B">│</text>
-<text x="404.3" y="75" fill="#E5C07B">╭──</text>
-<text x="433.3" y="75" fill="#98C379">●</text>
-<text x="462.2" y="75" fill="#E5C07B">╰───</text>
-<text x="500.8" y="75" fill="#98C379">●</text>
-<text x="192.0" y="94" fill="#E5C07B">╰─╮</text>
-<text x="269.2" y="94" fill="#E5C07B">│</text>
-<text x="298.2" y="94" fill="#E5C07B">│</text>
-<text x="327.1" y="94" fill="#E5C07B">│</text>
-<text x="385.0" y="94" fill="#E5C07B">╭─╯</text>
-<text x="134.1" y="113" fill="#56B6C2">╭───────┴─────┴──┴──┴─────┴───────╮</text>
-<text x="95.5" y="132" fill="#98C379">●</text>
-<text x="105.2" y="132" fill="#E5C07B">───</text>
-<text x="134.1" y="132" fill="#56B6C2">┤</text>
-<text x="143.8" y="132" fill="#E06C75">■</text>
-<text x="211.3" y="132" fill="#E06C75">▀</text>
-<text x="269.2" y="132" fill="#E06C75">▀</text>
-<text x="298.2" y="132" fill="#E06C75">▀</text>
-<text x="327.1" y="132" fill="#E06C75">▀</text>
-<text x="385.0" y="132" fill="#E06C75">▀</text>
-<text x="452.6" y="132" fill="#E06C75">■</text>
-<text x="462.2" y="132" fill="#56B6C2">├</text>
-<text x="471.9" y="132" fill="#E5C07B">───</text>
-<text x="500.8" y="132" fill="#98C379">●</text>
-<text x="134.1" y="151" fill="#56B6C2">│</text>
-<text x="172.7" y="151" fill="#ABB2BF">╔═════════════════════════╗</text>
-<text x="462.2" y="151" fill="#56B6C2">│</text>
-<text x="95.5" y="170" fill="#98C379">●</text>
-<text x="105.2" y="170" fill="#E5C07B">───</text>
-<text x="134.1" y="170" fill="#56B6C2">┤</text>
-<text x="143.8" y="170" fill="#E06C75">■</text>
-<text x="172.7" y="170" fill="#ABB2BF">║</text>
-<text x="211.3" y="170" fill="#C678DD">█▜▐</text>
-<text x="249.9" y="170" fill="#C678DD">█▀▀</text>
-<text x="288.5" y="170" fill="#C678DD">▚</text>
-<text x="307.8" y="170" fill="#C678DD">▞</text>
-<text x="327.1" y="170" fill="#C678DD">█</text>
-<text x="346.4" y="170" fill="#C678DD">▐</text>
-<text x="365.7" y="170" fill="#C678DD">▛▀▀</text>
-<text x="423.6" y="170" fill="#ABB2BF">║</text>
-<text x="452.6" y="170" fill="#E06C75">■</text>
-<text x="462.2" y="170" fill="#56B6C2">├</text>
-<text x="471.9" y="170" fill="#E5C07B">───</text>
-<text x="500.8" y="170" fill="#98C379">●</text>
-<text x="134.1" y="189" fill="#56B6C2">│</text>
-<text x="172.7" y="189" fill="#ABB2BF">║</text>
-<text x="211.3" y="189" fill="#C678DD">█▐▐</text>
-<text x="249.9" y="189" fill="#C678DD">█▀</text>
-<text x="298.2" y="189" fill="#C678DD">█</text>
-<text x="327.1" y="189" fill="#C678DD">█</text>
-<text x="346.4" y="189" fill="#C678DD">█</text>
-<text x="365.7" y="189" fill="#C678DD">▀▀▜</text>
-<text x="423.6" y="189" fill="#ABB2BF">║</text>
-<text x="462.2" y="189" fill="#56B6C2">│</text>
-<text x="95.5" y="208" fill="#98C379">●</text>
-<text x="105.2" y="208" fill="#E5C07B">───</text>
-<text x="134.1" y="208" fill="#56B6C2">┤</text>
-<text x="143.8" y="208" fill="#E06C75">■</text>
-<text x="172.7" y="208" fill="#ABB2BF">║</text>
-<text x="211.3" y="208" fill="#C678DD">▌</text>
-<text x="230.6" y="208" fill="#C678DD">█</text>
-<text x="249.9" y="208" fill="#C678DD">█▄▄</text>
-<text x="288.5" y="208" fill="#C678DD">▞</text>
-<text x="307.8" y="208" fill="#C678DD">▚</text>
-<text x="327.1" y="208" fill="#C678DD">█▄▟</text>
-<text x="365.7" y="208" fill="#C678DD">▄▄▟</text>
-<text x="423.6" y="208" fill="#ABB2BF">║</text>
-<text x="452.6" y="208" fill="#E06C75">■</text>
-<text x="462.2" y="208" fill="#56B6C2">├</text>
-<text x="471.9" y="208" fill="#E5C07B">───</text>
-<text x="500.8" y="208" fill="#98C379">●</text>
-<text x="134.1" y="227" fill="#56B6C2">│</text>
-<text x="172.7" y="227" fill="#ABB2BF">╚═════════════════════════╝</text>
-<text x="462.2" y="227" fill="#56B6C2">│</text>
-<text x="95.5" y="246" fill="#98C379">●</text>
-<text x="105.2" y="246" fill="#E5C07B">───</text>
-<text x="134.1" y="246" fill="#56B6C2">┤</text>
-<text x="143.8" y="246" fill="#E06C75">■</text>
-<text x="211.3" y="246" fill="#E06C75">▄</text>
-<text x="269.2" y="246" fill="#E06C75">▄</text>
-<text x="298.2" y="246" fill="#E06C75">▄</text>
-<text x="327.1" y="246" fill="#E06C75">▄</text>
-<text x="385.0" y="246" fill="#E06C75">▄</text>
-<text x="452.6" y="246" fill="#E06C75">■</text>
-<text x="462.2" y="246" fill="#56B6C2">├</text>
-<text x="471.9" y="246" fill="#E5C07B">───</text>
-<text x="500.8" y="246" fill="#98C379">●</text>
-<text x="134.1" y="265" fill="#56B6C2">╰───────┬─────┬──┬──┬─────┬───────╯</text>
-<text x="192.0" y="284" fill="#E5C07B">╭─╯</text>
-<text x="269.2" y="284" fill="#E5C07B">│</text>
-<text x="298.2" y="284" fill="#E5C07B">│</text>
-<text x="327.1" y="284" fill="#E5C07B">│</text>
-<text x="385.0" y="284" fill="#E5C07B">╰─╮</text>
-<text x="95.5" y="303" fill="#98C379">●</text>
-<text x="105.2" y="303" fill="#E5C07B">───╮</text>
-<text x="163.1" y="303" fill="#98C379">●</text>
-<text x="172.7" y="303" fill="#E5C07B">──╯</text>
-<text x="269.2" y="303" fill="#E5C07B">│</text>
-<text x="298.2" y="303" fill="#E5C07B">│</text>
-<text x="327.1" y="303" fill="#E5C07B">│</text>
-<text x="404.3" y="303" fill="#E5C07B">╰──</text>
-<text x="433.3" y="303" fill="#98C379">●</text>
-<text x="462.2" y="303" fill="#E5C07B">╭───</text>
-<text x="500.8" y="303" fill="#98C379">●</text>
-<text x="134.1" y="322" fill="#E5C07B">│</text>
-<text x="240.3" y="322" fill="#E5C07B">╭──╯</text>
-<text x="298.2" y="322" fill="#E5C07B">│</text>
-<text x="327.1" y="322" fill="#E5C07B">╰──╮</text>
-<text x="462.2" y="322" fill="#E5C07B">│</text>
-<text x="134.1" y="341" fill="#98C379">●</text>
-<text x="240.3" y="341" fill="#98C379">●</text>
-<text x="298.2" y="341" fill="#98C379">●</text>
-<text x="356.1" y="341" fill="#98C379">●</text>
-<text x="462.2" y="341" fill="#98C379">●</text>
-<text x="66.6" y="378" fill="#61AFEF" font-weight="bold">██████</text>
-<text x="124.5" y="378" fill="#56B6C2" font-weight="bold">╗</text>
-<text x="143.8" y="378" fill="#61AFEF" font-weight="bold">██████</text>
-<text x="201.7" y="378" fill="#56B6C2" font-weight="bold">╗</text>
-<text x="221.0" y="378" fill="#61AFEF" font-weight="bold">██████</text>
-<text x="278.9" y="378" fill="#56B6C2" font-weight="bold">╗</text>
-<text x="298.2" y="378" fill="#61AFEF" font-weight="bold">████████</text>
-<text x="375.4" y="378" fill="#56B6C2" font-weight="bold">╗</text>
-<text x="385.0" y="378" fill="#61AFEF" font-weight="bold">███████</text>
-<text x="452.6" y="378" fill="#56B6C2" font-weight="bold">╗</text>
-<text x="462.2" y="378" fill="#61AFEF" font-weight="bold">██</text>
-<text x="481.5" y="378" fill="#56B6C2" font-weight="bold">╗</text>
-<text x="510.5" y="378" fill="#61AFEF" font-weight="bold">██</text>
-<text x="529.8" y="378" fill="#56B6C2" font-weight="bold">╗</text>
-<text x="56.9" y="397" fill="#61AFEF" font-weight="bold">██</text>
-<text x="76.2" y="397" fill="#56B6C2" font-weight="bold">╔════╝</text>
-<text x="134.1" y="397" fill="#61AFEF" font-weight="bold">██</text>
-<text x="153.4" y="397" fill="#56B6C2" font-weight="bold">╔═══</text>
-<text x="192.0" y="397" fill="#61AFEF" font-weight="bold">██</text>
-<text x="211.3" y="397" fill="#56B6C2" font-weight="bold">╗</text>
-<text x="221.0" y="397" fill="#61AFEF" font-weight="bold">██</text>
-<text x="240.3" y="397" fill="#56B6C2" font-weight="bold">╔══</text>
-<text x="269.2" y="397" fill="#61AFEF" font-weight="bold">██</text>
-<text x="288.5" y="397" fill="#56B6C2" font-weight="bold">╗╚══</text>
-<text x="327.1" y="397" fill="#61AFEF" font-weight="bold">██</text>
-<text x="346.4" y="397" fill="#56B6C2" font-weight="bold">╔══╝</text>
-<text x="385.0" y="397" fill="#61AFEF" font-weight="bold">██</text>
-<text x="404.3" y="397" fill="#56B6C2" font-weight="bold">╔════╝╚</text>
-<text x="471.9" y="397" fill="#61AFEF" font-weight="bold">██</text>
-<text x="491.2" y="397" fill="#56B6C2" font-weight="bold">╗</text>
-<text x="500.8" y="397" fill="#61AFEF" font-weight="bold">██</text>
-<text x="520.1" y="397" fill="#56B6C2" font-weight="bold">╔╝</text>
-<text x="56.9" y="416" fill="#61AFEF" font-weight="bold">██</text>
-<text x="76.2" y="416" fill="#56B6C2" font-weight="bold">║</text>
-<text x="134.1" y="416" fill="#61AFEF" font-weight="bold">██</text>
-<text x="153.4" y="416" fill="#56B6C2" font-weight="bold">║</text>
-<text x="192.0" y="416" fill="#61AFEF" font-weight="bold">██</text>
-<text x="211.3" y="416" fill="#56B6C2" font-weight="bold">║</text>
-<text x="221.0" y="416" fill="#61AFEF" font-weight="bold">██████</text>
-<text x="278.9" y="416" fill="#56B6C2" font-weight="bold">╔╝</text>
-<text x="327.1" y="416" fill="#61AFEF" font-weight="bold">██</text>
-<text x="346.4" y="416" fill="#56B6C2" font-weight="bold">║</text>
-<text x="385.0" y="416" fill="#61AFEF" font-weight="bold">█████</text>
-<text x="433.3" y="416" fill="#56B6C2" font-weight="bold">╗</text>
-<text x="471.9" y="416" fill="#56B6C2" font-weight="bold">╚</text>
-<text x="481.5" y="416" fill="#61AFEF" font-weight="bold">███</text>
-<text x="510.5" y="416" fill="#56B6C2" font-weight="bold">╔╝</text>
-<text x="56.9" y="435" fill="#61AFEF" font-weight="bold">██</text>
-<text x="76.2" y="435" fill="#56B6C2" font-weight="bold">║</text>
-<text x="134.1" y="435" fill="#61AFEF" font-weight="bold">██</text>
-<text x="153.4" y="435" fill="#56B6C2" font-weight="bold">║</text>
-<text x="192.0" y="435" fill="#61AFEF" font-weight="bold">██</text>
-<text x="211.3" y="435" fill="#56B6C2" font-weight="bold">║</text>
-<text x="221.0" y="435" fill="#61AFEF" font-weight="bold">██</text>
-<text x="240.3" y="435" fill="#56B6C2" font-weight="bold">╔══</text>
-<text x="269.2" y="435" fill="#61AFEF" font-weight="bold">██</text>
-<text x="288.5" y="435" fill="#56B6C2" font-weight="bold">╗</text>
-<text x="327.1" y="435" fill="#61AFEF" font-weight="bold">██</text>
-<text x="346.4" y="435" fill="#56B6C2" font-weight="bold">║</text>
-<text x="385.0" y="435" fill="#61AFEF" font-weight="bold">██</text>
-<text x="404.3" y="435" fill="#56B6C2" font-weight="bold">╔══╝</text>
-<text x="471.9" y="435" fill="#61AFEF" font-weight="bold">██</text>
-<text x="491.2" y="435" fill="#56B6C2" font-weight="bold">╔</text>
-<text x="500.8" y="435" fill="#61AFEF" font-weight="bold">██</text>
-<text x="520.1" y="435" fill="#56B6C2" font-weight="bold">╗</text>
-<text x="56.9" y="454" fill="#56B6C2" font-weight="bold">╚</text>
-<text x="66.6" y="454" fill="#61AFEF" font-weight="bold">██████</text>
-<text x="124.5" y="454" fill="#56B6C2" font-weight="bold">╗╚</text>
-<text x="143.8" y="454" fill="#61AFEF" font-weight="bold">██████</text>
-<text x="201.7" y="454" fill="#56B6C2" font-weight="bold">╔╝</text>
-<text x="221.0" y="454" fill="#61AFEF" font-weight="bold">██</text>
-<text x="240.3" y="454" fill="#56B6C2" font-weight="bold">║</text>
-<text x="269.2" y="454" fill="#61AFEF" font-weight="bold">██</text>
-<text x="288.5" y="454" fill="#56B6C2" font-weight="bold">║</text>
-<text x="327.1" y="454" fill="#61AFEF" font-weight="bold">██</text>
-<text x="346.4" y="454" fill="#56B6C2" font-weight="bold">║</text>
-<text x="385.0" y="454" fill="#61AFEF" font-weight="bold">███████</text>
-<text x="452.6" y="454" fill="#56B6C2" font-weight="bold">╗</text>
-<text x="462.2" y="454" fill="#61AFEF" font-weight="bold">██</text>
-<text x="481.5" y="454" fill="#56B6C2" font-weight="bold">╔╝</text>
-<text x="510.5" y="454" fill="#61AFEF" font-weight="bold">██</text>
-<text x="529.8" y="454" fill="#56B6C2" font-weight="bold">╗</text>
-<text x="66.6" y="473" fill="#56B6C2" font-weight="bold">╚═════╝</text>
-<text x="143.8" y="473" fill="#56B6C2" font-weight="bold">╚═════╝</text>
-<text x="221.0" y="473" fill="#56B6C2" font-weight="bold">╚═╝</text>
-<text x="269.2" y="473" fill="#56B6C2" font-weight="bold">╚═╝</text>
-<text x="327.1" y="473" fill="#56B6C2" font-weight="bold">╚═╝</text>
-<text x="385.0" y="473" fill="#56B6C2" font-weight="bold">╚══════╝╚═╝</text>
-<text x="510.5" y="473" fill="#56B6C2" font-weight="bold">╚═╝</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="688" height="543" viewBox="0 0 688 543" role="img" aria-label="Nexus Cortex">
+<rect width="688" height="543" rx="12" fill="#070707"/>
+<g transform="translate(27.7,0) scale(1.15,1)" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" xml:space="preserve">
+<text x="106.2" y="37" fill="#A6E22E">●</text>
+<text x="212.3" y="37" fill="#A6E22E">●</text>
+<text x="270.2" y="37" fill="#A6E22E">●</text>
+<text x="328.1" y="37" fill="#A6E22E">●</text>
+<text x="434.2" y="37" fill="#A6E22E">●</text>
+<text x="106.2" y="56" fill="#E6DB74">│</text>
+<text x="212.3" y="56" fill="#E6DB74">╰──╮</text>
+<text x="270.2" y="56" fill="#E6DB74">│</text>
+<text x="299.2" y="56" fill="#E6DB74">╭──╯</text>
+<text x="434.2" y="56" fill="#E6DB74">│</text>
+<text x="67.5" y="75" fill="#A6E22E">●</text>
+<text x="77.2" y="75" fill="#E6DB74">───╯</text>
+<text x="135.1" y="75" fill="#A6E22E">●</text>
+<text x="144.8" y="75" fill="#E6DB74">──╮</text>
+<text x="241.2" y="75" fill="#E6DB74">│</text>
+<text x="270.2" y="75" fill="#E6DB74">│</text>
+<text x="299.2" y="75" fill="#E6DB74">│</text>
+<text x="376.4" y="75" fill="#E6DB74">╭──</text>
+<text x="405.3" y="75" fill="#A6E22E">●</text>
+<text x="434.2" y="75" fill="#E6DB74">╰───</text>
+<text x="472.9" y="75" fill="#A6E22E">●</text>
+<text x="164.1" y="94" fill="#E6DB74">╰─╮</text>
+<text x="241.2" y="94" fill="#E6DB74">│</text>
+<text x="270.2" y="94" fill="#E6DB74">│</text>
+<text x="299.2" y="94" fill="#E6DB74">│</text>
+<text x="357.1" y="94" fill="#E6DB74">╭─╯</text>
+<text x="106.2" y="113" fill="#AE81FF">╭───────┴─────┴──┴──┴─────┴───────╮</text>
+<text x="67.5" y="132" fill="#A6E22E">●</text>
+<text x="77.2" y="132" fill="#E6DB74">───</text>
+<text x="106.2" y="132" fill="#AE81FF">┤</text>
+<text x="115.8" y="132" fill="#FD971F">■</text>
+<text x="183.3" y="132" fill="#FD971F">▀</text>
+<text x="241.2" y="132" fill="#FD971F">▀</text>
+<text x="270.2" y="132" fill="#FD971F">▀</text>
+<text x="299.2" y="132" fill="#FD971F">▀</text>
+<text x="357.1" y="132" fill="#FD971F">▀</text>
+<text x="424.6" y="132" fill="#FD971F">■</text>
+<text x="434.2" y="132" fill="#AE81FF">├</text>
+<text x="443.9" y="132" fill="#E6DB74">───</text>
+<text x="472.9" y="132" fill="#A6E22E">●</text>
+<text x="106.2" y="151" fill="#AE81FF">│</text>
+<text x="144.8" y="151" fill="#F8F8F2">╔═════════════════════════╗</text>
+<text x="434.2" y="151" fill="#AE81FF">│</text>
+<text x="67.5" y="170" fill="#A6E22E">●</text>
+<text x="77.2" y="170" fill="#E6DB74">───</text>
+<text x="106.2" y="170" fill="#AE81FF">┤</text>
+<text x="115.8" y="170" fill="#FD971F">■</text>
+<text x="144.8" y="170" fill="#F8F8F2">║</text>
+<text x="395.7" y="170" fill="#F8F8F2">║</text>
+<text x="424.6" y="170" fill="#FD971F">■</text>
+<text x="434.2" y="170" fill="#AE81FF">├</text>
+<text x="443.9" y="170" fill="#E6DB74">───</text>
+<text x="472.9" y="170" fill="#A6E22E">●</text>
+<text x="106.2" y="189" fill="#AE81FF">│</text>
+<text x="144.8" y="189" fill="#F8F8F2">║</text>
+<text x="395.7" y="189" fill="#F8F8F2">║</text>
+<text x="434.2" y="189" fill="#AE81FF">│</text>
+<text x="67.5" y="208" fill="#A6E22E">●</text>
+<text x="77.2" y="208" fill="#E6DB74">───</text>
+<text x="106.2" y="208" fill="#AE81FF">┤</text>
+<text x="115.8" y="208" fill="#FD971F">■</text>
+<text x="144.8" y="208" fill="#F8F8F2">║</text>
+<text x="395.7" y="208" fill="#F8F8F2">║</text>
+<text x="424.6" y="208" fill="#FD971F">■</text>
+<text x="434.2" y="208" fill="#AE81FF">├</text>
+<text x="443.9" y="208" fill="#E6DB74">───</text>
+<text x="472.9" y="208" fill="#A6E22E">●</text>
+<text x="106.2" y="227" fill="#AE81FF">│</text>
+<text x="144.8" y="227" fill="#F8F8F2">╚═════════════════════════╝</text>
+<text x="434.2" y="227" fill="#AE81FF">│</text>
+<text x="67.5" y="246" fill="#A6E22E">●</text>
+<text x="77.2" y="246" fill="#E6DB74">───</text>
+<text x="106.2" y="246" fill="#AE81FF">┤</text>
+<text x="115.8" y="246" fill="#FD971F">■</text>
+<text x="183.3" y="246" fill="#FD971F">▄</text>
+<text x="241.2" y="246" fill="#FD971F">▄</text>
+<text x="270.2" y="246" fill="#FD971F">▄</text>
+<text x="299.2" y="246" fill="#FD971F">▄</text>
+<text x="357.1" y="246" fill="#FD971F">▄</text>
+<text x="424.6" y="246" fill="#FD971F">■</text>
+<text x="434.2" y="246" fill="#AE81FF">├</text>
+<text x="443.9" y="246" fill="#E6DB74">───</text>
+<text x="472.9" y="246" fill="#A6E22E">●</text>
+<text x="106.2" y="265" fill="#AE81FF">╰───────┬─────┬──┬──┬─────┬───────╯</text>
+<text x="164.1" y="284" fill="#E6DB74">╭─╯</text>
+<text x="241.2" y="284" fill="#E6DB74">│</text>
+<text x="270.2" y="284" fill="#E6DB74">│</text>
+<text x="299.2" y="284" fill="#E6DB74">│</text>
+<text x="357.1" y="284" fill="#E6DB74">╰─╮</text>
+<text x="67.5" y="303" fill="#A6E22E">●</text>
+<text x="77.2" y="303" fill="#E6DB74">───╮</text>
+<text x="135.1" y="303" fill="#A6E22E">●</text>
+<text x="144.8" y="303" fill="#E6DB74">──╯</text>
+<text x="241.2" y="303" fill="#E6DB74">│</text>
+<text x="270.2" y="303" fill="#E6DB74">│</text>
+<text x="299.2" y="303" fill="#E6DB74">│</text>
+<text x="376.4" y="303" fill="#E6DB74">╰──</text>
+<text x="405.3" y="303" fill="#A6E22E">●</text>
+<text x="434.2" y="303" fill="#E6DB74">╭───</text>
+<text x="472.9" y="303" fill="#A6E22E">●</text>
+<text x="106.2" y="322" fill="#E6DB74">│</text>
+<text x="212.3" y="322" fill="#E6DB74">╭──╯</text>
+<text x="270.2" y="322" fill="#E6DB74">│</text>
+<text x="299.2" y="322" fill="#E6DB74">╰──╮</text>
+<text x="434.2" y="322" fill="#E6DB74">│</text>
+<text x="106.2" y="341" fill="#A6E22E">●</text>
+<text x="212.3" y="341" fill="#A6E22E">●</text>
+<text x="270.2" y="341" fill="#A6E22E">●</text>
+<text x="328.1" y="341" fill="#A6E22E">●</text>
+<text x="434.2" y="341" fill="#A6E22E">●</text>
 </g>
-<text x="303.0" y="503" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" letter-spacing="3" fill="#5C6370">HEADLESS MULTI-PROVIDER AI AGENT HARNESS</text>
-<text x="303.0" y="525" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#5C6370">Anthropic &#8226; OpenAI &#8226; Google &#8226; XAI &#8226; DeepSeek</text>
+<g transform="translate(225.4,201.7) scale(0.05244,-0.05244)" fill="#66D9EF">
+<path transform="translate(0.0,0)" d="M56 0V720H216L619 240V720H776V0H616L211 482V0Z"/>
+<path transform="translate(946.4,0)" d="M58 0V720H723V564H215V438H624V282H215V156H723V0Z"/>
+<path transform="translate(1826.8,0)" d="M46 0V53L303 360L46 667V720H207L407 483L605 720H766V667L508 360L766 54V0H605L405 236L207 0Z"/>
+<path transform="translate(2753.2,0)" d="M202 0Q161.5 0 127.75 20.0Q94 40 74.0 73.75Q54 107.5 54 148V720H209V156Q209 156 209.0 156.0Q209 156 209 156H617Q617 156 617.0 156.0Q617 156 617 156V720H774V148Q774 107.5 753.5 73.75Q733 40 699.5625 20.0Q666.125 0 626 0H202Z"/>
+<path transform="translate(3695.7,0)" d="M202 0Q161.5 0 127.75 20.0Q94 40 74.0 73.75Q54 107.5 54 148V215H209V156Q209 156 209.0 156.0Q209 156 209 156H617Q617 156 617.0 156.0Q617 156 617 156V282Q617 282 617.0 282.0Q617 282 617 282H202Q161.5 282 127.75 302.0Q94 322 74.0 355.51724137931035Q54 389.0344827586207 54 430V572Q54 612.5 74.0 646.25Q94 680 127.75 700.0Q161.5 720 202 720H626Q666.125 720 699.5625 700.0Q733 680 753.5 646.25Q774 612.5 774 572V505H617V564Q617 564 617.0 564.0Q617 564 617 564H209Q209 564 209.0 564.0Q209 564 209 564V438Q209 438 209.0 438.0Q209 438 209 438H626Q666.125 438 699.5625 418.0Q733 398 753.5 364.48275862068965Q774 330.9655172413793 774 290V148Q774 107.5 753.5 73.75Q733 40 699.5625 20.0Q666.125 0 626 0Z"/>
+</g>
+<g transform="translate(70.0,460.8) scale(0.10911,-0.10911)" fill="#8F6A00">
+<path transform="translate(0.0,0)" d="M204 0Q163 0 129.5 20.0Q96 40 76.0 73.5Q56 107 56 148V572Q56 613 76.0 646.5Q96 680 129.5 700.0Q163 720 204 720H774V564H244Q228 564 219.5 556.0Q211 548 211 531V189Q211 173 219.5 164.5Q228 156 244 156H774V0Z"/>
+<path transform="translate(877.0,0)" d="M202 0Q161.5 0 127.75 20.0Q94 40 74.0 73.75Q54 107.5 54 148V572Q54 612.5 74.0 646.25Q94 680 127.75 700.0Q161.5 720 202 720H626Q666.125 720 699.5625 700.0Q733 680 753.5 646.25Q774 612.5 774 572V148Q774 107.5 753.5 73.75Q733 40 699.5625 20.0Q666.125 0 626 0ZM209 156H617Q617 156 617.0 156.0Q617 156 617 156V564Q617 564 617.0 564.0Q617 564 617 564H209Q209 564 209.0 564.0Q209 564 209 564V156Q209 156 209.0 156.0Q209 156 209 156Z"/>
+<path transform="translate(1760.0,0)" d="M615 0 406 249H609L775 53V0ZM56 0V719H627Q667.5 719 701.25 699.0Q735 679 755.5 645.0Q776 611 776 571V385Q776 345 755.5 311.0Q735 277 701.25 257.0Q667.5 237 627 237L211 236V0ZM211 393H619Q619 393 619.0 393.0Q619 393 619 393V564Q619 564 619.0 564.0Q619 564 619 564H211Q211 564 211.0 564.0Q211 564 211 564V393Q211 393 211.0 393.0Q211 393 211 393Z"/>
+<path transform="translate(2640.0,0)" d="M302 0V564H20V720H740V564H458V0Z"/>
+<path transform="translate(3454.0,0)" d="M58 0V720H723V564H215V438H624V282H215V156H723V0Z"/>
+<path transform="translate(4274.9,0)" d="M46 0V53L303 360L46 667V720H207L407 483L605 720H766V667L508 360L766 54V0H605L405 236L207 0Z"/>
+</g>
+<g transform="translate(66.5,457.3) scale(0.10911,-0.10911)" fill="#FFC600">
+<path transform="translate(0.0,0)" d="M204 0Q163 0 129.5 20.0Q96 40 76.0 73.5Q56 107 56 148V572Q56 613 76.0 646.5Q96 680 129.5 700.0Q163 720 204 720H774V564H244Q228 564 219.5 556.0Q211 548 211 531V189Q211 173 219.5 164.5Q228 156 244 156H774V0Z"/>
+<path transform="translate(877.0,0)" d="M202 0Q161.5 0 127.75 20.0Q94 40 74.0 73.75Q54 107.5 54 148V572Q54 612.5 74.0 646.25Q94 680 127.75 700.0Q161.5 720 202 720H626Q666.125 720 699.5625 700.0Q733 680 753.5 646.25Q774 612.5 774 572V148Q774 107.5 753.5 73.75Q733 40 699.5625 20.0Q666.125 0 626 0ZM209 156H617Q617 156 617.0 156.0Q617 156 617 156V564Q617 564 617.0 564.0Q617 564 617 564H209Q209 564 209.0 564.0Q209 564 209 564V156Q209 156 209.0 156.0Q209 156 209 156Z"/>
+<path transform="translate(1760.0,0)" d="M615 0 406 249H609L775 53V0ZM56 0V719H627Q667.5 719 701.25 699.0Q735 679 755.5 645.0Q776 611 776 571V385Q776 345 755.5 311.0Q735 277 701.25 257.0Q667.5 237 627 237L211 236V0ZM211 393H619Q619 393 619.0 393.0Q619 393 619 393V564Q619 564 619.0 564.0Q619 564 619 564H211Q211 564 211.0 564.0Q211 564 211 564V393Q211 393 211.0 393.0Q211 393 211 393Z"/>
+<path transform="translate(2640.0,0)" d="M302 0V564H20V720H740V564H458V0Z"/>
+<path transform="translate(3454.0,0)" d="M58 0V720H723V564H215V438H624V282H215V156H723V0Z"/>
+<path transform="translate(4274.9,0)" d="M46 0V53L303 360L46 667V720H207L407 483L605 720H766V667L508 360L766 54V0H605L405 236L207 0Z"/>
+</g>
+<text x="344.0" y="499" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" letter-spacing="3" fill="#75715E">HEADLESS MULTI-PROVIDER AI AGENT HARNESS</text>
+<text x="344.0" y="521" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#75715E">Anthropic • OpenAI • Google • XAI • DeepSeek</text>
 </svg>
