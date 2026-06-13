@@ -25,19 +25,23 @@ jobs:
         with:
           node-version: 20.18.1
       # `npm ci` reify intermittently aborts on this runner with "Exit handler never
-      # called!" (npm-internal, NOT version-specific — the runner runs npm 10.8.2, the same
-      # version that installs cleanly locally). When it aborts, bins aren't linked and the
-      # build's `tsc` would fall through to the runner's global tsc 6.x (TS5107). Self-heal
-      # through alternate install paths; the build is `tsc` only, so `--ignore-scripts`
-      # (skips playwright/native postinstalls) still yields a complete type-check toolchain.
-      - name: Install deps (self-healing; assert local tsc is linked)
+      # called!" — and crucially it then exits 0, leaving an INCOMPLETE install (bins not
+      # linked). So we gate fallbacks on whether tsc actually linked, NOT on exit code, and
+      # lead with --ignore-scripts (skips the playwright/native postinstall that triggers
+      # the crash). The build is `tsc` only — type-check needs the bins + shipped .d.ts, not
+      # postinstall artifacts — so this yields a complete toolchain. If bins never link, the
+      # build would silently fall through to the runner's global tsc 6.x (TS5107); the final
+      # assert fails the job loudly instead.
+      - name: Install deps (result-checked self-healing install)
         run: |
           node -v && npm -v
+          linked() { test -x node_modules/.bin/tsc; }
           clean() { rm -rf node_modules packages/*/node_modules 2>/dev/null || true; }
-          npm ci --no-audit --no-fund \
-            || { echo "npm ci aborted — retry with --ignore-scripts"; clean; npm ci --no-audit --no-fund --ignore-scripts; } \
-            || { echo "retry with npm install"; clean; npm install --no-audit --no-fund --no-save; }
-          test -x node_modules/.bin/tsc || { echo "::error::tsc not linked after install — would fall through to global tsc"; exit 1; }
+          echo "::group::install attempt 1 — npm ci --ignore-scripts"; npm ci --no-audit --no-fund --ignore-scripts || true; echo "::endgroup::"
+          if ! linked; then echo "::group::attempt 2 — npm install --ignore-scripts"; clean; npm install --no-audit --no-fund --no-save --ignore-scripts || true; echo "::endgroup::"; fi
+          if ! linked; then echo "::group::attempt 3 — npm ci (full)"; clean; npm ci --no-audit --no-fund || true; echo "::endgroup::"; fi
+          linked || { echo "::error::tsc not linked after 3 install attempts — would fall through to global tsc"; exit 1; }
+          echo "[ok] local tsc $(node_modules/.bin/tsc --version)"
       - name: Lint (fails on error-level issues; warnings are a tidy-up backlog)
         run: npm run lint
       - run: npm run build
