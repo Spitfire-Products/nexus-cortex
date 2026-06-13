@@ -53,13 +53,13 @@ jobs:
           echo "[ok] local tsc $(node_modules/.bin/tsc --version)"
       # Ordered two-pass build (scripts/build.sh) — breaks the core<->executors cycle.
       - run: npm run build
-      - name: Publish types -> core -> executors -> server -> cli
+      - name: Publish types -> core -> executors -> server -> cli -> meta
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: |
           set -euo pipefail
-          for pkg in types core executors server cli; do
+          for pkg in types core executors server cli meta; do
             dir="packages/$pkg"
             if [ ! -d "$dir" ]; then
               echo "::notice::skip $pkg (not in this release)"

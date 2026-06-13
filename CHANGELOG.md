@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.26.2] - 2026-06-13
+
+### Added
+
+- **One-command install.** A new `nexus-cortex` meta-package installs the `cortex` CLI and the
+  HTTP server together — `npm install -g nexus-cortex`, then just run `cortex "…"` (the server
+  auto-starts). The individual `@nexus-cortex/cli` and `@nexus-cortex/server` packages are still
+  published for those who want to install components directly.
+- **`CONTRIBUTING.md`** — development setup, project layout, and PR guidelines.
+
+### Changed
+
+- **Slimmed the README to a landing page.** The reference material that read like a manual moved
+  into `docs/user-guide.md` (the full CLI, HTTP server, REST API, sessions, PR review, deployment,
+  troubleshooting) and `docs/architecture.md` (monorepo layout and the core systems). The README is
+  now a quick start plus links. Getting started is: install, rename `.env.example` to `.env` and add
+  one provider key, then `cortex "…"`.
+
 ## [4.26.1] - 2026-06-13
 
 ### Fixed

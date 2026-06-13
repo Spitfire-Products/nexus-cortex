@@ -19,14 +19,12 @@ Run it three ways: **as a library** (`import { CortexOrchestrator }`), **as a he
 ## Quick Start
 
 ```bash
-# 1. Install (creates the `cortex` command globally)
-npm install -g @nexus-cortex/cli @nexus-cortex/server
-
-# 2. Add at least one provider key
-cp .env.example .env        # then put e.g. ANTHROPIC_API_KEY=… in it
+npm install -g nexus-cortex
 ```
 
-Now just talk to it — **the server auto-starts on first use**, no separate step:
+That's it — the `cortex` command is now on your PATH. Add at least one provider key: rename **`.env.example`** to **`.env`** and put a valid LLM key in it (e.g. `ANTHROPIC_API_KEY=…`).
+
+Then just talk to it — **the server auto-starts on first use**, no separate step:
 
 ```bash
 # Chat (multi-turn — the session persists across calls)
@@ -37,18 +35,7 @@ cortex "Now summarize the largest file"
 cortex agent --cwd ./my-project "add a --version flag to the CLI and run the tests"
 ```
 
-Or embed the orchestrator directly:
-
-```bash
-npm install @nexus-cortex/core @nexus-cortex/executors
-```
-```typescript
-import { CortexOrchestrator } from '@nexus-cortex/core';
-const cortex = new CortexOrchestrator({ modelId: 'claude-sonnet-4-6', projectPath: process.cwd() });
-const res = await cortex.processMessage({ role: 'user', content: 'Analyze this codebase' });
-```
-
-**Keys & Claude OAuth:** set only the providers you use (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`, …). Claude also works with a Claude.ai Pro/Max OAuth subscription — see **[docs/authentication.md](docs/authentication.md)**.
+> Claude also works with a Claude.ai Pro/Max OAuth subscription instead of an API key — see [docs/authentication.md](docs/authentication.md). For advanced `.env` setup, see [docs/configuration.md](docs/configuration.md).
 
 ## Why Nexus Cortex
 
@@ -58,19 +45,6 @@ const res = await cortex.processMessage({ role: 'user', content: 'Analyze this c
 - **A real harness, batteries included.** Parallel sub-agents (`Task`) with per-agent permissions, MCP tool integration, a sandboxed-artifact toolset (run + inspect real web apps), git/PR tooling, a policy-based permission engine, token-budget + prompt-cache context management, and append-only JSONL sessions with file checkpoints.
 - **A built-in improvement loop (opt-in).** Build a baseline and a candidate, benchmark both on a graded task set, and gate a keep/discard decision with real statistics — driving the harness's own self-improvement (inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch)).
 
-## What's inside
-
-A single orchestrator turn handles model selection, system-message injection, context budgeting, the tool-calling loop (with loop detection and orphaned-tool recovery), prompt caching, and session persistence. Around it:
-
-- **Multi-provider adapters** — Messages, Chat Completions, GenerateContent, GenAI, Responses
-- **Sub-agents** (`Task`) — parallel, isolated, per-agent permissions
-- **Tools** — files, search, shell, web/browser, git/PR, sandboxed artifacts with React introspection, MCP
-- **Middleware** — system messages, permissions, retry, helper-model compaction, reactive mentorship
-- **Sessions** — append-only JSONL, UUID message IDs, content-addressed file checkpoints, auto-compaction
-- **Auto-research** — closed-loop build → benchmark → statistically-gated keep/discard
-
-See the **[User Guide](docs/user-guide.md)** for the full CLI/server/REST workflow and the **[Architecture](docs/architecture.md)** doc for how it all fits together.
-
 ## Documentation
 
 | Doc | What's in it |
@@ -79,11 +53,12 @@ See the **[User Guide](docs/user-guide.md)** for the full CLI/server/REST workfl
 | **[Architecture](docs/architecture.md)** | Monorepo layout, the orchestrator, providers, tools, sub-agents, auto-research, and the other core systems |
 | **[Authentication](docs/authentication.md)** | Provider API keys and Claude OAuth setup |
 | **[Configuration](docs/configuration.md)** | Every environment variable, annotated |
+| **[Embed the library](docs/user-guide.md#install)** | Use `@nexus-cortex/core` directly in your own code |
 | **[Changelog](CHANGELOG.md)** | Release history |
 
 ## Contributing
 
-Fork, branch, make your change with tests, run `npm run typecheck && npm test`, and open a PR. Build from source with `npm install && npm run build` (a multi-pass build — see the [Architecture](docs/architecture.md) doc).
+Contributions welcome — see **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
 ## License
 

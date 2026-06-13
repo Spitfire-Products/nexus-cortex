@@ -6,12 +6,17 @@ internals see [Architecture](architecture.md).
 
 ## Install
 
-```bash
-# The cortex command + the HTTP server
-npm install -g @nexus-cortex/cli @nexus-cortex/server
+The simplest install is the `nexus-cortex` meta-package — it pulls in the `cortex` CLI and the
+HTTP server together:
 
-# Or embed the library
-npm install @nexus-cortex/core @nexus-cortex/executors
+```bash
+npm install -g nexus-cortex
+```
+
+Prefer to install the components yourself? They're published individually:
+
+```bash
+npm install -g @nexus-cortex/cli @nexus-cortex/server
 ```
 
 From source (`npm run build` auto-links the global commands):
@@ -19,6 +24,23 @@ From source (`npm run build` auto-links the global commands):
 ```bash
 npm install && npm run build     # multi-pass build, then links `cortex`
 npm run link                     # re-link any time (self-healing)
+```
+
+### Embed the library
+
+To drive the orchestrator in your own code instead of through the CLI:
+
+```bash
+npm install @nexus-cortex/core @nexus-cortex/executors
+```
+```typescript
+import { CortexOrchestrator } from '@nexus-cortex/core';
+
+const cortex = new CortexOrchestrator({
+  modelId: 'claude-sonnet-4-6',
+  projectPath: process.cwd(),
+});
+const res = await cortex.processMessage({ role: 'user', content: 'Analyze this codebase' });
 ```
 
 ## The `cortex` CLI
