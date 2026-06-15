@@ -25,7 +25,7 @@
 import { spawn, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
-import { existsSync, readFileSync, realpathSync, statSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, realpathSync, mkdirSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { createRequire } from 'module';
 
@@ -62,36 +62,64 @@ if (!process.env.CORTEX_ROOT) {
 const BASE_PORT = process.env.PORT || '4000';
 const BASE_URL = process.env.CORTEX_URL || `http://localhost:${BASE_PORT}`;
 
-// ── Background auto-update (opt-out) ──────────────────────────────
-// On by default; set CORTEX_AUTO_UPDATE=false (or pass --no-auto-update) to disable.
-// Fire-and-forget: spawns a DETACHED `npm i -g nexus-cortex@latest` that the current
-// run does NOT wait on and that does NOT hot-swap the running process — the update
-// lands on the NEXT launch. Throttled to once per 24h via a marker file. Skipped for
-// dev/source checkouts (only updates an actual global npm install). Never blocks or
-// throws into startup — any failure is swallowed.
-function maybeAutoUpdate() {
-  try {
-    const optOut = String(process.env.CORTEX_AUTO_UPDATE).toLowerCase() === 'false'
-      || process.argv.includes('--no-auto-update');
-    if (optOut) return;
-    // Only auto-update a real installed package, never a git/source checkout.
-    if (!__cortex_dirname.includes('node_modules')) return;
+// ── Self-update (transparent) ─────────────────────────────────────
+// No silent background install (the old approach failed invisibly and locked itself).
+// Instead: a one-line "update available" notice when a newer release exists (read from
+// a tiny cached version check), and `cortex --update` to update on the spot with visible
+// npm output. Silence the notice with CORTEX_NO_UPDATE_NOTICE=true.
+const UPDATE_CACHE = join(homedir(), '.cortex', '.update-check');
+const PKG_VERSION = (() => {
+  try { return JSON.parse(readFileSync(join(__cortex_dirname, '..', 'package.json'), 'utf8')).version; }
+  catch { return null; }
+})();
 
-    const marker = join(homedir(), '.cortex', '.update-check');
-    const DAY_MS = 24 * 60 * 60 * 1000;
-    try {
-      if (Date.now() - statSync(marker).mtimeMs < DAY_MS) return; // throttled
-    } catch { /* no marker yet — proceed */ }
-    try { mkdirSync(dirname(marker), { recursive: true }); writeFileSync(marker, String(Date.now())); } catch {}
-
-    const child = spawn('npm', ['install', '-g', 'nexus-cortex@latest'], {
-      detached: true,
-      stdio: 'ignore',
-    });
-    child.unref();
-  } catch { /* never let auto-update affect the CLI */ }
+function semverGt(a, b) {
+  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) > (pb[i] || 0)) return true;
+    if ((pa[i] || 0) < (pb[i] || 0)) return false;
+  }
+  return false;
 }
-maybeAutoUpdate();
+
+async function fetchLatestVersion() {
+  try {
+    const https = await import('node:https');
+    return await new Promise((resolve) => {
+      const req = https.get('https://registry.npmjs.org/nexus-cortex/latest', { timeout: 3000 }, (res) => {
+        let body = '';
+        res.on('data', (c) => { body += c; });
+        res.on('end', () => { try { resolve(JSON.parse(body).version); } catch { resolve(null); } });
+      });
+      req.on('error', () => resolve(null));
+      req.on('timeout', () => { req.destroy(); resolve(null); });
+    });
+  } catch { return null; }
+}
+
+// Show the notice from cache (instant, no network); refresh the cache in the background
+// when stale — a tiny registry GET, NEVER an install. Best-effort; never blocks/throws.
+function notifyUpdateAvailable() {
+  try {
+    if (String(process.env.CORTEX_NO_UPDATE_NOTICE).toLowerCase() === 'true') return;
+    if (!PKG_VERSION || !__cortex_dirname.includes('node_modules')) return;
+    let cache = {};
+    try { cache = JSON.parse(readFileSync(UPDATE_CACHE, 'utf8')); } catch { /* none/legacy — refresh below */ }
+    if (cache.latest && semverGt(cache.latest, PKG_VERSION)) {
+      process.stderr.write(`\n  ↑ Update available: ${PKG_VERSION} → ${cache.latest} · run \`cortex --update\`\n\n`);
+    }
+    const THROTTLE = 12 * 60 * 60 * 1000;
+    if (!cache.lastCheck || Date.now() - cache.lastCheck > THROTTLE) {
+      fetchLatestVersion().then((latest) => {
+        try {
+          mkdirSync(dirname(UPDATE_CACHE), { recursive: true });
+          writeFileSync(UPDATE_CACHE, JSON.stringify({ lastCheck: Date.now(), latest: latest || cache.latest || null }));
+        } catch { /* ignore */ }
+      }).catch(() => {});
+    }
+  } catch { /* never let the notice affect the CLI */ }
+}
 
 let serverProcess = null;
 
@@ -110,6 +138,25 @@ if (args.includes('--version') || args.includes('-v')) {
   } catch { /* leave 'unknown' */ }
   console.log(`cortex ${version}`);
   process.exit(0);
+}
+
+// ── Self-update command ───────────────────────────────────────────
+// `cortex --update` — update the global install on the spot, with visible npm output.
+if (args.includes('--update')) {
+  process.stdout.write(`Updating nexus-cortex (current: ${PKG_VERSION || 'unknown'})…\n\n`);
+  const res = spawnSync('npm', ['install', '-g', 'nexus-cortex@latest'], { stdio: 'inherit' });
+  if (res.status === 0) {
+    try { mkdirSync(dirname(UPDATE_CACHE), { recursive: true }); writeFileSync(UPDATE_CACHE, JSON.stringify({ lastCheck: Date.now(), latest: null })); } catch { /* ignore */ }
+    process.stdout.write('\n✓ Updated. Run `cortex --version` to confirm.\n');
+    process.exit(0);
+  }
+  process.stderr.write('\nUpdate failed — see the npm output above. If it is a permissions error, try:\n  sudo npm install -g nexus-cortex@latest\n');
+  process.exit(res.status || 1);
+}
+
+// Update-available notice (skip for machine-readable / quiet output).
+if (!args.includes('--json') && !args.includes('--quiet') && !args.includes('-q')) {
+  notifyUpdateAvailable();
 }
 
 // ── Setup wizard (interactive API-key onboarding) ─────────────────
@@ -322,8 +369,8 @@ FLAGS:
   --timeout MS        Request timeout in ms (default: 600000 = 10 min)
   --idle-timeout SECS Auto-shutdown server after N seconds of inactivity
   --cwd DIR           (agent) Run in DIR — the agent's file tools operate there
-  --no-auto-update    Skip the background update check for this run
-                      (also: export CORTEX_AUTO_UPDATE=false to disable it entirely)
+  --update            Update nexus-cortex to the latest version (npm i -g)
+                      (a notice appears when you're behind; CORTEX_NO_UPDATE_NOTICE=true to silence)
   --shutdown          Stop the running server and exit
   --tmux              List active tmux sessions with dashboard URLs
   --stats             Show current session statistics

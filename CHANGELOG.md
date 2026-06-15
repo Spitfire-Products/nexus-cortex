@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.31.0] - 2026-06-15
+
+### Changed
+
+- **Replaced silent background auto-update with a visible update flow.** The old approach installed
+  in the background, failed invisibly, and locked itself for 24h on failure. Now: a one-line notice
+  appears when you're behind — `↑ Update available: X → Y · run \`cortex --update\`` — and
+  **`cortex --update`** updates on the spot with full npm output and confirms the new version. The
+  version check is a tiny cached registry lookup (never a background install). Silence the notice
+  with `CORTEX_NO_UPDATE_NOTICE=true`.
+
+### Removed
+
+- The silent background auto-updater and the `--no-auto-update` / `CORTEX_AUTO_UPDATE` toggle (no
+  longer needed — nothing installs without you running `cortex --update`).
+
 ## [4.30.0] - 2026-06-15
 
 ### Added
