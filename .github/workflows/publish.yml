@@ -19,7 +19,35 @@ permissions:
   contents: read
 
 jobs:
+  # Test gate — the same fresh-clone, no-API-key suite CI runs. `publish` needs this,
+  # so a tag whose tests fail never reaches npm. (Cross-workflow `needs:` isn't possible
+  # — CI is a separate workflow triggered by the main push, not the tag push — so the
+  # gate is an in-workflow job here.)
+  test:
+    runs-on: ubuntu-latest
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.18.1
+      - name: Install deps
+        run: |
+          node -v && npm -v
+          npm ci --no-audit --no-fund --ignore-scripts \
+            || { echo "retry"; rm -rf node_modules packages/*/node_modules; npm ci --no-audit --no-fund --ignore-scripts; }
+          test -x node_modules/.bin/tsc || { echo "::error::tsc not linked after install"; exit 1; }
+      - run: npm run build
+      - name: Tests (fresh-clone mode, no API keys)
+        run: |
+          for p in core executors server cli tui; do
+            [ -d packages/$p ] || { echo "skip $p (not in this release)"; continue; }
+            (cd packages/$p && npx vitest run --passWithNoTests)
+          done
+
   publish:
+    needs: test
     runs-on: ubuntu-latest
     env:
       # executors -> playwright downloads browsers on install and OOM-crashes npm ci.
