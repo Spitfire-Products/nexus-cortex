@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.28.0] - 2026-06-15
+
+### Added
+
+- **Background auto-update (on by default).** The `cortex` command now checks for a newer release
+  in the background and installs it without blocking — the update applies on your next launch (it
+  never hot-swaps the running process). Throttled to once per 24h. Opt out with
+  `CORTEX_AUTO_UPDATE=false` (or `--no-auto-update` for a single run). Only runs for global npm
+  installs, never for source/dev checkouts.
+
 ## [4.27.0] - 2026-06-15
 
 ### Added

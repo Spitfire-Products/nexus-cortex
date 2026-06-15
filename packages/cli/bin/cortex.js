@@ -25,7 +25,8 @@
 import { spawn, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
-import { existsSync, readFileSync, realpathSync } from 'fs';
+import { existsSync, readFileSync, realpathSync, statSync, mkdirSync, writeFileSync } from 'fs';
+import { homedir } from 'os';
 import { createRequire } from 'module';
 
 const __cortex_require = createRequire(import.meta.url);
@@ -60,6 +61,37 @@ if (!process.env.CORTEX_ROOT) {
 
 const BASE_PORT = process.env.PORT || '4000';
 const BASE_URL = process.env.CORTEX_URL || `http://localhost:${BASE_PORT}`;
+
+// ── Background auto-update (opt-out) ──────────────────────────────
+// On by default; set CORTEX_AUTO_UPDATE=false (or pass --no-auto-update) to disable.
+// Fire-and-forget: spawns a DETACHED `npm i -g nexus-cortex@latest` that the current
+// run does NOT wait on and that does NOT hot-swap the running process — the update
+// lands on the NEXT launch. Throttled to once per 24h via a marker file. Skipped for
+// dev/source checkouts (only updates an actual global npm install). Never blocks or
+// throws into startup — any failure is swallowed.
+function maybeAutoUpdate() {
+  try {
+    const optOut = String(process.env.CORTEX_AUTO_UPDATE).toLowerCase() === 'false'
+      || process.argv.includes('--no-auto-update');
+    if (optOut) return;
+    // Only auto-update a real installed package, never a git/source checkout.
+    if (!__cortex_dirname.includes('node_modules')) return;
+
+    const marker = join(homedir(), '.cortex', '.update-check');
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    try {
+      if (Date.now() - statSync(marker).mtimeMs < DAY_MS) return; // throttled
+    } catch { /* no marker yet — proceed */ }
+    try { mkdirSync(dirname(marker), { recursive: true }); writeFileSync(marker, String(Date.now())); } catch {}
+
+    const child = spawn('npm', ['install', '-g', 'nexus-cortex@latest'], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+  } catch { /* never let auto-update affect the CLI */ }
+}
+maybeAutoUpdate();
 
 let serverProcess = null;
 
@@ -210,6 +242,8 @@ FLAGS:
   --timeout MS        Request timeout in ms (default: 600000 = 10 min)
   --idle-timeout SECS Auto-shutdown server after N seconds of inactivity
   --cwd DIR           (agent) Run in DIR — the agent's file tools operate there
+  --no-auto-update    Skip the background update check for this run
+                      (also: export CORTEX_AUTO_UPDATE=false to disable it entirely)
   --shutdown          Stop the running server and exit
   --tmux              List active tmux sessions with dashboard URLs
   --stats             Show current session statistics
