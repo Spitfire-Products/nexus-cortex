@@ -463,6 +463,42 @@ async function fetchJSON(path, options = {}, timeoutMs = 30000) {
 
 // ── Commands ──────────────────────────────────────────────────────
 
+// Interactive chat REPL — `cortex` with no message drops you here so you can talk
+// line-by-line without the shell mangling ?/*/quotes. The server keeps the session,
+// so it's multi-turn. Reuses the same /v1/messages send as the one-shot path.
+async function runInteractiveChat() {
+  if (newSession) {
+    try { await fetchJSON('/sessions/new', { method: 'POST' }); } catch { /* fresh session is best-effort */ }
+  }
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  process.stdout.write(
+    '\n  Nexus Cortex — interactive chat. Type a message and press Enter.\n' +
+    '  The session persists across messages. Type "exit" (or press Ctrl-D) to quit.\n\n',
+  );
+  try {
+    for (;;) {
+      let line;
+      try { line = (await rl.question('cortex> ')).trim(); }
+      catch { break; } // Ctrl-D / closed input
+      if (!line) continue;
+      if (line === 'exit' || line === 'quit' || line === ':q') break;
+      const payload = { messages: [{ role: 'user', content: line }] };
+      if (modelId) payload.model = modelId;
+      try {
+        const data = await fetchJSON('/v1/messages', { method: 'POST', body: JSON.stringify(payload) }, messageTimeoutMs);
+        const text = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+        process.stdout.write('\n' + (text || '(no text response)') + '\n\n');
+      } catch (err) {
+        process.stderr.write(`\n  [error] ${err.message}\n\n`);
+      }
+    }
+  } finally {
+    rl.close();
+  }
+  process.stdout.write('  Bye.\n');
+}
+
 async function run() {
   // --shutdown: stop the server and exit
   if (doShutdown) {
@@ -597,9 +633,17 @@ async function run() {
     }
   }
 
-  // Need a prompt for message commands
+  // No message provided. In an interactive terminal (and NOT agent/run mode), drop
+  // into the chat REPL so the shell never mangles ?/*/quotes. agent/run with no task,
+  // or any non-TTY (scripted) use, still gets the usage error — unchanged.
   if (!prompt) {
-    console.error('Usage: cortex "your prompt here"');
+    if (!__agentMode && process.stdin.isTTY) {
+      await runInteractiveChat();
+      return;
+    }
+    console.error(__agentMode
+      ? 'Usage: cortex agent "<task>"   (or cortex run "<task>")'
+      : 'Usage: cortex "your prompt here"');
     console.error('       cortex --help for more options');
     process.exit(1);
   }

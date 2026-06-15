@@ -1,6 +1,6 @@
 {
   "name": "nexus-cortex",
-  "version": "4.29.0",
+  "version": "4.30.0",
   "description": "A headless, multi-provider AI agent harness. One install gives you the `cortex` CLI and HTTP server: npm i -g nexus-cortex.",
   "type": "module",
   "bin": {
@@ -14,8 +14,8 @@
     "NOTICE"
   ],
   "dependencies": {
-    "@nexus-cortex/cli": "^4.29.0",
-    "@nexus-cortex/server": "^4.29.0"
+    "@nexus-cortex/cli": "^4.30.0",
+    "@nexus-cortex/server": "^4.30.0"
   },
   "engines": {
     "node": ">=18.0.0"

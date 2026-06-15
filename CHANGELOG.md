@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.30.0] - 2026-06-15
+
+### Added
+
+- **Interactive chat mode.** Run `cortex` with no message and you drop into a chat prompt — type
+  line by line, the session persists across messages, no shell quoting to fight (`?`, `*`, and
+  quotes all just work). `exit` or Ctrl-D to quit. One-shot `cortex "…"`, `cortex agent "<task>"`,
+  `cortex run`, and all flags are unchanged; non-interactive (piped) use still shows usage.
+
 ## [4.29.0] - 2026-06-15
 
 ### Added
