@@ -12,7 +12,7 @@
  */
 
 import { readFile, access, readdir, stat } from 'fs/promises';
-import { join, dirname } from 'path';
+import { join, dirname, isAbsolute, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
 import type {
@@ -48,6 +48,18 @@ export interface SystemMessageLoaderOptions {
 
   /** Enable debug logging */
   debug?: boolean;
+
+  /**
+   * Optional path to a file that REPLACES the core `system_prompt` message
+   * (normally `messages/SYSTEM_PROMPT.md`). When set, `loadMessageFile`
+   * reads this file for the `system_prompt` slot instead of resolving the
+   * usual project→global→builtin chain. Every other system message is
+   * unaffected. Equivalent to dropping the file at
+   * `.cortex/system-messages/messages/SYSTEM_PROMPT.md`, but selected at
+   * launch (the `--system-prompt-file` flag). Relative paths resolve against
+   * the project path.
+   */
+  systemPromptFile?: string;
 }
 
 /**
@@ -75,11 +87,16 @@ export class SystemMessageLoader {
   private readonly builtinPath: string;
   private readonly debug: boolean;
   private projectPath: string;
+  private readonly systemPromptFileOverride?: string;
 
   constructor(options: SystemMessageLoaderOptions = {}) {
     this.builtinPath = __dirname;
     this.projectPath = options.projectPath || process.cwd();
     this.debug = options.debug || false;
+    this.systemPromptFileOverride =
+      options.systemPromptFile && options.systemPromptFile.trim().length > 0
+        ? options.systemPromptFile.trim()
+        : undefined;
   }
 
   /**
@@ -232,6 +249,27 @@ export class SystemMessageLoader {
    * Special case for CORTEX.md: loads from .cortex/CORTEX.md with global fallback
    */
   private async loadMessageFile(definition: SystemMessageDefinition): Promise<string> {
+    // --system-prompt-file override: redirect ONLY the core system_prompt slot
+    // to the operator-specified file. Goes through the same downstream pipeline
+    // (template substitution, dedup, system-split static classification,
+    // wrapInSystemReminder) as the normal SYSTEM_PROMPT.md. Relative paths
+    // resolve against the project path. Explicit override = hard requirement:
+    // a missing file throws (no silent fall-through to the builtin prompt),
+    // so a typo'd path fails loudly instead of silently running the default.
+    if (definition.id === 'system_prompt' && this.systemPromptFileOverride) {
+      const overridePath = isAbsolute(this.systemPromptFileOverride)
+        ? this.systemPromptFileOverride
+        : resolve(this.projectPath, this.systemPromptFileOverride);
+      if (await this.fileExists(overridePath)) {
+        const content = await this.readFileCached(overridePath);
+        if (this.debug) {
+          console.log(`[SystemMessageLoader] system_prompt overridden from file: ${overridePath} (${content.length} chars)`);
+        }
+        return content;
+      }
+      throw new Error(`--system-prompt-file: system_prompt override not found at ${overridePath}`);
+    }
+
     // Special handling for CORTEX.md - it's in .cortex/ root, not system-messages/
     if (definition.id === 'cortex') {
       // Try project-level first

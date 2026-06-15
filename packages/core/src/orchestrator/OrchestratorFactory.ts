@@ -8,6 +8,7 @@
  * @since Wave 3 Integration
  */
 
+import path from 'path';
 import { CortexOrchestrator, type OrchestratorConfig } from './CortexOrchestrator.js';
 import { AdapterRegistry } from '../adapters/AdapterRegistry.js';
 import { GatewayTranslationLayer } from '../adapters/GatewayTranslationLayer.js';
@@ -39,6 +40,7 @@ import type { RetryOptions } from '../middleware/contracts/MiddlewareContracts.j
 // Wave 3: Permission policy imports
 import { WhitelistPolicy } from '../middleware/permissions/WhitelistPolicy.js';
 import { FileOperationPolicy } from '../middleware/permissions/FileOperationPolicy.js';
+import { WorkspaceBoundaryPolicy } from '../middleware/permissions/WorkspaceBoundaryPolicy.js';
 import { BashCommandPolicy } from '../middleware/permissions/BashCommandPolicy.js';
 import { CLIApprovalHandler } from '../middleware/permissions/CLIApprovalHandler.js';
 import { AutoApproveHandler } from '../middleware/permissions/AutoApproveHandler.js';
@@ -111,6 +113,19 @@ interface ResolvedPermissionsConfig {
 }
 
 async function createDefaultPolicies(config: OrchestratorConfig): Promise<ResolvedPermissionsConfig> {
+  // Approval-gated project boundary. Roots = working dir + project path + any
+  // --add-dir / CORTEX_ADD_DIRS grants. Prepended to EVERY resolved policy set
+  // so crossing the project boundary always routes through the approval system
+  // (prompt interactively, auto-approve under --yolo, or deny with an explain-why
+  // message the model can act on) rather than a silent hard wall.
+  const boundaryRoots = Array.from(new Set([
+    config.workingDirectory,
+    config.projectPath,
+    ...(config.additionalDirectories || []),
+    ...((process.env.CORTEX_ADD_DIRS || '').split(path.delimiter).map(d => d.trim()).filter(Boolean)),
+  ].filter((r): r is string => Boolean(r))));
+  const boundaryPolicy = new WorkspaceBoundaryPolicy(boundaryRoots);
+
   // If permissionProfile is specified, try to load from JSON file. The path
   // resolver tries the dotted form (.cortex/permissions.<profile>.json — the
   // form documented in CLAUDE.md) first, falling back to the subdirectory
@@ -140,7 +155,7 @@ async function createDefaultPolicies(config: OrchestratorConfig): Promise<Resolv
               `[OrchestratorFactory] Loaded ${policies.length} policies from permission profile: ${profileName} (defaultPolicy: ${defaultPolicy}, path: ${profilePath})`,
             );
           }
-          return { policies, defaultPolicy };
+          return { policies: [boundaryPolicy, ...policies], defaultPolicy };
         } catch (error) {
           console.warn(`[OrchestratorFactory] Failed to load permission profile ${profileName}:`, error);
           console.warn('[OrchestratorFactory] Falling back to default policies');
@@ -154,7 +169,7 @@ async function createDefaultPolicies(config: OrchestratorConfig): Promise<Resolv
   }
 
   // Fallback: hardcoded default policies use the safer 'deny' default.
-  return { policies: defaultPolicies, defaultPolicy: 'deny' };
+  return { policies: [boundaryPolicy, ...defaultPolicies], defaultPolicy: 'deny' };
 }
 
 async function fsReadJson(filePath: string): Promise<any> {
@@ -244,6 +259,18 @@ export async function createOrchestrator(
     config.enableDeferredToolLoading = true;
   }
 
+  // --system-prompt-file override: redirect the `system_prompt` system message
+  // to an alternate file. CORTEX_SYSTEM_PROMPT_FILE carries the PATH (the loader
+  // is Node-side and reads it directly — no text threading). Auto-load here so
+  // ALL creation paths (persistent server, stateless per-request, CLI direct)
+  // pick it up uniformly. Explicit config.systemPromptFile still wins.
+  if (config.systemPromptFile === undefined && (process.env.CORTEX_SYSTEM_PROMPT_FILE || '').trim().length > 0) {
+    config.systemPromptFile = process.env.CORTEX_SYSTEM_PROMPT_FILE;
+    if (config.debug) {
+      console.log(`[OrchestratorFactory] system_prompt override file: ${config.systemPromptFile}`);
+    }
+  }
+
   // Auto-load model router config from env (recording is independent of routing)
   if (!config.modelRouter && (process.env.MODEL_ROUTER_ENABLED === 'true' || process.env.MODEL_ROUTER_RECORD === 'true')) {
     config.modelRouter = {
@@ -316,13 +343,28 @@ export async function createOrchestrator(
   });
   const historicalService = new HistoricalContextService(normalizedConfig.storageDir!);
 
+  // --add-dir: user-granted directories outside the project root. Resolve from
+  // explicit config, falling back to the CORTEX_ADD_DIRS env (path-delimiter
+  // separated) so all creation paths (persistent, stateless, CLI) honor the grant.
+  const addDirsFromEnv = (process.env.CORTEX_ADD_DIRS || '')
+    .split(path.delimiter)
+    .map(d => d.trim())
+    .filter(Boolean);
+  const additionalDirectories = (normalizedConfig.additionalDirectories && normalizedConfig.additionalDirectories.length > 0)
+    ? normalizedConfig.additionalDirectories
+    : addDirsFromEnv;
+
   // Phase 2.5: Tool Execution
   const executorConfig: ExecutorConfig = {
     workingDirectory: normalizedConfig.workingDirectory || normalizedConfig.projectPath || process.cwd(),
+    additionalDirectories,
     enableSandbox: normalizedConfig.enableSandbox ?? true,
     allowedCommands: normalizedConfig.allowedCommands || []
   };
   const executorRegistry = createExecutorRegistry(executorConfig);
+  if (additionalDirectories.length > 0 && normalizedConfig.debug) {
+    console.log(`[OrchestratorFactory] additional accessible directories (--add-dir): ${additionalDirectories.join(', ')}`);
+  }
 
   // Phase 2.9: MCP Integration
   const mcpConfigManager = new McpConfigManager(normalizedConfig.projectPath);
@@ -353,7 +395,8 @@ export async function createOrchestrator(
   const projectPath = resolvedContextRoot || normalizedConfig.projectPath;
   const systemMessageLoader = new SystemMessageLoader({
     projectPath,
-    debug: normalizedConfig.debug || false
+    debug: normalizedConfig.debug || false,
+    systemPromptFile: normalizedConfig.systemPromptFile
   });
 
   // Note: FileCheckpointManager is created in createSession() since it needs sessionId

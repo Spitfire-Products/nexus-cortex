@@ -147,10 +147,10 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
         params.directory,
       );
 
-      // Security: ensure directory is within working directory
-      if (!resolvedDir.startsWith(this.config.workingDirectory)) {
-        return `Directory must be within working directory.`;
-      }
+      // Project-boundary enforcement is handled upstream by WorkspaceBoundaryPolicy
+      // (approval-gated): a `directory` outside the project root prompts the user
+      // (or is auto-approved under --yolo / pre-granted via --add-dir) rather than
+      // being silently rejected here.
 
       // Check directory exists
       try {

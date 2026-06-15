@@ -21,6 +21,28 @@ export function isWithinRoot(filePath: string, rootDir: string): boolean {
 }
 
 /**
+ * Check if a path is within the working directory OR any user-granted
+ * additional directory (the `--add-dir` / CORTEX_ADD_DIRS permission model).
+ * This is the single boundary predicate every file tool should use so the
+ * "in-bounds" rule is uniform and additional-dir grants are honored everywhere.
+ *
+ * @param filePath Path to check
+ * @param workingDirectory The canonical project root
+ * @param additionalDirectories Extra roots the user explicitly granted (optional)
+ */
+export function isWithinAllowedRoots(
+  filePath: string,
+  workingDirectory: string,
+  additionalDirectories?: string[]
+): boolean {
+  if (isWithinRoot(filePath, workingDirectory)) return true;
+  for (const dir of additionalDirectories || []) {
+    if (dir && isWithinRoot(filePath, dir)) return true;
+  }
+  return false;
+}
+
+/**
  * Make a path relative to a directory
  *
  * @param filePath Absolute path

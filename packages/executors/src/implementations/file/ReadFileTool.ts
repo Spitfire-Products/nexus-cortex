@@ -96,12 +96,6 @@ Individual lines longer than ${MAX_LINE_LENGTH} characters will also be truncate
       return schemaError;
     }
 
-    // Capture whether the model supplied a relative path BEFORE resolution.
-    // Absolute paths are allowed anywhere (matching standard absolute-path behavior);
-    // relative paths must stay within workingDirectory so a model can't
-    // escape via `../`-traversal.
-    const wasRelative = !path.isAbsolute(params.file_path);
-
     // Normalize and resolve path (with smart fallback for doubled directory names)
     let filePath = resolveFilePath(params.file_path, this.config.workingDirectory);
 
@@ -109,17 +103,11 @@ Individual lines longer than ${MAX_LINE_LENGTH} characters will also be truncate
       return `File path must resolve to an absolute path: ${filePath}`;
     }
 
-    // Containment check for originally-relative paths. Without this guard,
-    // `../outside.txt` resolves to a path outside workingDirectory and is
-    // happily read — which is a real security regression caught by bench
-    // 6's canary test. (Deficiency #15, fixed 2026-05-11.)
-    if (wasRelative && this.config.workingDirectory) {
-      const wd = path.resolve(this.config.workingDirectory);
-      const relative = path.relative(wd, filePath);
-      if (relative.startsWith('..') || path.isAbsolute(relative)) {
-        return `Path must be within the working directory: ${params.file_path}`;
-      }
-    }
+    // Project-boundary enforcement (incl. `../` traversal out of the project, the
+    // old Deficiency #15 case) is handled UPSTREAM by WorkspaceBoundaryPolicy in
+    // the permission layer — approval-gated, so an out-of-project path prompts the
+    // user (or is auto-approved under --yolo / pre-granted via --add-dir) instead
+    // of being silently hard-rejected here. The tool no longer self-rejects.
 
     // Update params with resolved path
     params.file_path = filePath;

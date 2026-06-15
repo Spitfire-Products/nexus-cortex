@@ -128,6 +128,26 @@ export interface OrchestratorConfig {
   /** Project path for file operations */
   projectPath: string;
 
+  /**
+   * Path to a file that REPLACES the core `system_prompt` system message
+   * (`messages/SYSTEM_PROMPT.md`) — from `--system-prompt-file` / the
+   * `CORTEX_SYSTEM_PROMPT_FILE` env. The SystemMessageLoader redirects ONLY the
+   * `system_prompt` registry slot to this file; every other system message
+   * (tool guides, CORTEX.md, MEMORY.md, templates, system-split caching) is
+   * unchanged. This is the existing project-level override mechanism, automated:
+   * equivalent to dropping the file at `.cortex/system-messages/messages/SYSTEM_PROMPT.md`.
+   * Used for A/B benchmarking an alternate persona/system prompt vs the default.
+   */
+  systemPromptFile?: string;
+
+  /**
+   * Directories OUTSIDE the project root that the user explicitly granted tool
+   * access to (the `--add-dir` / CORTEX_ADD_DIRS mechanism, like `claude --add-dir`).
+   * Threaded to the executor config so file/shell tools treat a path as in-bounds
+   * if it is within workingDirectory OR any of these. Absolute paths.
+   */
+  additionalDirectories?: string[];
+
   /** Enable automatic compaction */
   autoCompact?: boolean;
 

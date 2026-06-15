@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.27.0] - 2026-06-15
+
+### Added
+
+- **`--add-dir <dir>` + approval-gated workspace boundary.** Tools now treat the project root
+  (your launch directory) as the boundary. When the model targets a path outside it, the request
+  goes through the permission system instead of being silently rejected: you're prompted to allow
+  it (the model is told to explain *why* it needs to cross the boundary), `--add-dir <dir>` pre-grants
+  a directory, and `--yolo` auto-approves. Same model as `claude --add-dir`.
+- **`--system-prompt-file <path>` (server flag + `CORTEX_SYSTEM_PROMPT_FILE`).** Swaps just the core
+  `system_prompt` message for an alternate file — tool guides, project context (CORTEX.md), and
+  prompt-cache stability are untouched. Useful for A/B-testing an alternate persona/system prompt.
+- **`ENVIRONMENT_INFO` and `WORK_QUALITY` system messages now ship** with the package. They provide
+  working-directory/path-resolution grounding and the core work-quality protocols (decisiveness,
+  grounded references, TDD, output efficiency) that previously lived only as local overrides.
+
+### Changed
+
+- **Unified project-root resolution (the cwd model).** The launch directory is the canonical project
+  root for tools, sub-agents, sessions, and system messages. An explicit `PROJECT_PATH` (headless
+  use) now becomes canonical and `PROJECT_ROOT` is derived from it, so the two can never diverge and
+  silently mis-root operations. A startup `[WARN]` fires if `PROJECT_PATH` differs from the cwd.
+
+### Fixed
+
+- **System prompt was being shadowed by stale local overrides.** On machines with a `~/.cortex/` or
+  project `.cortex/system-messages/` copy, the loader served an older prompt instead of the shipped
+  one — bypassing the current steering. The shipped masters are now authoritative.
+- **Removed the dead `PROJECT_ROOT` env knob** from `.env`/`.env.example`: due to startup load order
+  it could never take effect, yet was documented as an override. `PROJECT_PATH` is the single knob.
+
 ## [4.26.2] - 2026-06-13
 
 ### Added

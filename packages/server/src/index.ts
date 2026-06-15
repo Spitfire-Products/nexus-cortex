@@ -17,7 +17,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const packageRoot = path.join(__dirname, '..', '..', '..');
 
-// PROJECT_ROOT = where the user launched from (the launch-cwd model)
+// PROJECT_ROOT = the launch cwd (the cwd model, like Claude Code / Gemini CLI).
+// This is a PROVISIONAL bootstrap for any reader that runs before main(); main()
+// reseats PROJECT_ROOT to the canonical resolved root (honoring an explicit
+// PROJECT_PATH) so it can never diverge from the tools' working directory.
 if (!process.env.PROJECT_ROOT) {
   process.env.PROJECT_ROOT = process.cwd();
 }
@@ -71,6 +74,7 @@ export interface ServerConfig {
   stateless?: boolean;  // If true, create new orchestrator per request
   yolo?: boolean;  // If true, auto-approve all permissions (headless mode)
   idleTimeoutMs?: number;  // If set, auto-shutdown after this many ms of inactivity
+  systemPromptFile?: string;  // Path that replaces the core system_prompt system message (--system-prompt-file)
 }
 
 export class CortexV4Server {
@@ -85,6 +89,7 @@ export class CortexV4Server {
   private idleTimeoutMs: number;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
+  private systemPromptFile?: string;
 
   constructor(config: ServerConfig = {}) {
     this.port = config.port || parseInt(process.env.PORT || '4000', 10);
@@ -92,6 +97,7 @@ export class CortexV4Server {
     this.stateless = config.stateless || (process.env.CORTEX_MODE) === 'stateless';
     this.yolo = config.yolo || false;
     this.idleTimeoutMs = config.idleTimeoutMs || parseInt(process.env.SERVER_IDLE_TIMEOUT || '0', 10);
+    this.systemPromptFile = config.systemPromptFile;
 
     this.app = express();
     this.setupMiddleware();
@@ -208,7 +214,8 @@ export class CortexV4Server {
         projectPath,
         workingDirectory: projectPath,
         enableTimeline: true,
-        debug: this.debug
+        debug: this.debug,
+        systemPromptFile: this.systemPromptFile
       }, {
         // Use auto-approve if --yolo or YOLO=true, otherwise use interactive mode
         permissionMode: this.yolo ? 'auto' : 'interactive'
@@ -451,12 +458,18 @@ ${chalk.bold.underline('Options:')}
   --yolo                  Auto-approve all tool executions (headless mode)
   --port <number>         Override port (default: 4000)
   --idle-timeout <secs>   Auto-shutdown after N seconds of inactivity (0 = disabled)
+  --system-prompt-file <path>  Redirect the core system_prompt message to this file
+                          (swaps messages/SYSTEM_PROMPT.md only; keeps tool guides,
+                          CORTEX.md, templates; A/B-test an alternate persona/prompt)
+  --add-dir <dir>         Grant tool access to a directory outside the project root
+                          (repeatable; your explicit permission, like claude --add-dir)
 
 ${chalk.bold.underline('Environment Variables:')}
   DEFAULT_MODEL_ID   Model to use (must be a registry ID, e.g. grok-4-1-fast-reasoning)
   PORT               Server port (default: 4000)
   DEBUG              Enable debug logging (true/false)
   YOLO               Auto-approve all permissions (true/false)
+  CORTEX_SYSTEM_PROMPT_FILE  Same as --system-prompt-file (path to a prompt file)
   AUTO_RESUME        Auto-resume last session on startup (default: false)
   RESUME_SESSION_ID  Resume a specific session by UUID
   CORTEX_MODE    "stateless" for per-request sessions (default: persistent)
@@ -520,11 +533,71 @@ ${chalk.bold.underline('Response Fields:')}
   const yolo = process.env.YOLO === 'true' || process.argv.includes('--yolo');
   const idleTimeoutMs = (idleFromFlag || parseInt(process.env.SERVER_IDLE_TIMEOUT || '0', 10)) * 1000;
 
+  // --system-prompt-file <path>: redirect the core `system_prompt` system message
+  // to an alternate file (A/B-test an alternate persona/prompt). Only the
+  // `system_prompt` slot is swapped — tool guides, CORTEX.md, templates, and
+  // system-split caching are untouched. The resolved ABSOLUTE path is exported via
+  // CORTEX_SYSTEM_PROMPT_FILE so every orchestrator creation path (persistent,
+  // stateless per-request, CLI) picks it up via OrchestratorFactory. The loader
+  // reads it directly (it is Node-side). Validated here so a bad path fails fast.
+  const spfFlagIndex = process.argv.indexOf('--system-prompt-file');
+  const spfRaw = spfFlagIndex !== -1
+    ? process.argv[spfFlagIndex + 1]
+    : process.env.CORTEX_SYSTEM_PROMPT_FILE;
+  let systemPromptFile: string | undefined;
+  if (spfRaw) {
+    const resolvedSpf = path.isAbsolute(spfRaw) ? spfRaw : path.resolve(process.cwd(), spfRaw);
+    if (!fs.existsSync(resolvedSpf)) {
+      console.error(chalk.red(`[FATAL] --system-prompt-file: not found at ${resolvedSpf}`));
+      process.exit(1);
+    }
+    systemPromptFile = resolvedSpf;
+    process.env.CORTEX_SYSTEM_PROMPT_FILE = resolvedSpf;
+    const sz = (() => { try { return fs.statSync(resolvedSpf).size; } catch { return 0; } })();
+    console.log(chalk.cyan(`[INIT] system_prompt override file: ${resolvedSpf} (${sz} bytes) — replaces messages/SYSTEM_PROMPT.md only`));
+  }
+
+  // Canonical project root (cwd model, like Claude Code / Gemini CLI): the launch
+  // cwd IS the project root. PROJECT_PATH is an optional explicit override; when set,
+  // it becomes canonical and PROJECT_ROOT is DERIVED from it so the two can never
+  // diverge (the divergence used to silently mis-root tools vs sub-agents/sessions).
+  const explicitProjectPath = (process.env.PROJECT_PATH || '').trim();
+  const canonicalRoot = explicitProjectPath || process.cwd();
+  process.env.PROJECT_ROOT = canonicalRoot; // derive — never an independent cwd pin
+  if (explicitProjectPath && path.resolve(explicitProjectPath) !== path.resolve(process.cwd())) {
+    console.log(chalk.yellow(`[WARN] PROJECT_PATH (${canonicalRoot}) differs from cwd (${process.cwd()}). Using PROJECT_PATH as the canonical root for ALL subsystems (tools, sub-agents, sessions).`));
+  }
+
+  // --add-dir <dir> (repeatable): grant the model access to directories OUTSIDE the
+  // project root — the user's explicit permission, same model as `claude --add-dir`.
+  // Resolved absolute paths are exported via CORTEX_ADD_DIRS (colon-separated) so every
+  // orchestrator creation path picks them up through OrchestratorFactory.
+  const addDirs: string[] = [];
+  for (let i = 0; i < process.argv.length; i++) {
+    if (process.argv[i] === '--add-dir' && process.argv[i + 1]) {
+      const d = process.argv[i + 1];
+      const abs = path.isAbsolute(d) ? d : path.resolve(process.cwd(), d);
+      if (!fs.existsSync(abs)) {
+        console.error(chalk.red(`[FATAL] --add-dir: directory not found at ${abs}`));
+        process.exit(1);
+      }
+      addDirs.push(abs);
+    }
+  }
+  // Merge any pre-existing CORTEX_ADD_DIRS env entries (from the CLI/launcher).
+  for (const d of (process.env.CORTEX_ADD_DIRS || '').split(path.delimiter)) {
+    if (d.trim() && !addDirs.includes(d.trim())) addDirs.push(d.trim());
+  }
+  if (addDirs.length > 0) {
+    process.env.CORTEX_ADD_DIRS = addDirs.join(path.delimiter);
+    console.log(chalk.cyan(`[INIT] Additional accessible directories (user-granted): ${addDirs.join(', ')}`));
+  }
+
   if (yolo) {
     console.log(chalk.yellow('[WARN] YOLO mode enabled - auto-approving all permissions'));
   }
 
-  const server = new CortexV4Server({ port, debug, yolo, idleTimeoutMs });
+  const server = new CortexV4Server({ port, debug, yolo, idleTimeoutMs, systemPromptFile });
 
   server.start().catch((error) => {
     console.error(chalk.red('Failed to start server:'), error);

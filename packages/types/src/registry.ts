@@ -285,6 +285,14 @@ export interface ExecutorConfig {
   /** Working directory for file operations */
   workingDirectory: string;
 
+  /**
+   * Additional directories the user has explicitly granted tool access to,
+   * OUTSIDE the working directory (the `--add-dir` / CORTEX_ADD_DIRS mechanism,
+   * same model as `claude --add-dir`). Absolute paths. File tools treat a path
+   * as in-bounds if it is within workingDirectory OR any of these.
+   */
+  additionalDirectories?: string[];
+
   /** Maximum execution time per tool (milliseconds) */
   maxExecutionTime?: number;
 
