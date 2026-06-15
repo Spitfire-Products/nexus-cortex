@@ -203,14 +203,17 @@ describe('ShellTool Integration', () => {
     expect(result.error).toContain('relative to working directory');
   });
 
-  it('should reject path traversal', async () => {
+  it('no longer self-rejects out-of-root directories (boundary moved to WorkspaceBoundaryPolicy)', async () => {
     const result = await tool.execute(
       { command: 'echo test', directory: '../../etc' },
       new AbortController().signal,
     );
 
+    // Boundary enforcement moved to WorkspaceBoundaryPolicy (approval-gated). The
+    // tool no longer returns a "within working directory" error; here the directory
+    // simply does not exist relative to the test cwd.
     expect(result.success).toBe(false);
-    expect(result.error).toContain('within working directory');
+    expect(result.error).not.toContain('within working directory');
   });
 
   it('should handle abort signal', async () => {

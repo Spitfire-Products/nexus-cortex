@@ -187,7 +187,7 @@ describe('ReadFileTool Integration', () => {
       expect(result.llmContent).toContain('export const x = 1');
     });
 
-    it('should still reject paths outside working directory', async () => {
+    it('no longer self-rejects out-of-root paths (boundary moved to WorkspaceBoundaryPolicy)', async () => {
       const outsideFile = path.join(testDir, 'outside.txt');
       fs.writeFileSync(outsideFile, 'secret');
 
@@ -196,8 +196,12 @@ describe('ReadFileTool Integration', () => {
         new AbortController().signal,
       );
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('must be within the working directory');
+      // The project boundary is now enforced upstream — approval-gated — by
+      // WorkspaceBoundaryPolicy in the permission layer (see its unit test). The
+      // tool itself only resolves the path; it no longer duplicates the boundary
+      // check (which could not trigger an approval prompt).
+      expect(result.success).toBe(true);
+      expect(result.llmContent).toContain('secret');
     });
   });
 });
