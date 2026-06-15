@@ -190,7 +190,14 @@ export class SystemMessageMiddleware implements ISystemMessageInjector {
       toolNames,
       sandboxEnabled: context.config.enableSandbox || false,
       modelId: context.modelId,
-      platform: process.platform
+      platform: process.platform,
+      // Path to the installed docs (CORTEX_ROOT/docs). Used by HARNESS_GUIDE so the
+      // model can read the full docs on demand; the docs dir is auto-granted as an
+      // allowed root in OrchestratorFactory.
+      docsPath: (() => {
+        const root = (process.env.CORTEX_ROOT || '').replace(/[/\\]+$/, '');
+        return root ? `${root}/docs` : '(not bundled — run `cortex docs`)';
+      })(),
     };
   }
 

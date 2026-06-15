@@ -268,6 +268,7 @@ export interface TemplateVariables {
   sandboxEnabled: boolean;
   modelId?: string;
   platform?: string;
+  docsPath?: string;
 }
 
 /**

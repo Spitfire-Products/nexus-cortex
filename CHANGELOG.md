@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.33.0] - 2026-06-15
+
+### Added
+
+- **Slash commands in chat.** Inside `cortex` chat, slash-prefixed commands keep tool-management
+  separate from messages to the model: `/help`, `/config`, `/docs [name]`, `/model [id]`, `/new`,
+  `/exit`. Anything without a leading `/` is sent to the model.
+- **Interactive config panel** — `/config` (in chat) or `cortex config` (shell) opens a menu to
+  view and change API keys, the default model, and any variable, written to `~/.cortex/.env`. The
+  scriptable `cortex config get/set` still work; `cortex config init` remains the first-run wizard.
+- **Docs you can read in the terminal** — `cortex docs [name]` / `/docs [name]` lists or prints the
+  bundled docs. The `docs/` tree now ships with the package.
+- **The agent knows the harness.** A `HARNESS_GUIDE` system message (always loaded) gives the model
+  authoritative facts about Nexus Cortex — providers/models, the CLI + slash commands, config, and
+  sessions — plus the path to the installed docs, which it can read on demand (that directory is
+  auto-granted as an allowed root). So "how do I add a key / update / what models?" gets a correct
+  answer instead of a guess.
+
 ## [4.32.0] - 2026-06-15
 
 ### Added
