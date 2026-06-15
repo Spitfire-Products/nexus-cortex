@@ -65,16 +65,3 @@ if (copied === 0) {
   process.exit(1);
 }
 console.log(`[copy-pkg-cortex-scaffold] vendored ${copied} scaffold entr${copied === 1 ? 'y' : 'ies'} into ${dest}`);
-
-// Vendor the docs/ tree into <pkg>/docs (listed in `files`). At runtime the agent reads
-// them at $CORTEX_ROOT/docs (the install package root) and `cortex docs` / `/docs` print
-// them. Best-effort: docs are nice-to-have, not pack-blocking.
-const rootDocs = resolve(pkgDir, '..', '..', 'docs');
-const docsDest = join(pkgDir, 'docs');
-rmSync(docsDest, { recursive: true, force: true });
-if (existsSync(rootDocs)) {
-  cpSync(rootDocs, docsDest, { recursive: true });
-  console.log(`[copy-pkg-cortex-scaffold] vendored docs/ into ${docsDest}`);
-} else {
-  console.warn('[copy-pkg-cortex-scaffold] repo-root docs/ not found — shipping without bundled docs');
-}

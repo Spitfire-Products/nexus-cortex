@@ -9,10 +9,11 @@ import {
   SETTINGS_METADATA,
   validateSetting,
   isLiveToggleable,
+  getGlobalConfigDir,
+  getGlobalEnvPath,
   type EnvironmentVariables,
 } from '@nexus-cortex/core';
 import { ThemeManager } from '../../themes/ThemeManager.js';
-import { findProjectRoot } from './utils.js';
 
 /**
  * Set configuration value
@@ -48,8 +49,11 @@ export async function configSet(
       return; // guard: do not write an invalid value if exit is mocked
     }
 
-    const projectPath = findProjectRoot();
-    const loader = new SettingsLoader(projectPath);
+    // Write to the global user config (~/.cortex/.env) so the setting applies from
+    // any directory and survives package updates — regardless of where npm installed
+    // the binary. A project-local ./.env still overrides this when present.
+    const writeDir = getGlobalConfigDir();
+    const loader = new SettingsLoader(writeDir);
     const result = loader.set(key as keyof EnvironmentVariables, value);
 
     if (!result.success) {
@@ -66,6 +70,7 @@ export async function configSet(
       console.log(theme.colors.muted(` was: ${result.previousValue}`));
     }
     console.log(theme.colors.highlight(` now: ${value}`));
+    console.log(theme.colors.muted(` saved to: ${getGlobalEnvPath()}`));
     console.log();
 
   } catch (error: any) {

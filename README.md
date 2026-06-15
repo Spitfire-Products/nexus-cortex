@@ -20,29 +20,22 @@ Run it three ways: **as a library** (`import { CortexOrchestrator }`), **as a he
 
 ```bash
 npm install -g nexus-cortex
-cortex                       # first run sets up your API key, then drops you into chat
 ```
 
-The first time you run `cortex`, an interactive setup asks which provider you use, takes your API key, and picks a default model — saved to `~/.cortex/.env` (so it works from any folder). Re-run it any time with `cortex config init`.
+That's it — the `cortex` command is now on your PATH. Add at least one provider key: rename **`.env.example`** to **`.env`** and put a valid LLM key in it (e.g. `ANTHROPIC_API_KEY=…`).
 
-Then you're in **interactive chat** — just type, no shell quoting to worry about. The server auto-starts and the session persists across messages:
-
-```text
-cortex> what is this project?
-cortex> now summarize the largest file
-```
-Type `exit` (or Ctrl-D) to leave.
-
-Prefer one-shot or scripting? Pass the message as an argument (quote it so the shell doesn't eat `?`/`*`), or run the autonomous agent:
+Then just talk to it — **the server auto-starts on first use**, no separate step:
 
 ```bash
-cortex "What is this project?"                                            # one-shot
-cortex agent --cwd ./my-project "add a --version flag and run the tests"  # autonomous (alias: cortex run)
+# Chat (multi-turn — the session persists across calls)
+cortex "What is this project?"
+cortex "Now summarize the largest file"
+
+# One-shot autonomous agent in any directory (alias: `cortex run`)
+cortex agent --cwd ./my-project "add a --version flag to the CLI and run the tests"
 ```
 
-**Staying current:** when a new release is out you'll see a one-line notice — update with `cortex --update`. Remove it with `cortex --uninstall`.
-
-> Prefer environment variables? Export a key instead of the wizard: `export ANTHROPIC_API_KEY=sk-ant-…` and `export DEFAULT_MODEL_ID=claude-sonnet-4-6`. Claude also works with a Claude.ai Pro/Max OAuth subscription instead of an API key — see [docs/authentication.md](docs/authentication.md).
+> Claude also works with a Claude.ai Pro/Max OAuth subscription instead of an API key — see [docs/authentication.md](docs/authentication.md). For advanced `.env` setup, see [docs/configuration.md](docs/configuration.md).
 
 ## Why Nexus Cortex
 

@@ -118,16 +118,11 @@ async function createDefaultPolicies(config: OrchestratorConfig): Promise<Resolv
   // so crossing the project boundary always routes through the approval system
   // (prompt interactively, auto-approve under --yolo, or deny with an explain-why
   // message the model can act on) rather than a silent hard wall.
-  // The installed docs dir is auto-granted so the agent can Read the harness docs
-  // (referenced by HARNESS_GUIDE as {{docsPath}}) without an approval prompt.
-  const cortexRoot = (process.env.CORTEX_ROOT || '').replace(/[/\\]+$/, '');
-  const docsRoot = cortexRoot ? path.join(cortexRoot, 'docs') : null;
   const boundaryRoots = Array.from(new Set([
     config.workingDirectory,
     config.projectPath,
     ...(config.additionalDirectories || []),
     ...((process.env.CORTEX_ADD_DIRS || '').split(path.delimiter).map(d => d.trim()).filter(Boolean)),
-    ...(docsRoot ? [docsRoot] : []),
   ].filter((r): r is string => Boolean(r))));
   const boundaryPolicy = new WorkspaceBoundaryPolicy(boundaryRoots);
 

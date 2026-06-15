@@ -268,6 +268,9 @@ export interface EnvironmentVariables {
   /** Orchestrator lifecycle mode */
   CORTEX_MODE?: string; // 'persistent' | 'stateless' | 'server'
 
+  /** Self-update behaviour when a newer release exists */
+  CORTEX_UPDATE_POLICY?: string; // 'auto' | 'off' | 'warn' | 'error' | 'force'
+
   /** Auto-approve ALL tool executions (bypasses permissions) */
   YOLO?: string; // 'true' | 'false'
 
@@ -418,6 +421,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
 
   // Runtime
   CORTEX_MODE: 'persistent',
+  CORTEX_UPDATE_POLICY: 'auto',
   YOLO: 'false',
   AUTO_RESUME: 'false',
   PORT: '4000',
@@ -1083,6 +1087,15 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     category: 'runtime',
     choices: ['persistent', 'stateless', 'server'],
     default: 'persistent'
+  },
+  {
+    key: 'CORTEX_UPDATE_POLICY',
+    displayName: 'Update Policy',
+    description: 'On a newer release: auto (warn when interactive, error when programmatic), off (never check), warn (notice only), error (exit non-zero), force (auto-update then continue)',
+    type: 'choice',
+    category: 'runtime',
+    choices: ['auto', 'off', 'warn', 'error', 'force'],
+    default: 'auto'
   },
   {
     key: 'YOLO',

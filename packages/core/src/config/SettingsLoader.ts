@@ -7,6 +7,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import type { OrchestratorConfig } from '../orchestrator/CortexOrchestrator.js';
 import type { EnvironmentVariables } from './SettingsSchema.js';
 import { DEFAULT_SETTINGS, validateSetting, getSettingMetadata } from './SettingsSchema.js';
@@ -54,23 +55,56 @@ export function parseEnvFile(content: string): EnvironmentVariables {
 }
 
 /**
- * Load .env file from project root
+ * The global user-config directory (~/.cortex) — the canonical, home-directory
+ * location every surface (CLI, TUI, server) reads regardless of where the binary
+ * is installed or which directory it's launched from. This is what makes a global
+ * `npm i -g` install configurable: the binary may live in /opt/homebrew/... but
+ * your settings live in a path you own.
+ */
+export function getGlobalConfigDir(): string {
+  return path.join(os.homedir() || process.cwd(), '.cortex');
+}
+
+/** Absolute path to the global config file (~/.cortex/.env). */
+export function getGlobalEnvPath(): string {
+  return path.join(getGlobalConfigDir(), '.env');
+}
+
+/** Read+parse a single .env file; returns {} if absent or unreadable. */
+function readEnvFileAt(envPath: string): EnvironmentVariables {
+  if (!fs.existsSync(envPath)) return {};
+  try {
+    return parseEnvFile(fs.readFileSync(envPath, 'utf-8'));
+  } catch (error: any) {
+    console.error(`[SettingsLoader] Error reading .env file ${envPath}: ${error.message}`);
+    return {};
+  }
+}
+
+/**
+ * Load merged .env config.
+ *
+ * Layering (low → high precedence): global ~/.cortex/.env  →  project ./.env.
+ * The global file is the user's persistent config (written by `config set`); a
+ * project-local ./.env is an optional override for when you're working inside a
+ * specific project (this is what makes the Replit "just edit ./.env" flow work).
+ * process.env and built-in defaults are applied afterwards in mergeWithDefaults().
  */
 export function loadEnvFile(projectPath: string = process.cwd()): EnvironmentVariables {
-  const envPath = path.join(projectPath, '.env');
+  const globalEnvPath = getGlobalEnvPath();
+  const projectEnvPath = path.join(projectPath, '.env');
 
-  if (!fs.existsSync(envPath)) {
-    console.log(`[SettingsLoader] No .env file found at ${envPath}, using defaults`);
-    return {};
+  const globalEnv = readEnvFileAt(globalEnvPath);
+  // Avoid double-reading when projectPath IS the global dir (e.g. config set).
+  const projectEnv = projectEnvPath === globalEnvPath ? {} : readEnvFileAt(projectEnvPath);
+
+  const merged = { ...globalEnv, ...projectEnv };
+
+  if (Object.keys(merged).length === 0) {
+    console.log(`[SettingsLoader] No .env found (checked ${globalEnvPath} and ${projectEnvPath}), using defaults`);
   }
 
-  try {
-    const content = fs.readFileSync(envPath, 'utf-8');
-    return parseEnvFile(content);
-  } catch (error: any) {
-    console.error(`[SettingsLoader] Error reading .env file: ${error.message}`);
-    return {};
-  }
+  return merged;
 }
 
 /**
@@ -169,6 +203,7 @@ export function writeEnvSetting(
   }
 
   try {
+    fs.mkdirSync(path.dirname(envPath), { recursive: true });
     fs.writeFileSync(envPath, newContent, 'utf-8');
     return {
       success: true,
@@ -328,6 +363,7 @@ export function mergeWithDefaults(env: EnvironmentVariables): Required<Environme
 
     // Runtime
     CORTEX_MODE: env.CORTEX_MODE || DEFAULT_SETTINGS.CORTEX_MODE,
+    CORTEX_UPDATE_POLICY: env.CORTEX_UPDATE_POLICY || process.env.CORTEX_UPDATE_POLICY || DEFAULT_SETTINGS.CORTEX_UPDATE_POLICY,
     YOLO: env.YOLO || process.env.YOLO || DEFAULT_SETTINGS.YOLO,
     AUTO_RESUME: env.AUTO_RESUME || process.env.AUTO_RESUME || DEFAULT_SETTINGS.AUTO_RESUME,
     PORT: env.PORT || process.env.PORT || DEFAULT_SETTINGS.PORT,

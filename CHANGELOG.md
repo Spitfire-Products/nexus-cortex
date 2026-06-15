@@ -7,91 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [4.33.0] - 2026-06-15
+## [4.34.0] - 2026-06-15
 
 ### Added
 
-- **Slash commands in chat.** Inside `cortex` chat, slash-prefixed commands keep tool-management
-  separate from messages to the model: `/help`, `/config`, `/docs [name]`, `/model [id]`, `/new`,
-  `/exit`. Anything without a leading `/` is sent to the model.
-- **Interactive config panel** — `/config` (in chat) or `cortex config` (shell) opens a menu to
-  view and change API keys, the default model, and any variable, written to `~/.cortex/.env`. The
-  scriptable `cortex config get/set` still work; `cortex config init` remains the first-run wizard.
-- **Docs you can read in the terminal** — `cortex docs [name]` / `/docs [name]` lists or prints the
-  bundled docs. The `docs/` tree now ships with the package.
-- **The agent knows the harness.** A `HARNESS_GUIDE` system message (always loaded) gives the model
-  authoritative facts about Nexus Cortex — providers/models, the CLI + slash commands, config, and
-  sessions — plus the path to the installed docs, which it can read on demand (that directory is
-  auto-granted as an allowed root). So "how do I add a key / update / what models?" gets a correct
-  answer instead of a guess.
-
-## [4.32.0] - 2026-06-15
-
-### Added
-
-- **`cortex --uninstall`** — removes the global install (`npm uninstall -g`), with visible output;
-  leaves your `~/.cortex` config/key in place and tells you how to remove those too.
-
-### Docs
-
-- README quick start brought current: leads with the **interactive chat** flow (no shell quoting),
-  shows one-shot/agent as alternatives, and documents `cortex --update` / `cortex --uninstall`.
-
-## [4.31.0] - 2026-06-15
+- **Global config at `~/.cortex/.env`.** Settings now load from `~/.cortex/.env` in your home
+  directory, so a globally-installed CLI is configurable from anywhere — you no longer need to
+  find where npm placed the binary. A project-local `./.env` still overrides it.
+- **`cortex config init`** — create an editable, schema-templated `~/.cortex/.env` you can open
+  and fill in by hand (`--force` refreshes the template while preserving your values).
+- **`cortex update`** — update the global install to the latest published release, with visible
+  npm output.
+- **`cortex uninstall`** — remove the global install (keeps your `~/.cortex` config unless
+  `--purge`; requires `--yes` when run non-interactively).
+- **`CORTEX_UPDATE_POLICY`** — controls the startup update check: `auto` (default: a one-line
+  notice when interactive; a non-zero exit when run programmatically, so unattended/automated
+  deployments don't silently run a stale version), plus `off` / `warn` / `error` / `force`.
 
 ### Changed
 
-- **Replaced silent background auto-update with a visible update flow.** The old approach installed
-  in the background, failed invisibly, and locked itself for 24h on failure. Now: a one-line notice
-  appears when you're behind — `↑ Update available: X → Y · run \`cortex --update\`` — and
-  **`cortex --update`** updates on the spot with full npm output and confirms the new version. The
-  version check is a tiny cached registry lookup (never a background install). Silence the notice
-  with `CORTEX_NO_UPDATE_NOTICE=true`.
+- **`cortex config set KEY VALUE` now writes to the global `~/.cortex/.env`** (and prints the
+  path) instead of a `.env` in the current directory, so settings persist across directories
+  and survive package updates.
 
-### Removed
-
-- The silent background auto-updater and the `--no-auto-update` / `CORTEX_AUTO_UPDATE` toggle (no
-  longer needed — nothing installs without you running `cortex --update`).
-
-## [4.30.0] - 2026-06-15
-
-### Added
-
-- **Interactive chat mode.** Run `cortex` with no message and you drop into a chat prompt — type
-  line by line, the session persists across messages, no shell quoting to fight (`?`, `*`, and
-  quotes all just work). `exit` or Ctrl-D to quit. One-shot `cortex "…"`, `cortex agent "<task>"`,
-  `cortex run`, and all flags are unchanged; non-interactive (piped) use still shows usage.
-
-## [4.29.0] - 2026-06-15
-
-### Added
-
-- **Interactive first-run setup + `cortex config init`.** The first time you run `cortex` with no
-  key configured, it walks you through picking a provider, pasting your API key, and choosing a
-  default model — no hunting for files, no manual `export`s. Saved to a **global** `~/.cortex/.env`
-  (written user-only, `chmod 600`), so it works from any folder. Re-run any time with
-  `cortex config init`.
-- **Global config (`~/.cortex/.env`).** The server now reads keys from `~/.cortex/.env` in addition
-  to a project `.env` and environment variables (priority: project `.env` → package dir → global →
-  env). This is what makes a global npm install usable without a project folder.
-
-### Fixed
-
-- **Onboarding docs were wrong for npm installs.** The quick start said "rename `.env.example` to
-  `.env`", but that file doesn't ship in the package and a global install puts nothing in your
-  folders. The README/auth docs now point to the setup wizard, note that prompts must be quoted
-  (the shell eats `?`/`*`), and flag that `DEFAULT_MODEL_ID` must match your key (the default is a
-  Gemini model).
-
-## [4.28.0] - 2026-06-15
-
-### Added
-
-- **Background auto-update (on by default).** The `cortex` command now checks for a newer release
-  in the background and installs it without blocking — the update applies on your next launch (it
-  never hot-swaps the running process). Throttled to once per 24h. Opt out with
-  `CORTEX_AUTO_UPDATE=false` (or `--no-auto-update` for a single run). Only runs for global npm
-  installs, never for source/dev checkouts.
+---
 
 ## [4.27.0] - 2026-06-15
 

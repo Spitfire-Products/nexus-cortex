@@ -25,8 +25,7 @@
 import { spawn, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
-import { existsSync, readFileSync, realpathSync, mkdirSync, writeFileSync } from 'fs';
-import { homedir } from 'os';
+import { existsSync, readFileSync, realpathSync } from 'fs';
 import { createRequire } from 'module';
 
 const __cortex_require = createRequire(import.meta.url);
@@ -62,65 +61,6 @@ if (!process.env.CORTEX_ROOT) {
 const BASE_PORT = process.env.PORT || '4000';
 const BASE_URL = process.env.CORTEX_URL || `http://localhost:${BASE_PORT}`;
 
-// ── Self-update (transparent) ─────────────────────────────────────
-// No silent background install (the old approach failed invisibly and locked itself).
-// Instead: a one-line "update available" notice when a newer release exists (read from
-// a tiny cached version check), and `cortex --update` to update on the spot with visible
-// npm output. Silence the notice with CORTEX_NO_UPDATE_NOTICE=true.
-const UPDATE_CACHE = join(homedir(), '.cortex', '.update-check');
-const PKG_VERSION = (() => {
-  try { return JSON.parse(readFileSync(join(__cortex_dirname, '..', 'package.json'), 'utf8')).version; }
-  catch { return null; }
-})();
-
-function semverGt(a, b) {
-  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
-  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < 3; i++) {
-    if ((pa[i] || 0) > (pb[i] || 0)) return true;
-    if ((pa[i] || 0) < (pb[i] || 0)) return false;
-  }
-  return false;
-}
-
-async function fetchLatestVersion() {
-  try {
-    const https = await import('node:https');
-    return await new Promise((resolve) => {
-      const req = https.get('https://registry.npmjs.org/nexus-cortex/latest', { timeout: 3000 }, (res) => {
-        let body = '';
-        res.on('data', (c) => { body += c; });
-        res.on('end', () => { try { resolve(JSON.parse(body).version); } catch { resolve(null); } });
-      });
-      req.on('error', () => resolve(null));
-      req.on('timeout', () => { req.destroy(); resolve(null); });
-    });
-  } catch { return null; }
-}
-
-// Show the notice from cache (instant, no network); refresh the cache in the background
-// when stale — a tiny registry GET, NEVER an install. Best-effort; never blocks/throws.
-function notifyUpdateAvailable() {
-  try {
-    if (String(process.env.CORTEX_NO_UPDATE_NOTICE).toLowerCase() === 'true') return;
-    if (!PKG_VERSION || !__cortex_dirname.includes('node_modules')) return;
-    let cache = {};
-    try { cache = JSON.parse(readFileSync(UPDATE_CACHE, 'utf8')); } catch { /* none/legacy — refresh below */ }
-    if (cache.latest && semverGt(cache.latest, PKG_VERSION)) {
-      process.stderr.write(`\n  ↑ Update available: ${PKG_VERSION} → ${cache.latest} · run \`cortex --update\`\n\n`);
-    }
-    const THROTTLE = 12 * 60 * 60 * 1000;
-    if (!cache.lastCheck || Date.now() - cache.lastCheck > THROTTLE) {
-      fetchLatestVersion().then((latest) => {
-        try {
-          mkdirSync(dirname(UPDATE_CACHE), { recursive: true });
-          writeFileSync(UPDATE_CACHE, JSON.stringify({ lastCheck: Date.now(), latest: latest || cache.latest || null }));
-        } catch { /* ignore */ }
-      }).catch(() => {});
-    }
-  } catch { /* never let the notice affect the CLI */ }
-}
-
 let serverProcess = null;
 
 // ── Argument parsing ──────────────────────────────────────────────
@@ -140,129 +80,6 @@ if (args.includes('--version') || args.includes('-v')) {
   process.exit(0);
 }
 
-// ── Self-update command ───────────────────────────────────────────
-// `cortex --update` — update the global install on the spot, with visible npm output.
-if (args.includes('--update')) {
-  process.stdout.write(`Updating nexus-cortex (current: ${PKG_VERSION || 'unknown'})…\n\n`);
-  const res = spawnSync('npm', ['install', '-g', 'nexus-cortex@latest'], { stdio: 'inherit' });
-  if (res.status === 0) {
-    try { mkdirSync(dirname(UPDATE_CACHE), { recursive: true }); writeFileSync(UPDATE_CACHE, JSON.stringify({ lastCheck: Date.now(), latest: null })); } catch { /* ignore */ }
-    process.stdout.write('\n✓ Updated. Run `cortex --version` to confirm.\n');
-    process.exit(0);
-  }
-  process.stderr.write('\nUpdate failed — see the npm output above. If it is a permissions error, try:\n  sudo npm install -g nexus-cortex@latest\n');
-  process.exit(res.status || 1);
-}
-
-// `cortex --uninstall` — remove the global install. Config/keys at ~/.cortex are LEFT
-// in place (so you don't lose your API key by accident); the message says how to remove them.
-if (args.includes('--uninstall')) {
-  process.stdout.write('Uninstalling nexus-cortex…\n\n');
-  const res = spawnSync('npm', ['uninstall', '-g', 'nexus-cortex'], { stdio: 'inherit' });
-  if (res.status === 0) {
-    process.stdout.write('\n✓ Uninstalled. Your config and API key remain at ~/.cortex — to remove those too:\n  rm -rf ~/.cortex\n');
-    process.exit(0);
-  }
-  process.stderr.write('\nUninstall failed — see the npm output above. If it is a permissions error, try:\n  sudo npm uninstall -g nexus-cortex\n');
-  process.exit(res.status || 1);
-}
-
-// Update-available notice (skip for machine-readable / quiet output).
-if (!args.includes('--json') && !args.includes('--quiet') && !args.includes('-q')) {
-  notifyUpdateAvailable();
-}
-
-// ── Setup wizard (interactive API-key onboarding) ─────────────────
-// Global config lives at ~/.cortex/.env so a global npm install works from ANY
-// folder (the server loads it). Runs on `cortex config init` and on first run
-// when no key is configured anywhere.
-const PROVIDERS = [
-  { name: 'Anthropic (Claude)', keyVar: 'ANTHROPIC_API_KEY', model: 'claude-sonnet-4-6', hint: 'sk-ant-…' },
-  { name: 'OpenAI (GPT)',       keyVar: 'OPENAI_API_KEY',    model: 'gpt-5-mini',        hint: 'sk-…' },
-  { name: 'Google (Gemini)',    keyVar: 'GEMINI_API_KEY',    model: 'gemini-2.5-flash',  hint: 'AIza…' },
-  { name: 'DeepSeek',           keyVar: 'DEEPSEEK_API_KEY',  model: 'deepseek-v4-pro',   hint: 'sk-…' },
-  { name: 'xAI (Grok)',         keyVar: 'XAI_API_KEY',       model: 'grok-4.3',          hint: 'xai-…' },
-];
-const KEY_VARS = [...PROVIDERS.map((p) => p.keyVar), 'GOOGLE_API_KEY'];
-const GLOBAL_ENV = join(homedir(), '.cortex', '.env');
-
-function hasApiKey() {
-  if (KEY_VARS.some((k) => (process.env[k] || '').trim())) return true;
-  for (const f of [GLOBAL_ENV, join(process.cwd(), '.env')]) {
-    try {
-      const txt = readFileSync(f, 'utf8');
-      if (KEY_VARS.some((k) => new RegExp('^' + k + '=\\S', 'm').test(txt))) return true;
-    } catch { /* file absent */ }
-  }
-  return false;
-}
-
-function writeGlobalEnv(kv) {
-  mkdirSync(dirname(GLOBAL_ENV), { recursive: true });
-  let lines = [];
-  try { lines = readFileSync(GLOBAL_ENV, 'utf8').split('\n').filter((l) => l.length); } catch { /* new file */ }
-  for (const [k, v] of Object.entries(kv)) {
-    const i = lines.findIndex((l) => l.startsWith(k + '='));
-    if (i >= 0) lines[i] = `${k}=${v}`; else lines.push(`${k}=${v}`);
-  }
-  writeFileSync(GLOBAL_ENV, lines.join('\n') + '\n', { mode: 0o600 }); // user-only — holds a secret
-}
-
-async function runSetupWizard() {
-  if (!process.stdin.isTTY) {
-    process.stderr.write(
-      '\n  No API key configured. Run `cortex config init` for interactive setup, or set one:\n' +
-      '    export ANTHROPIC_API_KEY=sk-ant-…\n' +
-      '    export DEFAULT_MODEL_ID=claude-sonnet-4-6\n\n',
-    );
-    process.exit(1);
-  }
-  const { createInterface } = await import('node:readline/promises');
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    process.stdout.write('\n  Welcome to Nexus Cortex — quick setup (~30s).\n\n  Which AI provider?\n');
-    PROVIDERS.forEach((p, i) => process.stdout.write(`    ${i + 1}) ${p.name}\n`));
-    let choice;
-    for (;;) {
-      const n = parseInt((await rl.question(`\n  Choose 1-${PROVIDERS.length}: `)).trim(), 10);
-      if (n >= 1 && n <= PROVIDERS.length) { choice = PROVIDERS[n - 1]; break; }
-      process.stdout.write(`  Please enter a number 1-${PROVIDERS.length}.\n`);
-    }
-    let key = '';
-    while (!key) {
-      key = (await rl.question(`\n  Paste your ${choice.name} API key (${choice.hint}): `)).trim();
-      if (!key) process.stdout.write('  An API key is required.\n');
-    }
-    const model = (await rl.question(`\n  Default model [${choice.model}]: `)).trim() || choice.model;
-    writeGlobalEnv({ [choice.keyVar]: key, DEFAULT_MODEL_ID: model });
-    process.stdout.write(`\n  ✓ Saved to ${GLOBAL_ENV}\n  You're set — try:  cortex "what is 2 + 2?"\n\n`);
-  } catch {
-    // Ctrl-C / Ctrl-D / closed input — exit cleanly instead of dumping a stack trace.
-    process.stdout.write('\n  Setup cancelled. Run `cortex config init` any time to finish.\n');
-    rl.close();
-    process.exit(1);
-  } finally {
-    rl.close();
-  }
-}
-
-// `cortex config init` — interactive setup (intercept before the Commander handoff).
-if (args[0] === 'config' && args[1] === 'init') {
-  await runSetupWizard();
-  process.exit(0);
-}
-// `cortex config` (no subcommand) — interactive config panel. `config get/set/...` still
-// delegate to the Commander CLI below.
-if (args[0] === 'config' && !args[1]) {
-  await runConfigPanel();
-  process.exit(0);
-}
-// `cortex docs [name]` — print the docs (the same ones the agent can read).
-if (args[0] === 'docs') {
-  await showDocs(args.slice(1).join(' '));
-  process.exit(0);
-}
-
 // ── Headless Commander delegation ─────────────────────────────────
 // `cortex` is primarily the HTTP chat/PR client; the headless Commander program
 // (autoresearch, models, message, mcp, config, …) lives in dist/index.js. If the
@@ -272,6 +89,7 @@ if (args[0] === 'docs') {
 const COMMANDER_SUBCOMMANDS = new Set([
   'autoresearch', 'models', 'message', 'mcp', 'config', 'permissions', 'context',
   'tools', 'middleware', 'artifact', 'cache', 'system-messages', 'tmux',
+  'update', 'uninstall',
 ]);
 const __firstPositional = args.find((a) => !a.startsWith('-'));
 if (__firstPositional && COMMANDER_SUBCOMMANDS.has(__firstPositional)) {
@@ -360,10 +178,7 @@ if (showHelp) {
 cortex — Natural language interface to the Nexus Cortex library
 
 USAGE:
-  cortex                                 Interactive chat (slash commands: /help /config /docs /model)
   cortex "your prompt here"              Send a message (continues current session)
-  cortex config                          Interactive config panel (keys, model, settings)
-  cortex docs [name]                     Print the docs (list, or e.g. cortex docs authentication)
   cortex agent "<task>"                  Autonomous one-shot agent run (see below)
   cortex --new "start fresh"             Start new session, then send message
   cortex --model MODEL_ID "prompt"       Use a specific model
@@ -396,9 +211,6 @@ FLAGS:
   --timeout MS        Request timeout in ms (default: 600000 = 10 min)
   --idle-timeout SECS Auto-shutdown server after N seconds of inactivity
   --cwd DIR           (agent) Run in DIR — the agent's file tools operate there
-  --update            Update nexus-cortex to the latest version (npm i -g)
-                      (a notice appears when you're behind; CORTEX_NO_UPDATE_NOTICE=true to silence)
-  --uninstall         Remove the global nexus-cortex install (keeps ~/.cortex config)
   --shutdown          Stop the running server and exit
   --tmux              List active tmux sessions with dashboard URLs
   --stats             Show current session statistics
@@ -538,168 +350,6 @@ async function fetchJSON(path, options = {}, timeoutMs = 30000) {
 
 // ── Commands ──────────────────────────────────────────────────────
 
-// Interactive chat REPL — `cortex` with no message drops you here so you can talk
-// line-by-line without the shell mangling ?/*/quotes. The server keeps the session,
-// so it's multi-turn. Reuses the same /v1/messages send as the one-shot path.
-// ── Config panel + docs (shared by /config & /docs and `cortex config`/`cortex docs`) ──
-// Docs ship alongside the install; dev runs from the monorepo. CORTEX_ROOT covers the
-// npm-install case (set to the package root that holds the .cortex scaffold + docs).
-function resolveDocsDir() {
-  for (const d of [join(MONOREPO_ROOT, 'docs'), join(CLI_PKG_ROOT, 'docs'), join(process.env.CORTEX_ROOT || '.', 'docs')]) {
-    try { if (existsSync(d)) return d; } catch { /* ignore */ }
-  }
-  return null;
-}
-
-function readGlobalEnvMap() {
-  const m = {};
-  try {
-    for (const l of readFileSync(GLOBAL_ENV, 'utf8').split('\n')) {
-      if (!l || l.startsWith('#')) continue;
-      const i = l.indexOf('=');
-      if (i > 0) m[l.slice(0, i).trim()] = l.slice(i + 1).trim();
-    }
-  } catch { /* none yet */ }
-  return m;
-}
-
-function maskSecret(v) { return !v ? '' : (v.length <= 10 ? '••••' : `${v.slice(0, 6)}…${v.slice(-4)}`); }
-
-async function showDocs(name) {
-  const dir = resolveDocsDir();
-  if (!dir) { process.stdout.write('  No docs found in this install.\n'); return; }
-  const { readdirSync } = await import('node:fs');
-  let files = [];
-  try { files = readdirSync(dir).filter((f) => f.endsWith('.md')); } catch { /* ignore */ }
-  if (!name) {
-    process.stdout.write(`\n  Docs (${dir}):\n`);
-    files.forEach((f) => process.stdout.write(`    - ${f.replace(/\.md$/, '')}\n`));
-    process.stdout.write('\n  Read one:  /docs <name>   (e.g. /docs authentication)\n\n');
-    return;
-  }
-  const match = files.find((f) => f.toLowerCase().includes(name.toLowerCase()));
-  if (!match) { process.stdout.write(`  No doc matching "${name}". Available: ${files.map((f) => f.replace(/\.md$/, '')).join(', ')}\n`); return; }
-  try { process.stdout.write('\n' + readFileSync(join(dir, match), 'utf8') + '\n'); }
-  catch (e) { process.stdout.write(`  Could not read ${match}: ${e.message}\n`); }
-}
-
-// Interactive config panel. Reuses the caller's readline (from chat) or creates its own
-// (from the `cortex config` shell command). Writes ~/.cortex/.env.
-async function runConfigPanel(existingRl) {
-  let rl = existingRl;
-  if (!rl) {
-    if (!process.stdin.isTTY) { process.stderr.write('  `cortex config` needs an interactive terminal. Use `cortex config set <key> <value>` non-interactively.\n'); process.exit(1); }
-    const { createInterface } = await import('node:readline/promises');
-    rl = createInterface({ input: process.stdin, output: process.stdout });
-  }
-  try {
-    for (;;) {
-      const env = readGlobalEnvMap();
-      process.stdout.write(`\n  Nexus Cortex config  —  ${GLOBAL_ENV}\n\n`);
-      for (const p of PROVIDERS) {
-        const v = env[p.keyVar] || process.env[p.keyVar];
-        process.stdout.write(`    ${p.keyVar.padEnd(20)} ${v ? '✓ ' + maskSecret(v) : '— not set'}\n`);
-      }
-      const model = env.DEFAULT_MODEL_ID || process.env.DEFAULT_MODEL_ID;
-      process.stdout.write(`    ${'DEFAULT_MODEL_ID'.padEnd(20)} ${model || '— not set'}\n`);
-      process.stdout.write('\n  1) set / change an API key\n  2) change the default model\n  3) set any variable (KEY=value)\n  4) view docs\n  q) done\n');
-      const c = (await rl.question('\n  > ')).trim().toLowerCase();
-      if (c === 'q' || c === 'done' || c === 'quit' || c === '') break;
-      if (c === '1') {
-        PROVIDERS.forEach((p, i) => process.stdout.write(`    ${i + 1}) ${p.name}\n`));
-        const p = PROVIDERS[parseInt((await rl.question(`  provider 1-${PROVIDERS.length}: `)).trim(), 10) - 1];
-        if (!p) { process.stdout.write('  cancelled.\n'); continue; }
-        const key = (await rl.question(`  ${p.name} key (${p.hint}): `)).trim();
-        if (key) {
-          const set = { [p.keyVar]: key };
-          if (!env.DEFAULT_MODEL_ID && !process.env.DEFAULT_MODEL_ID) set.DEFAULT_MODEL_ID = p.model;
-          writeGlobalEnv(set);
-          process.stdout.write(`  ✓ saved ${p.keyVar}${set.DEFAULT_MODEL_ID ? ` + DEFAULT_MODEL_ID=${set.DEFAULT_MODEL_ID}` : ''}\n`);
-        }
-      } else if (c === '2') {
-        const m = (await rl.question('  default model id (e.g. claude-sonnet-4-6): ')).trim();
-        if (m) { writeGlobalEnv({ DEFAULT_MODEL_ID: m }); process.stdout.write(`  ✓ DEFAULT_MODEL_ID=${m}\n`); }
-      } else if (c === '3') {
-        const kv = (await rl.question('  KEY=value: ')).trim();
-        const i = kv.indexOf('=');
-        if (i > 0) { writeGlobalEnv({ [kv.slice(0, i).trim()]: kv.slice(i + 1).trim() }); process.stdout.write('  ✓ saved\n'); }
-        else process.stdout.write('  expected KEY=value\n');
-      } else if (c === '4') {
-        await showDocs();
-      }
-    }
-  } finally {
-    if (!existingRl) rl.close();
-  }
-  process.stdout.write('  Config saved to ~/.cortex/.env. New keys take effect on the next server start (`cortex --shutdown`, then run again).\n');
-}
-
-function printSlashHelp() {
-  process.stdout.write(
-    '\n  Slash commands (anything without a leading / is sent to the model):\n' +
-    '    /help            this list\n' +
-    '    /config          view & change API keys, model, settings\n' +
-    '    /docs [name]     list docs, or print one (e.g. /docs authentication)\n' +
-    '    /model [id]      show or switch the model for this session\n' +
-    '    /new             start a fresh session\n' +
-    '    /exit            leave chat (or Ctrl-D)\n\n',
-  );
-}
-
-async function runInteractiveChat() {
-  if (newSession) {
-    try { await fetchJSON('/sessions/new', { method: 'POST' }); } catch { /* fresh session is best-effort */ }
-  }
-  let currentModel = modelId;
-  const { createInterface } = await import('node:readline/promises');
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  process.stdout.write(
-    '\n  Nexus Cortex — interactive chat. Type a message and press Enter.\n' +
-    '  Slash commands: /help /config /docs /model /new /exit  ·  Ctrl-D to quit.\n\n',
-  );
-  try {
-    for (;;) {
-      let line;
-      try { line = (await rl.question('cortex> ')).trim(); }
-      catch { break; } // Ctrl-D / closed input
-      if (!line) continue;
-      if (line.startsWith('/')) {
-        const parts = line.slice(1).split(/\s+/);
-        const cmd = (parts.shift() || '').toLowerCase();
-        const arg = parts.join(' ');
-        if (cmd === 'exit' || cmd === 'quit' || cmd === 'q') break;
-        if (cmd === 'help' || cmd === '?') { printSlashHelp(); continue; }
-        if (cmd === 'config') { await runConfigPanel(rl); continue; }
-        if (cmd === 'docs') { await showDocs(arg); continue; }
-        if (cmd === 'new') {
-          try { await fetchJSON('/sessions/new', { method: 'POST' }); process.stdout.write('  ✓ new session\n'); }
-          catch (e) { process.stderr.write(`  [error] ${e.message}\n`); }
-          continue;
-        }
-        if (cmd === 'model') {
-          if (arg) { currentModel = arg; process.stdout.write(`  ✓ model → ${arg}\n`); }
-          else process.stdout.write(`  model: ${currentModel || '(server default)'}\n`);
-          continue;
-        }
-        process.stdout.write(`  unknown command: /${cmd} — type /help\n`);
-        continue;
-      }
-      const payload = { messages: [{ role: 'user', content: line }] };
-      if (currentModel) payload.model = currentModel;
-      try {
-        const data = await fetchJSON('/v1/messages', { method: 'POST', body: JSON.stringify(payload) }, messageTimeoutMs);
-        const text = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
-        process.stdout.write('\n' + (text || '(no text response)') + '\n\n');
-      } catch (err) {
-        process.stderr.write(`\n  [error] ${err.message}\n\n`);
-      }
-    }
-  } finally {
-    rl.close();
-  }
-  process.stdout.write('  Bye.\n');
-}
-
 async function run() {
   // --shutdown: stop the server and exit
   if (doShutdown) {
@@ -707,12 +357,13 @@ async function run() {
     return;
   }
 
-  // First-run onboarding: no API key anywhere → walk the user through setup before
-  // starting the server. Skipped for pure server-management invocations.
-  const SKIP_SETUP = ['--help', '-h', '--stats', '--sessions', '--tmux'].some((f) => args.includes(f));
-  if (!SKIP_SETUP && !hasApiKey()) {
-    await runSetupWizard();
-  }
+  // Update check for the direct path (`cortex "<prompt>"`, `cortex agent`). Commander
+  // subcommands are delegated earlier and run this same check via the CLI's preAction
+  // hook; this covers the non-delegated chat/agent path. Canonical service, best-effort.
+  try {
+    const { checkForUpdate } = await import('../dist/lifecycle/updateCheck.js');
+    await checkForUpdate();
+  } catch { /* dist absent in a source checkout, or check failed — never block */ }
 
   await ensureServer();
 
@@ -834,17 +485,9 @@ async function run() {
     }
   }
 
-  // No message provided. In an interactive terminal (and NOT agent/run mode), drop
-  // into the chat REPL so the shell never mangles ?/*/quotes. agent/run with no task,
-  // or any non-TTY (scripted) use, still gets the usage error — unchanged.
+  // Need a prompt for message commands
   if (!prompt) {
-    if (!__agentMode && process.stdin.isTTY) {
-      await runInteractiveChat();
-      return;
-    }
-    console.error(__agentMode
-      ? 'Usage: cortex agent "<task>"   (or cortex run "<task>")'
-      : 'Usage: cortex "your prompt here"');
+    console.error('Usage: cortex "your prompt here"');
     console.error('       cortex --help for more options');
     process.exit(1);
   }

@@ -142,23 +142,6 @@
     },
 
     {
-      "id": "harness_guide",
-      "name": "Nexus Cortex Harness Guide",
-      "file": "messages/HARNESS_GUIDE.md",
-      "conditions": {
-        "turnNumber": 0,
-        "sessionPhase": "start"
-      },
-      "injection": {
-        "position": "prepend",
-        "role": "system",
-        "priority": 5
-      },
-      "cache": true,
-      "description": "Authoritative facts about the Nexus Cortex harness itself (CLI, slash commands, config, providers, sessions, docs path) so the model can speak accurately about the product"
-    },
-
-    {
       "id": "cortex",
       "name": "CORTEX.md Project Context",
       "file": "CORTEX.md",

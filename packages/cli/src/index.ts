@@ -42,6 +42,10 @@ import { configSet } from './commands/config/set.js';
 import { configCategories } from './commands/config/categories.js';
 import { configCategory } from './commands/config/category.js';
 import { configReset } from './commands/config/reset.js';
+import { configInit } from './commands/config/init.js';
+import { updateCli } from './commands/update.js';
+import { uninstallCli } from './commands/uninstall.js';
+import { checkForUpdate } from './lifecycle/updateCheck.js';
 import { autoResearchEvaluate } from './commands/autoresearch/evaluate.js';
 import { autoResearchList } from './commands/autoresearch/list.js';
 import { autoResearchBench } from './commands/autoresearch/bench.js';
@@ -505,6 +509,14 @@ permissions
 const config = program.command('config').description('Configuration management');
 
 config
+  .command('init')
+  .description('Create the global config file (~/.cortex/.env) you can edit by hand')
+  .option('--force', 'Refresh the template (existing values are preserved)')
+  .action(async (opts) => {
+    await configInit({ force: opts.force });
+  });
+
+config
   .command('get [key]')
   .description('Get configuration value(s)')
   .action(async (key) => {
@@ -956,6 +968,32 @@ systemMessages
 
 // `ui` interactive command group moved to @nexus-cortex/tui (neoncortex / cli-full).
 
+// Package lifecycle commands
+program
+  .command('update')
+  .description('Update the global install to the latest published release')
+  .action(async () => {
+    await updateCli();
+  });
+
+program
+  .command('uninstall')
+  .description('Remove the global install (keeps ~/.cortex config unless --purge)')
+  .option('--purge', 'Also delete your config + API keys at ~/.cortex')
+  .option('-y, --yes', 'Skip the confirmation prompt')
+  .action(async (opts) => {
+    await uninstallCli({ purge: opts.purge, yes: opts.yes });
+  });
+
+// Startup update check — runs before every command except the lifecycle ones
+// (so it can't deadlock update/uninstall). Behaviour is set by CORTEX_UPDATE_POLICY;
+// TTL-cached and best-effort, so it's cheap and never blocks on network failure.
+program.hook('preAction', async (_thisCommand, actionCommand) => {
+  const name = actionCommand.name();
+  if (name === 'update' || name === 'uninstall') return;
+  await checkForUpdate();
+});
+
 // Error handling
 program.exitOverride((err) => {
   if (err.code !== 'commander.version' && err.code !== 'commander.helpDisplayed') {
@@ -965,5 +1003,8 @@ program.exitOverride((err) => {
   process.exit(0);
 });
 
-// Parse command line
-program.parse();
+// Parse command line (async: actions and the preAction update check are async)
+program.parseAsync(process.argv).catch((err) => {
+  console.error(chalk.red('Error:'), err?.message || err);
+  process.exit(1);
+});
