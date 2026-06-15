@@ -20,11 +20,14 @@ Run it three ways: **as a library** (`import { CortexOrchestrator }`), **as a he
 
 ```bash
 npm install -g nexus-cortex
+cortex                       # first run walks you through adding an API key
 ```
 
-That's it — the `cortex` command is now on your PATH. Add at least one provider key: rename **`.env.example`** to **`.env`** and put a valid LLM key in it (e.g. `ANTHROPIC_API_KEY=…`).
+The first time you run `cortex`, an interactive setup asks which provider you use, takes your API key, and picks a default model — saved to `~/.cortex/.env` (so it works from any folder). Re-run it any time with `cortex config init`.
 
-Then just talk to it — **the server auto-starts on first use**, no separate step:
+> Prefer environment variables? Skip the wizard by exporting a key first, e.g. `export ANTHROPIC_API_KEY=sk-ant-…` and `export DEFAULT_MODEL_ID=claude-sonnet-4-6`.
+
+Then just talk to it — **the server auto-starts on first use**, no separate step (remember to quote your prompt so the shell doesn't eat `?`/`*`):
 
 ```bash
 # Chat (multi-turn — the session persists across calls)

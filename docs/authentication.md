@@ -1,28 +1,43 @@
 # Authentication & API Keys
 
-Nexus Cortex reads all configuration from a `.env` file at the repo root. Copy the tracked
-template and add only the keys for the providers you actually use:
+The easiest way to add a key is the interactive setup — it runs automatically the first
+time you start `cortex`, or any time on demand:
 
 ```bash
-cp .env.example .env        # then edit .env
+cortex config init
 ```
 
-`.env` is gitignored, so your keys are never committed.
+It asks which provider you use, takes your API key, and picks a default model — saving them
+to `~/.cortex/.env` (a global config, so `cortex` works from any folder). The file is written
+user-only (`chmod 600`) and is never committed.
+
+### Where config is read from
+
+Cortex loads, in priority order: a `.env` in your current folder → the package dir →
+`~/.cortex/.env` (the global config) → plain environment variables. So you can also just
+export a variable instead of using the wizard:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-…
+export DEFAULT_MODEL_ID=claude-sonnet-4-6
+```
+
+> **Set a `DEFAULT_MODEL_ID` that matches your key.** The built-in default is a Gemini model,
+> so an Anthropic key alone won't be used until you also set the model (the wizard does this
+> for you).
 
 ## Provider API keys
 
-Set the variables for the providers you use (the full annotated list is in `.env.example`):
-
-| Variable | Provider |
-|----------|----------|
-| `ANTHROPIC_API_KEY` | Claude (Anthropic) |
-| `OPENAI_API_KEY` | OpenAI (GPT / o-series) |
-| `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | Google Gemini |
-| `XAI_API_KEY` | xAI (Grok) |
-| `DEEPSEEK_API_KEY` | DeepSeek |
+| Variable | Provider | Example default model |
+|----------|----------|-----------------------|
+| `ANTHROPIC_API_KEY` | Claude (Anthropic) | `claude-sonnet-4-6` |
+| `OPENAI_API_KEY` | OpenAI (GPT / o-series) | `gpt-5-mini` |
+| `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | Google Gemini | `gemini-2.5-flash` |
+| `XAI_API_KEY` | xAI (Grok) | `grok-4.3` |
+| `DEEPSEEK_API_KEY` | DeepSeek | `deepseek-v4-pro` |
 
 Other providers (Cloudflare Workers AI, Zhipu/GLM, Qwen, Moonshot/Kimi, MiniMax, Mercury)
-use the same pattern — see `.env.example`. Run `cortex models list` for the live set.
+use the same pattern. Run `cortex models list` for the live set.
 
 ## Claude: API key *or* OAuth
 

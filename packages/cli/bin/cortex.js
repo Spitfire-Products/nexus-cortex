@@ -112,6 +112,86 @@ if (args.includes('--version') || args.includes('-v')) {
   process.exit(0);
 }
 
+// ── Setup wizard (interactive API-key onboarding) ─────────────────
+// Global config lives at ~/.cortex/.env so a global npm install works from ANY
+// folder (the server loads it). Runs on `cortex config init` and on first run
+// when no key is configured anywhere.
+const PROVIDERS = [
+  { name: 'Anthropic (Claude)', keyVar: 'ANTHROPIC_API_KEY', model: 'claude-sonnet-4-6', hint: 'sk-ant-…' },
+  { name: 'OpenAI (GPT)',       keyVar: 'OPENAI_API_KEY',    model: 'gpt-5-mini',        hint: 'sk-…' },
+  { name: 'Google (Gemini)',    keyVar: 'GEMINI_API_KEY',    model: 'gemini-2.5-flash',  hint: 'AIza…' },
+  { name: 'DeepSeek',           keyVar: 'DEEPSEEK_API_KEY',  model: 'deepseek-v4-pro',   hint: 'sk-…' },
+  { name: 'xAI (Grok)',         keyVar: 'XAI_API_KEY',       model: 'grok-4.3',          hint: 'xai-…' },
+];
+const KEY_VARS = [...PROVIDERS.map((p) => p.keyVar), 'GOOGLE_API_KEY'];
+const GLOBAL_ENV = join(homedir(), '.cortex', '.env');
+
+function hasApiKey() {
+  if (KEY_VARS.some((k) => (process.env[k] || '').trim())) return true;
+  for (const f of [GLOBAL_ENV, join(process.cwd(), '.env')]) {
+    try {
+      const txt = readFileSync(f, 'utf8');
+      if (KEY_VARS.some((k) => new RegExp('^' + k + '=\\S', 'm').test(txt))) return true;
+    } catch { /* file absent */ }
+  }
+  return false;
+}
+
+function writeGlobalEnv(kv) {
+  mkdirSync(dirname(GLOBAL_ENV), { recursive: true });
+  let lines = [];
+  try { lines = readFileSync(GLOBAL_ENV, 'utf8').split('\n').filter((l) => l.length); } catch { /* new file */ }
+  for (const [k, v] of Object.entries(kv)) {
+    const i = lines.findIndex((l) => l.startsWith(k + '='));
+    if (i >= 0) lines[i] = `${k}=${v}`; else lines.push(`${k}=${v}`);
+  }
+  writeFileSync(GLOBAL_ENV, lines.join('\n') + '\n', { mode: 0o600 }); // user-only — holds a secret
+}
+
+async function runSetupWizard() {
+  if (!process.stdin.isTTY) {
+    process.stderr.write(
+      '\n  No API key configured. Run `cortex config init` for interactive setup, or set one:\n' +
+      '    export ANTHROPIC_API_KEY=sk-ant-…\n' +
+      '    export DEFAULT_MODEL_ID=claude-sonnet-4-6\n\n',
+    );
+    process.exit(1);
+  }
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    process.stdout.write('\n  Welcome to Nexus Cortex — quick setup (~30s).\n\n  Which AI provider?\n');
+    PROVIDERS.forEach((p, i) => process.stdout.write(`    ${i + 1}) ${p.name}\n`));
+    let choice;
+    for (;;) {
+      const n = parseInt((await rl.question(`\n  Choose 1-${PROVIDERS.length}: `)).trim(), 10);
+      if (n >= 1 && n <= PROVIDERS.length) { choice = PROVIDERS[n - 1]; break; }
+      process.stdout.write(`  Please enter a number 1-${PROVIDERS.length}.\n`);
+    }
+    let key = '';
+    while (!key) {
+      key = (await rl.question(`\n  Paste your ${choice.name} API key (${choice.hint}): `)).trim();
+      if (!key) process.stdout.write('  An API key is required.\n');
+    }
+    const model = (await rl.question(`\n  Default model [${choice.model}]: `)).trim() || choice.model;
+    writeGlobalEnv({ [choice.keyVar]: key, DEFAULT_MODEL_ID: model });
+    process.stdout.write(`\n  ✓ Saved to ${GLOBAL_ENV}\n  You're set — try:  cortex "what is 2 + 2?"\n\n`);
+  } catch {
+    // Ctrl-C / Ctrl-D / closed input — exit cleanly instead of dumping a stack trace.
+    process.stdout.write('\n  Setup cancelled. Run `cortex config init` any time to finish.\n');
+    rl.close();
+    process.exit(1);
+  } finally {
+    rl.close();
+  }
+}
+
+// `cortex config init` — interactive setup (intercept before the Commander handoff).
+if (args[0] === 'config' && args[1] === 'init') {
+  await runSetupWizard();
+  process.exit(0);
+}
+
 // ── Headless Commander delegation ─────────────────────────────────
 // `cortex` is primarily the HTTP chat/PR client; the headless Commander program
 // (autoresearch, models, message, mcp, config, …) lives in dist/index.js. If the
@@ -388,6 +468,13 @@ async function run() {
   if (doShutdown) {
     await shutdownServer();
     return;
+  }
+
+  // First-run onboarding: no API key anywhere → walk the user through setup before
+  // starting the server. Skipped for pure server-management invocations.
+  const SKIP_SETUP = ['--help', '-h', '--stats', '--sessions', '--tmux'].some((f) => args.includes(f));
+  if (!SKIP_SETUP && !hasApiKey()) {
+    await runSetupWizard();
   }
 
   await ensureServer();

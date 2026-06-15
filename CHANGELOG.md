@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.29.0] - 2026-06-15
+
+### Added
+
+- **Interactive first-run setup + `cortex config init`.** The first time you run `cortex` with no
+  key configured, it walks you through picking a provider, pasting your API key, and choosing a
+  default model — no hunting for files, no manual `export`s. Saved to a **global** `~/.cortex/.env`
+  (written user-only, `chmod 600`), so it works from any folder. Re-run any time with
+  `cortex config init`.
+- **Global config (`~/.cortex/.env`).** The server now reads keys from `~/.cortex/.env` in addition
+  to a project `.env` and environment variables (priority: project `.env` → package dir → global →
+  env). This is what makes a global npm install usable without a project folder.
+
+### Fixed
+
+- **Onboarding docs were wrong for npm installs.** The quick start said "rename `.env.example` to
+  `.env`", but that file doesn't ship in the package and a global install puts nothing in your
+  folders. The README/auth docs now point to the setup wizard, note that prompts must be quoted
+  (the shell eats `?`/`*`), and flag that `DEFAULT_MODEL_ID` must match your key (the default is a
+  Gemini model).
+
 ## [4.28.0] - 2026-06-15
 
 ### Added

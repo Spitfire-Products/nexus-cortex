@@ -36,15 +36,20 @@ if (!process.env.CORTEX_ROOT) {
   else if (fs.existsSync(path.join(serverPkgRoot, '.cortex'))) process.env.CORTEX_ROOT = serverPkgRoot;
 }
 
-// Load .env from cwd first (user's project), then package root (dev/monorepo).
-// dotenv's default is "first wins" — cwd values take priority.
+// Load .env from cwd first (user's project), then package root (dev/monorepo),
+// then the GLOBAL config (~/.cortex/.env — written by `cortex config init` / the
+// first-run setup wizard, so a global npm install works from ANY folder).
+// dotenv's default is "first wins" — cwd > pkg > global. .local files override last.
 const cwdEnv = path.join(process.cwd(), '.env');
 const cwdEnvLocal = path.join(process.cwd(), '.env.local');
 const pkgEnv = path.join(packageRoot, '.env');
 const pkgEnvLocal = path.join(packageRoot, '.env.local');
+const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+const globalEnv = homeDir ? path.join(homeDir, '.cortex', '.env') : '';
 
 config({ path: cwdEnv, quiet: true });
 config({ path: pkgEnv, quiet: true });
+if (globalEnv) config({ path: globalEnv, quiet: true });
 config({ path: cwdEnvLocal, override: true, quiet: true });
 config({ path: pkgEnvLocal, override: true, quiet: true });
 
