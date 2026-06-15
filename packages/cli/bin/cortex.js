@@ -154,6 +154,19 @@ if (args.includes('--update')) {
   process.exit(res.status || 1);
 }
 
+// `cortex --uninstall` — remove the global install. Config/keys at ~/.cortex are LEFT
+// in place (so you don't lose your API key by accident); the message says how to remove them.
+if (args.includes('--uninstall')) {
+  process.stdout.write('Uninstalling nexus-cortex…\n\n');
+  const res = spawnSync('npm', ['uninstall', '-g', 'nexus-cortex'], { stdio: 'inherit' });
+  if (res.status === 0) {
+    process.stdout.write('\n✓ Uninstalled. Your config and API key remain at ~/.cortex — to remove those too:\n  rm -rf ~/.cortex\n');
+    process.exit(0);
+  }
+  process.stderr.write('\nUninstall failed — see the npm output above. If it is a permissions error, try:\n  sudo npm uninstall -g nexus-cortex\n');
+  process.exit(res.status || 1);
+}
+
 // Update-available notice (skip for machine-readable / quiet output).
 if (!args.includes('--json') && !args.includes('--quiet') && !args.includes('-q')) {
   notifyUpdateAvailable();
@@ -371,6 +384,7 @@ FLAGS:
   --cwd DIR           (agent) Run in DIR — the agent's file tools operate there
   --update            Update nexus-cortex to the latest version (npm i -g)
                       (a notice appears when you're behind; CORTEX_NO_UPDATE_NOTICE=true to silence)
+  --uninstall         Remove the global nexus-cortex install (keeps ~/.cortex config)
   --shutdown          Stop the running server and exit
   --tmux              List active tmux sessions with dashboard URLs
   --stats             Show current session statistics

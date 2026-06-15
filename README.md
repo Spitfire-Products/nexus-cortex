@@ -20,25 +20,29 @@ Run it three ways: **as a library** (`import { CortexOrchestrator }`), **as a he
 
 ```bash
 npm install -g nexus-cortex
-cortex                       # first run walks you through adding an API key
+cortex                       # first run sets up your API key, then drops you into chat
 ```
 
 The first time you run `cortex`, an interactive setup asks which provider you use, takes your API key, and picks a default model — saved to `~/.cortex/.env` (so it works from any folder). Re-run it any time with `cortex config init`.
 
-> Prefer environment variables? Skip the wizard by exporting a key first, e.g. `export ANTHROPIC_API_KEY=sk-ant-…` and `export DEFAULT_MODEL_ID=claude-sonnet-4-6`.
+Then you're in **interactive chat** — just type, no shell quoting to worry about. The server auto-starts and the session persists across messages:
 
-Then just talk to it — **the server auto-starts on first use**, no separate step (remember to quote your prompt so the shell doesn't eat `?`/`*`):
+```text
+cortex> what is this project?
+cortex> now summarize the largest file
+```
+Type `exit` (or Ctrl-D) to leave.
+
+Prefer one-shot or scripting? Pass the message as an argument (quote it so the shell doesn't eat `?`/`*`), or run the autonomous agent:
 
 ```bash
-# Chat (multi-turn — the session persists across calls)
-cortex "What is this project?"
-cortex "Now summarize the largest file"
-
-# One-shot autonomous agent in any directory (alias: `cortex run`)
-cortex agent --cwd ./my-project "add a --version flag to the CLI and run the tests"
+cortex "What is this project?"                                            # one-shot
+cortex agent --cwd ./my-project "add a --version flag and run the tests"  # autonomous (alias: cortex run)
 ```
 
-> Claude also works with a Claude.ai Pro/Max OAuth subscription instead of an API key — see [docs/authentication.md](docs/authentication.md). For advanced `.env` setup, see [docs/configuration.md](docs/configuration.md).
+**Staying current:** when a new release is out you'll see a one-line notice — update with `cortex --update`. Remove it with `cortex --uninstall`.
+
+> Prefer environment variables? Export a key instead of the wizard: `export ANTHROPIC_API_KEY=sk-ant-…` and `export DEFAULT_MODEL_ID=claude-sonnet-4-6`. Claude also works with a Claude.ai Pro/Max OAuth subscription instead of an API key — see [docs/authentication.md](docs/authentication.md).
 
 ## Why Nexus Cortex
 

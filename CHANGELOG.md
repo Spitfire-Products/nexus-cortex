@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.32.0] - 2026-06-15
+
+### Added
+
+- **`cortex --uninstall`** — removes the global install (`npm uninstall -g`), with visible output;
+  leaves your `~/.cortex` config/key in place and tells you how to remove those too.
+
+### Docs
+
+- README quick start brought current: leads with the **interactive chat** flow (no shell quoting),
+  shows one-shot/agent as alternatives, and documents `cortex --update` / `cortex --uninstall`.
+
 ## [4.31.0] - 2026-06-15
 
 ### Changed
