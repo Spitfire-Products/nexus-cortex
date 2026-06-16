@@ -25,7 +25,8 @@
 import { spawn, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
-import { existsSync, readFileSync, realpathSync } from 'fs';
+import { existsSync, readFileSync, realpathSync, mkdirSync, openSync } from 'fs';
+import { homedir } from 'os';
 import { createRequire } from 'module';
 
 const __cortex_require = createRequire(import.meta.url);
@@ -299,8 +300,30 @@ async function startServer() {
   if (idleTimeoutFlag) {
     serverArgs.push('--idle-timeout', idleTimeoutFlag);
   }
+  // Send the detached server's stdout+stderr to a LOG FILE, not a pipe.
+  //
+  // Previously stdio was ['ignore','pipe','pipe']. The client read-ends of those
+  // pipes close when this short-lived one-shot client EXITS after its command —
+  // so the NEXT command makes the still-running detached server write to a broken
+  // pipe (EPIPE), which disrupts it and the client's fetch dies with a bare
+  // "fetch failed". `browse` writes the most server output (its sub-agent), so it
+  // was the reliable trigger; a quiet command like 2+2 often slipped through,
+  // which made the failure look intermittent.
+  //
+  // A file sink has no reader to disappear, so the server never hits EPIPE — and
+  // it gives users/containers a real server log to inspect. Readiness is detected
+  // via /health polling below, so we never needed to parse the server's stdout.
+  // 'w' truncates per fresh server spawn, bounding growth to one server lifetime.
+  const logPath = getServerLogPath();
+  let logFd;
+  try {
+    mkdirSync(dirname(logPath), { recursive: true });
+    logFd = openSync(logPath, 'w');
+  } catch {
+    logFd = 'ignore'; // last resort: never fall back to an undrained pipe
+  }
   serverProcess = spawn('node', serverArgs, {
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', logFd, logFd],
     // Run the server in — and treat as project root — the directory cortex was invoked
     // from, so `cd foo && cortex "..."` operates on `foo` (not the home dir or a stale
     // PROJECT_PATH from the global ~/.cortex/.env). An explicitly-exported PROJECT_PATH /
@@ -316,30 +339,23 @@ async function startServer() {
   });
   serverProcess.unref();
 
-  serverProcess.stderr.on('data', (chunk) => {
-    const line = chunk.toString();
-    if (line.includes('[ERROR]') || line.includes('Failed to start')) {
-      process.stderr.write(line);
-    }
-  });
-
   // Wait for healthy (up to 15s)
   for (let i = 0; i < 30; i++) {
     await new Promise(r => setTimeout(r, 500));
     if (await isServerUp()) {
       process.stderr.write(`[cortex] Server ready on ${BASE_URL}\n`);
-      // The server is detached + unref'd so it persists on its own. Its piped
-      // stdio handles, however, keep THIS short-lived client's event loop alive
-      // — so after a one-shot the client would hang until killed. Unref the
-      // pipes so the client can exit cleanly once its request completes while
-      // the background server keeps running.
-      serverProcess.stdout?.unref?.();
-      serverProcess.stderr?.unref?.();
       return;
     }
   }
-  console.error('[cortex] Server failed to start within 15s');
+  console.error(`[cortex] Server failed to start within 15s (see ${logPath})`);
   process.exit(1);
+}
+
+// Where the auto-started background server logs to. Honors CORTEX_HOME/HOME so
+// it lands beside the rest of the global config (~/.cortex/server.log).
+function getServerLogPath() {
+  const base = process.env.CORTEX_HOME || homedir() || process.cwd();
+  return join(base, '.cortex', 'server.log');
 }
 
 async function ensureServer() {

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.36.2] - 2026-06-16
+
+### Fixed
+
+- **`browse` (and other output-heavy tools) no longer fail with a bare `fetch failed` against the
+  auto-started background server.** The `cortex` CLI auto-starts a detached server and piped its
+  stdout/stderr to the short-lived client. When the one-shot client exited after its command, the
+  read ends of those pipes closed — so the *next* command made the still-running server write to a
+  broken pipe (EPIPE), disrupting it and surfacing as `fetch failed` in the client. `browse`
+  produces the most server output (via its sub-agent), so it triggered this almost every time,
+  while a quiet command like `2+2` often slipped through — which made it look intermittent. The
+  detached server now logs to a file (`~/.cortex/server.log`) instead of pipes, so there is no
+  reader to disappear and no EPIPE. This also gives a persistent server log to inspect. Readiness
+  is detected via `/health` polling, so nothing depended on parsing the server's stdout.
+  Verified end-to-end: `2+2` then `browse` against the same detached server now both succeed.
+
+---
+
 ## [4.36.1] - 2026-06-16
 
 ### Added
