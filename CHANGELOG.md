@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.37.0] - 2026-06-16
+
+### Added
+
+- **First-run config bootstrap — `.env.example` becomes `~/.cortex/.env`, with no install
+  ceremony.** Previously you had to invoke `cortex` once just to create `~/.cortex/`, drop in a
+  `.env`, `--shutdown`, and invoke again — because the first run started a *keyless* server that
+  had already cached its (empty) config. Now, before starting any server, `cortex` checks whether
+  a provider key is resolvable from the environment **or** a `.env` (cwd or `~/.cortex/`). 
+  - If a key is found → it just runs (true one-shot). A secrets-store deployment (Cloudflare/Replit)
+    with blank `.env` values works directly: blank values defer to the environment, so the injected
+    secret wins — and **nothing is written** to disk.
+  - If no key is found → it copies the shipped, all-blank `.env.example` to `~/.cortex/.env` (the
+    findable, editable location), prints exactly what to add, and **exits without starting a keyless
+    server** (so there's no `--shutdown`/re-invoke dance). Fill the file (or inject the key via your
+    environment) and run again.
+  
+  No `postinstall` script is involved: the package ships `.env.example` and the first run renames it
+  to `.env`. All keys in the template are blank, so a value set in the environment always takes
+  precedence.
+
+---
+
 ## [4.36.2] - 2026-06-16
 
 ### Fixed

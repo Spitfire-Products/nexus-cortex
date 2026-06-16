@@ -60,6 +60,16 @@ if (existsSync(memorySeed)) {
   copied++;
 }
 
+// Vendor the blank-value .env.example into the package root. The `cortex` first-run
+// preflight copies it to ~/.cortex/.env (.env.example becomes .env — no codegen, no
+// postinstall). All keys are blank so a value in the environment/secrets store wins.
+const rootEnvExample = resolve(pkgDir, '..', '..', '.env.example');
+if (existsSync(rootEnvExample)) {
+  copyFileSync(rootEnvExample, join(pkgDir, '.env.example'));
+  copied++;
+  console.log(`[copy-pkg-cortex-scaffold] vendored .env.example into ${pkgDir}`);
+}
+
 if (copied === 0) {
   console.error('[copy-pkg-cortex-scaffold] nothing copied — scaffold dirs missing from repo-root .cortex');
   process.exit(1);

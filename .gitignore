@@ -52,6 +52,9 @@ coverage/
 # prepack; root .cortex/ is the source of truth) — a build artifact, never committed:
 packages/cli/.cortex/
 packages/server/.cortex/
+# Vendored at prepack from the repo-root .env.example (source of truth) — build artifact:
+packages/cli/.env.example
+packages/server/.env.example
 **/.cortex/sessions/
 **/.cortex/test-sessions/
 **/.cortex/checkpoints/

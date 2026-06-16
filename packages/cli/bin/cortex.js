@@ -25,7 +25,7 @@
 import { spawn, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
-import { existsSync, readFileSync, realpathSync, mkdirSync, openSync } from 'fs';
+import { existsSync, readFileSync, realpathSync, mkdirSync, openSync, writeFileSync, copyFileSync } from 'fs';
 import { homedir } from 'os';
 import { createRequire } from 'module';
 
@@ -354,8 +354,85 @@ async function startServer() {
 // Where the auto-started background server logs to. Honors CORTEX_HOME/HOME so
 // it lands beside the rest of the global config (~/.cortex/server.log).
 function getServerLogPath() {
+  return join(getGlobalCortexDir(), 'server.log');
+}
+
+function getGlobalCortexDir() {
   const base = process.env.CORTEX_HOME || homedir() || process.cwd();
-  return join(base, '.cortex', 'server.log');
+  return join(base, '.cortex');
+}
+
+// Is at least one provider API key resolvable — from the environment/secrets store
+// OR from a .env file (cwd or global)? A BLANK value in a .env (e.g. `DEEPSEEK_API_KEY=`)
+// does NOT count: the loader treats it as falsy and falls through to process.env, which is
+// exactly how the secrets-store model works (blank .env + key injected via env). So we only
+// count a non-empty, non-commented assignment, or a non-empty process.env var.
+function hasAnyApiKey() {
+  const isKeyName = (k) => /(_API_KEY|_API_TOKEN|_OAUTH_TOKEN)$/.test(k);
+  for (const [k, v] of Object.entries(process.env)) {
+    if (isKeyName(k) && String(v || '').trim()) return true;
+  }
+  for (const p of [join(process.cwd(), '.env'), join(getGlobalCortexDir(), '.env')]) {
+    try {
+      if (!existsSync(p)) continue;
+      for (const line of readFileSync(p, 'utf8').split('\n')) {
+        if (/^\s*#/.test(line)) continue;
+        const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(\S.*?)\s*$/);
+        if (m && isKeyName(m[1]) && m[2].trim()) return true;
+      }
+    } catch { /* unreadable .env — ignore */ }
+  }
+  return false;
+}
+
+// A blank-value config template — mirrors the project's own .env: every key declared but
+// EMPTY, so the loader falls through to the environment/secrets store. NEVER put a non-empty
+// placeholder here — it would override a real secret in process.env.
+const BLANK_ENV_TEMPLATE = `# Nexus Cortex configuration.
+# Blank values are read from your environment / secrets store (a value set in the
+# environment wins when the line below is left blank). Fill a key here for local use,
+# or leave blank and inject it via your secrets store. Run "cortex config init --force"
+# for the full, commented template.
+
+DEFAULT_MODEL_ID=deepseek-v4-pro
+
+ANTHROPIC_API_KEY=
+OPENAI_API_KEY=
+GEMINI_API_KEY=
+DEEPSEEK_API_KEY=
+XAI_API_KEY=
+`;
+
+// Preflight for the prompt path: a model run needs a key. If none is resolvable, seed a
+// blank ~/.cortex/.env so there's a findable file to edit (it didn't exist before the first
+// run), print clear guidance, and EXIT WITHOUT starting a server — so we never leave a
+// keyless server running that would force a --shutdown + re-invoke. When a key IS present
+// (a filled .env, or secrets in the environment), this is a no-op and the run proceeds —
+// one-shot. The container case (secrets in env) hits the no-op path and writes nothing.
+function ensureKeysOrExit() {
+  if (hasAnyApiKey()) return;
+  const dir = getGlobalCortexDir();
+  const envPath = join(dir, '.env');
+  let seeded = false;
+  if (!existsSync(envPath)) {
+    try {
+      mkdirSync(dir, { recursive: true });
+      // Prefer the shipped .env.example (the full, canonical blank-value template) and
+      // copy it to ~/.cortex/.env — i.e. .env.example becomes .env, no codegen. Fall back
+      // to the minimal inline template only if the example isn't found in the install.
+      const example = [join(CLI_PKG_ROOT, '.env.example'), join(MONOREPO_ROOT, '.env.example')]
+        .find((p) => existsSync(p));
+      if (example) copyFileSync(example, envPath);
+      else writeFileSync(envPath, BLANK_ENV_TEMPLATE);
+      seeded = true;
+    } catch { /* read-only home — still print guidance below */ }
+  }
+  process.stderr.write('\n[cortex] No API key found — a model run needs one.\n');
+  if (seeded) process.stderr.write(`[cortex] Created ${envPath}\n`);
+  process.stderr.write('[cortex] Add a provider key, then run again:\n');
+  process.stderr.write(`[cortex]   - edit ${envPath}  (e.g. DEEPSEEK_API_KEY=sk-...)\n`);
+  process.stderr.write('[cortex]   - or inject it via your environment / secrets store (read from there too)\n');
+  process.exit(1);
 }
 
 async function ensureServer() {
@@ -405,6 +482,14 @@ async function run() {
     const { checkForUpdate } = await import('../dist/lifecycle/updateCheck.js');
     await checkForUpdate();
   } catch { /* dist absent in a source checkout, or check failed — never block */ }
+
+  // A prompt/agent run needs a model key. Check BEFORE starting the server so we never
+  // leave a keyless server running (which forced the old --shutdown + re-invoke dance).
+  // Read-only ops (--stats/--sessions/--tmux/--pr, no prompt) don't need a key and are
+  // fine against a keyless server, so only gate the actual prompt path.
+  if (prompt) {
+    ensureKeysOrExit();
+  }
 
   await ensureServer();
 
