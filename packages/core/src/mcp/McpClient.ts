@@ -13,6 +13,21 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { Tool, Resource, Prompt } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from '../utils/logger.js';
 
+/**
+ * Format an error with its underlying cause. Node's fetch throws a bare
+ * "fetch failed" whose real reason (ECONNRESET, a TLS/cert error, ENOTFOUND,
+ * HTTP/2 issues, an HTTP status, etc.) lives in `error.cause` — surface it so
+ * MCP connection failures are diagnosable instead of an opaque "fetch failed".
+ */
+function describeError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const cause = (error as { cause?: unknown }).cause;
+  if (!cause) return error.message;
+  const causeMsg = cause instanceof Error ? cause.message : String(cause);
+  const code = (cause as { code?: string })?.code ? ` [${(cause as { code?: string }).code}]` : '';
+  return `${error.message} (cause: ${causeMsg}${code})`;
+}
+
 export type McpTransportType = 'stdio' | 'http';
 
 export interface McpReconnectionOptions {
@@ -111,115 +126,152 @@ export class McpClient {
 
     this.status = McpConnectionStatus.CONNECTING;
 
-    try {
-      // Create MCP client
-      this.client = new Client({
-        name: 'nexus-cortex-mcp-client',
-        version: '1.0.0',
-      });
+    const transportType: McpTransportType =
+      this.config.transport ?? (this.config.url ? 'http' : 'stdio');
 
-      // Resolve transport type — default to 'http' when url is set, else 'stdio'
-      const transportType: McpTransportType =
-        this.config.transport ?? (this.config.url ? 'http' : 'stdio');
+    // For http: try WITH the undici keep-alive dispatcher, then retry WITHOUT it.
+    // A cross-version undici Agent — e.g. the standalone undici-5 package's Agent on
+    // Node 23's built-in undici-7 — makes the very first fetch throw a bare
+    // "fetch failed", which broke MCP http connections entirely on newer Node. The
+    // dispatcher is only a cosmetic SSE idle keep-alive, so a dispatcher-less
+    // connection is fully functional (the SDK reconnects genuine idle drops).
+    const attempts = transportType === 'http' ? [true, false] : [false];
+    let lastError: unknown;
 
-      if (transportType === 'http') {
-        if (!this.config.url) {
-          throw new Error('http transport requires a url to be specified');
+    for (let i = 0; i < attempts.length; i++) {
+      try {
+        await this.openTransportAndConnect(transportType, attempts[i] === true);
+        this.status = McpConnectionStatus.CONNECTED;
+        if (i > 0) {
+          logger.debug(
+            `[MCP ${this.config.name}] connected without the undici keep-alive dispatcher ` +
+            `(it is incompatible with this Node's built-in undici)`,
+          );
         }
+        return;
+      } catch (error) {
+        lastError = error;
+        await this.safeCloseAfterFailedConnect();
+      }
+    }
 
-        // Disable undici's response body-inactivity timeout for the long-lived
-        // SSE stream. Without this, an idle server->client stream (no messages
-        // between tool calls) is terminated after undici's default (~300s),
-        // surfacing as "SSE stream disconnected: TypeError: terminated" and a
-        // needless reconnect every few minutes. The SDK's reconnection still
-        // covers genuine drops; this just stops the idle-timeout churn.
-        const dispatcher = await this.createNoIdleTimeoutDispatcher();
+    this.status = McpConnectionStatus.ERROR;
+    throw new Error(
+      `Failed to connect to MCP server '${this.config.name}': ${describeError(lastError)}`,
+    );
+  }
 
-        const requestInit: Record<string, unknown> = {
-          ...(this.config.headers ? { headers: this.config.headers } : {}),
-          ...(dispatcher ? { dispatcher } : {}),
-        };
+  /**
+   * Build the transport (http or stdio) and complete the MCP handshake.
+   * `useDispatcher` gates the optional undici keep-alive dispatcher (http only).
+   */
+  private async openTransportAndConnect(
+    transportType: McpTransportType,
+    useDispatcher: boolean,
+  ): Promise<void> {
+    this.client = new Client({
+      name: 'nexus-cortex-mcp-client',
+      version: '1.0.0',
+    });
 
-        this.transport = new StreamableHTTPClientTransport(
-          new URL(this.config.url),
-          {
-            ...(Object.keys(requestInit).length > 0
-              ? { requestInit: requestInit as RequestInit }
-              : {}),
-            reconnectionOptions: this.getResolvedReconnectionOptions(),
-          },
-        );
-      } else {
-        if (!this.config.command) {
-          throw new Error('stdio transport requires a command to be specified');
-        }
-
-        this.transport = new StdioClientTransport({
-          command: this.config.command,
-          args: this.config.args || [],
-          env: {
-            ...process.env,
-            ...(this.config.env || {}),
-          } as Record<string, string>,
-          cwd: this.config.cwd,
-          stderr: 'pipe',
-        });
-
-        // Log stderr if debug mode (stdio only)
-        if (this.debugMode && 'stderr' in this.transport) {
-          const stderr = (this.transport as any).stderr;
-          if (stderr) {
-            stderr.on('data', (data: Buffer) => {
-              console.error(`[MCP STDERR (${this.config.name})]:`, data.toString().trim());
-            });
-          }
-        }
+    if (transportType === 'http') {
+      if (!this.config.url) {
+        throw new Error('http transport requires a url to be specified');
       }
 
-      // Setup error handler. HTTP/SSE transports drop the long-lived stream
-      // periodically (idle timeouts, key rotation, network blips); the SDK
-      // auto-reconnects per reconnectionOptions. Treat those as recoverable —
-      // a gated debug note, NOT a console.error stack that corrupts the TUI,
-      // and NOT a permanent ERROR state (which would make isConnected() throw
-      // mid-reconnect). Only a terminal "max retries exceeded" or a genuine
-      // protocol error flips the client to ERROR.
-      this.client.onerror = (error) => {
-        const msg = error instanceof Error ? error.message : String(error);
-        // Errors fired while we are intentionally tearing the connection down
-        // (the SSE stream aborts on close) are expected noise — ignore them.
-        if (
-          this.status === McpConnectionStatus.DISCONNECTING ||
-          this.status === McpConnectionStatus.DISCONNECTED
-        ) {
-          logger.debug(`[MCP ${this.config.name}] error during teardown (ignored): ${msg}`);
-          return;
-        }
-        if (this.isRecoverableStreamError(msg)) {
-          this.status = McpConnectionStatus.RECONNECTING;
-          logger.debug(`[MCP ${this.config.name}] stream drop; auto-reconnecting: ${msg}`);
-        } else {
-          this.status = McpConnectionStatus.ERROR;
-          logger.warn(`[MCP ${this.config.name}] ${msg}`);
-        }
+      // Disable undici's response body-inactivity timeout for the long-lived SSE
+      // stream (prevents a needless reconnect every few minutes on idle). Skipped
+      // on the retry attempt to dodge cross-Node-version undici dispatcher breakage.
+      const dispatcher = useDispatcher ? await this.createNoIdleTimeoutDispatcher() : undefined;
+
+      const requestInit: Record<string, unknown> = {
+        ...(this.config.headers ? { headers: this.config.headers } : {}),
+        ...(dispatcher ? { dispatcher } : {}),
       };
 
-      // Setup close handler
-      this.client.onclose = () => {
-        this.status = McpConnectionStatus.DISCONNECTED;
-      };
+      this.transport = new StreamableHTTPClientTransport(
+        new URL(this.config.url),
+        {
+          ...(Object.keys(requestInit).length > 0
+            ? { requestInit: requestInit as RequestInit }
+            : {}),
+          reconnectionOptions: this.getResolvedReconnectionOptions(),
+        },
+      );
+    } else {
+      if (!this.config.command) {
+        throw new Error('stdio transport requires a command to be specified');
+      }
 
-      // Connect to server
-      await this.client.connect(this.transport, {
-        timeout: this.config.timeout ?? 10000, // 10 second default
+      this.transport = new StdioClientTransport({
+        command: this.config.command,
+        args: this.config.args || [],
+        env: {
+          ...process.env,
+          ...(this.config.env || {}),
+        } as Record<string, string>,
+        cwd: this.config.cwd,
+        stderr: 'pipe',
       });
 
-      this.status = McpConnectionStatus.CONNECTED;
-    } catch (error) {
-      this.status = McpConnectionStatus.ERROR;
-      throw new Error(
-        `Failed to connect to MCP server '${this.config.name}': ${error instanceof Error ? error.message : String(error)}`,
-      );
+      // Log stderr if debug mode (stdio only)
+      if (this.debugMode && 'stderr' in this.transport) {
+        const stderr = (this.transport as any).stderr;
+        if (stderr) {
+          stderr.on('data', (data: Buffer) => {
+            console.error(`[MCP STDERR (${this.config.name})]:`, data.toString().trim());
+          });
+        }
+      }
     }
+
+    // Setup error handler. HTTP/SSE transports drop the long-lived stream
+    // periodically (idle timeouts, key rotation, network blips); the SDK
+    // auto-reconnects per reconnectionOptions. Treat those as recoverable —
+    // a gated debug note, NOT a console.error stack that corrupts the TUI,
+    // and NOT a permanent ERROR state (which would make isConnected() throw
+    // mid-reconnect). Only a terminal "max retries exceeded" or a genuine
+    // protocol error flips the client to ERROR.
+    this.client.onerror = (error) => {
+      const msg = describeError(error);
+      // Errors fired while we are intentionally tearing the connection down
+      // (the SSE stream aborts on close) are expected noise — ignore them.
+      if (
+        this.status === McpConnectionStatus.DISCONNECTING ||
+        this.status === McpConnectionStatus.DISCONNECTED
+      ) {
+        logger.debug(`[MCP ${this.config.name}] error during teardown (ignored): ${msg}`);
+        return;
+      }
+      if (this.isRecoverableStreamError(msg)) {
+        this.status = McpConnectionStatus.RECONNECTING;
+        logger.debug(`[MCP ${this.config.name}] stream drop; auto-reconnecting: ${msg}`);
+      } else {
+        this.status = McpConnectionStatus.ERROR;
+        logger.warn(`[MCP ${this.config.name}] ${msg}`);
+      }
+    };
+
+    // Setup close handler
+    this.client.onclose = () => {
+      this.status = McpConnectionStatus.DISCONNECTED;
+    };
+
+    // Connect to server
+    await this.client.connect(this.transport, {
+      timeout: this.config.timeout ?? 10000, // 10 second default
+    });
+  }
+
+  /** Best-effort teardown of a half-open client/transport before a connect retry. */
+  private async safeCloseAfterFailedConnect(): Promise<void> {
+    // Mark DISCONNECTING so the stale client's error/close handlers ignore the noise.
+    this.status = McpConnectionStatus.DISCONNECTING;
+    try { await this.transport?.close?.(); } catch { /* ignore */ }
+    try { await this.client?.close?.(); } catch { /* ignore */ }
+    this.transport = undefined;
+    this.client = undefined;
+    this.status = McpConnectionStatus.CONNECTING;
   }
 
   /**
@@ -258,7 +310,7 @@ export class McpClient {
       return this.discoveredTools;
     } catch (error) {
       throw new Error(
-        `Failed to discover tools from MCP server '${this.config.name}': ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to discover tools from MCP server '${this.config.name}': ${describeError(error)}`,
       );
     }
   }
@@ -282,7 +334,7 @@ export class McpClient {
         return this.discoveredResources;
       }
       throw new Error(
-        `Failed to discover resources from MCP server '${this.config.name}': ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to discover resources from MCP server '${this.config.name}': ${describeError(error)}`,
       );
     }
   }
@@ -306,7 +358,7 @@ export class McpClient {
         return this.discoveredPrompts;
       }
       throw new Error(
-        `Failed to discover prompts from MCP server '${this.config.name}': ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to discover prompts from MCP server '${this.config.name}': ${describeError(error)}`,
       );
     }
   }
@@ -329,7 +381,7 @@ export class McpClient {
       return result;
     } catch (error) {
       throw new Error(
-        `Failed to call tool '${toolName}' on MCP server '${this.config.name}': ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to call tool '${toolName}' on MCP server '${this.config.name}': ${describeError(error)}`,
       );
     }
   }
@@ -347,7 +399,7 @@ export class McpClient {
       return result;
     } catch (error) {
       throw new Error(
-        `Failed to read resource '${uri}' from MCP server '${this.config.name}': ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to read resource '${uri}' from MCP server '${this.config.name}': ${describeError(error)}`,
       );
     }
   }

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.34.4] - 2026-06-16
+
+### Fixed
+
+- **MCP http connections (e.g. the `browse` tool / `nexus-browser`) no longer fail with a bare
+  `fetch failed` on Node 22+ (including Node 23).** The MCP client attached a keep-alive
+  dispatcher built from the standalone `undici` package, whose `Agent` is incompatible with
+  Node's newer built-in `undici` (Node 23 ships undici 7) — Node's `fetch` rejected it as an
+  opaque `fetch failed`, breaking every http MCP server. The client now **retries the connection
+  without that dispatcher** when the first attempt fails, so it succeeds on every Node version
+  (the dispatcher is only a cosmetic SSE keep-alive; the SDK still reconnects genuine idle drops).
+- **MCP connection errors now surface the underlying cause** (`error.cause` — a TLS error,
+  `ECONNRESET`, etc.) instead of a contextless `fetch failed`.
+
+---
+
 ## [4.34.3] - 2026-06-16
 
 ### Changed
