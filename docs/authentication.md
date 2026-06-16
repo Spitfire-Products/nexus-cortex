@@ -1,13 +1,27 @@
 # Authentication & API Keys
 
-Nexus Cortex reads all configuration from a `.env` file at the repo root. Copy the tracked
-template and add only the keys for the providers you actually use:
+Nexus Cortex resolves a provider key from your **environment first**, then a `.env` file
+(`./.env` in the current directory, then the global `~/.cortex/.env`). You only need **one**
+provider key to start. Pick whichever fits:
 
 ```bash
-cp .env.example .env        # then edit .env
+# Set a key in the global config file (created for you automatically)
+cortex config set DEEPSEEK_API_KEY sk-...     # writes ~/.cortex/.env
+
+# …or open ~/.cortex/.env and fill in a key by hand
+#   (run `cortex config init` to create it now; every supported key is listed, blank)
+
+# …or export it / use your platform's secrets store — the environment wins over the file
+export DEEPSEEK_API_KEY=sk-...
 ```
 
-`.env` is gitignored, so your keys are never committed.
+`~/.cortex/.env` ships with every key **blank**, so a value set in your environment (or a
+secrets store like Cloudflare/Replit) always takes precedence — ideal for containers, where you
+inject secrets and write nothing to disk. If you run `cortex` with no key found anywhere, it
+creates `~/.cortex/.env`, tells you what to add, and stops (no half-started server to clean up).
+
+> Running from a checkout instead of a global install? A `./.env` in the repo root works too and
+> overrides the global file. It's gitignored, so your keys are never committed.
 
 ## Provider API keys
 

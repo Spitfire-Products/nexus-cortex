@@ -43,6 +43,35 @@ const cortex = new CortexOrchestrator({
 const res = await cortex.processMessage({ role: 'user', content: 'Analyze this codebase' });
 ```
 
+## First-run setup & lifecycle
+
+After installing, give cortex **one** provider key, then run it — the server auto-starts and
+headless runs auto-approve tools, so it's a true one-shot:
+
+```bash
+cortex config set DEEPSEEK_API_KEY sk-...   # or edit ~/.cortex/.env, or export the key / use a secrets store
+cortex "What is this project?"
+```
+
+Keys resolve from the **environment first**, then `~/.cortex/.env` (which ships blank, so a
+secret in the environment always wins — see [Authentication](authentication.md)). With no key
+found anywhere, cortex creates `~/.cortex/.env`, prints what to add, and stops — nothing to clean up.
+
+| Task | Command |
+|------|---------|
+| Set a key | `cortex config set KEY value` (or edit `~/.cortex/.env`) |
+| Create the config file now | `cortex config init` (`--force` refreshes the template, keeps values) |
+| Generate project `CORTEX.md` | `cortex "generate a CORTEX.md for this project"` (runs the init tool) |
+| Add an MCP server | `cortex mcp init` → `cortex mcp enable <name>` (the browser is zero-config) |
+| Stop the background server | `cortex --shutdown` |
+| Update | `cortex update` |
+| Uninstall | `cortex uninstall` (or `npm uninstall -g nexus-cortex`) |
+
+The auto-started server self-stops after 60s idle. Run `cortex-server` yourself for a long-lived,
+interactive server (it prompts for tool approval in that terminal). Add your own agents/skills/
+commands in `~/.cortex/{agents,skills,commands,system-messages}/` (created on first run; the bundled
+set is mirrored read-only to `~/.cortex/builtin/` as examples).
+
 ## The `cortex` CLI
 
 `cortex` is a headless command — one-shot or multi-turn natural-language queries, plus a
