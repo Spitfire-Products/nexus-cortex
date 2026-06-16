@@ -27,6 +27,7 @@ import { SubAgentEventEmitter, getGlobalSubAgentEmitter } from './SubAgentEventE
 import { SubAgentOrchestrator } from './SubAgentOrchestrator.js';
 import { PauseController, createPauseControllerWithAbort } from './PauseController.js';
 import { ModelAliasResolver, getDefaultResolver } from '../models/registry/ModelAliasResolver.js';
+import { modelWithKeyFallback } from '../models/registry/modelKeyAvailability.js';
 import { ModelRouterMatrix } from '../training/ModelRouterMatrix.js';
 import { classifyTask } from '../training/TaskClassifier.js';
 import type { OrchestratorConfig } from './CortexOrchestrator.js';
@@ -150,7 +151,11 @@ export class SubAgentManager implements ISubAgentManager {
     // returns a concrete model (routed when trustworthy, else parent's model).
     let modelId = this.resolveModel(agentDefinition, options.modelOverride);
     if (modelId === 'auto') {
-      modelId = this.resolveAutoModel(taskPrompt);
+      // The router can pick a model whose provider key isn't configured — key-check it too.
+      modelId = modelWithKeyFallback(
+        this.resolveAutoModel(taskPrompt),
+        this.config.defaultModelId ?? DEFAULT_SUBAGENT_MODEL,
+      );
     }
 
     // Create controllers
@@ -241,10 +246,16 @@ export class SubAgentManager implements ISubAgentManager {
    * Resolve model ID from agent definition or override
    */
   private resolveModel(agentDefinition: AgentDefinition, override?: string): string {
+    const fallback = this.config.defaultModelId ?? DEFAULT_SUBAGENT_MODEL;
+
     // Use override if provided
     if (override) {
-      const resolved = this.modelResolver.resolveToId(override);
-      return resolved ?? override;
+      // 'auto' is handled by the caller (resolveAutoModel) — pass it through untouched.
+      if (override === 'auto') return 'auto';
+      const resolved = this.modelResolver.resolveToId(override) ?? override;
+      // Key-aware fallback: if the chosen model's provider key isn't configured on this
+      // install, run on the orchestrator's model instead of failing with "API key not found".
+      return modelWithKeyFallback(resolved, fallback);
     }
 
     // Use agent's model preference
@@ -252,12 +263,13 @@ export class SubAgentManager implements ISubAgentManager {
 
     // Handle 'inherit'
     if (agentModel === 'inherit' || !agentModel) {
-      return this.config.defaultModelId ?? DEFAULT_SUBAGENT_MODEL;
+      return fallback;
     }
 
-    // Resolve alias
-    const resolved = this.modelResolver.resolveToId(agentModel);
-    return resolved ?? agentModel;
+    // Resolve alias, then apply the key-aware fallback (e.g. a profile pinned to `sonnet`
+    // on a DeepSeek-only install falls back to the orchestrator model).
+    const resolved = this.modelResolver.resolveToId(agentModel) ?? agentModel;
+    return modelWithKeyFallback(resolved, fallback);
   }
 
   private routerMatrix?: ModelRouterMatrix;

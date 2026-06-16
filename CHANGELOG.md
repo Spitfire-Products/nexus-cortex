@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.37.5] - 2026-06-16
+
+### Added
+
+- **Key-aware sub-agent model fallback.** Complements 4.37.4: if a sub-agent resolves to a model
+  whose provider API key isn't configured on this install — a profile pinned to `sonnet`, an explicit
+  Task `model` override, or a model-router pick — it now falls back to the orchestrator's model
+  instead of failing with "API key not found". When the provider key *is* present, the chosen model
+  is honored (so curated per-task models still work on multi-provider installs). Deliberately
+  conservative: only an explicit, known, missing key triggers the fallback; unknown models pass
+  through. New `modelWithKeyFallback`/`hasApiKeyForModel` in core, applied in `SubAgentManager`'s
+  resolver (profile, override, and `auto`/router paths).
+
+---
+
 ## [4.37.4] - 2026-06-16
 
 ### Fixed
