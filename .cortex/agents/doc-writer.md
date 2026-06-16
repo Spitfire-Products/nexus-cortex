@@ -7,7 +7,7 @@ tools:
   - edit
   - glob
   - grep
-model: sonnet
+model: inherit
 ---
 
 # Documentation Writer Agent

@@ -8,7 +8,7 @@ tools:
   - glob
   - grep
   - bash
-model: sonnet
+model: inherit
 ---
 
 # Refactoring Agent

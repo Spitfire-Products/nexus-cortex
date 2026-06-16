@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.37.4] - 2026-06-16
+
+### Fixed
+
+- **Shipped agent profiles no longer hardcode a model — they inherit the orchestrator's model.**
+  Nine of the bundled agents pinned a specific model/provider (`code-reviewer`/`doc-writer`/`refactor`
+  → `sonnet`, `plan` → `opus`, `explore`/`test-writer` → `haiku`, `a-frontend-landing-page-designer`
+  → `gpt-5-mini`, `context-research` → `gemini-2.5-flash-sdk`, `autoresearch-agent` →
+  `deepseek-v4-flash`). Since the sub-agent resolver honors a profile's `model` verbatim, invoking
+  e.g. `code-reviewer` on a DeepSeek-only install failed (no Anthropic key). All shipped profiles now
+  use `model: inherit`, so an agent runs on whatever model the orchestrator is using unless explicitly
+  overridden (Task `model` param, or the model router). Curated per-task model selection should come
+  from the model router (key-aware), not a hardcoded profile.
+
+---
+
 ## [4.37.3] - 2026-06-16
 
 ### Fixed

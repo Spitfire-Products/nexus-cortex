@@ -7,7 +7,7 @@ tools:
   - grep
   - write
   - edit
-model: gemini-2.5-flash-sdk
+model: inherit
 ---
 
 # context-research-an-agent-that-l

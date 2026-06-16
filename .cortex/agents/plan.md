@@ -2,7 +2,7 @@
 name: plan
 description: Software architect agent for designing implementation plans. Creates step-by-step plans, identifies critical files, and considers architectural trade-offs.
 tools: all
-model: opus
+model: inherit
 ---
 
 # Software Architect / Planning Agent

@@ -7,7 +7,7 @@ tools:
   - glob
   - grep
   - bash
-model: haiku
+model: inherit
 ---
 
 # Test Writer Agent

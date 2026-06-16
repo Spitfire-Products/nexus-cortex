@@ -9,7 +9,7 @@ tools:
   - grep
   - bash
   - web_fetch
-model: gpt-5-mini
+model: inherit
 ---
 
 # a-frontend-landing-page-designer

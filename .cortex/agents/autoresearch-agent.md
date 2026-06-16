@@ -10,7 +10,7 @@ tools:
   - bash
   - research_backlog
   - workspace_manager
-model: deepseek-v4-flash
+model: inherit
 ---
 
 # Auto-Research Agent

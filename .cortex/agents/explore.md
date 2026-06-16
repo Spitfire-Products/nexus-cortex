@@ -5,7 +5,7 @@ tools:
   - read
   - glob
   - grep
-model: haiku
+model: inherit
 ---
 
 # Codebase Explorer Agent

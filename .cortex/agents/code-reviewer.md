@@ -5,7 +5,7 @@ tools:
   - read
   - glob
   - grep
-model: sonnet
+model: inherit
 ---
 
 # Code Review Agent
