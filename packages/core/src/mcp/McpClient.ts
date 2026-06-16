@@ -12,6 +12,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { Tool, Resource, Prompt } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from '../utils/logger.js';
+import { getPersistedMcpToken, persistMcpToken } from './McpTokenStore.js';
 
 /**
  * Format an error with its underlying cause. Node's fetch throws a bare
@@ -195,6 +196,9 @@ export class McpClient {
           ...(Object.keys(requestInit).length > 0
             ? { requestInit: requestInit as RequestInit }
             : {}),
+          // Reuse the auto-provisioned key across every connection (parent,
+          // sub-agents, reconnects) instead of re-provisioning a fresh one.
+          fetch: this.buildTokenAwareFetch(this.config.url),
           reconnectionOptions: this.getResolvedReconnectionOptions(),
         },
       );
@@ -471,6 +475,41 @@ export class McpClient {
     return /sse stream disconnected|failed to reconnect sse|terminated|socket hang ?up|econnreset|etimedout|epipe|other side closed|fetch failed|network|operation was aborted|aborted/i.test(
       msg,
     );
+  }
+
+  /**
+   * Wrap `fetch` so the client REUSES an auto-provisioned key instead of
+   * re-provisioning a new one on every connection.
+   *
+   * Outbound: if we have a persisted token for this server URL and the request
+   * carries no explicit `Authorization` (a static subscriber key from
+   * `config.headers` always wins), inject it as `Bearer <token>`. This makes the
+   * parent, every sub-agent child process, and every reconnect land on the SAME
+   * key → same Durable Object → consistent quota.
+   *
+   * Inbound: capture the server's `X-Mcp-Token` (the auto-provisioned key, or a
+   * server-side rotation of an expired/invalid one) and persist it. The client
+   * itself NEVER decides to provision — it only sends the persisted token and
+   * records whatever the server returns. A depleted free key is therefore
+   * rejected with the server's signup message (surfaced via describeError)
+   * rather than silently replaced with a fresh free key.
+   */
+  private buildTokenAwareFetch(serverUrl: string): typeof fetch {
+    return (async (input: any, init: any = {}) => {
+      const headers = new Headers((init && init.headers) || {});
+      if (!headers.has('authorization')) {
+        const saved = getPersistedMcpToken(serverUrl);
+        if (saved) headers.set('authorization', `Bearer ${saved}`);
+      }
+      const response = await fetch(input, { ...init, headers });
+      try {
+        const minted = response.headers?.get?.('x-mcp-token');
+        if (minted) persistMcpToken(serverUrl, minted);
+      } catch {
+        /* best-effort token capture */
+      }
+      return response;
+    }) as typeof fetch;
   }
 
   /**

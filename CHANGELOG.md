@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.35.0] - 2026-06-16
+
+### Added
+
+- **HTTP MCP clients now reuse an auto-provisioned API key instead of re-provisioning a new
+  one on every connection.** Servers that hand back a key via the `X-Mcp-Token` response header
+  (e.g. `nexus-browser`'s free-tier auto-provisioning) previously had that token discarded — so
+  the parent process, every sub-agent child process, every server auto-start, and every reconnect
+  minted a brand-new key. That fragmented quota across different server-side sessions and
+  intermittently tripped the server's per-IP "too many fresh registrations" throttle, surfacing
+  as a bare `fetch failed`.
+
+  The client now captures `X-Mcp-Token` and persists it globally (`~/.cortex/.mcp-tokens.json`,
+  keyed by server URL), then sends it as `Authorization: Bearer <token>` on subsequent
+  connections — so all processes share the **same key → same session/quota**. A static
+  subscriber key from the server's configured headers still takes precedence. The client never
+  re-provisions on its own: when a free key's quota is depleted, the server's signup message is
+  surfaced (via the connection error) rather than silently replaced with another free key,
+  preserving the path to a long-running subscriber key.
+
+---
+
 ## [4.34.8] - 2026-06-16
 
 ### Changed
