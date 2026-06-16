@@ -1,6 +1,6 @@
 {
   "name": "@nexus-cortex/server",
-  "version": "4.35.1",
+  "version": "4.36.0",
   "description": "Thin Express server wrapper for Nexus Cortex core library",
   "type": "module",
   "main": "dist/index.js",

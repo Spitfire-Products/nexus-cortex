@@ -66,7 +66,8 @@ import { toolFactory } from '../tools/ToolFactory.js';
 import { McpClientManager } from '../mcp/index.js';
 import { slashCommandRegistry } from '../commands/SlashCommandRegistry.js';
 import { McpConfigManager } from '../mcp/McpConfigManager.js';
-import { McpServerRegistry } from '../mcp/McpServerRegistry.js';
+import { McpServerRegistry, type McpServerDefinition } from '../mcp/McpServerRegistry.js';
+import type { McpServerConfig, McpTransportType } from '../mcp/McpClient.js';
 import { prefixMcpToolName, parseMcpToolName } from '../mcp/mcpToolNamespacing.js';
 import { DecisionStore, stableInputHash } from '../training/DecisionStore.js';
 import { formatPriorReminder } from '../training/DecisionPriorInjector.js';
@@ -5132,37 +5133,38 @@ export class CortexOrchestrator {
       // 3. Merge configs (project overrides global)
       const mergedConfig = this.mcpConfigManager.mergeConfigs(projectConfig, globalConfig);
 
-      if (!mergedConfig) {
-        // No config found - auto-injection disabled
+      // 4. Servers declared in MCP_CONFIG.md (auto-start only)
+      const configEntries = mergedConfig
+        ? this.mcpConfigManager.getAutoStartServers(mergedConfig)
+        : [];
+      const configNames = new Set(configEntries.map((e) => e.name));
+
+      // 4b. Servers to auto-connect straight from the built-in registry via
+      // CORTEX_MCP_AUTOCONNECT — NO MCP_CONFIG.md required. This is what makes
+      // `browse` (and any flagged built-in MCP) work zero-config / one-shot:
+      // BrowseTool sets CORTEX_MCP_AUTOCONNECT=nexus-browser on its subagent, so
+      // a fresh install with no config file still connects nexus-browser.
+      const registryConnects = this.getAutoConnectRegistryConfigs(configNames);
+
+      if (configEntries.length === 0 && registryConnects.length === 0) {
+        // Nothing to connect from either source - auto-injection disabled.
         this.mcpAutoInject = false;
         if (this.config.debug) {
-          console.log('[Orchestrator Phase 2.5] No MCP_CONFIG.md found - auto-injection disabled');
+          console.log('[Orchestrator Phase 2.5] No MCP_CONFIG.md and no CORTEX_MCP_AUTOCONNECT - auto-injection disabled');
         }
         return;
       }
 
-      if (this.config.debug) {
+      if (this.config.debug && mergedConfig) {
         const configSource = projectConfigExists ? 'project' : 'global';
         console.log(`[Orchestrator Phase 2.5] Found MCP_CONFIG.md (${configSource}) with ${mergedConfig.servers.length} server(s)`);
       }
-
-      // 4. Get auto-start servers
-      const autoStartServers = this.mcpConfigManager.getAutoStartServers(mergedConfig);
-
-      if (autoStartServers.length === 0) {
-        if (this.config.debug) {
-          console.log('[Orchestrator Phase 2.5] No auto-start servers configured');
-        }
-        this.mcpAutoInject = false;
-        return;
+      if (this.config.debug && registryConnects.length > 0) {
+        console.log(`[Orchestrator Phase 2.5] CORTEX_MCP_AUTOCONNECT: ${registryConnects.map((r) => r.name).join(', ')} (built-in registry, no config file needed)`);
       }
 
-      // 5. Connect to auto-start servers
-      if (this.config.debug) {
-        console.log(`[Orchestrator Phase 2.5] Connecting to ${autoStartServers.length} auto-start server(s)...`);
-      }
-
-      for (const serverEntry of autoStartServers) {
+      // 5. Connect MCP_CONFIG.md servers
+      for (const serverEntry of configEntries) {
         try {
           const serverConfig = this.mcpConfigManager.toServerConfig(serverEntry);
           this.mcpManager.addServerConfig(serverEntry.name, serverConfig);
@@ -5173,6 +5175,21 @@ export class CortexOrchestrator {
           }
         } catch (error: any) {
           console.error(`[Orchestrator Phase 2.5] Failed to connect to ${serverEntry.name}:`, error.message);
+          // Continue with other servers
+        }
+      }
+
+      // 5b. Connect built-in registry auto-connect servers (zero-config path)
+      for (const { name, config } of registryConnects) {
+        try {
+          this.mcpManager.addServerConfig(name, config);
+          await this.mcpManager.connectToServer(name);
+
+          if (this.config.debug) {
+            console.log(`[Orchestrator Phase 2.5] Auto-connected MCP server: ${name} (zero-config)`);
+          }
+        } catch (error: any) {
+          console.error(`[Orchestrator Phase 2.5] Failed to auto-connect ${name}:`, error.message);
           // Continue with other servers
         }
       }
@@ -5212,6 +5229,74 @@ export class CortexOrchestrator {
       this.mcpAutoInject = false;
       // Don't fail session creation if MCP initialization fails
     }
+  }
+
+  /**
+   * Resolve `CORTEX_MCP_AUTOCONNECT` (comma-separated server names) into
+   * connectable configs from the built-in registry — with NO MCP_CONFIG.md
+   * required. Servers already declared in MCP_CONFIG.md (`excludeNames`) are
+   * skipped so the config file always wins. This is the zero-config / one-shot
+   * MCP path: the browse subagent sets the env var and gets nexus-browser with
+   * no setup ceremony.
+   */
+  private getAutoConnectRegistryConfigs(
+    excludeNames: Set<string>,
+  ): Array<{ name: string; config: McpServerConfig }> {
+    const raw = process.env.CORTEX_MCP_AUTOCONNECT;
+    if (!raw) return [];
+    const registry = this.getMcpServerRegistry();
+    if (!registry) return [];
+
+    const out: Array<{ name: string; config: McpServerConfig }> = [];
+    for (const name of raw.split(',').map((s) => s.trim()).filter(Boolean)) {
+      if (excludeNames.has(name)) continue; // MCP_CONFIG.md takes precedence
+      const def = registry.getServer(name);
+      if (!def) {
+        if (this.config.debug) {
+          console.log(`[Orchestrator Phase 2.5] CORTEX_MCP_AUTOCONNECT: '${name}' not in registry, skipping`);
+        }
+        continue;
+      }
+      out.push({ name: def.name, config: this.registryDefinitionToConfig(def) });
+    }
+    return out;
+  }
+
+  /**
+   * Map a built-in registry definition to a connectable McpServerConfig.
+   * `${ENV_VAR}` placeholders in url/headers are interpolated; a header left
+   * UNRESOLVED (e.g. `Bearer ${NEXUS_BROWSER_API_KEY}` with no key set) is
+   * DROPPED rather than sent as a garbage credential — so the McpClient connects
+   * anonymously (triggering server-side auto-provisioning) or with a persisted
+   * token (McpTokenStore), instead of failing auth.
+   */
+  private registryDefinitionToConfig(def: McpServerDefinition): McpServerConfig {
+    const interp = (v: string): string =>
+      v.replace(/\$\{([A-Z_][A-Z0-9_]*)\}/gi, (match, varName) => {
+        const resolved = process.env[varName];
+        return resolved !== undefined && resolved !== '' ? resolved : match;
+      });
+
+    const transport: McpTransportType =
+      (def.transport === 'sse' ? 'http' : def.transport) ?? (def.url ? 'http' : 'stdio');
+    const config: McpServerConfig = { name: def.name, transport };
+
+    if (def.url) config.url = interp(def.url);
+    if (def.headers) {
+      const headers: Record<string, string> = {};
+      for (const [k, v] of Object.entries(def.headers)) {
+        const val = interp(v);
+        // Skip unresolved placeholders and empty/dangling bearers so the
+        // token-aware fetch (auto-provision / persisted token) can take over.
+        if (val.includes('${') || /^bearer\s*$/i.test(val.trim())) continue;
+        headers[k] = val;
+      }
+      if (Object.keys(headers).length > 0) config.headers = headers;
+    }
+    if (def.command) config.command = def.command;
+    if (def.defaultArgs) config.args = def.defaultArgs;
+    if (def.defaultEnv) config.env = def.defaultEnv;
+    return config;
   }
 
   // ============================================

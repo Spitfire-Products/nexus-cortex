@@ -43,7 +43,11 @@ export function buildBrowseSubagentDispatch(
       agentName: INLINE_BROWSE_AGENT.name,
       taskPrompt: fullPrompt,
       shouldSpawnSubAgent: true,
-      envOverrides: { MCP_AUTO_INJECT: 'true' },
+      // MCP_AUTO_INJECT enables injection; CORTEX_MCP_AUTOCONNECT connects the
+      // built-in nexus-browser registry entry with NO MCP_CONFIG.md required, so
+      // `browse` works zero-config / one-shot on a clean install. Scoped to this
+      // subagent — the parent's lean tool surface is unaffected.
+      envOverrides: { MCP_AUTO_INJECT: 'true', CORTEX_MCP_AUTOCONNECT: 'nexus-browser' },
       description: llmDisplay.slice(0, 200),
       ...(startTime !== undefined ? { executionTime: Date.now() - startTime } : {}),
     },

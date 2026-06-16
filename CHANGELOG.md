@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.36.0] - 2026-06-16
+
+### Added
+
+- **Zero-config MCP auto-connect via `CORTEX_MCP_AUTOCONNECT` — `browse` now works one-shot on a
+  clean install.** Previously the browser MCP only connected if `nexus-browser` was already listed
+  in an `MCP_CONFIG.md`; on a fresh install (no config file) the `browse` subagent connected
+  nothing and failed. Now the orchestrator also honors `CORTEX_MCP_AUTOCONNECT` (comma-separated
+  server names): it connects those servers straight from the built-in registry with **no
+  `MCP_CONFIG.md` required**, merged with any config that does exist (the config file still wins on
+  name conflicts). The built-in `browse` tool sets `CORTEX_MCP_AUTOCONNECT=nexus-browser` on its
+  subagent, so a brand-new install runs `browse` with no init/enable/restart ceremony — it
+  auto-provisions a free-tier key on first connect (persisted + reused per 4.35.0). Unresolved
+  `${ENV}` auth headers (e.g. `Bearer ${NEXUS_BROWSER_API_KEY}` with no key set) are dropped so the
+  client auto-provisions instead of sending a broken credential. The flag is opt-in per process, so
+  the parent's lean tool surface is unchanged. Verified against the live service: no `MCP_CONFIG.md`
+  anywhere → nexus-browser connected with 38 tools.
+
+---
+
 ## [4.35.1] - 2026-06-16
 
 ### Fixed
