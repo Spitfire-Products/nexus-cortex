@@ -238,7 +238,7 @@ describe('GrepTool Integration', () => {
     );
 
     expect(result.metadata).toBeDefined();
-    expect(result.metadata!.executionTime).toBeGreaterThan(0);
+    expect(result.metadata!.executionTime).toBeGreaterThanOrEqual(0); // ms duration; sub-ms ops legitimately measure 0
     expect(result.metadata!.matchCount).toBeGreaterThan(0);
     expect(result.metadata!.searchPath).toContain(testDir);
     expect(result.metadata!.pattern).toBe('hello');

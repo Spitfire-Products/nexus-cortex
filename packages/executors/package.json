@@ -1,6 +1,6 @@
 {
   "name": "@nexus-cortex/executors",
-  "version": "4.35.0",
+  "version": "4.35.1",
   "description": "Tool execution layer for Nexus Cortex",
   "type": "module",
   "main": "./dist/index.js",

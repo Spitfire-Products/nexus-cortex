@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.35.1] - 2026-06-16
+
+### Fixed
+
+- **MCP-management tools (`InitMcpConfig`, `EnableMcpServer`, …) and `InitCortexContext` are
+  now discoverable when deferred tool loading is on.** They are gathered separately from the
+  main tool factory, but the `SearchTools` index and the deferred-tools harness-note were both
+  built only from `toolFactory.getAllTools()` — so these tools were sent to the model in the
+  live tool set yet were invisible to discovery. A model asked to "use the MCP init tool" would
+  search for it, find nothing, and hand-write the wrong config file (`~/.cortex/mcp.json`
+  instead of the canonical `MCP_CONFIG.md`). The SearchTools catalog and the harness-note now
+  include the MCP-management and context tools (new "MCP Servers" / "Project Context" groups),
+  so the model can find and call `InitMcpConfig`/`EnableMcpServer` and set up an MCP server
+  correctly. (Enabling a server still connects it on the next session/restart, as before.)
+
+---
+
 ## [4.35.0] - 2026-06-16
 
 ### Added

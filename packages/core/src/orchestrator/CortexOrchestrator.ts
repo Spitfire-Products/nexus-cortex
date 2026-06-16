@@ -599,14 +599,22 @@ export class CortexOrchestrator {
           // model into calling a tool that the rest of the pipeline treats as
           // disabled (no Stage-2/3 grounding wired) — wasted turns.
           const endTurnGateOn = process.env.CORTEX_ENDTURN_GATE === 'true';
-          return toolFactory
-            .getAllTools()
+          // MCP-management tools (InitMcpConfig, EnableMcpServer, …) and context
+          // tools (InitCortexContext) are gathered SEPARATELY in the turn flow, so
+          // they are NOT in toolFactory.getAllTools(). Without adding them here the
+          // model can never discover them via SearchTools — it searches "mcp_init",
+          // finds nothing, and hand-writes the wrong config file. Include them so
+          // deferred setup tools are actually findable.
+          const extras = [...this.getMcpManagementTools(), ...this.getContextManagementTools()];
+          const seen = new Set<string>();
+          return [...toolFactory.getAllTools(), ...extras]
             .filter((t) => endTurnGateOn || t.name !== 'EndTurn')
+            .filter((t) => (seen.has(t.name) ? false : (seen.add(t.name), true)))
             .map((t) => ({
               name: namingHandler.convertName(t.name, convention),
               description: t.description,
-              category: t.category,
-              schema: t.schema,
+              category: (t as any).category,
+              schema: (t as any).schema,
             }));
         });
       }
@@ -7700,7 +7708,15 @@ export class CortexOrchestrator {
   }
 
   private buildDeferredToolAnnouncement(convention: 'snake_case' | 'PascalCase'): string | null {
-    const deferred = this.toolFilter.getDeferredTools(toolFactory.getAllTools());
+    // Source from the SAME superset the SearchTools index uses — toolFactory PLUS the
+    // separately-gathered MCP-management and context tools — or the harness-note never
+    // tells the model that deferred setup tools (InitMcpConfig, InitCortexContext) exist.
+    const allDiscoverable = [
+      ...toolFactory.getAllTools(),
+      ...this.getMcpManagementTools(),
+      ...this.getContextManagementTools(),
+    ];
+    const deferred = this.toolFilter.getDeferredTools(allDiscoverable);
     if (deferred.length === 0) return null;
 
     const namingHandler = new ToolNamingHandler();
@@ -7724,6 +7740,13 @@ export class CortexOrchestrator {
       ],
       'Web & Browse': [
         'WebSearch', 'WebFetch', 'Browse',
+      ],
+      'MCP Servers': [
+        'InitMcpConfig', 'EnableMcpServer', 'DisableMcpServer', 'ConfigureMcpServer',
+        'GetMcpConfig', 'ListAvailableMcpServers', 'SearchMcpServers',
+      ],
+      'Project Context': [
+        'InitCortexContext',
       ],
     };
 

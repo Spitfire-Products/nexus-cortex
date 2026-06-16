@@ -261,7 +261,7 @@ describe('ShellTool Integration', () => {
     );
 
     expect(result.metadata).toBeDefined();
-    expect(result.metadata!.executionTime).toBeGreaterThan(0);
+    expect(result.metadata!.executionTime).toBeGreaterThanOrEqual(0); // ms duration; sub-ms ops legitimately measure 0
     expect(result.metadata!.exitCode).toBe(0);
   });
 
