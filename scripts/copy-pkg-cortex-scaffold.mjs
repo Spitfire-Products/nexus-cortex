@@ -54,9 +54,15 @@ for (const f of SCAFFOLD_FILES) {
 // Fresh-install onboarding memory: ship the seed as MEMORY.md (never the dev MEMORY.md,
 // which is project-private). Injected on turn 1; tells the first agent how to /init,
 // discover skills/agents, and then replace it with real project memory.
+// Source is MEMORY.seed.md in the dev repo, but the deploy renames it to MEMORY.md in the
+// extracted repo (where CI publishes from) — so accept either, or MEMORY.md never ships.
 const memorySeed = join(rootCortex, 'MEMORY.seed.md');
+const memoryMd = join(rootCortex, 'MEMORY.md');
 if (existsSync(memorySeed)) {
   copyFileSync(memorySeed, join(dest, 'MEMORY.md'));
+  copied++;
+} else if (existsSync(memoryMd)) {
+  copyFileSync(memoryMd, join(dest, 'MEMORY.md'));
   copied++;
 }
 

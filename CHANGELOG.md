@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.37.2] - 2026-06-16
+
+### Added
+
+- **Your `~/.cortex/` now has obvious, reachable places to add your own skills/agents/commands, and a
+  browsable copy of the builtins that stays in sync with the package.** The agents/skills/commands/
+  system-messages that ship with nexus-cortex live in the install dir and load automatically (so they
+  can never go stale) — but they were buried in `node_modules`, with no clear place for *your* additions.
+  On each run, cortex now: (1) seeds `~/.cortex/{agents,skills,commands,system-messages}/` (each with a
+  short README) — drop your own there and they load alongside (and override) the builtins; (2) refreshes
+  a read-only reference of every builtin at `~/.cortex/builtin/`, version-gated so a package update
+  (changed prompt, new skill, etc.) re-syncs the reference. The reference is intentionally *not* a loaded
+  tier, so it never creates duplicates. Best-effort and never blocks the CLI.
+
+### Fixed
+
+- **`MEMORY.md` now ships** with the package. The prepack scaffold-vendor only looked for
+  `MEMORY.seed.md`, but the deploy renames it to `MEMORY.md` in the published repo, so it was being
+  skipped. It now accepts either.
+
+---
+
 ## [4.37.1] - 2026-06-16
 
 ### Fixed

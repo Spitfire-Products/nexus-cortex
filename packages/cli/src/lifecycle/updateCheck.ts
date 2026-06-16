@@ -17,7 +17,7 @@
  * throw — a check failure can never break the CLI.
  */
 import { spawnSync } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync, rmSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { getGlobalConfigDir, getGlobalEnvPath } from '@nexus-cortex/core';
@@ -105,12 +105,67 @@ export function runUpdate(): boolean {
   return false;
 }
 
+function personalDirReadme(kind: string): string {
+  return `# Your personal ${kind}\n\n` +
+    `Drop your own ${kind} here — they load alongside the ones that ship with nexus-cortex,\n` +
+    `and override a builtin of the same name. Browse the builtins for working examples in:\n` +
+    `  ~/.cortex/builtin/${kind}/\n` +
+    `(that folder is a read-only reference, re-synced to the installed version on each run.)\n`;
+}
+
+/**
+ * Keep the user's ~/.cortex in sync with the install on every run:
+ *  - seed the LOADED personal extension dirs (~/.cortex/{agents,skills,commands,system-messages})
+ *    so there's an obvious, accessible place to add your own;
+ *  - refresh a browsable, read-only reference copy of the shipped builtins at ~/.cortex/builtin/,
+ *    version-gated so a package update (new/changed prompt, skill, agent) propagates here too.
+ *
+ * The builtins the system actually LOADS are read from the install dir ($CORTEX_ROOT/.cortex),
+ * so they're never stale on their own — this only mirrors them somewhere reachable. The reference
+ * is intentionally NOT a loaded tier, so it can't create duplicate skills/agents. Best-effort.
+ */
+function syncBuiltinScaffold(): void {
+  try {
+    // Global installs only (skip source/dev runs) — same gate as the update check.
+    if (!dirname(fileURLToPath(import.meta.url)).includes('node_modules')) return;
+    const cortexRoot = process.env.CORTEX_ROOT;
+    if (!cortexRoot) return;
+    const src = join(cortexRoot, '.cortex');
+    if (!existsSync(src)) return;
+    const personal = getGlobalConfigDir();
+
+    // 1. Seed the loaded personal extension dirs (where users add their own).
+    for (const kind of ['agents', 'skills', 'commands', 'system-messages']) {
+      const dir = join(personal, kind);
+      if (!existsSync(dir)) {
+        try { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'README.md'), personalDirReadme(kind)); } catch { /* ignore */ }
+      }
+    }
+
+    // 2. Version-gated refresh of the browsable builtin reference (NOT a loaded tier).
+    const ref = join(personal, 'builtin');
+    const verFile = join(ref, '.synced-version');
+    const current = getCurrentVersion() || '';
+    let synced = '';
+    try { synced = readFileSync(verFile, 'utf8').trim(); } catch { /* not synced yet */ }
+    if (synced !== current) {
+      try { rmSync(ref, { recursive: true, force: true }); } catch { /* ignore */ }
+      cpSync(src, ref, { recursive: true });
+      try { writeFileSync(verFile, current); } catch { /* ignore */ }
+    }
+  } catch { /* never let scaffold sync break the CLI */ }
+}
+
 /**
  * Startup update check. Best-effort, gated by policy. Only runs for real global installs
  * (skips source/dev runs). Never throws.
  */
 export async function checkForUpdate(): Promise<void> {
   try {
+    // Mirror the shipped builtins into the user's reachable ~/.cortex (and seed the personal
+    // extension dirs), version-gated so package updates propagate. Independent of update policy.
+    syncBuiltinScaffold();
+
     const policy = resolvePolicy();
     if (policy === 'off') return;
 
