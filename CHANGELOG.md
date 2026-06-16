@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.37.1] - 2026-06-16
+
+### Fixed
+
+- **The "no API key" path now also stops a running server, so adding a key just works on the next
+  run.** When no key is resolvable, `cortex` prints the guidance and exits — but if a server was
+  already running, it was started without a key and had cached that empty config, so even after you
+  added a key the next call kept failing until a manual `--shutdown`. Now the no-key path gracefully
+  drains any running server before exiting, so the next invocation (after you add the key to
+  `~/.cortex/.env` or the environment) starts a fresh server that picks it up. No `--shutdown` dance.
+
+---
+
 ## [4.37.0] - 2026-06-16
 
 ### Added

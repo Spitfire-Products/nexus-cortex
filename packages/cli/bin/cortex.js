@@ -409,8 +409,18 @@ XAI_API_KEY=
 // keyless server running that would force a --shutdown + re-invoke. When a key IS present
 // (a filled .env, or secrets in the environment), this is a no-op and the run proceeds —
 // one-shot. The container case (secrets in env) hits the no-op path and writes nothing.
-function ensureKeysOrExit() {
+async function ensureKeysOrExit() {
   if (hasAnyApiKey()) return;
+  // No key resolvable. If a server is already running, it was started with no key and has
+  // cached that empty config — so even after you add a key it would keep failing until a
+  // restart. Drain it now (graceful) so the NEXT run (with your key) starts a fresh server
+  // that picks the key up — no manual --shutdown dance.
+  try {
+    if (await isServerUp()) {
+      try { await fetch(`${BASE_URL}/shutdown`, { method: 'POST', signal: AbortSignal.timeout(5000) }); } catch { /* best-effort */ }
+      process.stderr.write('[cortex] Stopped the running server so it will pick up your key on the next run.\n');
+    }
+  } catch { /* never block on the drain */ }
   const dir = getGlobalCortexDir();
   const envPath = join(dir, '.env');
   let seeded = false;
@@ -488,7 +498,7 @@ async function run() {
   // Read-only ops (--stats/--sessions/--tmux/--pr, no prompt) don't need a key and are
   // fine against a keyless server, so only gate the actual prompt path.
   if (prompt) {
-    ensureKeysOrExit();
+    await ensureKeysOrExit();
   }
 
   await ensureServer();
