@@ -1,5 +1,5 @@
 /**
- * `cortex-cli update` — update the global install to the latest published release,
+ * `cortex update` — update the global install to the latest published release,
  * with visible npm output. Thin wrapper over the canonical lifecycle update service
  * (the same code the startup check uses), so there's one update path, not per-bin flags.
  */
@@ -13,7 +13,7 @@ export async function updateCli(): Promise<void> {
   console.log();
 
   if (runUpdate()) {
-    console.log(theme.colors.success('\n[OK] Updated. Run "cortex-cli --version" to confirm.'));
+    console.log(theme.colors.success('\n[OK] Updated. Run "cortex --version" to confirm.'));
     return;
   }
 

@@ -1,5 +1,5 @@
 /**
- * `cortex-cli uninstall` — remove the global install.
+ * `cortex uninstall` — remove the global install.
  *
  * By default your config + API keys at ~/.cortex are LEFT in place (so you don't lose
  * keys by accident); --purge removes them too. Interactive runs confirm first;

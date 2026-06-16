@@ -133,7 +133,7 @@ export async function checkForUpdate(): Promise<void> {
     const msg = `nexus-cortex ${current} is out of date (latest ${latest}).`;
 
     if (policy === 'warn') {
-      process.stderr.write(`\n  [update] available: ${current} -> ${latest} · run \`cortex-cli update\`\n\n`);
+      process.stderr.write(`\n  [update] available: ${current} -> ${latest} · run \`cortex update\`\n\n`);
       return;
     }
 
@@ -149,7 +149,7 @@ export async function checkForUpdate(): Promise<void> {
 
     // policy === 'error' (default for non-interactive / programmatic use)
     process.stderr.write(
-      `\n[update-required] ${msg}\n  Run: cortex-cli update` +
+      `\n[update-required] ${msg}\n  Run: cortex update` +
       `   (or set CORTEX_UPDATE_POLICY=warn to allow running a stale version)\n\n`,
     );
     process.exit(75); // EX_TEMPFAIL — a distinct, retryable signal for orchestrators

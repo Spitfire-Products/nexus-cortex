@@ -32,11 +32,20 @@ export interface McpServerDefinition {
   /** Category for grouping */
   category: McpServerCategory;
 
-  /** Executable command */
+  /** Executable command (stdio transport; empty for http servers) */
   command: string;
 
   /** Default command arguments */
   defaultArgs?: string[];
+
+  /** Transport type (default 'stdio'). Use 'http' for hosted MCP servers. */
+  transport?: 'stdio' | 'http' | 'sse';
+
+  /** HTTP endpoint URL (for transport 'http'). */
+  url?: string;
+
+  /** HTTP headers (for transport 'http'); supports ${ENV_VAR} interpolation. */
+  headers?: Record<string, string>;
 
   /** Default environment variables */
   defaultEnv?: Record<string, string>;
@@ -93,18 +102,21 @@ export class McpServerRegistry {
         recommendedFor: ['node', 'web', 'general']
       },
 
-      // Puppeteer server
+      // nexus-browser — the canonical browser-automation MCP for Nexus Cortex.
+      // Hosted HTTP service that auto-provisions a free-tier API key on first connect;
+      // this is the server the built-in `browse` tool drives.
       {
-        name: 'puppeteer',
-        displayName: 'Puppeteer',
-        description: 'Browser automation and web scraping using headless Chrome',
+        name: 'nexus-browser',
+        displayName: 'Nexus Browser',
+        description: 'Headless Chrome browser automation (browse, scan, click, type, screenshot, evaluate, run_code, etc.). Hosted MCP service — auto-provisions a free-tier API key on first connect; subscribers supply NEXUS_BROWSER_API_KEY for a permanent key.',
         category: 'browser',
-        command: 'npx',
-        defaultArgs: ['-y', '@modelcontextprotocol/server-puppeteer'],
+        command: '',
+        transport: 'http',
+        url: 'https://browser.spitfire-products.com/mcp',
+        headers: { Authorization: 'Bearer ${NEXUS_BROWSER_API_KEY}' },
         verified: true,
-        npmPackage: '@modelcontextprotocol/server-puppeteer',
-        documentation: 'https://github.com/modelcontextprotocol/servers/tree/main/src/puppeteer',
-        capabilities: ['puppeteer_navigate', 'puppeteer_screenshot', 'puppeteer_click', 'puppeteer_fill', 'puppeteer_select'],
+        documentation: 'https://browser.spitfire-products.com',
+        capabilities: ['browse', 'scan', 'click', 'type', 'screenshot', 'evaluate', 'run_code'],
         recommendedFor: ['web', 'testing', 'scraping']
       },
 

@@ -282,14 +282,14 @@ export class InitMcpConfig {
     // - Web search: WebSearch tool
     // See MCP_REDUNDANCY_ANALYSIS.md for full analysis
 
-    // Puppeteer - OPTIONAL for complex browser automation
-    // (Native alternative: Bash + puppeteer scripts, but MCP provides structured API)
-    if (includeOptional && (features.includes('web') || projectTypes.includes('nodejs')) && serverRegistry.hasServer('puppeteer')) {
+    // nexus-browser - the canonical browser-automation MCP (the built-in `browse` tool
+    // drives this server). Hosted HTTP service with auto-provisioned free-tier keys.
+    if (includeOptional && (features.includes('web') || projectTypes.includes('nodejs')) && serverRegistry.hasServer('nexus-browser')) {
       recommendations.push({
-        name: 'puppeteer',
-        priority: 'optional',
-        reason: 'Complex browser automation - provides structured API (alternative: Bash + puppeteer scripts)',
-        autoStart: false
+        name: 'nexus-browser',
+        priority: 'recommended',
+        reason: 'Browser automation — the canonical nexus-browser MCP that the `browse` tool drives (hosted, auto-provisioning)',
+        autoStart: true
       });
     }
 
@@ -363,12 +363,14 @@ export class InitMcpConfig {
     for (const rec of analysis.recommendedServers) {
       const serverDef = await this.lookupServerDefinition(rec.name);
       if (serverDef) {
+        const isHttp = serverDef.transport === 'http' || !!serverDef.url;
         servers.push({
           name: rec.name,
           status: 'available',  // Changed from 'enabled' - servers are opt-in, not auto-enabled
           description: serverDef.description || rec.reason,
-          command: serverDef.command,
-          args: rec.args || serverDef.defaultArgs,
+          ...(isHttp
+            ? { transport: 'http' as const, url: serverDef.url, headers: serverDef.headers }
+            : { command: serverDef.command, args: rec.args || serverDef.defaultArgs }),
           env: rec.env,
           autoStart: rec.autoStart
         });
@@ -400,10 +402,12 @@ export class InitMcpConfig {
         defaultArgs: ['-y', '@modelcontextprotocol/server-git'],
         description: 'Git version control operations'
       },
-      puppeteer: {
-        command: 'npx',
-        defaultArgs: ['-y', '@modelcontextprotocol/server-puppeteer'],
-        description: 'Browser automation and web scraping'
+      'nexus-browser': {
+        transport: 'http',
+        url: 'https://browser.spitfire-products.com/mcp',
+        headers: { Authorization: 'Bearer ${NEXUS_BROWSER_API_KEY}' },
+        command: '',
+        description: 'Headless Chrome browser automation (hosted MCP service — auto-provisions a free-tier API key on first connect)'
       },
       postgres: {
         command: 'npx',

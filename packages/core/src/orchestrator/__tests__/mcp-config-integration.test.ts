@@ -346,7 +346,7 @@ describe('Orchestrator MCP Config Integration', () => {
       // Verify all community servers are registered
       const expectedServers = [
         'filesystem',
-        'puppeteer',
+        'nexus-browser',
         'postgres',
         'sqlite',
         'github',

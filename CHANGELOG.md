@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.34.3] - 2026-06-16
+
+### Changed
+
+- **`nexus-browser` is now the standard browser-automation MCP server.** Previously the MCP
+  server registry and `mcp init` offered `puppeteer` (a local `npx` server), but the built-in
+  `browse` tool only drives `nexus-browser` (the hosted, auto-provisioning service) — so a
+  generated config never matched the tool, and `browse` failed with `fetch failed`. `puppeteer`
+  is removed from the registry; `nexus-browser` is the registered, recommended browser server,
+  so the config the harness generates now actually works with `browse`.
+
+### Fixed
+
+- The `update` / `uninstall` messages referenced a non-existent `cortex-cli` command; they now
+  say `cortex` (the only published binary).
+
+---
+
 ## [4.34.2] - 2026-06-15
 
 ### Fixed

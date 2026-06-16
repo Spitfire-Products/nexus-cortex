@@ -142,7 +142,7 @@ export class EnableMcpServer {
         properties: {
           server_name: {
             type: 'string',
-            description: 'Name of server from registry (use ListAvailableMcpServers to see options). Examples: "postgres", "puppeteer", "filesystem"'
+            description: 'Name of server from registry (use ListAvailableMcpServers to see options). Examples: "postgres", "nexus-browser", "filesystem"'
           },
           description: {
             type: 'string',

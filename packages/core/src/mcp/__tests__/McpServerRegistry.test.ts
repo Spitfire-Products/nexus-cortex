@@ -30,7 +30,7 @@ describe('McpServerRegistry', () => {
     it('should have all 10 community servers', () => {
       const expectedServers = [
         'filesystem',
-        'puppeteer',
+        'nexus-browser',
         'postgres',
         'sqlite',
         'github',
@@ -118,7 +118,7 @@ describe('McpServerRegistry', () => {
       const browserServers = registry.getServersByCategory('browser');
 
       expect(browserServers).toHaveLength(1);
-      expect(browserServers[0]?.name).toBe('puppeteer');
+      expect(browserServers[0]?.name).toBe('nexus-browser');
     });
 
     it('should return empty array for unknown category', () => {
@@ -168,7 +168,7 @@ describe('McpServerRegistry', () => {
 
       expect(servers.length).toBeGreaterThan(0);
       expect(servers.some(s => s.name === 'filesystem')).toBe(true);
-      expect(servers.some(s => s.name === 'puppeteer')).toBe(true);
+      expect(servers.some(s => s.name === 'nexus-browser')).toBe(true);
     });
 
     it('should recommend servers for general projects', () => {
@@ -209,14 +209,14 @@ describe('McpServerRegistry', () => {
       const servers = registry.search('browser automation');
 
       expect(servers.length).toBeGreaterThan(0);
-      expect(servers.some(s => s.name === 'puppeteer')).toBe(true);
+      expect(servers.some(s => s.name === 'nexus-browser')).toBe(true);
     });
 
     it('should search by capabilities', () => {
       const servers = registry.search('screenshot');
 
       expect(servers.length).toBeGreaterThan(0);
-      expect(servers.some(s => s.name === 'puppeteer')).toBe(true);
+      expect(servers.some(s => s.name === 'nexus-browser')).toBe(true);
     });
 
     it('should be case insensitive', () => {
