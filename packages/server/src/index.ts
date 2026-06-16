@@ -536,7 +536,14 @@ ${chalk.bold.underline('Response Fields:')}
 
   const port = portFromFlag || parseInt(process.env.PORT || '4000', 10);
   const debug = process.env.DEBUG === 'true' || process.argv.includes('--debug');
-  const yolo = process.env.YOLO === 'true' || process.argv.includes('--yolo');
+  // Headless (no TTY) → auto-approve. The interactive CLIApprovalHandler can't prompt without a
+  // TTY: a detached/auto-started server has no terminal, so it would FAIL-FAST DENY every tool that
+  // needs approval — breaking `cortex "<task>"` unless the user babysits a foreground cortex-server
+  // to click "approve". There's no interactive approver in a headless one-shot, so auto-approve (the
+  // same stance as `cortex agent`). A foreground `cortex-server` in a real terminal (a TTY) still
+  // prompts. Opt out with CORTEX_HEADLESS_APPROVE=false (then headless tools that need approval deny).
+  const headlessAutoApprove = !process.stdout.isTTY && process.env.CORTEX_HEADLESS_APPROVE !== 'false';
+  const yolo = process.env.YOLO === 'true' || process.argv.includes('--yolo') || headlessAutoApprove;
   const idleTimeoutMs = (idleFromFlag || parseInt(process.env.SERVER_IDLE_TIMEOUT || '0', 10)) * 1000;
 
   // --system-prompt-file <path>: redirect the core `system_prompt` system message

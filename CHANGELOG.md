@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.37.3] - 2026-06-16
+
+### Fixed
+
+- **Headless `cortex "<task>"` no longer blocks on tool-approval prompts (no second `cortex-server`
+  shell needed).** A plain prompt auto-starts a detached server with no TTY, where the interactive
+  approval handler can't prompt — so it would fail-fast *deny* every tool needing approval (or, if you
+  ran a foreground `cortex-server`, prompt there, forcing you to babysit a second shell). A headless
+  server (no TTY) now auto-approves tool execution — the same stance as `cortex agent`, and the only
+  workable one when there's no interactive approver. A foreground `cortex-server` in a real terminal
+  still prompts interactively. Opt out with `CORTEX_HEADLESS_APPROVE=false` (headless tools that need
+  approval then deny). Verified: `cortex "create a file…"` runs the Write tool one-shot, no prompt.
+
+---
+
 ## [4.37.2] - 2026-06-16
 
 ### Added
