@@ -11,6 +11,7 @@ import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 
 // Resolve paths for .env loading
 const __filename = fileURLToPath(import.meta.url);
@@ -45,6 +46,11 @@ const pkgEnvLocal = path.join(packageRoot, '.env.local');
 
 config({ path: cwdEnv, quiet: true });
 config({ path: pkgEnv, quiet: true });
+// Global user config (~/.cortex/.env): lowest priority among non-.local files (dotenv is
+// "first wins", so a project ./.env already loaded above still overrides it). This is what
+// puts keys set via `cortex config set` — which writes ~/.cortex/.env — into process.env,
+// where the API-key consumers (APIClient, web tool backends) actually read them.
+config({ path: path.join(os.homedir() || process.cwd(), '.cortex', '.env'), quiet: true });
 config({ path: cwdEnvLocal, override: true, quiet: true });
 config({ path: pkgEnvLocal, override: true, quiet: true });
 

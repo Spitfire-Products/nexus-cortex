@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.34.1] - 2026-06-15
+
+### Fixed
+
+- **API keys set in `~/.cortex/.env` are now actually used at runtime.** The server loaded only
+  `./.env` into `process.env`, so keys written to the global `~/.cortex/.env` (by `cortex config
+  set` / `config init`) were visible to config introspection but never reached the model and
+  web-tool clients, which read `process.env` directly — producing `API key not found in
+  environment variable: GEMINI_API_KEY` even with the key set. The server now also loads
+  `~/.cortex/.env` at startup, at the lowest priority (a project `./.env` still overrides it).
+
+---
+
 ## [4.34.0] - 2026-06-15
 
 ### Added
