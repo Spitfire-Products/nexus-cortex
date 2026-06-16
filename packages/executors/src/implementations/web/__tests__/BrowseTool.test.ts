@@ -45,7 +45,7 @@ describe('BrowseTool', () => {
       expect((r.metadata?.agentDefinition as any).name).toBe('browse-agent');
       expect((r.metadata?.agentDefinition as any).systemPrompt).toContain('nexus-browser');
       // Critical: env override must enable MCP for the subagent only
-      expect(r.metadata?.envOverrides).toEqual({ MCP_AUTO_INJECT: 'true' });
+      expect(r.metadata?.envOverrides).toEqual({ MCP_AUTO_INJECT: 'true', CORTEX_MCP_AUTOCONNECT: 'nexus-browser' });
     });
 
     it('threads starting URL into taskPrompt when provided', async () => {
@@ -90,7 +90,7 @@ describe('BrowseTool', () => {
     it('produces the exact dispatch contract orchestrator expects', () => {
       const r = buildBrowseSubagentDispatch('test task', 'https://x.com', 'display label');
       expect(r.metadata?.shouldSpawnSubAgent).toBe(true);
-      expect(r.metadata?.envOverrides).toEqual({ MCP_AUTO_INJECT: 'true' });
+      expect(r.metadata?.envOverrides).toEqual({ MCP_AUTO_INJECT: 'true', CORTEX_MCP_AUTOCONNECT: 'nexus-browser' });
       expect(r.metadata?.taskPrompt).toBe('Start at: https://x.com\n\ntest task');
       expect(r.metadata?.agentName).toBe('browse-agent');
     });
