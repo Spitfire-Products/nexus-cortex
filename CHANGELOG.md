@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.34.7] - 2026-06-16
+
+### Fixed
+
+- **`InitCortexContext` (the `CORTEX.md` / `/init` generator) is now always visible to the
+  model.** Its tool definition had no `discoveryTier`, so with deferred tool loading enabled
+  (the default) it was deferred — and models reported it "isn't in the tool registry" rather
+  than searching for it. Marked it `essential` so it's always sent. Asking the agent to
+  generate `CORTEX.md` now works without disabling deferred loading.
+
+---
+
 ## [4.34.6] - 2026-06-16
 
 ### Fixed
