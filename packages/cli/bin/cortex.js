@@ -86,6 +86,11 @@ if (args.includes('--version') || args.includes('-v')) {
 // first positional arg is one of those subcommands, hand the whole invocation off
 // to it — this is what makes `cortex autoresearch experiment … --json` work on PATH
 // (the auto-research container contract).
+// Parsed during flag-handling further down, but the delegation below may auto-start
+// the server before that runs — declare it here (undefined => server uses its default
+// idle behavior) so startServer() can read it without hitting the temporal dead zone.
+let idleTimeoutFlag;
+
 const COMMANDER_SUBCOMMANDS = new Set([
   'autoresearch', 'models', 'message', 'mcp', 'config', 'permissions', 'context',
   'tools', 'middleware', 'artifact', 'cache', 'system-messages', 'tmux',
@@ -93,6 +98,16 @@ const COMMANDER_SUBCOMMANDS = new Set([
 ]);
 const __firstPositional = args.find((a) => !a.startsWith('-'));
 if (__firstPositional && COMMANDER_SUBCOMMANDS.has(__firstPositional)) {
+  // A few delegated subcommands talk to the cortex server over HTTP (they connect via
+  // CortexClient to localhost:PORT). Auto-start the server first so e.g.
+  // `cortex mcp enable <name>` works without a running server instead of failing with a
+  // bare "fetch failed". File-only subcommands (mcp init/edit/list/validate) don't need it.
+  const __sub = args.find((a) => !a.startsWith('-') && a !== __firstPositional);
+  const __needsServer =
+    __firstPositional === 'mcp' && ['enable', 'disable', 'tools', 'status', 'server'].includes(__sub);
+  if (__needsServer) {
+    await ensureServer();
+  }
   const CLI_ENTRY = join(__cortex_dirname, '..', 'dist', 'index.js');
   const res = spawnSync(process.execPath, [CLI_ENTRY, ...args], { stdio: 'inherit' });
   process.exit(res.status ?? 0);
@@ -140,7 +155,7 @@ const modelId = getFlagValue('--model') || getFlagValue('-m');
 const resumeId = getFlagValue('--resume');
 const prMode = getFlagValue('--pr');
 const timeoutFlag = getFlagValue('--timeout');
-let idleTimeoutFlag = getFlagValue('--idle-timeout');
+idleTimeoutFlag = getFlagValue('--idle-timeout');
 const cwdFlag = getFlagValue('--cwd');     // `cortex agent` target directory
 hasFlag('--yolo');                         // accepted but redundant — agent auto-approves by default
 const messageTimeoutMs = timeoutFlag ? parseInt(timeoutFlag, 10) : 600000; // 10 min default for messages

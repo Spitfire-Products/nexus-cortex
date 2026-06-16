@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.34.5] - 2026-06-16
+
+### Fixed
+
+- **`cortex mcp enable` / `disable` / `tools` / `status` now auto-start the cortex server**
+  when it isn't running, instead of failing with a bare `fetch failed`. These subcommands talk
+  to the server over HTTP, but the `cortex` bin delegated them without ensuring the server was
+  up. (File-only subcommands like `mcp init` are unaffected.)
+
+---
+
 ## [4.34.4] - 2026-06-16
 
 ### Fixed
