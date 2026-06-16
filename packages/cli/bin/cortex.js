@@ -301,7 +301,17 @@ async function startServer() {
   }
   serverProcess = spawn('node', serverArgs, {
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, PORT: BASE_PORT },
+    // Run the server in — and treat as project root — the directory cortex was invoked
+    // from, so `cd foo && cortex "..."` operates on `foo` (not the home dir or a stale
+    // PROJECT_PATH from the global ~/.cortex/.env). An explicitly-exported PROJECT_PATH /
+    // PROJECT_ROOT still wins (e.g. the autoresearch container sets one deliberately).
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      PORT: BASE_PORT,
+      PROJECT_PATH: process.env.PROJECT_PATH || process.cwd(),
+      PROJECT_ROOT: process.env.PROJECT_ROOT || process.cwd(),
+    },
     detached: true,
   });
   serverProcess.unref();

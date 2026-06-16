@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.34.6] - 2026-06-16
+
+### Fixed
+
+- **The auto-started server now uses the directory you ran `cortex` from as the project
+  root.** The bin started the server without telling it the invocation directory, so the
+  server fell back to `PROJECT_PATH` from the global `~/.cortex/.env` (often your home dir).
+  Result: `cd myproject && cortex "..."` would write `.cortex/` (CORTEX.md, sessions) and
+  scope file operations to your home dir instead of `myproject` — e.g. `/init` generated
+  `CORTEX.md` in the wrong place. The bin now sets the spawned server's `cwd` +
+  `PROJECT_PATH`/`PROJECT_ROOT` to the invocation directory (an explicitly-exported
+  `PROJECT_PATH`/`PROJECT_ROOT` still wins, e.g. for the autoresearch container).
+
+---
+
 ## [4.34.5] - 2026-06-16
 
 ### Fixed
