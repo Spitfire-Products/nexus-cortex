@@ -71,7 +71,7 @@ import { prRouter } from './routes/pr.js';
 import { configRouter } from './routes/config.js';
 
 // Import core library components
-import { createOrchestrator, type CortexOrchestrator } from '@nexus-cortex/core';
+import { createOrchestrator, DEFAULT_SETTINGS, type CortexOrchestrator } from '@nexus-cortex/core';
 import { SandboxViewServer, TmuxViewServer, SessionPersistence, TmuxManager } from '@nexus-cortex/executors';
 
 export interface ServerConfig {
@@ -208,7 +208,7 @@ export class CortexV4Server {
     // Step 1: Initialize persistent orchestrator (if not stateless)
     if (!this.stateless) {
       console.log(chalk.cyan('[INIT] Initializing persistent orchestrator...'));
-      const defaultModel = process.env.DEFAULT_MODEL_ID || 'gemini-2.5-flash';
+      const defaultModel = process.env.DEFAULT_MODEL_ID || DEFAULT_SETTINGS.DEFAULT_MODEL_ID;
 
       // PROJECT_PATH controls the file access boundary for tool execution.
       // Defaults to monorepo root; set to a parent directory (e.g., /path/to/projects)

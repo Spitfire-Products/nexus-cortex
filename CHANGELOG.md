@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.34.2] - 2026-06-15
+
+### Fixed
+
+- **The default model now honours your `DEFAULT_MODEL_ID` and falls back to the documented
+  default.** The server hardcoded `gemini-2.5-flash` as its startup fallback (and the messages
+  route hardcoded `grok-code-fast-1`), so when `DEFAULT_MODEL_ID` wasn't visible it silently used
+  gemini and demanded `GEMINI_API_KEY` — even if you'd set `deepseek-v4-pro`. Both fallbacks now
+  use the canonical schema default (`DEFAULT_SETTINGS.DEFAULT_MODEL_ID` = `deepseek-v4-pro`), so
+  there's a single source of truth for the default model. (Combined with 4.34.1, a `DEFAULT_MODEL_ID`
+  set in `~/.cortex/.env` is now both read and applied.)
+
+---
+
 ## [4.34.1] - 2026-06-15
 
 ### Fixed

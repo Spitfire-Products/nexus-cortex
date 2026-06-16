@@ -3,7 +3,7 @@
  * Thin wrapper around CortexOrchestrator
  */
 import { Router, Request, Response } from 'express';
-import { createOrchestrator, type OrchestratorConfig, type CortexOrchestrator, toolFactory } from '@nexus-cortex/core';
+import { createOrchestrator, DEFAULT_SETTINGS, type OrchestratorConfig, type CortexOrchestrator, toolFactory } from '@nexus-cortex/core';
 
 // Read lazily — ESM hoists imports before index.ts sets process.env.PROJECT_ROOT
 function getProjectRoot(): string {
@@ -45,7 +45,7 @@ messagesRouter.post('/v1/messages', async (req: Request, res: Response, next) =>
     //   3. .env DEFAULT_MODEL_ID
     //   4. hard fallback
     const sessionModel = serverOrchestrator?.getCurrentModelId?.();
-    const model = requestModel || sessionModel || process.env.DEFAULT_MODEL_ID || 'grok-code-fast-1';
+    const model = requestModel || sessionModel || process.env.DEFAULT_MODEL_ID || DEFAULT_SETTINGS.DEFAULT_MODEL_ID;
 
     // Validate required fields
     if (!messages || !Array.isArray(messages)) {
