@@ -24,6 +24,7 @@ import { verifyCitationsGrounded } from './citationVerification.js';
 import { verifyCoordinates, deterministicCoordinateScore } from './coordinateVerification.js';
 import { buildRouterSample, appendJsonlRotating } from './cortexTrainingRecord.js';
 import { join as pathJoin } from 'path';
+import { existsSync } from 'fs';
 import { type ServerSideToolMetadata, extractServerSideMetadata, XAIServerSideTools, OpenAIServerSideTools, toCanonicalTool } from '../tools/ServerSideTools.js';
 
 // Message types
@@ -6109,9 +6110,19 @@ export class CortexOrchestrator {
    * @returns Array of context management tools
    */
   private getContextManagementTools(): any[] {
-    return [
-      InitCortexContext.getToolDefinition()
-    ] as any[];
+    const def = InitCortexContext.getToolDefinition();
+    // Promote the init tool from deferred to 'essential' ONLY when this project has no
+    // CORTEX.md yet — so an uninitialized project can discover/run it (the model never
+    // thinks to SearchTools for a deferred setup tool), but it drops back to deferred
+    // (lean context) once CORTEX.md exists and there's nothing to initialize.
+    try {
+      const projectPath = this.config.projectPath || process.cwd();
+      const hasCortexMd = existsSync(pathJoin(projectPath, '.cortex', 'CORTEX.md'));
+      if (!hasCortexMd) {
+        def.discoveryTier = 'essential';
+      }
+    } catch { /* on any fs error, leave the tool at its default (deferred) tier */ }
+    return [def] as any[];
   }
 
   // ============================================

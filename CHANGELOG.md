@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.34.8] - 2026-06-16
+
+### Changed
+
+- **`InitCortexContext` is now surfaced to the model only when the project actually needs
+  it.** Rather than always sending it (4.34.7), the tool is deferred by default and promoted
+  to `essential` only when the current project has no `.cortex/CORTEX.md` yet. So an
+  uninitialized project can discover and run it (you don't have to disable deferred loading),
+  while already-initialized projects keep a lean, fully-deferred tool context.
+
+---
+
 ## [4.34.7] - 2026-06-16
 
 ### Fixed

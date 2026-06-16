@@ -1200,10 +1200,11 @@ you know the install.
   static getToolDefinition(): CanonicalTool {
     return {
       name: 'InitCortexContext',
-      // Always send to the model (don't defer): it's a user-invoked setup tool, and when
-      // deferred the model couldn't see it ("not in the tool registry") and didn't think to
-      // SearchTools for it. Tiny schema, so the always-on token cost is negligible.
-      discoveryTier: 'essential',
+      // Deferred by default to keep the hot-path context lean. The orchestrator promotes
+      // this to 'essential' only when the project has no CORTEX.md yet (see
+      // getContextManagementTools) — so it's discoverable exactly when initialization is
+      // relevant, and out of the way once the project is initialized.
+      discoveryTier: 'standard',
       description: 'Scan the project and return structured data for you to write a CORTEX.md project context file. You will receive file structure, dependencies, scripts, and architecture patterns. Use this data plus your own analysis to write a concise CORTEX.md (like CLAUDE.md). Write the file yourself using WriteFile.',
       schema: {
         type: 'object',
