@@ -61,7 +61,7 @@ found anywhere, cortex creates `~/.cortex/.env`, prints what to add, and stops â
 |------|---------|
 | Set a key | `cortex config set KEY value` (or edit `~/.cortex/.env`) |
 | Create the config file now | `cortex config init` (`--force` refreshes the template, keeps values) |
-| Generate project `CORTEX.md` | `cortex "generate a CORTEX.md for this project"` (runs the init tool) |
+| Generate project `CORTEX.md` | `cortex init` |
 | Add an MCP server | `cortex mcp init` â†’ `cortex mcp enable <name>` (the browser is zero-config) |
 | Stop the background server | `cortex --shutdown` |
 | Update | `cortex update` |

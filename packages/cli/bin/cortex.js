@@ -162,6 +162,16 @@ hasFlag('--yolo');                         // accepted but redundant — agent a
 const messageTimeoutMs = timeoutFlag ? parseInt(timeoutFlag, 10) : 600000; // 10 min default for messages
 let prompt = args.join(' ').trim();
 
+// `cortex init` — generate the project CORTEX.md context file (headless parity with the TUI's
+// /init slash command). Expands to a generation request; the model runs the init_cortex_context
+// tool, which scans the project and writes .cortex/CORTEX.md (auto-loaded as context thereafter).
+if (prompt === 'init') {
+  prompt =
+    'Generate a CORTEX.md project-context file for this project using the init_cortex_context ' +
+    'tool. Scan the project structure, key files, dependencies, and npm scripts, and write ' +
+    '`.cortex/CORTEX.md`. It is auto-loaded as project context on future runs. Keep it concise.';
+}
+
 // Apply `cortex agent` autonomous defaults. Set BEFORE the server is auto-started so the
 // spawned server inherits the cwd (project path) + YOLO env.
 if (__agentMode) {

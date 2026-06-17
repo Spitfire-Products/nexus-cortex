@@ -61,7 +61,7 @@ cortex agent --cwd ./my-project "add a --version flag to the CLI and run the tes
 | Set a key | `cortex config set KEY value`  (or edit `~/.cortex/.env`) |
 | Create the config file now | `cortex config init`  (`--force` refreshes the template, keeps your values) |
 | Run a one-shot agent | `cortex agent "…"`  (auto-approves tools, fresh session, self-stops on idle) |
-| Generate project context (`CORTEX.md`) | `cortex "generate a CORTEX.md for this project"`  (runs the init tool) |
+| Generate project context (`CORTEX.md`) | `cortex init` |
 | Add an MCP server | `cortex mcp init` then `cortex mcp enable <name>`  (the browser already works zero-config) |
 | Stop the background server | `cortex --shutdown` |
 | Update to the latest version | `cortex update` |

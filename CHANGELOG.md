@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.37.6] - 2026-06-16
+
+### Added
+
+- **`cortex init`** — generate a project `CORTEX.md` context file from the headless CLI, matching
+  the TUI's `/init`. It runs the `init_cortex_context` tool to scan the project (structure, key
+  files, dependencies, npm scripts) and write `.cortex/CORTEX.md`, which is auto-loaded as project
+  context on subsequent runs.
+
+---
+
 ## [4.37.5] - 2026-06-16
 
 ### Added
