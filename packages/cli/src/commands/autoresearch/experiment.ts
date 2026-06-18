@@ -28,6 +28,7 @@ import { ThemeManager } from '../../themes/ThemeManager.js';
 import { findProjectRoot } from '../config/utils.js';
 import { freePort, gitShortSha, CortexTarget, type ExperimentTarget, type PreparedArm } from './harnessProcess.js';
 import { CommandTarget } from './commandRunner.js';
+import { resolveRepoDir, resolveTaskSet } from './repoResolve.js';
 
 export interface AutoResearchExperimentOptions {
   experimentTag?: string;
@@ -88,9 +89,13 @@ export async function autoResearchExperiment(options: AutoResearchExperimentOpti
   const log = (m: string) => { if (!json) console.log(theme.colors.muted(` ${m}`)); };
 
   const projectRoot = findProjectRoot();
-  const candidateDir = options.candidateDir;
-  const baseDir = options.baseDir ?? projectRoot;
+  // --candidate-dir / --base-dir may be a PUBLIC http(s) git URL → shallow-clone
+  // (credential-free) and use the checkout; local paths are used as-is. A relative
+  // --task-set / --holdout-set resolves against the candidate checkout (the repo).
+  const candidateDir = options.candidateDir ? resolveRepoDir(options.candidateDir, log) : undefined;
+  const baseDir = options.baseDir ? resolveRepoDir(options.baseDir, log) : projectRoot;
   const cortexDir = options.cortexDir ?? projectRoot;
+  const repoAnchor = candidateDir ?? (options.baseDir ? baseDir : undefined);
 
   const missing: string[] = [];
   if (!options.experimentTag) missing.push('--experiment-tag');
@@ -100,8 +105,8 @@ export async function autoResearchExperiment(options: AutoResearchExperimentOpti
 
   const arms: PreparedArm[] = [];
   try {
-    const trainTasks = loadTasks(options.taskSet!);
-    const holdoutTasks = options.holdoutSet ? loadTasks(options.holdoutSet) : undefined;
+    const trainTasks = loadTasks(resolveTaskSet(options.taskSet!, repoAnchor));
+    const holdoutTasks = options.holdoutSet ? loadTasks(resolveTaskSet(options.holdoutSet, repoAnchor)) : undefined;
     if (trainTasks.length === 0) { console.error(theme.colors.error('Error: empty --task-set')); process.exit(1); }
 
     // Distinct arm labels: git SHA when the dir is a checkout, else its basename.

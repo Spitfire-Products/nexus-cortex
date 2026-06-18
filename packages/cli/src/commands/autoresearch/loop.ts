@@ -28,6 +28,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { ResearchBacklog } from '@nexus-cortex/core';
 import { ThemeManager } from '../../themes/ThemeManager.js';
+import { resolveRepoDir, resolveTaskSet } from './repoResolve.js';
 
 export interface AutoResearchLoopOptions {
   repo?: string;
@@ -60,6 +61,10 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
   const theme = ThemeManager.getTheme();
   const json = !!options.json;
   const log = (m: string) => { if (!json) console.log(theme.colors.muted(` ${m}`)); };
+  // In --json mode, emit machine-readable progress as one compact JSON object per line
+  // (JSONL) so a host watching the process sees the loop advance; the final summary
+  // object is still printed last (unchanged) for existing consumers.
+  const emit = (event: Record<string, unknown>) => { if (json) console.log(JSON.stringify(event)); };
   const self = process.argv[1]!; // re-invoke this same CLI for fix/experiment
 
   const miss: string[] = [];
@@ -67,7 +72,9 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
   if (!options.taskSet) miss.push('--task-set');
   if (miss.length) { console.error(theme.colors.error(`Error: missing ${miss.join(', ')}`)); process.exit(1); }
 
-  const repo = resolve(options.repo!);
+  // --repo may be a PUBLIC http(s) git URL → shallow-clone (credential-free) and use the
+  // checkout; a local path is used as-is. Relative task-sets resolve against the repo.
+  const repo = resolveRepoDir(options.repo!, log);
   const git = (args: string[], cwd = repo) =>
     execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   const sh = (cmd: string, cwd: string) => spawnSync('sh', ['-c', cmd], { cwd, stdio: json ? 'ignore' : 'inherit' });
@@ -106,6 +113,7 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
 
   try {
     for (let r = 1; r <= maxRounds; r++) {
+      emit({ event: 'round_start', round: r });
       // 1. Goal
       let goal = options.prompt;
       let defId: string | undefined;
@@ -121,20 +129,21 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
 
       // 3. Mutate (fixer).
       log(`r${r}: fixing → ${goal!.slice(0, 80)}`);
+      emit({ event: 'fix', round: r, fixer: options.fixerCmd ? 'command' : 'llm' });
       if (options.fixerCmd) {
         const cmd = options.fixerCmd.replace(/\{prompt\}/g, shQuote(goal!));
         const f = sh(cmd, candDir);
-        if (f.status !== 0) { log(`r${r}: fixer-cmd failed (exit ${f.status}) → skip`); removeWorktree(candDir); stale++; if (stale >= maxStale) { stop = 'max-stale'; break; } continue; }
+        if (f.status !== 0) { log(`r${r}: fixer-cmd failed (exit ${f.status}) → skip`); emit({ event: 'round_done', round: r, merged: false, skipped: 'fixer-failed' }); removeWorktree(candDir); stale++; if (stale >= maxStale) { stop = 'max-stale'; break; } continue; }
       } else {
         const f = spawnSync('node', [self, 'autoresearch', 'fix', '--cwd', candDir, '--prompt', goal!, '--json'],
           { stdio: json ? 'ignore' : 'inherit' });
-        if (f.status !== 0) { log(`r${r}: fixer failed → skip`); removeWorktree(candDir); stale++; if (stale >= maxStale) { stop = 'max-stale'; break; } continue; }
+        if (f.status !== 0) { log(`r${r}: fixer failed → skip`); emit({ event: 'round_done', round: r, merged: false, skipped: 'fixer-failed' }); removeWorktree(candDir); stale++; if (stale >= maxStale) { stop = 'max-stale'; break; } continue; }
       }
 
       // 4. Commit candidate (no change → skip the round).
       git(['add', '-A'], candDir);
       const dirty = spawnSync('git', ['-C', candDir, 'diff', '--cached', '--quiet']).status !== 0;
-      if (!dirty) { log(`r${r}: no change → skip`); removeWorktree(candDir); stale++; if (stale >= maxStale) { stop = 'max-stale'; break; } continue; }
+      if (!dirty) { log(`r${r}: no change → skip`); emit({ event: 'round_done', round: r, merged: false, skipped: 'no-change' }); removeWorktree(candDir); stale++; if (stale >= maxStale) { stop = 'max-stale'; break; } continue; }
       git(['commit', '-q', '-m', `autoresearch loop r${r}: ${goal!.slice(0, 60)}`], candDir);
       const candRef = git(['rev-parse', '--short', 'HEAD'], candDir);
 
@@ -143,9 +152,9 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
         '--experiment-tag', `loop-r${r}`,
         '--base-dir', baseDir, '--candidate-dir', candDir,
         '--base-ref', git(['rev-parse', '--short', 'HEAD'], baseDir), '--candidate-ref', candRef,
-        '--task-set', resolve(options.taskSet!), '--no-build',
+        '--task-set', resolveTaskSet(options.taskSet!, repo), '--no-build',
         '--cortex-dir', store, '--runs', options.runs ?? '3', '--json'];
-      if (options.holdoutSet) expArgs.push('--holdout-set', resolve(options.holdoutSet));
+      if (options.holdoutSet) expArgs.push('--holdout-set', resolveTaskSet(options.holdoutSet, repo));
       if (options.model) expArgs.push('--model', options.model);
       if (options.temperature) expArgs.push('--temperature', options.temperature);
       if (options.strategy) expArgs.push('--strategy', options.strategy);
@@ -153,12 +162,14 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
         expArgs.push('--run-cmd', options.runCmd, '--accept-exit', options.acceptExit ?? '0');
         if (options.buildCmd) expArgs.push('--build-cmd', options.buildCmd);
       }
+      emit({ event: 'experiment', round: r, candidateRef: candRef });
       const exp = spawnSync('node', [self, ...expArgs], { encoding: 'utf8' });
       let res: any;
-      try { res = JSON.parse(exp.stdout); } catch { log(`r${r}: experiment produced no verdict → skip`); removeWorktree(candDir); stale++; if (stale >= maxStale) { stop = 'max-stale'; break; } continue; }
+      try { res = JSON.parse(exp.stdout); } catch { log(`r${r}: experiment produced no verdict → skip`); emit({ event: 'round_done', round: r, merged: false, skipped: 'no-verdict' }); removeWorktree(candDir); stale++; if (stale >= maxStale) { stop = 'max-stale'; break; } continue; }
 
       const keep = res.verdict?.decision === 'keep';
       const accept = options.holdoutSet ? !!res.mergeEligible : keep;
+      emit({ event: 'gate', round: r, decision: res.verdict?.decision, effect: res.verdict?.effect, mergeEligible: !!res.mergeEligible, accepted: accept });
       const candScore = (() => {
         const s = res.benchSummaries?.candidate?.holdout ?? res.benchSummaries?.candidate?.train;
         const t = s?.tasks?.find((x: any) => x.taskId === successMetric?.taskId);
@@ -173,9 +184,11 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
         removeWorktree(baseDir);                       // old base
         baseDir = candDir; baseRef = candRef; stale = 0;
         if (defId) { if (options.holdoutSet) backlog.markVerified(defId, `loop-r${r}`); else backlog.markFixed(defId, candRef); }
+        emit({ event: 'round_done', round: r, merged: true, ref: candRef });
         if (successMetric && candScore != null && candScore >= successMetric.threshold) { stop = 'success'; break; }
       } else {
         if (!options.keepWorktrees) removeWorktree(candDir);
+        emit({ event: 'round_done', round: r, merged: false });
         stale++;
         if (stale >= maxStale) { stop = 'max-stale'; break; }
       }
@@ -186,6 +199,7 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
     for (const w of worktrees) removeWorktree(w);
   }
 
+  emit({ event: 'stop', reason: stop });
   const out = { repo, branch, finalRef: baseRef, rounds: rounds.length, merges: rounds.filter(r => r.accepted).length, stop, history: rounds };
   if (json) { console.log(JSON.stringify(out, null, 2)); return; }
   console.log();
