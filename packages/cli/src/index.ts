@@ -51,6 +51,7 @@ import { autoResearchList } from './commands/autoresearch/list.js';
 import { autoResearchBench } from './commands/autoresearch/bench.js';
 import { autoResearchExperiment } from './commands/autoresearch/experiment.js';
 import { autoResearchFix } from './commands/autoresearch/fix.js';
+import { autoResearchJudge } from './commands/autoresearch/judge.js';
 import { autoResearchLoop } from './commands/autoresearch/loop.js';
 import { tmuxList } from './commands/tmux/list.js';
 import { middlewareList } from './commands/middleware/list.js';
@@ -603,6 +604,22 @@ autoresearch
   });
 
 autoresearch
+  .command('judge')
+  .description('LLM-as-judge qualitative gate: read a candidate diff (read-only), score it against a rubric → {approve, score, confidence, rationale}')
+  .requiredOption('--base-ref <ref>', 'base git ref (the control)')
+  .requiredOption('--candidate-ref <ref>', 'candidate git ref (the change under test)')
+  .option('--rubric <text>', 'scoring rubric: what to reward / penalize')
+  .option('--rubric-file <path>', 'read the rubric from a file')
+  .option('--mission <text>', 'optional framing of what this judge is evaluating')
+  .option('--cwd <path>', 'repo/worktree both refs are reachable from (default: cwd)')
+  .option('--model <id>', 'judge model (default: DEFAULT_MODEL_ID)')
+  .option('--max-diff-chars <n>', 'cap the diff fed to the model', '60000')
+  .action(async (opts) => {
+    const globalOpts = program.opts();
+    await autoResearchJudge({ ...opts, json: globalOpts.json });
+  });
+
+autoresearch
   .command('experiment')
   .description('Full single experiment: build+serve base & candidate → bench both arms (train+holdout) → gate → verdict + JSONL artifact')
   .requiredOption('--experiment-tag <tag>', 'experiment / swarm-member id')
@@ -682,6 +699,10 @@ autoresearch
   .option('--branch <name>', 'loop branch name (default: autoresearch/loop-<sha>)')
   .option('--cortex-dir <path>', 'shared .cortex store + JSONL artifacts (default: repo)')
   .option('--keep-worktrees', 'do not remove rejected candidate worktrees (debugging)')
+  .option('--require-judge', 'opt-in qualitative gate: an LLM judge must APPROVE each gate-accepted candidate before it merges (accept = gate ∧ judge)')
+  .option('--judge-rubric <text>', 'rubric for --require-judge (default: a generic code-quality rubric)')
+  .option('--judge-rubric-file <path>', 'read the judge rubric from a file')
+  .option('--judge-model <id>', 'model for the judge (default: --model, else DEFAULT_MODEL_ID)')
   .action(async (opts) => {
     const globalOpts = program.opts();
     await autoResearchLoop({ ...opts, json: globalOpts.json });

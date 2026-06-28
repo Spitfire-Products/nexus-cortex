@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.38.0] - 2026-06-18
+
+### Auto-research: operate on any repo, structured progress
+
+- `--repo` / `--base-dir` / `--candidate-dir` accept a PUBLIC http(s) git URL and clone it on demand (credential-free, shallow, idempotent); local paths unchanged.
+- `--task-set` / `--holdout-set` relative paths resolve against the repo checkout, so a caller can reference a task-set that lives inside the repo.
+- `loop --json` streams JSONL progress events (`round_start` / `fix` / `experiment` / `gate` / `round_done` / `stop`) before the final summary object, so a host can track a long run without scraping human output.
+- New `docs/AUTORESEARCH.md` — OSS guide to the auto-research system (CLI commands, task-set format, the Monte-Carlo gate, target modes, models, git safety, the hosted MCP).
+
 ## [4.37.6] - 2026-06-16
 
 ### Added

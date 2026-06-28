@@ -53,7 +53,24 @@ export interface AutoResearchLoopOptions {
    *  every scored run so the matrix can rank (model × temperature × strategy). */
   temperature?: string;
   strategy?: string;
+  /** Opt-in qualitative gate: run `cortex autoresearch judge` on each candidate the
+   *  STATISTICAL gate accepted, and require it to APPROVE before merging
+   *  (accept = gate-accept ∧ judge-approve). Default off → unchanged behavior. */
+  requireJudge?: boolean;
+  judgeRubric?: string;
+  judgeRubricFile?: string;
+  /** judge model (default: the loop --model, else DEFAULT_MODEL_ID). */
+  judgeModel?: string;
 }
+
+/** Generic code-quality rubric used when --require-judge is set without an explicit
+ *  --judge-rubric / --judge-rubric-file. Override for domain-specific judging. */
+const DEFAULT_JUDGE_RUBRIC =
+  'Score 0-100. Approve ONLY if the change is correct, focused, and clearly addresses the ' +
+  'stated goal without introducing hallucinated/nonexistent APIs, dead or speculative code, ' +
+  'security issues, or unrelated churn. Reward minimal, well-targeted, sound changes that a ' +
+  'careful reviewer would accept. Penalize scope creep, edits that look like they game a metric, ' +
+  'and anything that reduces clarity or safety. When in doubt, do not approve.';
 
 function shQuote(s: string): string { return `'${s.replace(/'/g, `'\\''`)}'`; }
 
@@ -168,8 +185,33 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
       try { res = JSON.parse(exp.stdout); } catch { log(`r${r}: experiment produced no verdict → skip`); emit({ event: 'round_done', round: r, merged: false, skipped: 'no-verdict' }); removeWorktree(candDir); stale++; if (stale >= maxStale) { stop = 'max-stale'; break; } continue; }
 
       const keep = res.verdict?.decision === 'keep';
-      const accept = options.holdoutSet ? !!res.mergeEligible : keep;
-      emit({ event: 'gate', round: r, decision: res.verdict?.decision, effect: res.verdict?.effect, mergeEligible: !!res.mergeEligible, accepted: accept });
+      const gateAccept = options.holdoutSet ? !!res.mergeEligible : keep;
+      emit({ event: 'gate', round: r, decision: res.verdict?.decision, effect: res.verdict?.effect, mergeEligible: !!res.mergeEligible, accepted: gateAccept });
+
+      // 5b. Optional qualitative judge gate (opt-in, default off). Runs ONLY on a
+      // candidate the STATISTICAL gate already accepted — the judge can SUBTRACT
+      // acceptance, never resurrect a rejected candidate. Final accept =
+      // gate-accept ∧ judge-approve. Fail-closed: a judge that errors or returns
+      // no parseable verdict blocks the merge (approve defaults to false).
+      let accept = gateAccept;
+      if (options.requireJudge && accept) {
+        const baseShort = git(['rev-parse', '--short', 'HEAD'], baseDir);
+        const jArgs = ['autoresearch', 'judge',
+          '--cwd', candDir, '--base-ref', baseShort, '--candidate-ref', candRef, '--json'];
+        if (options.judgeRubricFile) jArgs.push('--rubric-file', options.judgeRubricFile);
+        else jArgs.push('--rubric', options.judgeRubric ?? DEFAULT_JUDGE_RUBRIC);
+        const jModel = options.judgeModel ?? options.model;
+        if (jModel) jArgs.push('--model', jModel);
+        if (goal) jArgs.push('--mission', goal.slice(0, 500));
+        emit({ event: 'judge_start', round: r, candidateRef: candRef });
+        const j = spawnSync('node', [self, ...jArgs], { encoding: 'utf8' });
+        let jv: any = null;
+        try { jv = JSON.parse(j.stdout); } catch { jv = null; }
+        const approve = !!jv?.approve;
+        if (!approve) accept = false;
+        emit({ event: 'judge', round: r, approve, score: jv?.score, confidence: jv?.confidence });
+        log(`r${r}: judge ${approve ? theme.colors.success('APPROVE') : theme.colors.error('reject')}${jv?.score != null ? ` (score ${jv.score})` : ''}`);
+      }
       const candScore = (() => {
         const s = res.benchSummaries?.candidate?.holdout ?? res.benchSummaries?.candidate?.train;
         const t = s?.tasks?.find((x: any) => x.taskId === successMetric?.taskId);
