@@ -279,6 +279,8 @@ cortex autoresearch bench --task-set <file|dir of *.json> --experiment-tag <id> 
 ```
 Task = `{id, prompt, verifier, taskType?}`; verifier ∈ `exact|regex|contains|llm-judge`. **Prefer `contains` (partial credit → continuous score) or graded rubrics** over binary exact/regex — the bootstrap/permutation gate separates arms far better on continuous scores. Sample: `.cortex/bench/tasks/sample-tasks.json`. Run it in the base build and the candidate build (different `--harness-ref`/worktree), then `cortex autoresearch evaluate`. Keep holdout task FILES out of any fixing agent's context (overfitting guard).
 
+> **Two different "judges" — don't conflate them.** The `llm-judge` *verifier* above is **task-level**: it scores one task's OUTPUT against a rubric, producing a number that feeds the statistical gate. The autoresearch **judge gate** (`cortex autoresearch judge`, `loop --require-judge`) is **candidate-level**: it reads the whole candidate *diff* and approves/vetoes the MERGE (`accept = mergeEligible ∧ judge-approve`), catching eval-gaming and unsafe code the per-task scores cannot see. Orthogonal roles: one grades outputs, the other gates merges.
+
 **The one-shot runner — `cortex autoresearch experiment` (v4.7.0).** Does the whole single-experiment loop in one call (build+serve both arms → bench train+holdout → gate → `verifyOnHoldout` → teardown), so you don't orchestrate `bench`×2 + `evaluate` by hand:
 ```
 cortex autoresearch experiment --experiment-tag <id> \

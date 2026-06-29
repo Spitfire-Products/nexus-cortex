@@ -46,7 +46,7 @@ Identical agents on identical prompts waste the parallelism — they trace the s
 
 ## 3. DELEGATE (pick the execution path by how you're accessed)
 - **Local cortex harness** (you're driving cortex, or inside it): set `AUTORESEARCH_AGENTS=native` and delegate via the **Task tool** (`subagent_type: autoresearch-agent`), one per strategy, each prompt = the plan + that arm's persona/strategy + `EXECUTION MODE: native`. Or drive the CLI directly: `cortex autoresearch fix` / `experiment` / `loop`.
-- **Hosted at scale** (external agent): a hosted auto-research MCP is planned (ships after the npm release). When one is configured, relay the plan to its tools — `EXECUTION MODE: mcp`.
+- **Hosted at scale** (external agent): the hosted **`nexus-autoresearch` MCP** is LIVE. Relay the plan to its tools (`start_autoresearch_campaign` / `autoresearch_experiment` / `autoresearch_fix`) — `EXECUTION MODE: mcp`. Hosted campaigns run the **LLM judge gate ON by default** (see §4); pass `requireJudge:false` to disable or `judgeRubric` to customize.
 
 The agents EXPLORE; they do not merge. They each return a candidate + its verdict.
 
@@ -55,7 +55,8 @@ Collect every candidate + verdict and keep **only the holdout-verified winner**:
 - **fixed ≠ verified.** A candidate that only passes the task that surfaced the deficiency is `fixed`. It is `verified` ONLY after a **held-out** set it was never tuned against confirms it.
 - **N-aware significance.** With N parallel arms some clear the bar by chance — the gate's family-wise-error (FWER) correction handles this; apply it across *all* arms (including the discarded ones). A single arm "winning" is not enough on its own.
 - **You arbitrate; the arms don't self-merge.** This central single-judge step is what makes aggressive diversity safe.
-- The gate is deterministic code (`cortex autoresearch evaluate` / `AutoResearchGate`) — never an LLM deciding significance.
+- The **statistical** gate is deterministic code (`cortex autoresearch evaluate` / `AutoResearchGate`) — never an LLM deciding significance.
+- **Two gates, not one — add the qualitative judge.** The statistical gate measures whether the *scores* improved; it is blind to *how*. A candidate can pass every statistical check by **gaming the eval** (hardcoding outputs, branching on test inputs, editing the verifier) or by **smuggling damage** (a hallucinated import, an unsafe shell-out, an exfiltration backdoor, unrelated churn) alongside a real fix. The **LLM judge gate** (`cortex autoresearch judge`) reads the candidate's *diff* and vetoes those — so the merge rule is `accept = mergeEligible ∧ judge-approve`. It's opt-in on the CLI (`--require-judge` / `--judge-rubric`) and **ON by default** on hosted MCP campaigns. This is the qualitative complement to the statistical gate — not a replacement: a score gain is necessary but NOT sufficient.
 
 ## 5. Discipline (the overfitting guards — load-bearing)
 - **Human owns the metric.** You (or the operator) define success; the agents optimize against it. An agent that chooses its own metric games the eval.

@@ -177,6 +177,38 @@ cortex autoresearch fix \
   --model deepseek-v4-flash
 ```
 
+### `cortex autoresearch judge`
+
+The **LLM-as-judge qualitative gate** — the second, qualitative half of the merge
+decision. The statistical gate (`experiment`/`evaluate`) answers *"is this a REAL
+improvement?"* (effect size, CI, FWER, holdout). The judge answers the orthogonal
+question the statistics cannot: *"is the change actually GOOD?"* — a real fix of the
+cause, not an artifact that games the eval or smuggles in unsafe code. It reads the
+candidate's `git diff` **read-only** (it never edits) and emits a structured verdict.
+
+Required:
+- `--base-ref <ref>` / `--candidate-ref <ref>` — the two refs to diff (both reachable
+  from `--cwd`).
+
+Key options:
+- `--rubric <text>` or `--rubric-file <path>` — the scoring rubric. Defaults to a tuned
+  anti-gaming / anti-unsafe rubric when omitted.
+- `--mission <text>` — optional framing of what is being evaluated.
+- `--cwd <path>` — repo/worktree the refs are reachable from (default: cwd).
+- `--model <id>` — judge model (default `$DEFAULT_MODEL_ID`).
+- `--max-diff-chars <n>` — cap the diff fed to the model (default `60000`).
+
+`--json` emits `{ approve, score (0-100), confidence (0-1), rationale }`. Fail-closed: a
+missing/garbled verdict or an error yields `approve:false` so a required judge never
+passes blind.
+
+```bash
+cortex autoresearch judge \
+  --cwd /tmp/cand-worktree --base-ref HEAD~1 --candidate-ref HEAD \
+  --rubric "Approve only a minimal, correct fix; reject hardcoded outputs, hallucinated APIs, unsafe code." \
+  --json
+```
+
 ### `cortex autoresearch loop`
 
 The autonomous campaign — the single-process, local analogue of an N-agent swarm. Pick a
@@ -208,6 +240,12 @@ Key options:
 - `--cortex-dir <path>` — shared `.cortex` store + artifacts (default: repo).
 - `--temperature <n>` / `--strategy <label>` — effectiveness labels passed to each round's
   experiment.
+- `--require-judge` — **opt-in qualitative gate.** After the statistical gate accepts a
+  candidate, run `cortex autoresearch judge` on it and merge ONLY if it also approves
+  (`accept = gate-accept ∧ judge-approve`). Default off.
+- `--judge-rubric <text>` / `--judge-rubric-file <path>` — rubric for `--require-judge`
+  (default: the tuned anti-gaming / anti-unsafe rubric).
+- `--judge-model <id>` — judge model (default: `--model`, else `$DEFAULT_MODEL_ID`).
 - `--keep-worktrees` — do not remove rejected candidate worktrees (debugging).
 
 Each round:
@@ -218,10 +256,16 @@ Each round:
 4. **Commit** the candidate (no change -> skip the round).
 5. **Experiment** (`cortex autoresearch experiment`) base vs candidate -> read the verdict.
 6. **Accept** = `mergeEligible` when a holdout is given (keep + FWER + holdout-verified);
-   with no holdout, accept = keep-on-train (logged UNVERIFIED). On accept: advance base to
-   the candidate and anchor the loop branch to it. On reject: drop the worktree.
+   with no holdout, accept = keep-on-train (logged UNVERIFIED). **With `--require-judge`,
+   a gate-accepted candidate must ALSO pass the judge** (`accept = gate-accept ∧
+   judge-approve`) — the judge reads the diff and rejects eval-gaming / unsafe code the
+   metric cannot see, fail-closed. On accept: advance base to the candidate and anchor the
+   loop branch to it. On reject: drop the worktree.
 7. **Stop** on: success metric met, max rounds, max consecutive stale rounds, or a dry
    backlog.
+
+> **The hosted MCP turns the judge gate ON by default** (`start_autoresearch_campaign`
+> defaults `requireJudge:true`); the CLI keeps it opt-in via `--require-judge`. See §8.
 
 ```bash
 cortex autoresearch loop \
@@ -346,6 +390,34 @@ The gate (`decideExperiment`) turns the per-task base-vs-candidate run arrays in
 introduced task regressions is flagged in the reason so the loop does not silently merge
 collateral damage.
 
+### The judge gate (qualitative half)
+
+The Monte-Carlo gate is **statistical** — it measures whether the candidate's *scores*
+improved, generalizing to a holdout, beyond chance at swarm scale. It is structurally
+blind to *how* the scores were obtained: a candidate can pass every statistical check by
+**gaming the eval** (hardcoding expected outputs, branching on test inputs, editing the
+verifier) or by smuggling in damage alongside a correct fix (a hallucinated import, an
+unsafe shell-out, an exfiltration backdoor, unrelated churn). The numbers look great; the
+diff does not.
+
+The **judge gate** (`cortex autoresearch judge`) closes that hole. When `--require-judge`
+is set (CLI) — or always, for hosted MCP campaigns — a candidate the statistical gate
+already accepted is sent to an LLM that reads the **diff** read-only and renders a
+qualitative verdict against a rubric. The merge decision becomes:
+
+```
+accept = mergeEligible  ∧  judge.approve          (require-judge on)
+```
+
+It can only **subtract** eligibility — it runs ONLY on already-accepted candidates and
+never resurrects a discarded one — and it is **fail-closed** (a judge error or unparseable
+verdict counts as not-approved). The default rubric is tuned for this job: a measurable,
+holdout-verified gain is *necessary but not sufficient*; the judge approves only a real,
+minimal, generalizing fix and rejects eval-gaming, hallucinated APIs, unsafe operations,
+and scope creep. Verified end-to-end: a correct-but-malicious candidate (a real fix that
+also adds a `child_process` exfiltration backdoor) passes the statistical gate with
+`effect 100`, holdout-verified — and is still **rejected by the judge and not merged**.
+
 ### Overfitting guards (load-bearing)
 
 - **Train decides, holdout verifies.** The keep/discard decision is computed from
@@ -460,3 +532,11 @@ report verdicts (`autoresearch_experiment`, `autoresearch_fix`,
 `list_autoresearch_jobs`). It uses a credential-free model — point it at a public repo
 (clone) or upload private source — and it returns the winning diff. The MCP's own usage
 guide lives in the nexus-terminal repo; this document covers the CLI engine that backs it.
+
+**Judge gate on hosted campaigns.** Unlike the CLI (where the judge is opt-in via
+`--require-judge`), the hosted `start_autoresearch_campaign` turns the judge gate **ON by
+default** — `requireJudge` defaults `true` with the tuned production rubric, so every
+hosted campaign merges a candidate only when the statistical gate AND the judge approve.
+Callers opt out with `requireJudge:false`, or override the criteria with `judgeRubric` /
+`judgeModel`. The container installs the published CLI, so this maps directly onto
+`cortex autoresearch loop --require-judge --judge-rubric …` inside the sandbox.

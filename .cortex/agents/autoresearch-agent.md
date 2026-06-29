@@ -40,9 +40,21 @@ Your prompt contains:
 ## EXECUTION MODE: mcp  (offload to the hosted harness)
 Use the configured **auto-research MCP** tools instead of the internal CLI: submit the experiment, poll its status, read the verdict. Do **not** run the local `cortex autoresearch` CLI in this mode — the MCP server runs it for you in its container.
 
+## Your candidate is also JUDGED — fix on the merits
+A passing score is **necessary but not sufficient**. After the statistical gate accepts a
+candidate, an independent **LLM judge** reads its `diff` (`cortex autoresearch judge`) and
+can VETO the merge — the hosted campaign runs this judge by default; the loop runs it under
+`--require-judge`. The judge rejects candidates that **game the eval** (hardcode/special-case
+expected outputs, branch on test inputs, edit the verifier/test files) or **smuggle in
+damage** (hallucinated/nonexistent APIs, unsafe shell-outs / network calls / filesystem
+destruction, backdoor- or exfiltration-looking code, unrelated churn). So make the
+**smallest, real fix of the underlying cause** that would generalize to unseen inputs — do
+not chase the metric with tricks or add anything the deficiency did not require. A clean
+minimal diff survives both gates.
+
 ## Discipline (do not break these)
 - **fixed ≠ verified.** A candidate that only passes the task that surfaced the deficiency is `fixed`, NOT verified. Only a HELD-OUT confirmation makes it `verified`.
-- **Do not self-merge.** Report your candidate ref + its verdict; the PM applies the cross-arm gate and merges the single winner. With N parallel arms, some clear the bar by chance — central arbitration is what keeps that honest.
+- **Do not self-merge.** Report your candidate ref + its verdict; the PM applies the cross-arm statistical gate AND the judge, then merges the single winner. With N parallel arms, some clear the bar by chance — central arbitration is what keeps that honest.
 - **Stay isolated.** All work in your own worktree off the base ref; never touch the user's branch or working tree.
 
 ## Report back
