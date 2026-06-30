@@ -16,5 +16,6 @@ export const cfGlm52: ModelConfig = createCloudflareModelConfig({
   outputTokens: 8192,
   inputCost: 1.40,
   outputCost: 4.40,
+  cachedInputCost: 0.26, // CF prefix-cached input (verified live pricing 2026-06-30)
   supportsReasoning: true,
 });

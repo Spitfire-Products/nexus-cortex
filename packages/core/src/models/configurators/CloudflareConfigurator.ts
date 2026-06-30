@@ -37,6 +37,8 @@ export interface CloudflareModelOptions {
   /** Placeholder per-million cost — CF actual billing is Neurons-based. */
   inputCost: number;
   outputCost: number;
+  /** Cloudflare discounts automatic prefix-cached input tokens (per-model). $/M. */
+  cachedInputCost?: number;
   /** Some CF models expose visible reasoning (e.g. gpt-oss, qwq, kimi). */
   supportsReasoning?: boolean;
   /** Vision-capable models (mistral-small, gemma, kimi, llama-4-scout). */
@@ -127,7 +129,8 @@ export function createCloudflareModelConfig(options: CloudflareModelOptions): Mo
 
     cost: {
       inputPerMillion: options.inputCost,
-      outputPerMillion: options.outputCost
+      outputPerMillion: options.outputCost,
+      ...(options.cachedInputCost !== undefined && { cachedInputPerMillion: options.cachedInputCost })
     },
 
     ...(options.supportsReasoning && {

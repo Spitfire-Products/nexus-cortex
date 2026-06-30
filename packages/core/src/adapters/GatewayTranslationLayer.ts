@@ -841,11 +841,17 @@ export class GatewayTranslationLayer {
       if (cachedTokens > 0 && inputTokens > 0) {
         const uncached = Math.max(0, inputTokens - cachedTokens);
         const hitRate = cachedTokens / inputTokens;
-        // Provider-specific cached-token discount:
-        //   OpenAI Chat Completions: 50% · XAI Responses: 75% (= XAI Messages)
-        //   Mercury/Inception: 90% ($0.025 cached read vs $0.25 input)
+        // Cached-token discount. Prefer the card's ACTUAL published rates — the
+        // true discount is 1 - cachedInputPerMillion/inputPerMillion (e.g.
+        // Cloudflare GLM-5.2 = 1 - 0.26/1.40 = 0.814, and it's per-model). Fall
+        // back to provider defaults only when the card omits a cached price:
+        //   OpenAI Chat Completions: 50% · XAI Responses: 75% · Mercury: 90%
+        const cachedPM = modelConfig.cost?.cachedInputPerMillion;
+        const inputPM = modelConfig.cost?.inputPerMillion;
         const discountRate =
-          provider === 'openai' ? 0.5 : provider === 'mercury' ? 0.9 : 0.75;
+          typeof cachedPM === 'number' && typeof inputPM === 'number' && inputPM > 0
+            ? Math.max(0, Math.min(1, 1 - cachedPM / inputPM))
+            : provider === 'openai' ? 0.5 : provider === 'mercury' ? 0.9 : 0.75;
         const costSavings = (cachedTokens * discountRate) / inputTokens;
         cacheMetrics = {
           cacheCreationTokens: 0, // Neither API reports cache creation separately

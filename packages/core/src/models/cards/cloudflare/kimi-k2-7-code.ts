@@ -16,5 +16,6 @@ export const cfKimiK27Code: ModelConfig = createCloudflareModelConfig({
   outputTokens: 8192,
   inputCost: 0.95,
   outputCost: 4.00,
+  cachedInputCost: 0.19, // CF prefix-cached input (verified live pricing 2026-06-30)
   supportsReasoning: true,
 });
