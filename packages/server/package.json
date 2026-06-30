@@ -1,6 +1,6 @@
 {
   "name": "@nexus-cortex/server",
-  "version": "4.42.0",
+  "version": "4.43.0",
   "description": "Thin Express server wrapper for Nexus Cortex core library",
   "type": "module",
   "main": "dist/index.js",
@@ -20,8 +20,8 @@
     "prepack": "node ../../scripts/copy-pkg-cortex-scaffold.mjs"
   },
   "dependencies": {
-    "@nexus-cortex/core": "^4.41.1",
-    "@nexus-cortex/executors": "^4.41.1",
+    "@nexus-cortex/core": "^4.42.1",
+    "@nexus-cortex/executors": "^4.42.1",
     "chalk": "^5.3.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

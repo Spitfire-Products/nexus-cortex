@@ -175,6 +175,10 @@ export class ModularModelRegistry implements ModelRegistry {
       cloudflareModels.cfLlama3370b,
       cloudflareModels.cfQwq32b,
       cloudflareModels.cfGranite4,
+      cloudflareModels.cfGlm52,
+      cloudflareModels.cfKimiK27Code,
+      cloudflareModels.cfQwen25Coder32b,
+      cloudflareModels.cfDeepseekR1Distill32b,
 
       // Mercury (Inception Labs) — diffusion LLM, OpenAI-compatible.
       // Direct API serves only mercury-2 (verified 2026-06-07).

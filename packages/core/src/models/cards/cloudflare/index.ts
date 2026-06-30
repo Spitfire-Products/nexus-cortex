@@ -22,3 +22,7 @@ export { cfLlama4Scout } from './llama-4-scout.js';
 export { cfLlama3370b } from './llama-3-3-70b.js';
 export { cfQwq32b } from './qwq-32b.js';
 export { cfGranite4 } from './granite-4.js';
+export { cfGlm52 } from './glm-5-2.js';
+export { cfKimiK27Code } from './kimi-k2-7-code.js';
+export { cfQwen25Coder32b } from './qwen2-5-coder-32b.js';
+export { cfDeepseekR1Distill32b } from './deepseek-r1-distill-qwen-32b.js';
