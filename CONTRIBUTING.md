@@ -43,7 +43,11 @@ Each package has its own `CLAUDE.md` with a focused reading list.
 
 - Keep PRs focused — one logical change per PR is easier to review.
 - If you change registry-derived facts (tools, models, providers), don't hardcode counts in
-  docs — the README counts are generated (`npm run docs:counts`).
+  docs — the README counts are generated. The **root** `npm run build` refreshes them for you
+  (it runs `scripts/update-doc-counts.mjs` at the end); building a single package does **not**.
+  CI has a separate **`Doc counts up to date`** gate that fails if the committed README is stale
+  — note this can go red even when the npm publish succeeds. Commit the refreshed `README.md` in
+  the same change, and run `npm run docs:counts:check` first to catch drift locally.
 - Note any new environment variables in `.env.example` and `docs/configuration.md`.
 
 ## Reporting issues
