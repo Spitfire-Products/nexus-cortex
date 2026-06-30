@@ -1,6 +1,6 @@
 {
   "name": "@nexus-cortex/types",
-  "version": "4.41.0",
+  "version": "4.42.0",
   "description": "Shared TypeScript types for Nexus Cortex - breaks circular dependency between core and executors",
   "type": "module",
   "main": "./dist/index.js",

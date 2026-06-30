@@ -194,7 +194,18 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
       emit({ event: 'experiment', round: r, candidateRef: candRef });
       const exp = spawnSync('node', [self, ...expArgs], { encoding: 'utf8' });
       let res: any;
-      try { res = JSON.parse(exp.stdout); } catch { log(`r${r}: experiment produced no verdict → skip`); emit({ event: 'round_done', round: r, merged: false, skipped: 'no-verdict' }); removeWorktree(candDir); stale++; if (stale >= maxStale) { stop = 'max-stale'; break; } continue; }
+      try { res = JSON.parse(exp.stdout); } catch {
+        // Capture WHY this arm produced no verdict (missing/invalid provider key,
+        // inference error, crash) so the driving model / fixer / PM is NOTIFIED —
+        // not just told "skipped". Surfaced in the round history + emitted event +
+        // the final result, so the driver can react (retry / reassign / report).
+        const reason = ((exp.stderr || '').trim().split('\n').filter(Boolean).slice(-3).join(' ')
+          || (exp.status != null ? `exit ${exp.status}` : 'no parseable verdict')).slice(0, 500);
+        log(`r${r}: experiment produced no verdict → skip (${reason})`);
+        rounds.push({ round: r, candRef, failed: true, accepted: false, reason, exitCode: exp.status ?? null });
+        emit({ event: 'round_done', round: r, merged: false, skipped: 'no-verdict', reason, exitCode: exp.status ?? null });
+        removeWorktree(candDir); stale++; if (stale >= maxStale) { stop = 'max-stale'; break; } continue;
+      }
 
       const keep = res.verdict?.decision === 'keep';
       const gateAccept = options.holdoutSet ? !!res.mergeEligible : keep;
@@ -254,7 +265,8 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
   }
 
   emit({ event: 'stop', reason: stop });
-  const out = { repo, branch, finalRef: baseRef, rounds: rounds.length, merges: rounds.filter(r => r.accepted).length, stop, history: rounds };
+  const failedArms = rounds.filter(r => r.failed).map(r => ({ round: r.round, reason: r.reason, exitCode: r.exitCode }));
+  const out = { repo, branch, finalRef: baseRef, rounds: rounds.length, merges: rounds.filter(r => r.accepted).length, failures: failedArms.length, failedArms, stop, history: rounds };
   if (json) { console.log(JSON.stringify(out, null, 2)); return; }
   console.log();
   console.log(` ${theme.colors.highlight('Loop done')}  stop=${stop}  rounds=${rounds.length}  merges=${out.merges}`);
