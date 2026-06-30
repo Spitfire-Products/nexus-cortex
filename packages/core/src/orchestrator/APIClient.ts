@@ -5,6 +5,10 @@
  * Phase 2.1: Real API Integration
  */
 
+// Install the AI-provider proxy-fetch wrapper FIRST (before the SDKs load), so
+// outbound provider calls route through CORTEX_PROXY_BASE_URL when set (autoresearch
+// user-funded jobs). Inert unless the env var is present.
+import './cortexProxyFetch.js';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
