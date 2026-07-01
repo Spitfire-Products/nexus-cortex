@@ -33,6 +33,7 @@ import {
 const ANTHROPIC_ADAPTIVE_THINKING_FAMILIES = new Set([
   'claude-4.7',
   'claude-4.8',
+  'claude-5',         // Claude Sonnet 5 (and the Claude 5 generation)
   'claude-fable-5'
 ]);
 
