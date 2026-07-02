@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.44.1] - 2026-07-01
+
+### Fixed
+
+- **Claude Sonnet 5 extended thinking** — Sonnet 5 (like Opus 4.7/4.8 and Fable 5) requires the
+  adaptive-thinking request surface and rejects the legacy shape with a 400
+  (`"thinking.type.enabled" is not supported… use adaptive + output_config.effort`). Its family
+  (`claude-5`) was missing from the adaptive-thinking set, so it fell through to
+  `thinking:{type:'enabled', budget_tokens}` + `temperature`. Added `claude-5` so Sonnet 5 sends
+  `thinking:{type:'adaptive'}` + `output_config.effort` and omits `temperature`. Validated live.
+
+## [4.44.0] - 2026-06-30
+
+### Added
+
+- **Claude Sonnet 5** (`claude-sonnet-5`) — 1M context, adaptive thinking, $3/$15 per MTok
+  (introductory $2/$10 through 2026-08-31).
+
+### Changed
+
+- **Cloudflare cached-token pricing is now per-model.** The cache cost-savings estimate derives
+  the cached-input discount from each model's actual published cached price
+  (e.g. GLM 5.2 = 1 − $0.26/$1.40 ≈ 81%) instead of a flat 75%. Added an optional `cachedInputCost`
+  to the Cloudflare model configurator; set for GLM 5.2 ($0.26) and Kimi K2.7 Code ($0.19). Cache
+  hit-rate/token counts were already accurate — this only sharpens the dollar estimate.
+
+## [4.43.0] - 2026-06-30
+
+### Added
+
+- **4 new Cloudflare Workers AI models** (verified against the live catalog): GLM 5.2
+  (`@cf/zai-org/glm-5.2`), Kimi K2.7 Code (`@cf/moonshotai/kimi-k2.7-code`), Qwen2.5 Coder 32B
+  (`@cf/qwen/qwen2.5-coder-32b-instruct`), DeepSeek R1 Distill Qwen 32B
+  (`@cf/deepseek-ai/deepseek-r1-distill-qwen-32b`).
+
+## [4.42.0] - 2026-06-30
+
+### Added
+
+- **Auto-research failed-arm notification** — when an experiment arm fails (build/verifier error,
+  missing provider key, non-zero exit), `loop` now surfaces *why* in the result (`failures` count
+  + `failedArms[{round, reason, exitCode}]`) instead of silently dropping the arm, so the driving
+  model can react to the skip reason.
+
+## [4.41.0] - 2026-06-30
+
+### Added
+
+- **BYO-key inference proxy mode (`CORTEX_PROXY_BASE_URL`).** When set, outbound AI-provider calls
+  are rewritten through a job-token proxy. **Security hardening:** the executor/sandbox never
+  receives a raw provider API key — it holds only a short-lived per-job token, and the real key
+  stays behind the proxy. Enables user-funded inference without exposing credentials to the run.
+
+## [4.40.0] - 2026-06-28
+
+### Changed
+
+- **Auto-research LLM-judge gate ON by default for campaigns.** A candidate now merges only if the
+  statistical gate **and** the LLM judge approve — the judge reads the candidate *diff* and vetoes
+  eval-gaming or unsafe code the score-based gate can't see (`mergeEligible = gate-keep ∧
+  judge-approve`). Tuned the default judge rubric. Opt out with `--require-judge false`.
+
+## [4.39.0] - 2026-06-28
+
+### Added
+
+- **`cortex autoresearch judge`** subcommand + opt-in LLM-as-judge gate on `loop`/`experiment`
+  (`--require-judge`) — a qualitative gate that reviews candidate diffs for correctness and safety
+  before a keep decision.
+
 ## [4.38.0] - 2026-06-18
 
 ### Auto-research: operate on any repo, structured progress

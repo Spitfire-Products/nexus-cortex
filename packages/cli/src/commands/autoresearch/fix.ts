@@ -76,6 +76,13 @@ export async function autoResearchFix(options: AutoResearchFixOptions): Promise<
       toolCallCount: toolUses.length,
       iterations,
       summary: text.slice(0, 2000),
+      // Token usage for downstream spend metering (the Fixer writes no router-matrix
+      // records, so this is the only usage source for `fix` jobs).
+      usage: {
+        inputTokens: response?.usage?.inputTokens ?? 0,
+        outputTokens: response?.usage?.outputTokens ?? 0,
+        model: response?.model?.id ?? model,
+      },
     };
 
     if (json) { console.log(JSON.stringify(out, null, 2)); }
