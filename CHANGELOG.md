@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.44.2] - 2026-07-02
+
+### Added
+- `cortex autoresearch fix --json` verdict now includes `usage: { inputTokens, outputTokens, model }` — the Fixer records no router-matrix entries, so this is the usage source for downstream spend metering/telemetry of fix runs.
+
 ## [4.44.1] - 2026-07-01
 
 ### Fixed
