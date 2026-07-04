@@ -201,8 +201,11 @@ export async function autoResearchExperiment(options: AutoResearchExperimentOpti
     console.log();
 
   } catch (error: any) {
-    if (json) console.log(JSON.stringify({ error: error.message }, null, 2));
-    else console.error(theme.colors.error(`Error: ${error.message}`));
+    // AUTORESEARCH_DEBUG=1 includes the stack — a swallowed stack turns a one-line fix
+    // into a bisection hunt when an arm reports only "Cannot read properties of undefined".
+    const debug = process.env.AUTORESEARCH_DEBUG === '1';
+    if (json) console.log(JSON.stringify({ error: error.message, ...(debug ? { stack: error.stack } : {}) }, null, 2));
+    else console.error(theme.colors.error(`Error: ${error.message}${debug ? `\n${error.stack}` : ''}`));
     process.exitCode = 1;
   } finally {
     for (const a of arms) a.stop();

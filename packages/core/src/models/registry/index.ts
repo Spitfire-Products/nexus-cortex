@@ -5,6 +5,7 @@
 
 export { ModelCardLoader, type ModelCardLoaderOptions } from './ModelCardLoader.js';
 export { ModularModelRegistry, type ModularModelRegistryOptions } from './ModularModelRegistry.js';
+export { hasApiKeyForModel, modelWithKeyFallback } from './modelKeyAvailability.js';
 
 // Model Alias Resolver (Sub-Agent System)
 export {

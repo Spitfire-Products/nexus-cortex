@@ -343,6 +343,23 @@ export function parseTaskSet(raw: unknown, source = '<task-set>'): TaskSpec[] {
     if (typeof v.type !== 'string' || !validTypes.includes(v.type)) {
       throw new Error(`${source}[${i}] (${o.id}): verifier.type must be one of ${validTypes.join('|')}`);
     }
+    // Validate the type-specific payload here, at load time — a malformed verifier that
+    // slips through surfaces later as an opaque grading crash inside every arm.
+    if (v.type === 'exact' && typeof v.expected !== 'string') {
+      throw new Error(`${source}[${i}] (${o.id}): 'exact' verifier needs expected: string`);
+    }
+    if (v.type === 'regex' && typeof v.pattern !== 'string') {
+      throw new Error(`${source}[${i}] (${o.id}): 'regex' verifier needs pattern: string`);
+    }
+    if (v.type === 'contains' && (!Array.isArray(v.all) || !v.all.length || !v.all.every(s => typeof s === 'string'))) {
+      throw new Error(`${source}[${i}] (${o.id}): 'contains' verifier needs all: string[] (non-empty)`);
+    }
+    if (v.type === 'llm-judge' && typeof v.rubric !== 'string') {
+      throw new Error(`${source}[${i}] (${o.id}): 'llm-judge' verifier needs rubric: string`);
+    }
+    if (v.type === 'numeric' && v.direction !== 'maximize' && v.direction !== 'minimize') {
+      throw new Error(`${source}[${i}] (${o.id}): 'numeric' verifier needs direction: maximize|minimize`);
+    }
     return { id: o.id, prompt: o.prompt, verifier: o.verifier as Verifier, taskType: o.taskType as string | undefined };
   });
 }
