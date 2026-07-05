@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.45.0] - 2026-07-04
+
+### Added
+- **Multi-provider swarm fan-out for the autoresearch loop.** `cortex autoresearch loop --width N`
+  fans each round into N parallel candidate arms — each arm gets its own git worktree and its own
+  Fixer model, competing on the same goal. Every arm's experiment runs with `--n-family <width>`,
+  so the statistical gate's FWER correction tightens with the true family width; the best
+  gate-accepted arm merges (with `--require-judge`, the judge reviews accepted arms in effect
+  order until one is approved). Losing arms are dropped; per-arm results land in the round
+  history (`arms[]`, `winnerArm`).
+- **Arm-pool selection.** `--arm-models a,b,c` rotates explicit model ids across arms (arm 1
+  keeps `--model`); `--providers deepseek,anthropic,…` draws each provider's flagship
+  tool-supporting model; with neither given, the pool auto-derives from providers with a
+  configured API key (honoring `MODEL_ROUTER_EXCLUDE`, default `grok*`).
+- **`--missing-provider-key-policy platform_fallback|omit|redistribute`** — what happens to an
+  arm whose model's provider key isn't configured: run anyway (an upstream proxy may fund it),
+  drop the arm, or reassign it to a funded model.
+- Per-arm environment for `--fixer-cmd` arms (`CORTEX_ARM_INDEX`/`CORTEX_ARM_MODEL`/
+  `CORTEX_ARM_STRATEGY`); per-arm `fixer:<model>` strategy labels recorded into the router
+  matrix so the effectiveness layer ranks fixer models over time.
+- `AUTORESEARCH_DEBUG=1` includes the error stack in `experiment --json` error output.
+- Core registry barrel exports `hasApiKeyForModel` / `modelWithKeyFallback`.
+
+### Fixed
+- The loop's `--model` now actually reaches the LLM Fixer (it was documented as the Fixer
+  model but was only ever passed to the experiment grader).
+- Task-set verifiers are validated at load time (type-specific payload checks) — a malformed
+  verifier previously surfaced as an opaque grading crash inside every arm.
+- An experiment returning parseable JSON without a verdict (bad task-set, missing provider key)
+  is recorded as a reasoned `no-verdict` skip with the captured cause, not a silent reject.
+
+### Docs
+- `docs/AUTORESEARCH.md` documents the fan-out lifecycle + flags; the in-package autoresearch/
+  cortex-bench skills and the `autoresearch-agent` profile describe width-arm campaigns (the
+  container Fixer knows it may be one of N competing arms).
+
 ## [4.44.2] - 2026-07-02
 
 ### Added

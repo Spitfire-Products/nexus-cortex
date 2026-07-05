@@ -290,6 +290,8 @@ cortex autoresearch experiment --experiment-tag <id> \
 ```
 `--json` → `{verdict, holdoutVerdict, regressedTasks, mergeEligible, benchSummaries, cortexDir, jsonlPaths}`. Owns the "two builds not one relabel" correctness (each arm served from its OWN built code; refuses `baseRef===candidateRef`). `--cortex-dir` is the per-experiment **artifact** (all 3 `.cortex/*.jsonl`). `mergeEligible` = keep ∧ fwerAdjusted ∧ holdout-keep (FALSE without holdout). Validated live end-to-end (both a real **discard** and a real **keep** with `mergeEligible:true`).
 
+**The multi-arm campaign runner — `cortex autoresearch loop --width N` (4.45+).** The swarm-width family is now AUTOMATED: `loop --width N` fans each round into N parallel Fixer arms (own worktree + own model each, pool via `--arm-models`/`--providers`, `--missing-provider-key-policy` for unfunded arms), passes `--n-family <width>` to every arm's experiment so the FWER bar is honest, records per-arm `fixer:<model>` strategy labels into the matrix, and merges only the best gate-accepted (and judge-approved, if required) arm. This IS the N-of-this-experiment machinery — don't hand-orchestrate N `experiment` calls when a width'd loop round does it with correct family statistics.
+
 ### Hard-won benchmarking gotchas (from the first live runs, 2026-06-08)
 - **Server returns `model` as an OBJECT** `{id, provider}`, not a string — any recorder must extract `.id` (fixed in serverRunner/estimateCost, `a4097aaf8`).
 - **`PROJECT_PATH`, not `PROJECT_ROOT`**, controls the orchestrator's project context (system messages, CORTEX.md, agents) — set it when spawning a harness for a specific checkout (fixed in startServer, `3f549daa5`).

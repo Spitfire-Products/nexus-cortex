@@ -230,7 +230,24 @@ Key options:
 - `--run-cmd <template>` / `--build-cmd <cmd>` / `--accept-exit <codes>` — non-cortex
   target (else build + serve a cortex server per arm).
 - `--runs <n>` — bench runs per task per arm (default `3`).
-- `--model <id>` — model for cortex targets / the LLM Fixer.
+- `--model <id>` — model for cortex targets / the LLM Fixer (the arm-1 baseline when
+  `--width` > 1).
+- `--width <n>` — **multi-provider swarm fan-out** (4.45+, default `1` = classic loop).
+  Each round fans into N parallel candidate ARMS — each arm gets its own worktree and its
+  own Fixer model, competing on the SAME goal. Every arm's experiment runs with
+  `--n-family <width>` so the statistical gate's FWER correction tightens with the real
+  family width; the best gate-accepted arm merges (with `--require-judge`, the judge
+  reviews accepted arms in effect order until one is approved). A `--fixer-cmd` arm sees
+  `CORTEX_ARM_INDEX` / `CORTEX_ARM_MODEL` / `CORTEX_ARM_STRATEGY` in its environment.
+- `--arm-models <list>` — comma-separated model ids rotated across the arms (arm 1 keeps
+  `--model` when set). Overrides `--providers`.
+- `--providers <list>` — comma-separated providers to draw arm models from — each
+  contributes its flagship tool-supporting model. When neither `--arm-models` nor
+  `--providers` is given (and width > 1), the pool auto-derives from providers with a
+  configured API key, honoring `MODEL_ROUTER_EXCLUDE` (default `grok*`).
+- `--missing-provider-key-policy <p>` — what happens to an arm whose model's provider key
+  is missing: `platform_fallback` (run anyway — an upstream proxy may fund it; default),
+  `omit` (drop the arm), `redistribute` (reassign the arm to a funded model).
 - `--max-rounds <n>` (default `10`) / `--max-stale <n>` — stop after N consecutive
   non-merge rounds.
 - `--success-metric <taskId:threshold>` — stop early when the candidate mean score for
@@ -251,16 +268,23 @@ Key options:
 Each round:
 
 1. **Goal** = `--prompt`, else the highest-priority workable backlog deficiency.
-2. **Candidate worktree** detached at the current base ref.
-3. **Mutate** it: `--fixer-cmd` (any transformer), else the LLM `cortex autoresearch fix`.
-4. **Commit** the candidate (no change -> skip the round).
-5. **Experiment** (`cortex autoresearch experiment`) base vs candidate -> read the verdict.
+2. **Arms** — fan into `--width` parallel candidate worktrees detached at the current base
+   ref (width 1 = the classic single-candidate round), each assigned its own Fixer model
+   per the arm plan.
+3. **Mutate** each arm: `--fixer-cmd` (any transformer; per-arm `CORTEX_ARM_*` env), else
+   the LLM `cortex autoresearch fix --model <arm model>`.
+4. **Commit** each candidate (no change -> that arm is skipped).
+5. **Experiment** (`cortex autoresearch experiment`) base vs candidate per arm, each with
+   `--n-family <width>` -> read the verdicts. An arm that produced no verdict is recorded
+   as a reasoned no-verdict skip (missing key, crash, bad task-set) rather than a silent
+   reject.
 6. **Accept** = `mergeEligible` when a holdout is given (keep + FWER + holdout-verified);
-   with no holdout, accept = keep-on-train (logged UNVERIFIED). **With `--require-judge`,
-   a gate-accepted candidate must ALSO pass the judge** (`accept = gate-accept ∧
+   with no holdout, accept = keep-on-train (logged UNVERIFIED). The WINNER is the
+   gate-accepted arm with the highest effect. **With `--require-judge`, the judge reviews
+   accepted arms in effect order until one is approved** (`accept = gate-accept ∧
    judge-approve`) — the judge reads the diff and rejects eval-gaming / unsafe code the
-   metric cannot see, fail-closed. On accept: advance base to the candidate and anchor the
-   loop branch to it. On reject: drop the worktree.
+   metric cannot see, fail-closed. On accept: advance base to the winner and anchor the
+   loop branch to it; losing arms are dropped. On reject: drop the worktrees.
 7. **Stop** on: success metric met, max rounds, max consecutive stale rounds, or a dry
    backlog.
 
@@ -274,6 +298,14 @@ cortex autoresearch loop \
   --holdout-set ./tasks/holdout.json \
   --runs 3 --model deepseek-v4-flash \
   --max-rounds 8 --max-stale 3
+
+# Multi-provider swarm: 3 arms/round across providers, unfunded arms reassigned
+cortex autoresearch loop \
+  --repo /path/to/project \
+  --task-set ./tasks/train.json --holdout-set ./tasks/holdout.json \
+  --width 3 --providers deepseek,anthropic,openai \
+  --missing-provider-key-policy redistribute \
+  --max-rounds 8
 
 # When satisfied, merge the loop branch yourself:
 #   git -C /path/to/project merge autoresearch/loop-<sha>
