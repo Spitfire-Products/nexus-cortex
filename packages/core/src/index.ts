@@ -108,6 +108,8 @@ export * from './ui/index.js';
 
 // Training / routing
 export { ModelRouterMatrix, estimateCost as estimateModelCost, resolveMaxMatrixBytes } from './training/ModelRouterMatrix.js';
+export { predictionMatchScore, flattenUserContent, scoreAndRecordTurnPrediction } from './training/TurnPredictionStore.js';
+export type { TurnPredictionRecord, PendingTurnPrediction } from './training/TurnPredictionStore.js';
 export type { BenchmarkRecord, ModelScore, CostEfficiencyProfile, ScoringMatrix } from './training/ModelRouterMatrix.js';
 export { classifyTask } from './training/TaskClassifier.js';
 export type { TaskType } from './training/TaskClassifier.js';

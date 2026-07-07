@@ -53,6 +53,15 @@ import { autoResearchExperiment } from './commands/autoresearch/experiment.js';
 import { autoResearchFix } from './commands/autoresearch/fix.js';
 import { autoResearchJudge } from './commands/autoresearch/judge.js';
 import { autoResearchLoop } from './commands/autoresearch/loop.js';
+import {
+  autoResearchBacklogList,
+  autoResearchBacklogShow,
+  autoResearchBacklogNext,
+  autoResearchBacklogResolve,
+  autoResearchBacklogClaim,
+  autoResearchBacklogClaimNext,
+  autoResearchBacklogRelease,
+} from './commands/autoresearch/backlog.js';
 import { tmuxList } from './commands/tmux/list.js';
 import { middlewareList } from './commands/middleware/list.js';
 import { middlewareStatus } from './commands/middleware/status.js';
@@ -710,6 +719,86 @@ autoresearch
   .action(async (opts) => {
     const globalOpts = program.opts();
     await autoResearchLoop({ ...opts, json: globalOpts.json });
+  });
+
+// ── backlog: view + manage the deficiency pool (.cortex/research-backlog.jsonl) ──
+const backlog = autoresearch
+  .command('backlog')
+  .description('View + manage the deficiency pool (.cortex/research-backlog.jsonl) — the task board the loop pulls from');
+
+backlog
+  .command('list')
+  .description('List deficiencies, prioritized (hides closed/wont_fix unless --status or --all)')
+  .option('--status <s>', 'filter by status (comma list): open,triaged,in_progress,fixed,verified,closed,wont_fix,regressed')
+  .option('--all', 'include closed + wont_fix')
+  .option('--repo <path>', "target a specific project's pool (default: $CORTEX_ROOT or detected root)")
+  .action(async (opts) => {
+    const globalOpts = program.opts();
+    await autoResearchBacklogList({ ...opts, json: globalOpts.json });
+  });
+
+backlog
+  .command('show <id>')
+  .description('Show one deficiency in full')
+  .option('--repo <path>', "target a specific project's pool (default: $CORTEX_ROOT or detected root)")
+  .action(async (id, opts) => {
+    const globalOpts = program.opts();
+    await autoResearchBacklogShow(id, { ...opts, json: globalOpts.json });
+  });
+
+backlog
+  .command('next')
+  .description('Show the highest-priority workable (open/triaged) deficiency — what the loop fixes next')
+  .option('--repo <path>', "target a specific project's pool (default: $CORTEX_ROOT or detected root)")
+  .action(async (opts) => {
+    const globalOpts = program.opts();
+    await autoResearchBacklogNext({ ...opts, json: globalOpts.json });
+  });
+
+backlog
+  .command('resolve <id>')
+  .description('Resolve a deficiency (default: mark verified). PM keep/discard for the work-swarm.')
+  .option('--wont-fix <reason>', 'discard: mark wont_fix with a reason')
+  .option('--close', 'mark closed (merged + done)')
+  .option('--fixed <ref>', 'mark fixed (passes discovery task, not yet generalized) with a commit ref')
+  .option('--round <label>', 'verified-round label when marking verified', 'manual')
+  .option('--repo <path>', "target a specific project's pool (default: $CORTEX_ROOT or detected root)")
+  .action(async (id, opts) => {
+    const globalOpts = program.opts();
+    await autoResearchBacklogResolve(id, { ...opts, json: globalOpts.json });
+  });
+
+backlog
+  .command('claim <id>')
+  .description('Claim a specific deficiency for a worker (work-swarm lease with TTL)')
+  .option('--owner <id>', 'worker/arm/persona id holding the lease (default: cli-<pid>)')
+  .option('--ttl <minutes>', 'lease minutes before the claim goes stale', '15')
+  .option('--repo <path>', "target a specific project's pool (default: $CORTEX_ROOT or detected root)")
+  .action(async (id, opts) => {
+    const globalOpts = program.opts();
+    await autoResearchBacklogClaim(id, { ...opts, json: globalOpts.json });
+  });
+
+backlog
+  .command('claim-next')
+  .description('Release expired leases, then claim the top UNCLAIMED workable item — the work-swarm pull')
+  .option('--owner <id>', 'worker/arm/persona id holding the lease (default: cli-<pid>)')
+  .option('--ttl <minutes>', 'lease minutes before the claim goes stale', '15')
+  .option('--repo <path>', "target a specific project's pool (default: $CORTEX_ROOT or detected root)")
+  .action(async (opts) => {
+    const globalOpts = program.opts();
+    await autoResearchBacklogClaimNext({ ...opts, json: globalOpts.json });
+  });
+
+backlog
+  .command('release [id]')
+  .description('Release a claim you hold (→ triaged). With --expired (or no id), sweep ALL expired leases.')
+  .option('--owner <id>', 'only release if you hold the lease')
+  .option('--expired', 'release every expired lease instead of one id')
+  .option('--repo <path>', "target a specific project's pool (default: $CORTEX_ROOT or detected root)")
+  .action(async (id, opts) => {
+    const globalOpts = program.opts();
+    await autoResearchBacklogRelease(id, { ...opts, json: globalOpts.json });
   });
 
 autoresearch

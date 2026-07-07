@@ -57,6 +57,11 @@ export interface DeficiencyRecord {
   fixedRef?: string;                 // commit that fixed it
   verifiedRound?: string;            // bench round confirming on held-out
   notes?: string;
+  // work-swarm lease (claim/release with TTL) — lets N workers pull DIFFERENT
+  // items from ONE pool without double-claiming. Only set by claim()/claimNext().
+  claimedBy?: string;                // worker/arm/persona id holding the lease
+  claimedAt?: string;                // ISO when claimed
+  leaseExpiresAt?: string;           // ISO; a stale lease past this is reclaimable
   createdAt: string;
   updatedAt: string;
 }
@@ -204,4 +209,136 @@ export class ResearchBacklog {
   close(id: string): DeficiencyRecord | undefined { return this.update(id, { status: 'closed' }); }
   wontFix(id: string, reason: string): DeficiencyRecord | undefined { return this.update(id, { status: 'wont_fix', notes: reason }); }
   reopenRegressed(id: string): DeficiencyRecord | undefined { return this.update(id, { status: 'regressed' }); }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Work-swarm claim/release (lease with TTL)
+  //
+  // Lets N workers pull DIFFERENT items from ONE pool concurrently without
+  // double-claiming (the §5.4 "claim/release, 15-min TTL" mechanic). An advisory
+  // lock file makes the read-check-append sequence atomic on a single machine
+  // (the local work-swarm case: N worker processes, one repo). Distributed
+  // workers coordinate via the STDB `deficiency` mirror instead, not this JSONL.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  static readonly DEFAULT_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+  private get lockPath(): string { return this.storePath + '.lock'; }
+
+  /** Run `fn` while holding an exclusive advisory lock. Spins briefly for the
+   *  lock; steals a lock older than staleMs (holder presumed dead). */
+  private withLock<T>(fn: () => T, opts: { timeoutMs?: number; staleMs?: number } = {}): T {
+    const timeoutMs = opts.timeoutMs ?? 4000;
+    const staleMs = opts.staleMs ?? 30_000;
+    fs.mkdirSync(path.dirname(this.storePath), { recursive: true });
+    const deadline = Date.now() + timeoutMs;
+    let fd: number | undefined;
+    for (;;) {
+      try {
+        fd = fs.openSync(this.lockPath, 'wx'); // exclusive create → fails if held
+        break;
+      } catch {
+        // Steal a stale lock (prior holder crashed without releasing).
+        try {
+          const age = Date.now() - fs.statSync(this.lockPath).mtimeMs;
+          if (age > staleMs) { try { fs.unlinkSync(this.lockPath); } catch { /* raced */ } continue; }
+        } catch { /* lock vanished — retry acquire */ }
+        if (Date.now() > deadline) {
+          // Give up on the lock rather than hang; proceed unlocked (best-effort).
+          break;
+        }
+        // brief busy-wait (sync context; keep it short)
+        const until = Date.now() + 25;
+        while (Date.now() < until) { /* spin */ }
+      }
+    }
+    try {
+      return fn();
+    } finally {
+      if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* ignore */ } try { fs.unlinkSync(this.lockPath); } catch { /* ignore */ } }
+    }
+  }
+
+  private isLeaseLive(r: DeficiencyRecord, nowMs: number): boolean {
+    return !!r.leaseExpiresAt && Date.parse(r.leaseExpiresAt) > nowMs;
+  }
+
+  /** Claim ONE specific item for `owner`. Returns the claimed record, or
+   *  undefined if it does not exist, is already resolved, or is held by another
+   *  worker under a LIVE lease. Idempotent for the same owner (re-extends lease). */
+  claim(id: string, owner: string, ttlMs: number = ResearchBacklog.DEFAULT_TTL_MS): DeficiencyRecord | undefined {
+    return this.withLock(() => {
+      const cur = this.get(id);
+      if (!cur) return undefined;
+      // Only open/triaged (or already-mine in_progress) are claimable.
+      const claimableStatus = cur.status === 'open' || cur.status === 'triaged' || cur.status === 'in_progress';
+      if (!claimableStatus) return undefined;
+      const now = Date.now();
+      if (cur.claimedBy && cur.claimedBy !== owner && this.isLeaseLive(cur, now)) return undefined; // held by another
+      return this.writeClaim(cur, owner, now, ttlMs);
+    });
+  }
+
+  /** Release-expired + claim the highest-priority UNCLAIMED workable item.
+   *  The core work-swarm pull: each worker calls this to get its own task. */
+  claimNext(owner: string, ttlMs: number = ResearchBacklog.DEFAULT_TTL_MS): DeficiencyRecord | undefined {
+    return this.withLock(() => {
+      this.releaseExpiredUnlocked();
+      const now = Date.now();
+      const candidate = this.list({ status: ['open', 'triaged'], sortByPriority: true })
+        .find((r) => !r.claimedBy || r.claimedBy === owner || !this.isLeaseLive(r, now));
+      if (!candidate) return undefined;
+      return this.writeClaim(candidate, owner, now, ttlMs);
+    });
+  }
+
+  /** Revert every in_progress item whose lease has EXPIRED back to triaged so
+   *  another worker can pick it up. Returns the reclaimed records. Items marked
+   *  in_progress WITHOUT a lease (legacy markInProgress) are left untouched. */
+  releaseExpired(): DeficiencyRecord[] {
+    return this.withLock(() => this.releaseExpiredUnlocked());
+  }
+
+  /** Explicitly release a claim you hold (work finished/abandoned) → back to triaged. */
+  release(id: string, owner?: string): DeficiencyRecord | undefined {
+    return this.withLock(() => {
+      const cur = this.get(id);
+      if (!cur || !cur.claimedBy) return cur;
+      if (owner && cur.claimedBy !== owner) return undefined; // not yours
+      return this.append2({ ...cur, status: 'triaged', claimedBy: undefined, claimedAt: undefined, leaseExpiresAt: undefined });
+    });
+  }
+
+  // -- claim internals (assume lock held) -------------------------------------
+
+  private writeClaim(cur: DeficiencyRecord, owner: string, nowMs: number, ttlMs: number): DeficiencyRecord {
+    const nowIso = new Date(nowMs).toISOString();
+    return this.append2({
+      ...cur,
+      status: 'in_progress',
+      claimedBy: owner,
+      claimedAt: nowIso,
+      leaseExpiresAt: new Date(nowMs + ttlMs).toISOString(),
+      experimentTag: cur.experimentTag ?? owner,
+    });
+  }
+
+  private releaseExpiredUnlocked(): DeficiencyRecord[] {
+    const now = Date.now();
+    const released: DeficiencyRecord[] = [];
+    for (const r of this.list({ status: ['in_progress'], sortByPriority: false })) {
+      if (r.leaseExpiresAt && Date.parse(r.leaseExpiresAt) <= now) {
+        released.push(this.append2({ ...r, status: 'triaged', claimedBy: undefined, claimedAt: undefined, leaseExpiresAt: undefined }));
+      }
+    }
+    return released;
+  }
+
+  /** append with priority recompute + updatedAt bump (like update(), but takes a
+   *  full record and is safe to call under the lock without a re-read). */
+  private append2(rec: DeficiencyRecord): DeficiencyRecord {
+    const merged: DeficiencyRecord = { ...rec, updatedAt: new Date().toISOString() };
+    merged.priorityScore = computePriority(merged.severity, merged.impact, merged.effort, merged.confidence);
+    this.append(merged);
+    return merged;
+  }
 }

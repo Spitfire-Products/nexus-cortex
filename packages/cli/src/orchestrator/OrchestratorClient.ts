@@ -65,6 +65,11 @@ export interface MessageOptions {
   reasoningEffort?: ReasoningEffort;
   /** Abort signal for cancelling long-running operations (ESC key) */
   abortSignal?: AbortSignal;
+  /**
+   * Turn-prediction provenance of THIS message vs the displayed ghost prefill
+   * (spec §5.1): 'none' | 'shown' | 'inserted'. TUI-only; defaults to 'none'.
+   */
+  prefillProvenance?: 'none' | 'shown' | 'inserted';
 }
 
 /** Result of a file-backed permission grant/revoke. */
@@ -315,6 +320,11 @@ export class OrchestratorClient {
       sendOptions.topP = options.top_p;
     }
 
+    // Turn-prediction prefill provenance (spec §5.1) — rides to the scorer
+    if (options.prefillProvenance !== undefined) {
+      sendOptions.prefillProvenance = options.prefillProvenance;
+    }
+
     // Send message through orchestrator (pass content directly, not messages array)
     // The orchestrator maintains its own internal message history
     const result = await this.orchestrator.sendMessage(content, sendOptions);
@@ -408,6 +418,11 @@ export class OrchestratorClient {
     // Pass abort signal for ESC key cancellation
     if (options.abortSignal) {
       sendOptions.abortSignal = options.abortSignal;
+    }
+
+    // Turn-prediction prefill provenance (spec §5.1) — rides to the scorer
+    if (options.prefillProvenance !== undefined) {
+      sendOptions.prefillProvenance = options.prefillProvenance;
     }
 
     // Track whether stream completed normally (vs interrupted by ESC)

@@ -322,6 +322,16 @@ export interface SendMessageOptions {
 
   /** Abort signal for cancelling long-running operations (e.g., ESC key in CLI) */
   abortSignal?: AbortSignal;
+
+  /**
+   * How THIS message relates to the previously displayed next-action
+   * prediction (TUI ghost-text prefill) — spec §5.1 tri-state provenance for
+   * the turn-prediction graduation signal: 'none' (prediction never rendered),
+   * 'shown' (rendered, user typed independently), 'inserted' (user
+   * Tab/→-accepted the ghost, edited or not). Defaults to 'none' for
+   * programmatic/headless callers, which never display predictions.
+   */
+  prefillProvenance?: import('../training/TurnPredictionStore.js').PrefillProvenance;
 }
 
 /**
@@ -437,6 +447,11 @@ export class CortexOrchestrator {
   private currentModelId: string;
   private messageHistory: Message[] = [];
   private turnNumber: number = 0;
+
+  /** Pending TURN_SUMMARY_PREDICTION awaiting the user's ACTUAL next message —
+   *  scored + recorded at the next sendMessage (graduation-signal capture,
+   *  Decision Capture Layer §5). In-memory only; lost on restart by design. */
+  private pendingTurnPrediction: import('../training/TurnPredictionStore.js').PendingTurnPrediction | null = null;
 
   // Wave 3: Approval mode for auto-approve actions feature
   private approvalMode: { autoApproveActions: boolean };
@@ -650,6 +665,18 @@ export class CortexOrchestrator {
     if (!this.sessionTimeline) {
       throw new Error('Session not initialized. Call createSession() first.');
     }
+
+    // Graduation-signal capture (Decision Capture Layer §5): the previous turn's
+    // next-action prediction is scored against THIS user message and recorded to
+    // .cortex/training/turn-predictions.jsonl. Best-effort; never affects the turn.
+    if (this.pendingTurnPrediction && this.pendingTurnPrediction.sessionId === this.currentSessionId) {
+      try {
+        const { scoreAndRecordTurnPrediction, flattenUserContent } = await import('../training/TurnPredictionStore.js');
+        const recRoot = process.env.PROJECT_ROOT || this.config.projectPath || this.config.workingDirectory || process.cwd();
+        scoreAndRecordTurnPrediction(recRoot, this.pendingTurnPrediction, flattenUserContent(content), Date.now(), options.prefillProvenance ?? 'none');
+      } catch { /* recording must never affect the turn */ }
+    }
+    this.pendingTurnPrediction = null;
 
     // Responses API chain: preserve lastResponseId + checkpoint across user turns.
     // Now that input slicing is implemented (send only items added after
@@ -2615,6 +2642,18 @@ export class CortexOrchestrator {
           lastUserText: userContent,
           toolsUsed: toolNames,
         });
+        // Hold the prediction; scored against the ACTUAL next user message at the
+        // next sendMessage (graduation-signal capture, Decision Capture Layer §5).
+        if (turnSummaryData?.prediction) {
+          this.pendingTurnPrediction = {
+            sessionId: this.currentSessionId,
+            turnNumber: this.turnNumber,
+            predictorModel: process.env.HELPER_MODEL_ID || 'deepseek-v4-flash',
+            summary: turnSummaryData.summary || null,
+            prediction: turnSummaryData.prediction,
+            predictedAtMs: Date.now(),
+          };
+        }
       } catch (err: unknown) {
         if (this.config.debug) {
           console.warn('[Orchestrator] Turn summary generation failed:', (err as Error)?.message);
@@ -2672,6 +2711,17 @@ export class CortexOrchestrator {
     if (!this.currentSessionId || !this.sessionTimeline) {
       throw new Error('Session not initialized. Call createSession() first.');
     }
+
+    // Graduation-signal capture (Decision Capture Layer §5) — same as sendMessage:
+    // score the previous turn's prediction against THIS user message + record.
+    if (this.pendingTurnPrediction && this.pendingTurnPrediction.sessionId === this.currentSessionId) {
+      try {
+        const { scoreAndRecordTurnPrediction, flattenUserContent } = await import('../training/TurnPredictionStore.js');
+        const recRoot = process.env.PROJECT_ROOT || this.config.projectPath || this.config.workingDirectory || process.cwd();
+        scoreAndRecordTurnPrediction(recRoot, this.pendingTurnPrediction, flattenUserContent(content), Date.now(), options.prefillProvenance ?? 'none');
+      } catch { /* recording must never affect the turn */ }
+    }
+    this.pendingTurnPrediction = null;
 
     const turnStartMs = Date.now();
 
@@ -4050,6 +4100,18 @@ export class CortexOrchestrator {
             type: 'turn_summary' as const,
             data: { summary: turnSummaryData.summary, prediction: turnSummaryData.prediction },
           } as StreamChunk;
+        }
+        // Graduation-signal capture (Decision Capture Layer §5) — same as the
+        // non-streaming path: hold the prediction for scoring at the next turn.
+        if (turnSummaryData.prediction) {
+          this.pendingTurnPrediction = {
+            sessionId: this.currentSessionId,
+            turnNumber: this.turnNumber,
+            predictorModel: process.env.HELPER_MODEL_ID || 'deepseek-v4-flash',
+            summary: turnSummaryData.summary || null,
+            prediction: turnSummaryData.prediction,
+            predictedAtMs: Date.now(),
+          };
         }
       } catch (err: unknown) {
         if (this.config.debug) {
