@@ -47,7 +47,7 @@ export interface ModelConfig {
 
   api: {
     /** API pattern type (determines which adapter to use) */
-    pattern: 'messages' | 'chat/completions' | 'generateContent' | 'google-genai' | 'google-sdk' | 'responses';
+    pattern: 'messages' | 'chat/completions' | 'generateContent' | 'google-genai' | 'google-sdk' | 'responses' | 'hf-space';
 
     /** API endpoint URL */
     endpoint: string;

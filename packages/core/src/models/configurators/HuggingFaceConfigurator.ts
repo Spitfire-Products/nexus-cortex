@@ -1,10 +1,10 @@
 /**
  * Hugging Face Model Configurator
  *
- * Factory function for creating Hugging Face Inference API model configurations.
- * Supports serverless inference API and dedicated inference endpoints.
+ * Factory for HF Inference Providers model configs. Routes through the OpenAI-compatible
+ * router (router.huggingface.co) with server-side provider selection.
  *
- * API Docs: https://huggingface.co/docs/api-inference/index
+ * API Docs: https://huggingface.co/docs/inference-providers/index
  */
 
 import type { ModelConfig } from '../ModelConfig.interface.js';
@@ -15,33 +15,40 @@ export interface HuggingFaceModelOptions {
   family: string;
   contextWindow: number;
   outputTokens: number;
-  inputCost?: number;      // Optional - serverless is rate-limited but free
-  outputCost?: number;     // Optional - serverless is rate-limited but free
+  inputCost?: number;      // Optional — provider-dependent; free tier + PRO credits
+  outputCost?: number;     // Optional — provider-dependent; free tier + PRO credits
   supportsTools?: boolean;
 
   /**
-   * Hugging Face model ID (e.g., 'meta-llama/Meta-Llama-3-8B-Instruct')
-   * If not provided, uses the 'id' field
+   * Hugging Face model ID (e.g., 'openai/gpt-oss-120b'). Sent as the request-body
+   * "model". If not provided, uses the 'id' field.
    */
   huggingFaceModelId?: string;
 
   /**
-   * For dedicated inference endpoints (optional)
-   * Format: https://[endpoint-id].us-east-1.aws.endpoints.huggingface.cloud
+   * For a dedicated HF Inference Endpoint (optional)
+   * Format: https://[endpoint-id].[region].aws.endpoints.huggingface.cloud/v1/chat/completions
    */
   customEndpoint?: string;
 }
 
 export function createHuggingFaceModelConfig(options: HuggingFaceModelOptions): ModelConfig {
   const supportsTools = options.supportsTools !== undefined ? options.supportsTools : false;
+  // The HF repo id (e.g. "meta-llama/Llama-3.1-8B-Instruct"). Sent as the request-body
+  // "model" (= config.id), matching the OpenAI card convention (id === API model name).
+  // Append a policy/provider suffix to steer routing: ":fastest" (default), ":cheapest",
+  // or ":together" / ":groq" / etc. for a specific provider.
   const modelId = options.huggingFaceModelId || options.id;
 
-  // Use custom endpoint if provided, otherwise use serverless inference API
+  // HF Inference Providers OpenAI-compatible router (auto provider selection). The legacy
+  // api-inference.huggingface.co host is deprecated. NOTE: the router hosts mostly larger
+  // popular models via partner providers — small models are typically NOT served, so use
+  // a local card for those. Override with customEndpoint for a dedicated endpoint.
   const endpoint = options.customEndpoint ||
-                  `https://api-inference.huggingface.co/models/${modelId}`;
+                  'https://router.huggingface.co/v1/chat/completions';
 
   return {
-    id: options.id,
+    id: modelId,
     provider: 'huggingface',
     displayName: options.displayName,
     family: options.family,

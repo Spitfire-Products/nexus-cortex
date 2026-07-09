@@ -161,6 +161,10 @@ export interface EnvironmentVariables {
   /** Per-doc byte cap for injected project docs (CLAUDE.md, MEMORY.md, etc.). 0/unset = unlimited. */
   SYSTEM_MESSAGE_DOC_MAX_BYTES?: string; // integer as string
 
+  /** Archive-prune cap for MEMORY.md: over-cap overflow MOVES to MEMORY.archive.md
+   *  (never dropped), bounding both injection and file growth. 0/unset = off. */
+  MEMORY_ARCHIVE_MAX_BYTES?: string; // integer as string
+
   // ============================================
   // LOOP CONTROL (Inline Detection)
   // ============================================
@@ -375,6 +379,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   MCP_AUTO_INJECT: 'false',
   AUTORESEARCH_AGENTS: 'off',
   SYSTEM_MESSAGE_DOC_MAX_BYTES: '0',
+  MEMORY_ARCHIVE_MAX_BYTES: '0',
 
   // Loop Control
   MAX_TOOL_ITERATIONS: '50',
@@ -801,6 +806,14 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'SYSTEM_MESSAGE_DOC_MAX_BYTES',
     displayName: 'System Doc Inject Cap',
     description: 'Cap on bytes per injected project doc (CLAUDE.md, MEMORY.md, AGENTS.md, GEMINI.md, CORTEX.md). 0 = unlimited (default). Set a positive integer to truncate; model can use Read to fetch full content.',
+    type: 'number',
+    category: 'session',
+    default: '0'
+  },
+  {
+    key: 'MEMORY_ARCHIVE_MAX_BYTES',
+    displayName: 'Memory Archive Cap',
+    description: 'Archive-prune cap for CORTEX MEMORY.md. When over cap, older overflow MOVES to a sibling MEMORY.archive.md (never dropped) and MEMORY.md is bounded — fixes unbounded growth + full-file injection. 0 = off (default). Recommended ~10000. Superior to the doc inject cap for MEMORY.md, which head-truncates and loses the newest entries.',
     type: 'number',
     category: 'session',
     default: '0'

@@ -54,6 +54,21 @@ config({ path: path.join(os.homedir() || process.cwd(), '.cortex', '.env'), quie
 config({ path: cwdEnvLocal, override: true, quiet: true });
 config({ path: pkgEnvLocal, override: true, quiet: true });
 
+// HF token aliases. The `hf` CLI, huggingface_hub, and hosting platforms (e.g. Replit)
+// use HF_TOKEN; the harness's HF model card reads HUGGINGFACE_API_KEY. Treat all three
+// names as equivalent so whichever the user set authenticates HF models. A blank `KEY=`
+// (empty string from dotenv) counts as unset.
+const hfTok = [
+  process.env.HF_TOKEN,
+  process.env.HUGGINGFACE_API_KEY,
+  process.env.HUGGINGFACE_TOKEN,
+].find((v) => v && v.trim());
+if (hfTok) {
+  if (!process.env.HUGGINGFACE_API_KEY?.trim()) process.env.HUGGINGFACE_API_KEY = hfTok;
+  if (!process.env.HF_TOKEN?.trim()) process.env.HF_TOKEN = hfTok;
+  if (!process.env.HUGGINGFACE_TOKEN?.trim()) process.env.HUGGINGFACE_TOKEN = hfTok;
+}
+
 // Import middleware and routes
 import { corsMiddleware } from './middleware/cors.js';
 import { errorHandler } from './middleware/errorHandler.js';
@@ -73,6 +88,7 @@ import { configRouter } from './routes/config.js';
 // Import core library components
 import { createOrchestrator, DEFAULT_SETTINGS, type CortexOrchestrator } from '@nexus-cortex/core';
 import { SandboxViewServer, TmuxViewServer, SessionPersistence, TmuxManager } from '@nexus-cortex/executors';
+import { resumeHFSpaceIfManaged, pauseHFSpaceIfManaged } from './hfSpaceLifecycle.js';
 
 export interface ServerConfig {
   port?: number;
@@ -361,6 +377,9 @@ export class CortexV4Server {
             this.resetIdleTimer();
           }
 
+          // Resume the HF Space GPU if the chosen model runs on it (non-blocking).
+          resumeHFSpaceIfManaged();
+
           resolve();
         });
 
@@ -379,6 +398,9 @@ export class CortexV4Server {
   }
 
   async stop(): Promise<void> {
+    // Pause the HF Space GPU (if managed) to stop billing before we exit.
+    try { await pauseHFSpaceIfManaged(); } catch { /* billing pause is best-effort */ }
+
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;

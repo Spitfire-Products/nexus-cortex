@@ -15,3 +15,5 @@
 export { llama38bLocal } from './llama-3-8b-local.js';
 export { mistral7bOllama } from './mistral-7b-ollama.js';
 export { codellama13bLocal } from './codellama-13b-local.js';
+// Generic local / self-hosted OpenAI-compatible model (LOCAL_MODEL_ENDPOINT)
+export { localOpenAI } from './local-openai.js';

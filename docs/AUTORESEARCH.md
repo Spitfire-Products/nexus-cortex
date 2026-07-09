@@ -321,6 +321,51 @@ Show recorded keep/discard decisions from `.cortex/experiments.jsonl`.
 cortex autoresearch list --decision keep
 ```
 
+### `cortex autoresearch backlog`
+
+View + manage the **deficiency pool** (`.cortex/research-backlog.jsonl`) — the
+prioritized task board runs auto-append to and `loop` pulls from (`next()` is the
+loop's default goal). Also the **work-swarm** substrate: a TTL lease lets N workers
+pull DIFFERENT items from ONE pool without double-claiming.
+
+All subcommands take `--repo <path>` (else `$CORTEX_ROOT`, else the detected root —
+findProjectRoot resolves to the CLI's install dir, so pass `--repo`/`CORTEX_ROOT`
+to target a specific project's pool) and `--json`.
+
+- `backlog list [--status <s,…>] [--all]` — prioritized list. Hides closed/wont_fix
+  unless a `--status` filter or `--all`.
+- `backlog show <id>` — one deficiency, full detail.
+- `backlog next` — the highest-priority workable (open/triaged) item = what `loop`
+  fixes next.
+- `backlog resolve <id> [--wont-fix <reason> | --close | --fixed <ref> | --round <label>]`
+  — the **PM keep/discard** decision. Default marks `verified` (keep); `--wont-fix`
+  discards; `--close` finalizes; `--fixed` records a discovery-task fix (not yet
+  generalized). This is how a human/PM arbitrates work-swarm output per item.
+
+**Work-swarm claim/release (lease with TTL):**
+- `backlog claim <id> [--owner <id>] [--ttl <minutes>]` — claim ONE item (fails if
+  held by another under a live lease). `--owner` defaults to `cli-<pid>`; `--ttl` 15.
+- `backlog claim-next [--owner <id>] [--ttl <minutes>]` — release-expired + claim the
+  top UNCLAIMED item. **This is the work-swarm pull**: run one per worker and each
+  gets a distinct task.
+- `backlog release [id] [--owner <id>] [--expired]` — release your claim (→ triaged);
+  with `--expired` (or no id) sweep ALL expired leases.
+
+```bash
+# Divide-and-conquer: N workers, one pool, distinct tasks
+cortex autoresearch backlog claim-next --owner worker-1 --repo /path/to/proj   # → item A
+cortex autoresearch backlog claim-next --owner worker-2 --repo /path/to/proj   # → item B
+# … each worker fixes its item, then the PM arbitrates:
+cortex autoresearch backlog resolve <id-A> --close        # keep
+cortex autoresearch backlog resolve <id-B> --wont-fix "duplicate"   # discard
+```
+
+> **Two run-modes, don't confuse them.** `loop`/`experiment` = **autoresearch**:
+> N arms compete on the SAME goal, a statistical + judge gate keeps ONE winner
+> (right for hard-metric optimization). `backlog claim-next` + per-item `resolve` =
+> **work-swarm**: N workers take DIFFERENT items, a human/PM keeps per item (right
+> for divide-and-conquer throughput, e.g. building many independent fixes).
+
 ---
 
 ## 3. Task-sets

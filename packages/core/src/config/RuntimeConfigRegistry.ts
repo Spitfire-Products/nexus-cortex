@@ -44,6 +44,7 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   TOOL_BUDGET_SOFT:               { tier: 'env' },
   AGENT_TMUX_MONITOR:             { tier: 'env' },
   SYSTEM_MESSAGE_DOC_MAX_BYTES:   { tier: 'env' },
+  MEMORY_ARCHIVE_MAX_BYTES:       { tier: 'env' },
 
   // Training / Decision Store
   CORTEX_RECORD_DECISIONS:        { tier: 'env' },

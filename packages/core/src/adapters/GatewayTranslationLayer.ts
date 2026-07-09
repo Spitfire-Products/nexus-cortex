@@ -514,16 +514,18 @@ export class GatewayTranslationLayer {
       'Content-Type': 'application/json'
     };
 
-    // Add authentication header
+    // Add authentication header. Local / self-hosted OpenAI-compatible servers
+    // (LM Studio, llama-server, vLLM, proxies) commonly need no auth, so a missing
+    // key is only fatal for remote providers.
     const apiKey = process.env[modelConfig.api.apiKeyEnvVar];
-    if (!apiKey) {
+    if (apiKey) {
+      const authPrefix = modelConfig.api.authPrefix || 'Bearer';
+      headers[modelConfig.api.authHeader] = `${authPrefix} ${apiKey}`;
+    } else if (modelConfig.provider !== 'local') {
       throw new Error(
         `API key not found in environment variable: ${modelConfig.api.apiKeyEnvVar}`
       );
     }
-
-    const authPrefix = modelConfig.api.authPrefix || 'Bearer';
-    headers[modelConfig.api.authHeader] = `${authPrefix} ${apiKey}`;
 
     // Add version header if specified
     if (modelConfig.api.versionHeader) {
@@ -685,8 +687,9 @@ export class GatewayTranslationLayer {
     if (modelConfig.api.pattern === 'messages') {
       // Anthropic/XAI: { content: [...] }
       return resp.content ? [{ role: 'assistant', content: resp.content }] : [];
-    } else if (modelConfig.api.pattern === 'chat/completions') {
-      // OpenAI: { choices: [{ message: {...} }] }
+    } else if (modelConfig.api.pattern === 'chat/completions' || modelConfig.api.pattern === 'hf-space') {
+      // OpenAI shape: { choices: [{ message: {...} }] }. hf-space returns the same
+      // shape (sendHFSpaceAPI normalizes the Gradio output into an OpenAI completion).
       return resp.choices ? resp.choices.map((c: any) => c.message) : [];
     } else if (modelConfig.api.pattern === 'responses') {
       // OpenAI/XAI Responses API: { output: [...] }

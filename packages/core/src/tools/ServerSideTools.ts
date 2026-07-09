@@ -298,6 +298,15 @@ export function toCanonicalTool(toolDef: ServerSideToolDefinition): any {
   return {
     name: toolDef.name,
     description: toolDef.description || `${toolDef.name} tool`,
+    // Essential tier: provider-executed tools must SURVIVE ClientSideToolFilter's
+    // deferred-loading reduction (it keeps only discoveryTier==='essential' +
+    // recent + discovered). Without this, Phase 2.3's injected server-side tools
+    // were stripped from the request, weren't discoverable via SearchTools
+    // (they're not in toolFactory), and server-side detection condition #3 never
+    // fired — xAI silently lost x_search/web_search when
+    // ENABLE_DEFERRED_TOOL_LOADING shipped default-on. Empty schemas make the
+    // eager cost negligible.
+    discoveryTier: 'essential' as const,
     schema: {
       type: 'object' as const,
       properties: {} as Record<string, any>,

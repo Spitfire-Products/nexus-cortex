@@ -19,22 +19,16 @@ export interface QwenModelOptions {
   outputCost: number;
   supportsTools?: boolean;
   supportsVision?: boolean;
-
-  /**
-   * Use Hugging Face endpoint instead of DashScope
-   */
-  useHuggingFace?: boolean;
 }
 
 export function createQwenModelConfig(options: QwenModelOptions): ModelConfig {
   const supportsTools = options.supportsTools !== undefined ? options.supportsTools : true;
 
-  // DashScope API endpoint (default) or can use Hugging Face
-  const endpoint = options.useHuggingFace
-    ? `https://api-inference.huggingface.co/models/Qwen/${options.id}`
-    : 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation';
+  // DashScope (Alibaba Cloud) endpoint. For Qwen via Hugging Face, use the generic
+  // hf-router card (HF_MODEL_ID) instead — HF serving is handled there, not here.
+  const endpoint = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation';
 
-  const apiKeyEnvVar = options.useHuggingFace ? 'HUGGINGFACE_API_KEY' : 'DASHSCOPE_API_KEY';
+  const apiKeyEnvVar = 'DASHSCOPE_API_KEY';
 
   return {
     id: options.id,
@@ -46,8 +40,8 @@ export function createQwenModelConfig(options: QwenModelOptions): ModelConfig {
       pattern: 'chat/completions',  // OpenAI-compatible format
       endpoint: endpoint,
       apiKeyEnvVar: apiKeyEnvVar,
-      authHeader: options.useHuggingFace ? 'Authorization' : 'Authorization',
-      authPrefix: options.useHuggingFace ? 'Bearer' : 'Bearer'
+      authHeader: 'Authorization',
+      authPrefix: 'Bearer'
     },
 
     tools: {

@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.47.1] - 2026-07-09
+
+### Fixed
+- **xAI server-side tools (`x_search`, `web_search`, `code_execution`) were silently unavailable**
+  when deferred tool loading was enabled (its default). The orchestrator injected them correctly,
+  but the deferred-loading filter kept only essential/recently-used tools and stripped the injected
+  server-side tools from every request — and they weren't rediscoverable via SearchTools. Grok then
+  never switched to the Responses API and fell back to the harness's own WebSearch. Server-side
+  tools are now marked essential (they have empty schemas, so the eager cost is negligible) and
+  survive the filter; live X search works again on Responses-capable xAI models.
+
+## [4.47.0] - 2026-07-09
+
+### Added
+- **Self-hosted & Hugging Face Space model inference.** A generic local/HF inference path for the
+  harness and helper models, plus a native **hf-space provider transport** that drives HuggingFace
+  Gradio Spaces directly. Reasoning-mode support for local/self-hosted models, and local/self-hosted
+  models no longer require an API key. `HF_TOKEN` is accepted as an alias for `HUGGINGFACE_API_KEY`;
+  `BENCH_MODEL_ENDPOINT` points the bake-off at a self-hosted model.
+- **Per-model HF Space cards + served-model verification.** Qwen3.5-0.8B bake-off candidate cards and
+  per-model HF Space cards, each with a served-model verification guard so a Space serving the wrong
+  checkpoint fails loudly. Vendor-recommended sampling defaults are applied per model.
+- **Automatic HF Space GPU billing management.** The server starts the configured HF Space's GPU on
+  startup and stops it on shutdown, so a dedicated-GPU bake-off Space isn't billed while idle.
+- **vLLM template variant** with prefix caching for multi-turn tool loops.
+- **Grok 4.5 card** (xAI flagship, released 2026-07-09).
+- **Archive-aware `MEMORY.md` pruning** (`MEMORY_ARCHIVE_MAX_BYTES`; code default off, shipped on at
+  `10000` in `.env` / `.env.example`). When `MEMORY.md` exceeds the cap, older overflow **moves** to a
+  sibling append-only `MEMORY.archive.md` and `MEMORY.md` is bounded — fixing unbounded memory growth
+  and full-file injection without dropping the newest entries the way the injection head-truncation
+  did. Applied only to CORTEX-owned memory locations; the model Reads the archive on demand.
+- **Work-swarm claim/release on the deficiency pool.** `cortex autoresearch backlog list/show/next/
+  resolve` gives deficiency-pool visibility, and a new `ResearchBacklog` executor tool
+  (`claim`/`claim_next`/`release`) lets multiple agents coordinate over one pool with a TTL lease, so
+  a crashed claimant's item is auto-released — the divide-and-conquer counterpart to the competitive
+  `loop`.
+- **Turn-prediction graduation signal (capture Phase 2).** A deterministic next-turn-prediction
+  scorer + STDB-backed store feeding the training pipeline, with tri-state prefill provenance
+  (`none`/`shown`/`inserted`) on each record so self-fulfilled predictions are excluded from the
+  graduation exam.
+
+### Fixed
+- hf-space transport: emulate streaming for the blocking Gradio transport; parse Phi token-wrapped
+  tool calls; detect templates that ignore the `tools` kwarg (by render comparison) and fall back to
+  prompt-injected tools; treat an unterminated `<think>` block as reasoning not content; coerce null
+  message content to an empty string.
+- autoresearch: raise the bench fetch timeout past undici's 300s default (long graded runs).
+- gateway: don't require an API key for local/self-hosted models. skills: pdf-documents HF image
+  endpoint → `router.huggingface.co`. Removed stale/untested HF inference paths.
+
+### Docs
+- Env + `docs/AUTORESEARCH.md`: `BENCH_MODEL_ENDPOINT` for self-hosted bake-off models; vLLM pilot
+  findings (SM80+ requirement, prompt-echo debugging, `DTYPE` knob).
+
+## [4.46.0] - 2026-07-08
+
+Internal version-sync release (dependency alignment across the workspace, no user-facing changes).
+The work-swarm backlog tooling and turn-prediction capture that landed after this bump ship in
+**4.47.0** above.
+
 ## [4.45.0] - 2026-07-04
 
 ### Added

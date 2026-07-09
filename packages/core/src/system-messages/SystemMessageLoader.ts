@@ -25,6 +25,7 @@ import type {
 } from './SystemMessageRegistry.interface.js';
 import type { MessageRegistryEntry } from './types.js';
 import { truncateDocForInjection, resolveDocMaxBytes } from './docTruncation.js';
+import { pruneMemoryFileToArchive, resolveMemoryArchiveMaxBytes } from './memoryArchive.js';
 
 /**
  * User registry format (from .cortex/registry.json)
@@ -241,6 +242,31 @@ export class SystemMessageLoader {
   }
 
   /**
+   * Load a CORTEX-owned MEMORY.md with archive-aware pruning.
+   *
+   * When `MEMORY_ARCHIVE_MAX_BYTES` is set, an over-cap MEMORY.md is pruned to
+   * that size and the overflow is MOVED (never dropped) into a sibling
+   * MEMORY.archive.md — bounding per-turn injection AND unbounded file growth
+   * without losing memories. Off by default (returns the cached content
+   * unchanged). Applied ONLY to CORTEX-owned locations (.cortex/MEMORY.md, the
+   * project .claude/MEMORY.md) — the external-agent auto-memory under
+   * .claude/projects/<id>/memory/ is managed by Claude Code's own pruner, so we
+   * never touch it here.
+   */
+  private async loadCortexMemory(path: string): Promise<string> {
+    const content = await this.readFileCached(path);
+    const archiveMax = resolveMemoryArchiveMaxBytes(process.env.MEMORY_ARCHIVE_MAX_BYTES);
+    if (archiveMax <= 0) return content;
+    try {
+      return await pruneMemoryFileToArchive(path, content, archiveMax);
+    } catch (e) {
+      // never let memory maintenance break injection — fall back to raw content
+      if (this.debug) console.warn(`[SystemMessageLoader] memory archive-prune failed for ${path}:`, e);
+      return content;
+    }
+  }
+
+  /**
    * Load message content with three-tier lookup:
    * 1. Project .cortex/system-messages/{file}
    * 2. Global ~/.cortex/system-messages/{file}
@@ -411,7 +437,7 @@ export class SystemMessageLoader {
       // Try .cortex/ location first (created by /init)
       const cortexMemoryPath = join(this.projectPath, '.cortex', 'MEMORY.md');
       if (await this.fileExists(cortexMemoryPath)) {
-        const content = await this.readFileCached(cortexMemoryPath);
+        const content = await this.loadCortexMemory(cortexMemoryPath);
         if (this.debug) {
           console.log(`[SystemMessageLoader] Loaded MEMORY.md from .cortex/: ${cortexMemoryPath}`);
         }
@@ -421,7 +447,7 @@ export class SystemMessageLoader {
       // Try .claude/ location: {projectPath}/.claude/MEMORY.md
       const simpleMemoryPath = join(this.projectPath, '.claude', 'MEMORY.md');
       if (await this.fileExists(simpleMemoryPath)) {
-        const content = await this.readFileCached(simpleMemoryPath);
+        const content = await this.loadCortexMemory(simpleMemoryPath);
         if (this.debug) {
           console.log(`[SystemMessageLoader] Loaded MEMORY.md from: ${simpleMemoryPath}`);
         }

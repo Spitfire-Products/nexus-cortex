@@ -29,6 +29,14 @@ export interface LocalModelOptions {
   /** Whether the model supports tool calling */
   supportsTools?: boolean;
 
+  /**
+   * Whether the model exposes reasoning / chain-of-thought as a separate
+   * `reasoning_content` field (like DeepSeek / CF reasoners: gpt-oss, qwq, kimi,
+   * and Qwen3 / SmolLM3 in thinking mode). The server (or proxy) must emit
+   * `reasoning_content`; run the model with thinking enabled.
+   */
+  supportsReasoning?: boolean;
+
   /** Custom provider name (default: 'local') */
   provider?: string;
 }
@@ -113,6 +121,17 @@ export function createLocalModelConfig(options: LocalModelOptions): ModelConfig 
     cost: {
       inputPerMillion: 0.0,   // FREE - local inference
       outputPerMillion: 0.0   // FREE - local inference
-    }
+    },
+
+    // Mirrors the DeepSeek / Cloudflare reasoner pattern: reasoning arrives as a
+    // separate `reasoning_content` field, which the harness reads generically.
+    ...(options.supportsReasoning && {
+      reasoning: {
+        supported: true,
+        format: 'reasoning_content',
+        extractionMethod: 'separate_field',
+        pattern: 'interleaved'
+      }
+    })
   };
 }

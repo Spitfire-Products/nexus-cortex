@@ -6,5 +6,8 @@
  *
  */
 
-export { llama38bInstructHF } from './llama-3-8b-instruct.js';
-export { mistral7bInstructHF } from './mistral-7b-instruct.js';
+// Generic HF Inference Providers model (HF_MODEL_ID → router.huggingface.co)
+export { hfRouter } from './hf-router.js';
+export { hfSpace } from './hf-space.js';
+// Ready-made per-model Space cards (HF_SPACE_ID_<SLUG> / HF_SPACE_CANDIDATES)
+export { hfSpaceModelCards } from './hf-space-models.js';

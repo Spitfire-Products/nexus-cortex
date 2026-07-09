@@ -14,6 +14,7 @@ import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { GoogleGenAI } from '@google/genai';
 import { v4 as uuidv4 } from 'uuid';
+import { parseHFCompletion, normalizeToolCallArguments } from '../models/hfSpace/normalize.js';
 import type { ModelConfig } from '../models/ModelConfig.interface.js';
 import type { PreparedRequest } from '../adapters/GatewayTranslationLayer.js';
 import type { CanonicalToolUse } from '@nexus-cortex/types';
@@ -224,6 +225,11 @@ export class APIClient {
         // OpenAI Chat Completions API (used by OpenAI, XAI, DeepSeek, Groq)
         return this.sendChatCompletionsAPI(request, modelConfig);
 
+      case 'hf-space':
+        // HuggingFace Gradio Space (model served via a Gradio app, called through
+        // @gradio/client; raw output normalized to the OpenAI shape in-process).
+        return this.sendHFSpaceAPI(request, modelConfig);
+
       case 'responses':
         // OpenAI Responses API (used by OpenAI gpt-5-codex, XAI stateful)
         return this.sendResponsesAPI(request, modelConfig);
@@ -278,6 +284,11 @@ export class APIClient {
       case 'google-genai':
         throw new Error('Streaming not supported for google-genai pattern');
 
+      case 'hf-space':
+        // Gradio predict() is blocking — emulate a stream so agent/streaming
+        // callers work against hf-space models (one text chunk + completion).
+        return this.streamViaNonStreaming(request, modelConfig);
+
       case 'google-sdk':
         // Google SDK with full tool support (experimental)
         return this.streamGoogleSDK(request, modelConfig);
@@ -285,6 +296,33 @@ export class APIClient {
       default:
         throw new Error(`Unsupported API pattern for streaming: ${apiPattern}`);
     }
+  }
+
+  /**
+   * Emulate streaming for blocking transports (hf-space): run the normal
+   * non-streaming request, then emit its content as a single-pass chunk
+   * stream. Callers get the same StreamingResponse contract — text arrives
+   * in one delta rather than incrementally.
+   */
+  private streamViaNonStreaming(request: PreparedRequest, modelConfig: ModelConfig): StreamingResponse {
+    const responsePromise = this.sendRequest(request, modelConfig);
+
+    const finalMessage = responsePromise.then((resp: any) => resp.data);
+
+    async function* chunks(): AsyncGenerator<StreamChunk, void, unknown> {
+      const data = await finalMessage;
+      const message = data?.choices?.[0]?.message ?? {};
+      yield { type: 'message_start', data };
+      if (message.content) {
+        yield { type: 'text_delta', delta: message.content, snapshot: message.content };
+      }
+      for (const tc of message.tool_calls ?? []) {
+        yield { type: 'tool_use_complete', data: tc };
+      }
+      yield { type: 'message_stop', data };
+    }
+
+    return { chunks: chunks(), finalMessage };
   }
 
   /**
@@ -835,6 +873,84 @@ export class APIClient {
       status: 200,
       headers: {}
     };
+  }
+
+  /**
+   * Send request to a HuggingFace Gradio Space (provider 'hf-space').
+   *
+   * The model is served by a Gradio app exposing a `/run(messages_json, tools_json,
+   * max_tokens, temperature)` API. We reuse the chat/completions request builder to get
+   * OpenAI-shaped messages+tools, call the space via @gradio/client, then normalize the
+   * raw model text back into an OpenAI chat.completion object so ALL downstream
+   * canonicalization (tool_calls, reasoning_content) is reused unchanged. Non-streaming
+   * (the Gradio predict() call is blocking).
+   */
+  private async sendHFSpaceAPI(
+    request: PreparedRequest,
+    modelConfig: ModelConfig
+  ): Promise<APIResponse> {
+    const { chatRequest } = this.buildChatCompletionsRequest(request, modelConfig, { stream: false });
+    const messages = normalizeToolCallArguments((chatRequest as any).messages || []);
+    const tools = (chatRequest as any).tools;
+    const maxTokens = (chatRequest as any).max_tokens ?? (chatRequest as any).max_completion_tokens ?? 512;
+    // A card-declared default temperature WINS over the request's inherited value:
+    // format-fragile tool callers (Phi-4-mini) only emit clean calls near-greedy.
+    const cardTemp = (modelConfig.parameters?.temperature as any)?.default;
+    const temperature = cardTemp ?? (chatRequest as any).temperature ?? 0.7;
+
+    const spaceId = modelConfig.api.endpoint; // e.g. "user/space-name"
+    const hfToken = process.env[modelConfig.api.apiKeyEnvVar] || process.env.HF_TOKEN;
+
+    const { Client } = await import('@gradio/client');
+    let result: any;
+    try {
+      const app = await Client.connect(spaceId, hfToken ? ({ hf_token: hfToken } as any) : undefined);
+      result = await app.predict('/run', [
+        JSON.stringify(messages),
+        tools ? JSON.stringify(tools) : '',
+        maxTokens,
+        temperature,
+      ]);
+    } catch (e: any) {
+      const detail = e?.message ?? (typeof e === 'object' ? JSON.stringify(e) : String(e));
+      console.error(`[hf-space] gradio call failed: ${detail}`);
+      throw new Error(`hf-space (${spaceId}) call failed: ${detail}`);
+    }
+    const raw = Array.isArray(result?.data) ? result.data[0] : result?.data;
+
+    // Guard against a mislabeled arm: the template Space prefixes output with
+    // [MODEL=<repo>]. If this card pins an expected repo and the Space reports a
+    // different one, fail loudly instead of silently answering with the wrong model.
+    const expectedModel = (modelConfig as any).metadata?.hfSpaceExpectedModel;
+    if (expectedModel) {
+      const served = /^\[MODEL=([^\]]+)\]/.exec(String(raw ?? ''))?.[1];
+      if (served && served !== expectedModel) {
+        throw new Error(
+          `hf-space (${spaceId}) is serving ${served} but model card '${modelConfig.id}' expects ${expectedModel}. ` +
+          `Point HF_SPACE_ID_* at the right Space or swap the Space's MODEL_ID variable.`
+        );
+      }
+    }
+
+    const parsed = parseHFCompletion(String(raw ?? ''));
+
+    const message: any = { role: 'assistant', content: parsed.content || null };
+    if (parsed.reasoning) message.reasoning_content = parsed.reasoning;
+    if (parsed.toolCalls.length) message.tool_calls = parsed.toolCalls;
+
+    const data = {
+      id: 'chatcmpl-' + Date.now().toString(36),
+      object: 'chat.completion',
+      created: Math.floor(Date.now() / 1000),
+      model: modelConfig.id,
+      choices: [{
+        index: 0,
+        message,
+        finish_reason: parsed.toolCalls.length ? 'tool_calls' : 'stop',
+      }],
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    };
+    return { data, status: 200, headers: {} };
   }
 
   /**

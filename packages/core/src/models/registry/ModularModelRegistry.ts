@@ -30,6 +30,8 @@ import * as moonshotModels from '../cards/moonshot/index.js';
 import * as minimaxModels from '../cards/minimax/index.js';
 import * as cloudflareModels from '../cards/cloudflare/index.js';
 import * as mercuryModels from '../cards/mercury/index.js';
+import * as localModels from '../cards/local/index.js';
+import * as huggingfaceModels from '../cards/huggingface/index.js';
 
 export interface ModularModelRegistryOptions {
   /**
@@ -62,8 +64,11 @@ export class ModularModelRegistry implements ModelRegistry {
    */
   private loadModelCards(): void {
     // All models from modular cards (100% coverage)
+    const hfRouterCard = huggingfaceModels.hfRouter; // ModelConfig | null (set via HF_MODEL_ID)
+    const hfSpaceCard = huggingfaceModels.hfSpace;   // ModelConfig | null (set via HF_SPACE_ID)
     const allModelCards: ModelConfig[] = [
       // XAI models
+      xaiModels.grok45,
       xaiModels.grok43,
       xaiModels.grok420Reasoning,
       xaiModels.grok420NonReasoning,
@@ -183,7 +188,19 @@ export class ModularModelRegistry implements ModelRegistry {
 
       // Mercury (Inception Labs) — diffusion LLM, OpenAI-compatible.
       // Direct API serves only mercury-2 (verified 2026-06-07).
-      mercuryModels.mercury2
+      mercuryModels.mercury2,
+
+      // Local / self-hosted inference for the harness or helper model.
+      // Point LOCAL_MODEL_ENDPOINT at an OpenAI-compatible server; select via
+      // DEFAULT_MODEL_ID=local or HELPER_MODEL_ID=local.
+      localModels.localOpenAI,
+      // HF Inference Providers — only registers when HF_MODEL_ID is set (a served repo id).
+      ...(hfRouterCard ? [hfRouterCard] : []),
+      // HF Gradio Space (native hf-space transport) — registers when HF_SPACE_ID is set.
+      ...(hfSpaceCard ? [hfSpaceCard] : []),
+      // Per-model Space cards — each registers via HF_SPACE_ID_<SLUG>, or all via
+      // HF_SPACE_CANDIDATES=true + shared HF_SPACE_ID (swap the Space's MODEL_ID).
+      ...huggingfaceModels.hfSpaceModelCards,
     ];
 
     // Apply user filter if provided

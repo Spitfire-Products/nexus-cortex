@@ -3,6 +3,7 @@
  * Auto-exported for easy discovery
  */
 
+export { grok45 } from './grok-4-5.js';
 export { grok43 } from './grok-4-3.js';
 export { grok420Reasoning } from './grok-4-20-reasoning.js';
 export { grok420NonReasoning } from './grok-4-20-non-reasoning.js';

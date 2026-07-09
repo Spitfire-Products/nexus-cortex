@@ -17,7 +17,7 @@ Use cases:
 | **Cloudflare Workers AI** | FLUX.2 [dev] | Free tier | Very good | Medium (~8s) | Production images, multi-ref |
 | **xAI Imagine** | grok-imagine-image-quality | ~$0.07/image | Excellent | Medium | Hero images, photorealistic |
 | **OpenAI** | gpt-image-2 | $0.02-0.19/image | Excellent | Medium | Text-in-image, precise control |
-| **HuggingFace Inference** | FLUX.1 [schnell] / SDXL | Free (rate-limited) | Good | Variable | Open-source, customisable |
+| **HuggingFace Inference** | FLUX.1 [schnell] / SDXL | Free tier + PRO credits | Good | Variable | Open-source, customisable |
 
 ## Cloudflare Workers AI (FREE — Recommended Default)
 
@@ -102,18 +102,18 @@ curl -s -X POST "https://api.openai.com/v1/images/generations" \
 # Sizes: 1024x1024, 1024x1792, 1792x1024
 ```
 
-## HuggingFace Inference API (Free Tier — Open Source Models)
+## HuggingFace Inference Providers (Open Source Models)
 
 ```bash
 curl -s -X POST \
-  "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell" \
-  -H "Authorization: Bearer ${HUGGINGFACE_API_KEY}" \
+  "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell" \
+  -H "Authorization: Bearer ${HF_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{"inputs": "Underwater shipwreck scene, coral-covered hull, tropical fish, sunlight rays through water, photorealistic"}' \
   --output generated-image.png
 
-# Free tier: ~1000 requests/day with rate limiting
-# May return 503 if model is loading — retry after 20s
+# Auth: HF_TOKEN (HUGGINGFACE_API_KEY / HUGGINGFACE_TOKEN also accepted); hf.co/settings/tokens
+# Free tier + PRO credits; provider-dependent. May return 503 while loading — retry after ~20s
 ```
 
 ## Provider Selection Decision Tree

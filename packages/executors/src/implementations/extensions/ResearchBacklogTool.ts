@@ -12,7 +12,7 @@ import { BaseTool, type ToolResult } from '../../base/index.js';
 import { ResearchBacklog, type Severity } from '@nexus-cortex/core';
 
 export interface ResearchBacklogParams {
-  action: 'add' | 'triage' | 'list' | 'next' | 'in_progress' | 'fixed' | 'verified' | 'close' | 'wont_fix' | 'regressed';
+  action: 'add' | 'triage' | 'list' | 'next' | 'in_progress' | 'fixed' | 'verified' | 'close' | 'wont_fix' | 'regressed' | 'claim' | 'claim_next' | 'release';
   // add / triage
   title?: string;
   description?: string;
@@ -29,6 +29,9 @@ export interface ResearchBacklogParams {
   ref?: string;             // fixed → commit; verified → held-out round; wont_fix → reason
   // list filter
   status?: string;
+  // work-swarm lease (claim/claim_next/release)
+  owner?: string;      // worker/arm id holding the lease
+  ttlMinutes?: number; // lease minutes before it goes stale (default 15)
 }
 
 export class ResearchBacklogToolExecutor extends BaseTool<ResearchBacklogParams, ToolResult> {
@@ -40,8 +43,8 @@ export class ResearchBacklogToolExecutor extends BaseTool<ResearchBacklogParams,
       properties: {
         action: {
           type: 'string',
-          enum: ['add', 'triage', 'list', 'next', 'in_progress', 'fixed', 'verified', 'close', 'wont_fix', 'regressed'],
-          description: "add (auto-triages on add) | triage | list | next (highest-priority open item) | in_progress | fixed (passes discovery task) | verified (held-out confirmed — overfitting-cleared) | close | wont_fix | regressed",
+          enum: ['add', 'triage', 'list', 'next', 'in_progress', 'fixed', 'verified', 'close', 'wont_fix', 'regressed', 'claim', 'claim_next', 'release'],
+          description: "add (auto-triages on add) | triage | list | next (highest-priority open item) | in_progress | fixed (passes discovery task) | verified (held-out confirmed — overfitting-cleared) | close | wont_fix | regressed | claim (work-swarm: lease id for a worker) | claim_next (work-swarm PULL: release-expired + claim the top UNCLAIMED item so N workers get DIFFERENT tasks) | release (free your claim → triaged; no id ⇒ sweep expired leases)",
         },
         title: { type: 'string', description: 'add: short deficiency title (also the dedupe key)' },
         description: { type: 'string', description: 'add: what is wrong + how it was found' },
@@ -56,6 +59,8 @@ export class ResearchBacklogToolExecutor extends BaseTool<ResearchBacklogParams,
         experimentTag: { type: 'string', description: 'in_progress: the worktree experiment tag' },
         ref: { type: 'string', description: 'fixed: commit SHA · verified: held-out round · wont_fix: reason' },
         status: { type: 'string', description: 'list: filter by status' },
+        owner: { type: 'string', description: 'claim/claim_next/release: worker/arm id holding the lease' },
+        ttlMinutes: { type: 'number', description: 'claim/claim_next: lease minutes before it goes stale (default 15)' },
       },
       required: ['action'],
     });
@@ -65,7 +70,7 @@ export class ResearchBacklogToolExecutor extends BaseTool<ResearchBacklogParams,
   validateToolParams(p: ResearchBacklogParams): string | null {
     if (!p.action) return 'action is required';
     if (p.action === 'add' && (!p.title || !p.description)) return 'add requires title and description';
-    if (['triage', 'in_progress', 'fixed', 'verified', 'close', 'wont_fix', 'regressed'].includes(p.action) && !p.id) {
+    if (['triage', 'in_progress', 'fixed', 'verified', 'close', 'wont_fix', 'regressed', 'claim'].includes(p.action) && !p.id) {
       return `${p.action} requires an id (use action:list to find it)`;
     }
     return null;
@@ -107,6 +112,19 @@ export class ResearchBacklogToolExecutor extends BaseTool<ResearchBacklogParams,
           return this.resultOr(this.backlog.wontFix(params.id!, params.ref ?? 'no reason given'), params.id!);
         case 'regressed':
           return this.resultOr(this.backlog.reopenRegressed(params.id!), params.id!);
+        case 'claim':
+          return this.resultOr(this.backlog.claim(params.id!, params.owner ?? 'agent', (params.ttlMinutes ?? 15) * 60_000), params.id!);
+        case 'claim_next': {
+          const c = this.backlog.claimNext(params.owner ?? 'agent', (params.ttlMinutes ?? 15) * 60_000);
+          return this.createSuccessResult(c ? fmt(c) : 'No unclaimed workable deficiency to claim.');
+        }
+        case 'release': {
+          if (!params.id) {
+            const rel = this.backlog.releaseExpired();
+            return this.createSuccessResult(`released ${rel.length} expired lease(s): ${rel.map((r) => r.id).join(', ') || '(none)'}`);
+          }
+          return this.resultOr(this.backlog.release(params.id, params.owner), params.id);
+        }
         default:
           return this.createErrorResult(`Unknown action: ${params.action}`);
       }

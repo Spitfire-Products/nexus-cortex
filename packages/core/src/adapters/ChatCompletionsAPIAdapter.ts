@@ -129,7 +129,9 @@ export interface OpenAIChatMessage {
  */
 export class ChatCompletionsAPIAdapter implements FormatAdapter {
   readonly name = 'ChatCompletionsAPIAdapter';
-  readonly apiPatterns = ['chat/completions'];
+  // 'hf-space' reuses this adapter for request-building (canonical -> OpenAI messages);
+  // APIClient dispatches it to the Gradio transport instead of an HTTP send.
+  readonly apiPatterns = ['chat/completions', 'hf-space'];
 
   /**
    * Convert canonical messages to OpenAI chat message format
