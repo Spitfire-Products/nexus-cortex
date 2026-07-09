@@ -76,7 +76,7 @@ describe('/models endpoint', () => {
       const response = await request(app).get('/models');
       const models = response.body.data;
 
-      const validProviders = ['anthropic', 'cloudflare', 'deepseek', 'google', 'mercury', 'minimax', 'moonshot', 'openai', 'qwen', 'xai', 'zhipu'];
+      const validProviders = ['anthropic', 'cloudflare', 'deepseek', 'google', 'hf-space', 'huggingface', 'local', 'mercury', 'minimax', 'moonshot', 'openai', 'qwen', 'xai', 'zhipu'];
 
       models.forEach((model: any) => {
         expect(validProviders).toContain(model.owned_by);
@@ -87,8 +87,7 @@ describe('/models endpoint', () => {
       const response = await request(app).get('/models');
       const models = response.body.data;
 
-      // Based on test analysis: 6 API patterns
-      const validPatterns = ['messages', 'chat/completions', 'generateContent', 'google-genai', 'google-sdk', 'responses'];
+      const validPatterns = ['messages', 'chat/completions', 'generateContent', 'google-genai', 'google-sdk', 'responses', 'hf-space'];
 
       models.forEach((model: any) => {
         expect(validPatterns).toContain(model.apiPattern);

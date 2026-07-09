@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.47.3] - 2026-07-09
+
+### Fixed
+- CI: updated the `/models` endpoint test allowlists for providers added in 4.47.0 (`owned_by`
+  accepts `local`/`huggingface`/`hf-space`; `apiPattern` accepts `hf-space`). Test-only. This is
+  the first npm release since 4.47.0 — the 4.47.1 server-side-tools fix and 4.47.2 test fix ship
+  here (their tags were blocked at the CI gate by these stale tests).
+
 ## [4.47.2] - 2026-07-09
 
 ### Fixed
