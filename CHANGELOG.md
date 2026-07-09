@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.47.2] - 2026-07-09
+
+### Fixed
+- CI: updated a stale adapter-registry test (expected 5 API patterns; the hf-space transport in
+  4.47.0 made it 6). Test-only. Note: **4.47.1 never reached npm** — its publish was blocked by
+  this test — so 4.47.2 is the first npm release carrying the 4.47.1 server-side-tools fix.
+
 ## [4.47.1] - 2026-07-09
 
 ### Fixed

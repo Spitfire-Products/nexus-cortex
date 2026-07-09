@@ -176,10 +176,12 @@ describe('AdapterRegistry', () => {
       const patterns = registry.getAvailableApiPatterns();
 
       expect(patterns).toContain('generateContent');
+      expect(patterns).toContain('google-genai');
       expect(patterns).toContain('messages');
       expect(patterns).toContain('chat/completions');
       expect(patterns).toContain('responses');
-      expect(patterns).toHaveLength(5);
+      expect(patterns).toContain('hf-space');
+      expect(patterns).toHaveLength(6);
     });
   });
 
