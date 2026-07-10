@@ -3,18 +3,37 @@
     "id": "t1-read-server-version",
     "taskType": "T1",
     "prompt": "Read the file packages/server/package.json in this project and report the exact value of its \"version\" field.",
-    "verifier": { "type": "contains", "all": ["4.46.0"] }
+    "verifier": {
+      "type": "contains",
+      "all": [
+        "4.47.3"
+      ]
+    }
   },
   {
     "id": "t2-locate-parsehfcompletion",
     "taskType": "T2",
     "prompt": "Search this project's packages/core/src tree for the file that defines the function parseHFCompletion, then report that file's path.",
-    "verifier": { "type": "contains", "all": ["hfSpace", "normalize.ts"] }
+    "verifier": {
+      "type": "contains",
+      "all": [
+        "hfSpace",
+        "normalize.ts"
+      ]
+    }
   },
   {
     "id": "t3-count-hf-cards",
     "taskType": "T3",
     "prompt": "Count the .ts files directly inside packages/core/src/models/cards/huggingface/ in this project and list their filenames.",
-    "verifier": { "type": "contains", "all": ["hf-router.ts", "hf-space.ts", "hf-space-models.ts", "index.ts"] }
+    "verifier": {
+      "type": "contains",
+      "all": [
+        "hf-router.ts",
+        "hf-space.ts",
+        "hf-space-models.ts",
+        "index.ts"
+      ]
+    }
   }
 ]

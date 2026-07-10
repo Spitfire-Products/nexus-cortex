@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.47.4] - 2026-07-10
+
+### Fixed
+- Router training record now captures the actual routing tool + its input args. The cortex
+  training recorder was writing turn-quality metadata into `selected_args_json` instead of the
+  tool call, so a fine-tune on that corpus learned to emit the metadata as "arguments". Now
+  records the first real (non-EndTurn) tool of the turn with its actual input; the quality
+  metadata still feeds `outcomeScore`.
+
 ## [4.47.3] - 2026-07-09
 
 ### Fixed

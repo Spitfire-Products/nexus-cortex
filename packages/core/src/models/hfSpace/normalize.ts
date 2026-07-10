@@ -107,6 +107,30 @@ function parseXml(body: string): Array<{ name: string; arguments: Record<string,
   return out;
 }
 
+/** MiniCPM5 XML (attribute syntax, per openbmb/MiniCPM5-1B chat_template.jinja):
+ *  `<function name="n"><param name="k">v</param></function>` — param values may be
+ *  wrapped `<![CDATA[...]]>` (emitted for values containing <, & or newlines).
+ *  Content and calls are separated by `<tool_sep>`. */
+function parseMiniCpmXml(body: string): Array<{ name: string; arguments: Record<string, string> }> {
+  const out: Array<{ name: string; arguments: Record<string, string> }> = [];
+  const funcRe = /<function name="([^"]+)">([\s\S]*?)<\/function>/g;
+  let m: RegExpExecArray | null;
+  while ((m = funcRe.exec(body))) {
+    const name = m[1]!.trim();
+    const args: Record<string, string> = {};
+    const paramRe = /<param name="([^"]+)">([\s\S]*?)<\/param>/g;
+    let p: RegExpExecArray | null;
+    while ((p = paramRe.exec(m[2]!))) {
+      let v = p[2]!.trim();
+      const cdata = v.match(/^<!\[CDATA\[([\s\S]*?)\]\]>$/);
+      if (cdata) v = cdata[1]!;
+      args[p[1]!.trim()] = v;
+    }
+    out.push({ name, arguments: args });
+  }
+  return out;
+}
+
 export function parseHFCompletion(raw: string): ParsedHFCompletion {
   raw = raw.replace(/^\[MODEL=[^\]]*\]\s*/, '');
   const { reasoning, rest } = extractReasoning(raw);
@@ -129,6 +153,19 @@ export function parseHFCompletion(raw: string): ParsedHFCompletion {
     const tc = parseXml(body).map((o) => mkCall(o.name, o.arguments));
     if (tc.length) {
       const content = body.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
+      return { reasoning, content, toolCalls: tc };
+    }
+  }
+
+  // 2b. MiniCPM5 XML (attribute syntax — `<function name="...">`, unambiguous vs
+  // Qwen3.5's `<function=...>`). Calls follow content after a <tool_sep> marker.
+  if (body.includes('<function name="')) {
+    const tc = parseMiniCpmXml(body).map((o) => mkCall(o.name, o.arguments));
+    if (tc.length) {
+      const content = body
+        .replace(/<function name="[^"]+">[\s\S]*?<\/function>/g, '')
+        .replace(/<tool_call>|<\/tool_call>|<tool_sep>/g, '')
+        .trim();
       return { reasoning, content, toolCalls: tc };
     }
   }

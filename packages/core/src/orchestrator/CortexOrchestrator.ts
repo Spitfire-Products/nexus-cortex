@@ -1362,6 +1362,13 @@ export class CortexOrchestrator {
     // trusted baseline a coordinate must map to.
     let lastEndTurnCitations: Array<{ reference: string; verbatim_source: string }> | undefined;
     let endTurnLastToolName: string | undefined; // for the cortex training record
+    // R60: the ROUTING decision = the FIRST real tool called in response to the
+    // user prompt, WITH ITS ACTUAL INPUT ARGS. Previously the router sample's
+    // selected_args_json was filled with turn-quality metadata (endTurnCalled/
+    // nudges/violations/draftPreview) — fine-tunes on that corpus learned to
+    // emit garbage args (proven by the v2p3 r9b pilot adapter).
+    let routerFirstToolName: string | undefined;
+    let routerFirstToolArgs: unknown;
     // Scope: the gate ONLY arms when the turn actually used a (non-EndTurn)
     // tool. A pure-language turn has no tool-derived artifact to
     // misattribute, so forcing EndTurn there is pure overhead → bypass.
@@ -1797,14 +1804,14 @@ export class CortexOrchestrator {
                 decisionId: `cortex-${this.currentSessionId}-${this.turnNumber}-${uuidv4().slice(0, 8)}`,
                 sessionId: this.currentSessionId,
                 inputContext: userPrompt.slice(0, 2000),
-                selectedTool: endTurnLastToolName ?? null,
-                selectedArgsJson: JSON.stringify({
-                  endTurnCalled,
-                  endTurnNudges,
-                  stage3Violations,
-                  citations: lastEndTurnCitations ?? [],
-                  draftPreview: draftText.slice(0, 800),
-                }),
+                // R60: record the FIRST real tool + its ACTUAL input args — the
+                // routing decision the sample is supposed to teach. The turn
+                // quality metadata that used to be stringified here already
+                // feeds outcomeScore; it does not belong in the args target.
+                selectedTool: routerFirstToolName ?? endTurnLastToolName ?? null,
+                selectedArgsJson: routerFirstToolName
+                  ? JSON.stringify(routerFirstToolArgs ?? {})
+                  : null,
                 outcomeScore,
                 trainingWeight: 1.0,
                 timestampMs: Date.now(),
@@ -1839,6 +1846,10 @@ export class CortexOrchestrator {
           if (tu.name !== 'EndTurn') {
             turnUsedTools = true;
             endTurnLastToolName = tu.name; // last real tool — for cortex record
+            if (routerFirstToolName === undefined) {
+              routerFirstToolName = tu.name; // the routing decision (R60)
+              routerFirstToolArgs = (tu as any).input ?? {};
+            }
             if (['Edit', 'Write', 'Bash', 'NotebookEdit'].includes(tu.name)) {
               turnUsedMutatingTool = true;
             }

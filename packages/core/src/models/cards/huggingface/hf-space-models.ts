@@ -16,6 +16,9 @@
  *   Qwen3.5         — XML <function=name><parameter=k>v</parameter></function>
  *   Phi-4-mini      — bare JSON array
  *   LFM2.5          — pythonic <|tool_call_start|>[f(k=v)]<|tool_call_end|>
+ *   MiniCPM5        — XML <function name="n"><param name="k">v</param></function>
+ *                     (attribute syntax, optional <![CDATA[...]]> values,
+ *                     <tool_sep> content separator — per its chat_template.jinja)
  */
 
 import { createHFSpaceModelConfig } from '../../configurators/HFSpaceConfigurator.js';
@@ -47,6 +50,11 @@ const SPECS: SpaceModelSpec[] = [
   { envSlug: 'LFM2_5_350M',  id: 'lfm2.5-350m-space',  displayName: 'LFM2.5 350M (HF Space)',     family: 'lfm2.5',  repo: 'LiquidAI/LFM2.5-350M',           contextWindow: 32768, reasoning: false, defaultTemperature: 0.3 },
   { envSlug: 'LFM2_5_1_2B',  id: 'lfm2.5-1.2b-space',  displayName: 'LFM2.5 1.2B (HF Space)',     family: 'lfm2.5',  repo: 'LiquidAI/LFM2.5-1.2B-Instruct',  contextWindow: 32768, reasoning: false, defaultTemperature: 0.3 },
   { envSlug: 'LFM2_5_1_2B_THINKING', id: 'lfm2.5-1.2b-thinking-space', displayName: 'LFM2.5 1.2B Thinking (HF Space)', family: 'lfm2.5', repo: 'LiquidAI/LFM2.5-1.2B-Thinking', contextWindow: 32768, reasoning: true, defaultTemperature: 0.3 },
+  // MiniCPM5 1.08B (dense Llama arch, apache-2.0; hybrid <think>; own XML tool
+  // family — see normalize.ts). Temp 0.3 = tool-stability override (vendor chat
+  // default is 0.9/0.95, but router-bench r8/r8b: 100/300 @0.9 vs 250/300 @0.3 —
+  // format-fragile tool caller, the Phi class). 128K native ctx; 32K serving.
+  { envSlug: 'MINICPM5_1B',  id: 'minicpm5-1b-space',  displayName: 'MiniCPM5 1B (HF Space)',     family: 'minicpm5', repo: 'openbmb/MiniCPM5-1B',           contextWindow: 32768, reasoning: true,  defaultTemperature: 0.3 },
   // Reasoners (1.5-4B)
   { envSlug: 'QWEN3_1_7B',   id: 'qwen3-1.7b-space',   displayName: 'Qwen3 1.7B (HF Space)',      family: 'qwen3',   repo: 'Qwen/Qwen3-1.7B',                contextWindow: 32768, reasoning: true,  defaultTemperature: 0.6 },
   { envSlug: 'QWEN3_5_4B',   id: 'qwen3.5-4b-space',   displayName: 'Qwen3.5 4B (HF Space)',      family: 'qwen3.5', repo: 'Qwen/Qwen3.5-4B',                contextWindow: 32768, reasoning: true,  defaultTemperature: 0.6 },
