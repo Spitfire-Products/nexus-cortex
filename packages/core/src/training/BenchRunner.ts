@@ -47,7 +47,16 @@ export type Verifier =
    *  the gate is relative either way). `target` sets the pass threshold (>= for maximize,
    *  <= for minimize); omit → any extracted number passes, so a crashed/non-numeric run
    *  fails (score 0) and seeds the backlog. */
-  | { type: 'numeric'; direction: 'maximize' | 'minimize'; extract?: string; best?: number; worst?: number; target?: number };
+  | { type: 'numeric'; direction: 'maximize' | 'minimize'; extract?: string; best?: number; worst?: number; target?: number }
+  /** ROUTING-MATCH (V2-P3 D10): grade the FIRST tool call, not the final text — a
+   *  router's job is to pick the right tool+args and STOP, so task-completion
+   *  verifiers score a perfect router 0. Scoring mirrors the Lens-R AST match:
+   *  no/wrong first tool = 0; right tool = 50 + 50 × (fraction of expected `args`
+   *  hit) — continuous, so the gate can separate arms. An arg hits when the
+   *  expected value is a SUBSTRING of the emitted value (robust to relative vs
+   *  absolute paths and equivalent phrasings; pin the discriminative fragment).
+   *  Requires the runner to expose `toolUses` (the cortex serverRunner does). */
+  | { type: 'tool-route'; tool: string; args?: Record<string, string> };
 
 export interface TaskSpec {
   id: string;
@@ -71,11 +80,17 @@ function normalizeWs(s: string): string {
   return s.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
+/** Tool-call trace a runner may expose alongside the text (serverRunner does). */
+export interface GradeExtras {
+  toolUses?: { name?: string; input?: unknown }[];
+}
+
 /**
  * Grade one model output against a verifier. Pure for the deterministic types;
  * `contains` gives partial credit. `llm-judge` requires an injected judge.
+ * `tool-route` grades `extras.toolUses` (the first call), not the text.
  */
-export async function gradeRun(output: string, verifier: Verifier, judge?: JudgeFn): Promise<GradeResult> {
+export async function gradeRun(output: string, verifier: Verifier, judge?: JudgeFn, extras?: GradeExtras): Promise<GradeResult> {
   switch (verifier.type) {
     case 'exact': {
       const a = verifier.normalize ? normalizeWs(output) : output.trim();
@@ -129,6 +144,22 @@ export async function gradeRun(output: string, verifier: Verifier, judge?: Judge
         : (verifier.direction === 'minimize' ? value <= verifier.target : value >= verifier.target);
       return { pass, qualitativeScore: Math.round(score * 100) / 100, detail: `value=${value}` };
     }
+    case 'tool-route': {
+      const first = extras?.toolUses?.[0];
+      if (!first?.name) {
+        return { pass: false, qualitativeScore: 0, detail: 'tool-route: no tool call observed' };
+      }
+      if (first.name !== verifier.tool) {
+        return { pass: false, qualitativeScore: 0, detail: `tool-route: called ${first.name}, expected ${verifier.tool}` };
+      }
+      const expected = verifier.args ?? {};
+      const keys = Object.keys(expected);
+      if (keys.length === 0) return { pass: true, qualitativeScore: 100, detail: 'tool-route: tool matched (no args expected)' };
+      const input = (first.input && typeof first.input === 'object') ? first.input as Record<string, unknown> : {};
+      const hit = keys.filter((k) => input[k] !== undefined && String(input[k]).includes(expected[k]!.trim())).length;
+      const qualitativeScore = Math.round(50 + 50 * (hit / keys.length));
+      return { pass: hit === keys.length, qualitativeScore, detail: `tool-route: ${verifier.tool} args ${hit}/${keys.length}` };
+    }
     default: {
       const _exhaustive: never = verifier;
       throw new Error(`gradeRun: unknown verifier ${JSON.stringify(_exhaustive)}`);
@@ -147,6 +178,9 @@ export interface HarnessRunResult {
   outputTokens: number;
   toolCallCount: number;
   latencyMs: number;
+  /** Ordered tool calls (name, input) when the runner can observe them — the
+   *  `tool-route` verifier grades toolUses[0] (routing correctness, D10). */
+  toolUses?: { name?: string; input?: unknown }[];
 }
 
 export interface HarnessRunner {
@@ -250,7 +284,7 @@ export async function runBench(
 
     for (let i = 0; i < runs; i++) {
       const res = await runner.run(task.prompt, { model: opts.modelId });
-      const grade = await gradeRun(res.text, task.verifier, opts.judge);
+      const grade = await gradeRun(res.text, task.verifier, opts.judge, { toolUses: res.toolUses });
       if (!grade.pass && sampleFailure === undefined) sampleFailure = res.text;
       observedModelId = res.modelId ?? observedModelId;
       passes += grade.pass ? 1 : 0;
@@ -339,7 +373,7 @@ export function parseTaskSet(raw: unknown, source = '<task-set>'): TaskSpec[] {
     if (typeof o.prompt !== 'string' || !o.prompt) throw new Error(`${source}[${i}] (${o.id}): missing 'prompt'`);
     if (!o.verifier || typeof o.verifier !== 'object') throw new Error(`${source}[${i}] (${o.id}): missing 'verifier'`);
     const v = o.verifier as Record<string, unknown>;
-    const validTypes = ['exact', 'regex', 'contains', 'llm-judge', 'numeric'];
+    const validTypes = ['exact', 'regex', 'contains', 'llm-judge', 'numeric', 'tool-route'];
     if (typeof v.type !== 'string' || !validTypes.includes(v.type)) {
       throw new Error(`${source}[${i}] (${o.id}): verifier.type must be one of ${validTypes.join('|')}`);
     }
@@ -359,6 +393,9 @@ export function parseTaskSet(raw: unknown, source = '<task-set>'): TaskSpec[] {
     }
     if (v.type === 'numeric' && v.direction !== 'maximize' && v.direction !== 'minimize') {
       throw new Error(`${source}[${i}] (${o.id}): 'numeric' verifier needs direction: maximize|minimize`);
+    }
+    if (v.type === 'tool-route' && (typeof v.tool !== 'string' || !v.tool)) {
+      throw new Error(`${source}[${i}] (${o.id}): 'tool-route' verifier needs tool: string (the expected FIRST tool call)`);
     }
     return { id: o.id, prompt: o.prompt, verifier: o.verifier as Verifier, taskType: o.taskType as string | undefined };
   });

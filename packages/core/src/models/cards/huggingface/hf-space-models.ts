@@ -60,6 +60,22 @@ const SPECS: SpaceModelSpec[] = [
   { envSlug: 'QWEN3_5_4B',   id: 'qwen3.5-4b-space',   displayName: 'Qwen3.5 4B (HF Space)',      family: 'qwen3.5', repo: 'Qwen/Qwen3.5-4B',                contextWindow: 32768, reasoning: true,  defaultTemperature: 0.6 },
   { envSlug: 'SMOLLM3_3B',   id: 'smollm3-3b-space',   displayName: 'SmolLM3 3B (HF Space)',      family: 'smollm3', repo: 'HuggingFaceTB/SmolLM3-3B',       contextWindow: 32768, reasoning: true,  defaultTemperature: 0.6 },
   { envSlug: 'PHI_4_MINI',   id: 'phi-4-mini-space',   displayName: 'Phi-4-mini 3.8B (HF Space)', family: 'phi-4',   repo: 'microsoft/Phi-4-mini-instruct',  contextWindow: 32768, reasoning: false, defaultTemperature: 0.0 },
+  // ── 2026-07-10 onboarding wave (candidate research ledger: dbai training/v2p3/
+  //    CANDIDATE_RESEARCH_2026-07-10.md). Tool families verified from each repo's
+  //    chat_template.jinja: granite + arctic emit Hermes-JSON; nemotron emits the
+  //    Qwen3.5-style <function=> XML *wrapped* in <tool_call> (parseHFCompletion
+  //    handles both, verified against dist). gemma-4 uses a channel-based format —
+  //    reasoning/tool emission confirmed via live shape probe before first bench.
+  { envSlug: 'GRANITE_4_1_3B',      id: 'granite-4.1-3b-space',      displayName: 'Granite 4.1 3B (HF Space)',        family: 'granite',  repo: 'ibm-granite/granite-4.1-3b',              contextWindow: 32768, reasoning: false, defaultTemperature: 0.3 },
+  // Sampling sweep r12: 200/300 @0.6 vs 50/300 @0.3 — the INVERSE of the MiniCPM/Phi
+  // pattern; the Qwen-thinking "greedy discouraged" vendor note is real. Keep 0.6.
+  { envSlug: 'QWEN3_5_2B',          id: 'qwen3.5-2b-space',          displayName: 'Qwen3.5 2B (HF Space)',            family: 'qwen3.5',  repo: 'Qwen/Qwen3.5-2B',                         contextWindow: 32768, reasoning: true,  defaultTemperature: 0.6 },
+  // Operator-requested wildcard: community reasoning distill of the same base —
+  // controlled A/B vs vanilla (does a 750-sample reasoning distill help/hurt routing?).
+  { envSlug: 'QWEN3_5_2B_KHAZARAI', id: 'qwen3.5-2b-khazarai-space', displayName: 'Qwen3.5 2B Khazarai Distill (HF Space)', family: 'qwen3.5', repo: 'khazarai/Qwen3.5-2B-Qwen3.6-plus-Distilled', contextWindow: 32768, reasoning: true, defaultTemperature: 0.6 },
+  { envSlug: 'NEMOTRON_3_NANO_4B',  id: 'nemotron-3-nano-4b-space',  displayName: 'Nemotron 3 Nano 4B (HF Space)',    family: 'nemotron', repo: 'nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16',   contextWindow: 32768, reasoning: true,  defaultTemperature: 0.6 },
+  { envSlug: 'GEMMA_4_E2B',         id: 'gemma-4-e2b-space',         displayName: 'Gemma 4 E2B (HF Space)',           family: 'gemma4',   repo: 'google/gemma-4-E2B-it',                   contextWindow: 32768, reasoning: true,  defaultTemperature: 0.6 },
+  { envSlug: 'ARCTIC_AWM_4B',       id: 'arctic-awm-4b-space',       displayName: 'Arctic AWM 4B (HF Space)',         family: 'qwen3',    repo: 'Snowflake/Arctic-AWM-4B',                 contextWindow: 32768, reasoning: true,  defaultTemperature: 0.6 },
 ];
 
 function buildCard(spec: SpaceModelSpec): ModelConfig | null {

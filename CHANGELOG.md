@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.48.0] - 2026-07-11
+
+### Added
+- hf-space transport: 6th tool-call parser family — Gemma-4 channel format
+  (`<|tool_call>call:name{...}<tool_call|>` with quote-token arguments, plus `<|channel>thought`
+  reasoning extraction), verified against a live gemma-4-E2B-it probe. New end-token handling
+  strips `<|end_of_text|>` (Granite) and `<turn|>` (Gemma) terminators from completions.
+- hf-space model cards for the 2026-07 onboarding wave: granite-4.1-3b, qwen3.5-2b,
+  qwen3.5-2b-khazarai, nemotron-3-nano-4b, gemma-4-e2b, arctic-awm-4b.
+- Bench: new `tool-route` verifier — grades the FIRST tool call (name + args, partial credit,
+  substring arg match) instead of the final text, so routing-component models are measured on
+  routing correctness rather than task completion. `HarnessRunResult` now carries the ordered
+  `toolUses` trace, and `gradeRun` accepts it via a new optional `extras` parameter.
+
 ## [4.47.4] - 2026-07-10
 
 ### Fixed

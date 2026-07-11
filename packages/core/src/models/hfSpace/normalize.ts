@@ -27,7 +27,7 @@ export interface ParsedHFCompletion {
   toolCalls: HFToolCall[];
 }
 
-const END_TOKENS = ['<|im_end|>', '<|end|>', '<|eot_id|>', '<|endoftext|>', '</s>'];
+const END_TOKENS = ['<|im_end|>', '<|end|>', '<|eot_id|>', '<|endoftext|>', '<|end_of_text|>', '<turn|>', '</s>'];
 
 function mkCall(name: string, args: unknown): HFToolCall {
   return {
@@ -51,6 +51,15 @@ function stripEndTokens(s: string): string {
  *  leaving an opening <think> with no close — treat that whole tail as reasoning
  *  rather than leaking raw think-text into content. */
 function extractReasoning(s: string): { reasoning: string; rest: string } {
+  // Gemma-4 channel-thought form: `<|channel>thought\n…\n<channel|>` (its template's
+  // thinking channel — distinct from the <think> family below).
+  const gemmaThought = /<\|channel>thought\n?([\s\S]*?)<channel\|>/g;
+  if (gemmaThought.test(s)) {
+    gemmaThought.lastIndex = 0;
+    const parts: string[] = [];
+    const rest = s.replace(gemmaThought, (_, t: string) => { parts.push(t.trim()); return ''; }).trim();
+    return { reasoning: parts.join('\n\n'), rest };
+  }
   const idx = s.indexOf('</think>');
   if (idx === -1) {
     const open = s.indexOf('<think>');
@@ -167,6 +176,39 @@ export function parseHFCompletion(raw: string): ParsedHFCompletion {
         .replace(/<tool_call>|<\/tool_call>|<tool_sep>/g, '')
         .trim();
       return { reasoning, content, toolCalls: tc };
+    }
+  }
+
+  // 2c. Gemma-4 (per google/gemma-4-*-it template + live probe 2026-07-10):
+  // `<|tool_call>call:name{key:<|"|>value<|"|>, n:2}<tool_call|>` — pythonic-ish
+  // braces with string values wrapped in the <|"|> quote token; a trailing
+  // `<|tool_response>` opens the (empty) result slot. Marker `<|tool_call>` has
+  // NO pipe before `>` — distinct from Phi's `<|tool_call|>` and Hermes's
+  // `<tool_call>`.
+  if (body.includes('<|tool_call>')) {
+    const gtc: HFToolCall[] = [];
+    const gemRe = /<\|tool_call>\s*call:([\w.-]+)\s*\{([\s\S]*?)\}\s*<tool_call\|>/g;
+    let gm: RegExpExecArray | null;
+    while ((gm = gemRe.exec(body))) {
+      const args: Record<string, unknown> = {};
+      const argSrc = gm[2]!;
+      const quotedRe = /([\w.-]+)\s*:\s*<\|"\|>([\s\S]*?)<\|"\|>/g;
+      let qm: RegExpExecArray | null;
+      while ((qm = quotedRe.exec(argSrc))) args[qm[1]!] = qm[2]!;
+      // unquoted leftovers (numbers/booleans); fragments of quoted values that
+      // contain commas carry the <|"|> token or lack a `key:` shape and are skipped
+      for (const seg of argSrc.split(',')) {
+        if (seg.includes('<|"|>')) continue;
+        const m2 = seg.trim().match(/^([\w.-]+)\s*:\s*(.+)$/s);
+        if (!m2 || m2[1]! in args) continue;
+        const v = m2[2]!.trim();
+        args[m2[1]!] = v === 'true' ? true : v === 'false' ? false : (v !== '' && Number.isFinite(Number(v)) ? Number(v) : v);
+      }
+      gtc.push(mkCall(gm[1]!, args));
+    }
+    if (gtc.length) {
+      const content = body.replace(gemRe, '').replace(/<\|tool_response>[\s\S]*$/, '').trim();
+      return { reasoning, content, toolCalls: gtc };
     }
   }
 

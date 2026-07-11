@@ -59,6 +59,10 @@ export function serverRunner(serverUrl: string, model: string | undefined): Harn
         outputTokens: data.usage?.outputTokens ?? 0,
         toolCallCount: Array.isArray(data.toolUses) ? data.toolUses.length : (data.metadata?.toolCallIterations ?? 0),
         latencyMs: Date.now() - started,
+        // Ordered (name, input) trace — the 'tool-route' verifier grades [0] (D10).
+        toolUses: Array.isArray(data.toolUses)
+          ? data.toolUses.map((t: any) => ({ name: t?.name, input: t?.input }))
+          : undefined,
       };
     },
   };
