@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.50.1] - 2026-07-24
+
+### Fixed
+- README registry counts regenerated against a fresh build (47 built-in tools after
+  `MemoryWrite`/`MemoryRecall`). The v4.50.0 tag never published: CI's doc-count gate
+  correctly rejected counts generated from a stale local build. No code changes —
+  4.50.1 is the release vehicle for 4.50.0's features.
+
 ## [4.50.0] - 2026-07-24
 
 ### Added
