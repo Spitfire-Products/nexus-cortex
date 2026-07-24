@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.50.2] - 2026-07-24
+
+### Fixed
+- Permissions profiles listed snake_case aliases (`memory_write`/`memory_recall`) that no
+  registry ever registers — removed; only `MemoryWrite`/`MemoryRecall` are canonical. The
+  permission-audit test now recognizes both (and counts `MemoryRecall` in the prod
+  read-only minimum). Memory-tools test aligned with the documented 2-64-char slug rule.
+  4.50.2 is the release vehicle for 4.50.0's features (4.50.0/4.50.1 tags never published:
+  CI's doc-count and test gates caught the above in sequence).
+
 ## [4.50.1] - 2026-07-24
 
 ### Fixed

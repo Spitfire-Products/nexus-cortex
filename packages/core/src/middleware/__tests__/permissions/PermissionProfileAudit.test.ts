@@ -37,7 +37,7 @@ const EXECUTOR_REGISTRY_TOOLS = [
 const ORCHESTRATOR_MANAGED_TOOLS = [
   'ConfigureMcpServer', 'DisableMcpServer', 'EnableMcpServer',
   'GetMcpConfig', 'InitCortexContext', 'InitMcpConfig',
-  'ListAvailableMcpServers', 'SearchMcpServers',
+  'ListAvailableMcpServers', 'MemoryRecall', 'MemoryWrite', 'SearchMcpServers',
 ];
 
 const CANONICAL_TOOL_NAMES = new Set([
@@ -53,7 +53,7 @@ const PROD_READ_ONLY_TOOLS = [
   'ListSessions', 'LoadSession',
   'RequestHistoricalContext', 'SearchConversationHistory',
   'GetConversationSegment', 'ListCompactionBoundaries',
-  'TodoList', 'SearchTools',
+  'TodoList', 'SearchTools', 'MemoryRecall',
 ];
 
 // Approval handlers that can run safely without an interactive TTY.

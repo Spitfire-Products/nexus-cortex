@@ -34,11 +34,11 @@ describe('MemoryWrite', () => {
   });
 
   it('dedupes by name: re-writing UPDATES the file and replaces the index line', async () => {
-    await MemoryWrite.execute({ name: 'a', description: 'old desc', content: 'v1' }, dir);
-    const r = await MemoryWrite.execute({ name: 'a', description: 'new desc', content: 'v2' }, dir);
+    await MemoryWrite.execute({ name: 'aa', description: 'old desc', content: 'v1' }, dir);
+    const r = await MemoryWrite.execute({ name: 'aa', description: 'new desc', content: 'v2' }, dir);
     expect(r.message).toMatch(/^Updated/);
     const index = await idx();
-    expect(index.split('\n').filter((l) => l.includes('(memory/a.md)'))).toHaveLength(1);
+    expect(index.split('\n').filter((l) => l.includes('(memory/aa.md)'))).toHaveLength(1);
     expect(index).toContain('new desc');
     expect(index).not.toContain('old desc');
   });

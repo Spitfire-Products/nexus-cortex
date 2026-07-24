@@ -18,9 +18,7 @@
           "glob",
           "create_artifact",
           "MemoryWrite",
-          "MemoryRecall",
-          "memory_write",
-          "memory_recall"
+          "MemoryRecall"
         ]
       }
     },

@@ -27,9 +27,7 @@
           "TodoList",
           "SearchTools",
           "MemoryWrite",
-          "MemoryRecall",
-          "memory_write",
-          "memory_recall"
+          "MemoryRecall"
         ]
       }
     },
