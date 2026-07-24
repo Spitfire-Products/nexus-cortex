@@ -16,7 +16,11 @@
           "list_files",
           "grep",
           "glob",
-          "create_artifact"
+          "create_artifact",
+          "MemoryWrite",
+          "MemoryRecall",
+          "memory_write",
+          "memory_recall"
         ]
       }
     },

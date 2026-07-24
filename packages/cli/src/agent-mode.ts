@@ -160,6 +160,11 @@ async function handleStart(message: IPCStartMessage): Promise<void> {
       allowedBaseTools,
     };
 
+    // Stage-3 memory ownership rule (P-A 2026-07): sub-agent processes are
+    // READ-ONLY on the shared projectPath memory files — no lock exists, the
+    // parent owns writes. MemoryWrite checks this flag and refuses politely.
+    process.env.CORTEX_SUBAGENT = '1';
+
     // Create orchestrator with permissions enabled
     // We'll replace the approval handler after creation
     orchestrator = await createOrchestrator(config, {

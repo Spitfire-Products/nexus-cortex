@@ -334,26 +334,24 @@ export class InitCortexContext {
         } catch {}
       }
       if (!memoryExists && !dryRun) {
+        // P-A two-tier shape: MEMORY.md = curated one-line INDEX (injected every
+        // session, high priority); detail lives in .cortex/memory/<name>.md via
+        // the MemoryWrite/MemoryRecall tools.
         const memoryTemplate = `# Memory
 
-Persistent cross-session memory for this project — injected as a system message
-on every conversation turn. Maintain it with your file tools: keep it small,
-current, and factual (it costs context every turn). Record patterns as they
-emerge; delete what turns out to be wrong.
+Curated index — one line per memory; detail lives in \`.cortex/memory/<name>.md\`.
+Maintain via **MemoryWrite** (dedupe-by-name, update-not-duplicate, delete-when-
+wrong; types: user/feedback/project/reference) and load detail via
+**MemoryRecall**. This index is injected every session at high priority — keep
+lines short and load-bearing.
 
 Capability discovery (for a first session here): \`Skill\` with
-\`command: "list"\` shows the installed skill library (autoresearch,
-cortex-bench, best-of-n, verify-work, the document skills, …); \`Task\` with
+\`command: "list"\` shows the installed skill library; \`Task\` with
 \`subagent_type: "list"\` shows the agent profiles. Remove this paragraph once
 you know the install.
-
-## Project Patterns
-
-## Key Files
-
-## Known Issues
 `;
         await fs.writeFile(memoryMdPath, memoryTemplate, 'utf-8');
+        await fs.mkdir(path.join(targetDir, 'memory'), { recursive: true });
         memoryCreated = true;
       }
 

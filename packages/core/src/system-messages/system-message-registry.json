@@ -215,10 +215,10 @@
       "injection": {
         "position": "prepend",
         "role": "system",
-        "priority": 6
+        "priority": 3
       },
       "cache": true,
-      "description": "Persistent cross-session memory (.claude/ MEMORY.md)"
+      "description": "Persistent cross-session memory INDEX (P-A two-tier: one line per memory, detail in .cortex/memory/ via MemoryRecall). Priority 3 — injected in the tool-guide band, ABOVE the p6 doc band (CLAUDE.md/CORTEX.md), because always-present index + tool definitions carry more model salience than large static docs."
     },
 
     {

@@ -91,7 +91,7 @@ import {
 } from '../tools/mcp-management/index.js';
 
 // Context Management Tools
-import { InitCortexContext } from '../tools/context-management/index.js';
+import { InitCortexContext, MemoryWrite, MemoryRecall } from '../tools/context-management/index.js';
 
 // Phase 2.2.1: Context Management
 import { ContextBudgetManager } from '../conversation/ContextBudgetManager.js';
@@ -5462,9 +5462,11 @@ export class CortexOrchestrator {
           console.log(`[Orchestrator Phase 2.5] Executing tool: ${toolUse.name}`);
         }
 
-        // Context management tools (CORTEX.md generation)
+        // Context management tools (CORTEX.md generation + two-tier memory)
         const contextManagementToolNames = [
-          'InitCortexContext'
+          'InitCortexContext',
+          'MemoryWrite',
+          'MemoryRecall'
         ];
         const isContextManagementTool = contextManagementToolNames.includes(toolUse.name);
 
@@ -5545,6 +5547,20 @@ export class CortexOrchestrator {
               switch (toolUse.name) {
                 case 'InitCortexContext':
                   contextManagementResult = await InitCortexContext.execute(
+                    toolUse.input,
+                    this.config.projectPath || process.cwd()
+                  );
+                  break;
+
+                case 'MemoryWrite':
+                  contextManagementResult = await MemoryWrite.execute(
+                    toolUse.input,
+                    this.config.projectPath || process.cwd()
+                  );
+                  break;
+
+                case 'MemoryRecall':
+                  contextManagementResult = await MemoryRecall.execute(
                     toolUse.input,
                     this.config.projectPath || process.cwd()
                   );

@@ -1,0 +1,6 @@
+{
+  "api": "https://api.example.com",
+  "port": 4001,
+  "timeout": 30000,
+  "debug": true
+}

@@ -894,6 +894,38 @@ Use plan mode for tasks with genuine ambiguity — multiple reasonable architect
     }
   },
   {
+    name: 'MemoryWrite',
+    description: 'Create/update/delete a persistent memory (two-tier: one-line entry in the always-injected MEMORY.md index + a detail file in .cortex/memory/<name>.md). Dedupe-by-name: writing an existing name UPDATES it. Delete memories that turn out wrong. Types: user (who the user is), feedback (how to work — include why), project (ongoing work/constraints), reference (external pointers). READ-ONLY in sub-agents (parent owns writes).',
+    schema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['write', 'delete'], description: 'write (create or update) | delete' },
+        name: { type: 'string', description: 'kebab-case slug, the dedupe key. E.g. "deploy-flow", "user-prefers-tdd"' },
+        type: { type: 'string', enum: ['user', 'feedback', 'project', 'reference'], description: 'memory category (default project)' },
+        description: { type: 'string', description: 'ONE line — becomes the always-injected index entry; make it load-bearing' },
+        content: { type: 'string', description: 'the full detail (markdown). For feedback: include **Why** and **How to apply**' }
+      },
+      required: ['name']
+    },
+    category: 'base',
+    discoveryTier: 'standard',
+    metadata: { immutable: true, executionEnvironment: 'client', version: '1.0.0' }
+  },
+  {
+    name: 'MemoryRecall',
+    description: 'Load a memory\'s full detail by name (from the MEMORY.md index), or search memories by query (names, descriptions, content). Falls back to searching legacy monolithic MEMORY.md + MEMORY.archive.md when no per-fact file exists. Use when an index line in the Memory section is relevant to the task.',
+    schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'exact memory name from an index line' },
+        query: { type: 'string', description: 'search term across names/descriptions/content (used when name omitted)' }
+      }
+    },
+    category: 'base',
+    discoveryTier: 'essential',
+    metadata: { immutable: true, executionEnvironment: 'client', version: '1.0.0' }
+  },
+  {
     name: 'ResearchBacklog',
     description: "Track & triage harness deficiencies for recursive auto-research self-improvement. During benchmarking, AUTO-ADD every harness deficiency found (action:add — auto-triages + prioritizes). Walk each through open→triaged→in_progress→fixed→verified→closed. OVERFITTING GUARD: action:fixed means it passes the discovery task; action:verified means it ALSO held on held-out tasks — only verify after held-out confirmation. Use action:next to get the highest-priority deficiency to work on.",
     schema: {

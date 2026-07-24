@@ -379,7 +379,10 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   MCP_AUTO_INJECT: 'false',
   AUTORESEARCH_AGENTS: 'off',
   SYSTEM_MESSAGE_DOC_MAX_BYTES: '0',
-  MEMORY_ARCHIVE_MAX_BYTES: '0',
+  // Default ON (P-A memory upgrade 2026-07): bounds hot MEMORY.md, overflow moves
+  // losslessly to MEMORY.archive.md. Superior to the head-truncating doc cap
+  // (which DROPS the tail) — claude_memory is now exempt from that cap entirely.
+  MEMORY_ARCHIVE_MAX_BYTES: '10000',
 
   // Loop Control
   MAX_TOOL_ITERATIONS: '50',

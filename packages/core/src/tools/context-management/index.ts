@@ -5,6 +5,7 @@
  */
 
 export { InitCortexContext } from './InitCortexContext.js';
+export { MemoryWrite, MemoryRecall } from './MemoryTools.js';
 export type {
   InitCortexContextInput,
   InitCortexContextOutput,

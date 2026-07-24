@@ -541,7 +541,10 @@ export class SystemMessageLoader {
    */
   private static readonly CAPPED_DOC_IDS = new Set([
     'claude_md',
-    'claude_memory',
+    // 'claude_memory' EXEMPT (P-A 2026-07): the head-truncating cap DROPS the
+    // tail (newest memories). Memory is size-governed by the LOSSLESS
+    // archive-prune instead (MEMORY_ARCHIVE_MAX_BYTES, default ON — overflow
+    // moves to MEMORY.archive.md, never deleted). See memoryArchive.ts.
     'agents_md',
     'gemini_md',
     'cortex',

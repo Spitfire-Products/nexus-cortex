@@ -93,7 +93,19 @@ function buildCard(spec: SpaceModelSpec): ModelConfig | null {
     outputTokens: 4096,
     supportsTools: true,
     supportsReasoning: spec.reasoning,
-    expectedSpaceModel: spec.repo,
+    // The Space normally serves the card's pinned base repo — but a graduated
+    // ADAPTER of that base is served through the same card (P4 INTERN / real-world
+    // validation). HF_SPACE_EXPECT_MODEL_<SLUG> overrides the identity assert to
+    // the adapter id (same convention as HF_SPACE_ID_<SLUG>).
+    expectedSpaceModel: process.env[`HF_SPACE_EXPECT_MODEL_${spec.envSlug}`]?.trim() || spec.repo,
+    // Wire the spec's swept sampling temp into the card (it was previously dead
+    // weight — calls fell through to request-or-0.7, the exact condition the
+    // near-greedy sweep proved wrong for format-fragile families). Per-slug env
+    // override for experiments (e.g. serving an InfoSFT graduate at 0.0).
+    defaultTemperature: (() => {
+      const env = Number(process.env[`HF_SPACE_TEMPERATURE_${spec.envSlug}`]);
+      return Number.isFinite(env) ? env : spec.defaultTemperature;
+    })(),
   });
 }
 

@@ -14,6 +14,10 @@ const num = (v: string | undefined, d: number) => {
   const n = v ? parseInt(v, 10) : NaN;
   return Number.isFinite(n) ? n : d;
 };
+const numF = (v: string | undefined): number | undefined => {
+  const n = v ? parseFloat(v) : NaN;
+  return Number.isFinite(n) ? n : undefined;
+};
 
 const HF_SPACE_ID = process.env.HF_SPACE_ID?.trim();
 
@@ -27,5 +31,12 @@ export const hfSpace: ModelConfig | null = HF_SPACE_ID
       outputTokens: num(process.env.HF_SPACE_MAX_OUTPUT, 4096),
       supportsTools: process.env.HF_SPACE_SUPPORTS_TOOLS !== 'false',
       supportsReasoning: process.env.HF_SPACE_REASONING === 'true',
+      // Card temp WINS over request temp (the documented sampling control for
+      // format-fragile tool callers). Expose it on the generic card so a served
+      // fine-tune/adapter can be pinned near-greedy without a dedicated card.
+      defaultTemperature: numF(process.env.HF_SPACE_TEMPERATURE),
+      // Optional identity pin: the serve template announces [MODEL=<repo>]; when
+      // set, the transport hard-fails on mismatch (never test the wrong model).
+      expectedSpaceModel: process.env.HF_SPACE_EXPECT_MODEL?.trim() || undefined,
     })
   : null;

@@ -1,5 +1,5 @@
 {
-  "$comment": "Production environment — strict deny-by-default. Whitelist allows the minimum read-only tools needed for read-only operation. defaultPolicy: deny + approvalHandler: deny-all means anything not on the allowlist is hard-blocked.",
+  "$comment": "Production environment \u2014 strict deny-by-default. Whitelist allows the minimum read-only tools needed for read-only operation. defaultPolicy: deny + approvalHandler: deny-all means anything not on the allowlist is hard-blocked.",
   "enabled": true,
   "defaultPolicy": "deny",
   "policies": [
@@ -25,7 +25,11 @@
           "GetConversationSegment",
           "ListCompactionBoundaries",
           "TodoList",
-          "SearchTools"
+          "SearchTools",
+          "MemoryWrite",
+          "MemoryRecall",
+          "memory_write",
+          "memory_recall"
         ]
       }
     },
@@ -34,8 +38,21 @@
       "enabled": true,
       "priority": 80,
       "config": {
-        "allowedPaths": ["./public", "./dist", "./build"],
-        "blockedPaths": ["/etc", "/root", "/sys", "/.git", "/node_modules", "./config", "./secrets", "./.env"],
+        "allowedPaths": [
+          "./public",
+          "./dist",
+          "./build"
+        ],
+        "blockedPaths": [
+          "/etc",
+          "/root",
+          "/sys",
+          "/.git",
+          "/node_modules",
+          "./config",
+          "./secrets",
+          "./.env"
+        ],
         "requireApprovalForDelete": false,
         "requireApprovalForWrite": false
       }
@@ -46,7 +63,9 @@
       "priority": 50,
       "config": {
         "allowedCommands": [],
-        "blockedCommands": ["*"],
+        "blockedCommands": [
+          "*"
+        ],
         "requireApprovalForDangerous": false
       }
     }

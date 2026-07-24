@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.50.0] - 2026-07-24
+
+### Added
+- **Two-tier persistent memory.** `.cortex/MEMORY.md` is now a curated one-line-per-memory
+  INDEX injected every session at high priority (above the project-docs band — an
+  always-present index carries more model salience than large static documents); per-fact
+  detail lives in `.cortex/memory/<name>.md` files with `name`/`description`/`type`
+  frontmatter.
+- **`MemoryWrite` tool** — create/update/delete a memory with dedupe-by-name (writing an
+  existing name updates it), typed categories (`user`/`feedback`/`project`/`reference`),
+  and automatic index-line maintenance.
+- **`MemoryRecall` tool** (essential tier — always visible) — load a memory's full detail
+  by name, or search names/descriptions/content. Falls back to searching a legacy
+  monolithic `MEMORY.md` + `MEMORY.archive.md`, so existing projects need no migration.
+- `cortex init` scaffolds the new index + `memory/` directory shape.
+
+### Changed
+- **Memory size-governance defaults ON**: `MEMORY_ARCHIVE_MAX_BYTES` now defaults to
+  `10000` — when the hot `MEMORY.md` exceeds the budget, the overflow moves LOSSLESSLY to
+  `MEMORY.archive.md` (a pointer remains). Set `0` to opt out. On first load after
+  upgrade, an over-budget `MEMORY.md` is pruned with all content preserved in the archive.
+- `MEMORY.md` is now EXEMPT from the head-truncating `SYSTEM_MESSAGE_DOC_MAX_BYTES` cap
+  (which dropped the newest memories).
+- Sub-agent processes are READ-ONLY on memory (`MemoryWrite` refuses with guidance) — the
+  parent session owns writes; sub-agents recall and report findings in their results.
+
+### Notes
+- The memory index's higher injection priority plus the two new tools change the static
+  prompt prefix — expect a ONE-TIME provider prompt-cache miss per environment after
+  upgrading.
+
+---
+
+## [4.49.0] - 2026-07-12
+
+### Added
+- hf-space generic card: `HF_SPACE_TEMPERATURE` (card-level sampling pin) and
+  `HF_SPACE_EXPECT_MODEL` (identity assert — the transport hard-fails when the Space's
+  `[MODEL=...]` header doesn't match, so a served adapter is never silently the wrong model).
+- hf-space per-model cards: per-slug env overrides matching the `HF_SPACE_ID_<SLUG>`
+  convention — `HF_SPACE_TEMPERATURE_<SLUG>` (sampling pin) and `HF_SPACE_EXPECT_MODEL_<SLUG>`
+  (identity-assert override), so a fine-tuned ADAPTER of a card's base model can be served
+  and validated through the same card.
+
+### Fixed
+- hf-space per-model cards: `defaultTemperature` from the model spec is now actually wired
+  into the card. It was previously dead weight — per-model card calls fell through to the
+  request temperature or 0.7, the exact condition the near-greedy sweeps proved wrong for
+  format-fragile small tool-callers.
+
 ## [4.48.0] - 2026-07-11
 
 ### Added

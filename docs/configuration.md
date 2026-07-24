@@ -78,7 +78,8 @@ Set the keys for the providers you use; leave the rest blank. A model is only av
 |----------|---------|------------------------------|
 | `SESSION_STORAGE_DIR` | `.cortex/sessions` | Where JSONL session files are written. |
 | `MCP_AUTO_INJECT` | `false` | Auto-inject connected MCP servers' tools into every turn. |
-| `SYSTEM_MESSAGE_DOC_MAX_BYTES` | `0` | Per-doc byte cap for injected project docs (CORTEX.md, MEMORY.md). `0` = unlimited. |
+| `SYSTEM_MESSAGE_DOC_MAX_BYTES` | `0` | Per-doc byte cap for injected project docs (CORTEX.md, CLAUDE.md, AGENTS.md). `0` = unlimited. MEMORY.md is EXEMPT — it is governed by the lossless archive-prune below, never head-truncated. |
+| `MEMORY_ARCHIVE_MAX_BYTES` | `10000` | Hot-memory byte budget (default ON). When `.cortex/MEMORY.md` exceeds it, the overflow MOVES to `MEMORY.archive.md` (lossless) and the hot file keeps a pointer. `0` disables. |
 
 #### Loop control
 

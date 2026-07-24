@@ -31,7 +31,7 @@ if (!existsSync(rootCortex)) {
 }
 
 // Shippable scaffold only — mirrors the deploy script's .cortex keep-list.
-const SCAFFOLD_DIRS = ['agents', 'skills', 'commands', 'system-messages', join('bench', 'tasks')];
+const SCAFFOLD_DIRS = ['agents', 'skills', 'commands', 'memory', 'system-messages', join('bench', 'tasks')];
 const SCAFFOLD_FILES = ['permissions.example.json', 'permissions.dev.json', 'permissions.test.json', 'permissions.prod.json'];
 
 rmSync(dest, { recursive: true, force: true });     // always rebuild — never accrete
