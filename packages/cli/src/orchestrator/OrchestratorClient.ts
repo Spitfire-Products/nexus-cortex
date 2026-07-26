@@ -13,7 +13,17 @@
 import { existsSync, readFileSync, realpathSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { Agent } from 'undici';
 import type { CortexOrchestrator, SubAgentEventCallback } from '@nexus-cortex/core';
+
+// Non-streaming server turns send headers only at completion; node fetch's
+// undici defaults (headersTimeout 300s) kill slow local-model turns as bare
+// "fetch failed" (see CortexClient.ts / harnessProcess.ts — same class).
+const CLIENT_FETCH_TIMEOUT_MS = parseInt(process.env.CORTEX_CLIENT_FETCH_TIMEOUT_MS || '900000', 10);
+const longTimeoutAgent = new Agent({
+  headersTimeout: CLIENT_FETCH_TIMEOUT_MS,
+  bodyTimeout: CLIENT_FETCH_TIMEOUT_MS,
+});
 
 // Get installation root from this file's location
 // Use realpathSync to resolve symlinks (important for npm link)
@@ -343,7 +353,10 @@ export class OrchestratorClient {
         content,
         model: this.options.defaultModelId,
         ...options
-      })
+      }),
+      // @ts-expect-error undici dispatcher option (node fetch honors it)
+      dispatcher: longTimeoutAgent,
+      signal: AbortSignal.timeout(CLIENT_FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {

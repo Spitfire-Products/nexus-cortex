@@ -4,6 +4,7 @@
  */
 
 export { claudeFable5 } from './claude-fable-5.js';
+export { claudeOpus5 } from './claude-opus-5.js';
 export { claudeOpus48 } from './claude-opus-4-8.js';
 export { claudeOpus47 } from './claude-opus-4-7.js';
 export { claudeOpus46 } from './claude-opus-4-6.js';

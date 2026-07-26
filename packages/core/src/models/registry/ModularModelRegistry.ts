@@ -91,6 +91,7 @@ export class ModularModelRegistry implements ModelRegistry {
 
       // Anthropic models
       anthropicModels.claudeFable5,
+      anthropicModels.claudeOpus5,
       anthropicModels.claudeOpus48,
       anthropicModels.claudeOpus47,
       anthropicModels.claudeOpus46,

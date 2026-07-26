@@ -28,6 +28,17 @@ import { dirname, join, resolve } from 'path';
 import { existsSync, readFileSync, realpathSync, mkdirSync, openSync, writeFileSync, copyFileSync } from 'fs';
 import { homedir } from 'os';
 import { createRequire } from 'module';
+import { Agent as UndiciAgent } from 'undici';
+
+// Non-streaming turns send response headers only when the WHOLE turn completes,
+// so node fetch's built-in undici defaults (headersTimeout 300s) kill any slow
+// local-model turn with a bare "fetch failed" BEFORE our AbortSignal (10 min)
+// ever fires. Same defect class as the autoresearch bench dispatcher fix.
+const CLIENT_FETCH_TIMEOUT_MS = parseInt(process.env.CORTEX_CLIENT_FETCH_TIMEOUT_MS || '900000', 10);
+const LONG_TIMEOUT_DISPATCHER = new UndiciAgent({
+  headersTimeout: CLIENT_FETCH_TIMEOUT_MS,
+  bodyTimeout: CLIENT_FETCH_TIMEOUT_MS,
+});
 
 const __cortex_require = createRequire(import.meta.url);
 const __cortex_filename = fileURLToPath(import.meta.url);
@@ -466,6 +477,7 @@ async function fetchJSON(path, options = {}, timeoutMs = 30000) {
     const resp = await fetch(`${BASE_URL}${path}`, {
       headers: { 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(timeoutMs),
+      dispatcher: LONG_TIMEOUT_DISPATCHER,
       ...options,
     });
     if (!resp.ok) {

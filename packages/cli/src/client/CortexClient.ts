@@ -2,6 +2,18 @@
  * HTTP Client for Nexus Cortex Server
  * Handles communication with localhost:4000 server
  */
+import { Agent } from 'undici';
+
+// Non-streaming turns return headers only when the FULL turn completes, so
+// node fetch's built-in undici defaults (headersTimeout 300s) abort any slow
+// local-model turn as a bare "fetch failed" — same class the autoresearch
+// bench fixed with its long-timeout dispatcher (harnessProcess.ts). Slow
+// think-mode arms legitimately exceed 5 minutes.
+const CLIENT_FETCH_TIMEOUT_MS = parseInt(process.env.CORTEX_CLIENT_FETCH_TIMEOUT_MS || '900000', 10);
+const longTimeoutAgent = new Agent({
+  headersTimeout: CLIENT_FETCH_TIMEOUT_MS,
+  bodyTimeout: CLIENT_FETCH_TIMEOUT_MS,
+});
 
 export interface Message {
   role: 'user' | 'assistant' | 'system';
@@ -76,6 +88,9 @@ export class CortexClient {
         ...options,
         stream: false,
       }),
+      // @ts-expect-error undici dispatcher option (node fetch honors it)
+      dispatcher: longTimeoutAgent,
+      signal: AbortSignal.timeout(CLIENT_FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -103,6 +118,8 @@ export class CortexClient {
         ...options,
         stream: true,
       }),
+      // @ts-expect-error undici dispatcher option (node fetch honors it)
+      dispatcher: longTimeoutAgent,
     });
 
     if (!response.ok) {
