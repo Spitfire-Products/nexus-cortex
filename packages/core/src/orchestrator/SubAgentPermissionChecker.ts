@@ -23,6 +23,15 @@ import type {
 import type { AgentDefinition } from './SubAgentTypes.js';
 
 /**
+ * Case- and separator-insensitive tool-name normalization: 'WebSearch',
+ * 'web_search', and 'web-search' all normalize to 'websearch'. Permission
+ * membership must not depend on which naming convention a profile used.
+ */
+function normalizeToolName(name: string): string {
+  return name.toLowerCase().replace(/[_-]/g, '');
+}
+
+/**
  * Configuration for sub-agent permission checking
  */
 export interface SubAgentPermissionConfig {
@@ -80,8 +89,11 @@ export class SubAgentPermissionChecker implements PermissionPolicy {
     if (config.agentDefinition.tools === 'all') {
       this.allowedTools = 'all';
     } else {
+      // Normalize separators as well as case: profiles have historically used
+      // snake_case (web_search) while canonical names are PascalCase (WebSearch).
+      // Case-folding alone silently denied every multi-word tool.
       this.allowedTools = new Set(
-        config.agentDefinition.tools.map((t) => t.toLowerCase())
+        config.agentDefinition.tools.map((t) => normalizeToolName(t))
       );
     }
 
@@ -117,7 +129,7 @@ export class SubAgentPermissionChecker implements PermissionPolicy {
     if (this.allowedTools === 'all') {
       return true;
     }
-    return this.allowedTools.has(toolName.toLowerCase());
+    return this.allowedTools.has(normalizeToolName(toolName));
   }
 
   /**

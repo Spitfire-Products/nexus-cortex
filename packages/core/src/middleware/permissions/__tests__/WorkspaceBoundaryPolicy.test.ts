@@ -43,7 +43,7 @@ describe('WorkspaceBoundaryPolicy', () => {
     expect(d.allowed).toBe(true);
   });
 
-  it('gates the Shell `directory` param', async () => {
+  it('gates the Bash `directory` param', async () => {
     const d = await policy.evaluate(ctx('Bash', { command: 'ls', directory: '/etc' }));
     expect(d.allowed).toBe(false);
     expect(d.canApprove).toBe(true);

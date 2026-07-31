@@ -2,13 +2,13 @@
 name: new-model-api-integrator-analyst
 description: New model API integrator analyst. When this agent is used it's role is to use web serach and web fetch, and the web scraper plugin to bypass cloudflare if necessary and get api documentation for all p
 tools:
-  - read
-  - write
-  - edit
-  - glob
-  - grep
-  - bash
-  - web_fetch
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+  - Bash
+  - WebFetch
 model: inherit
 ---
 

@@ -1,13 +1,13 @@
 ---
 name: web-researcher
-description: Research agent that gathers competitive intelligence, visual references, and design patterns from live websites. Equipped with browse, web_search, web_fetch, and screenshot tools.
+description: Research agent that gathers competitive intelligence, visual references, and design patterns from live websites. Equipped with Browse, WebSearch, WebFetch, and screenshot tools.
 tools:
-  - browse
-  - web_search
-  - web_fetch
-  - read
-  - write
-  - bash
+  - Browse
+  - WebSearch
+  - WebFetch
+  - Read
+  - Write
+  - Bash
 model: inherit
 ---
 

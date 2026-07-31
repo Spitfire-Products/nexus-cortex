@@ -142,7 +142,7 @@ Run `cortex --list-tools` (or `GET /tools`) for the authoritative registered lis
 file ops (Read/Write/Edit/Glob/Grep), execution (Bash/BashOutput/KillShell/TmuxSession),
 web (WebSearch/WebFetch), agents (Task/WorkspaceManager/PRAgent), session history
 (ListSessions/LoadSession/SearchConversationHistory/...), sandbox/artifacts, planning
-(TodoWrite/ExitPlanMode), extensions (Skill/SlashCommand), and auto-research
+(TodoCreate/TodoUpdate/TodoList/ExitPlanMode), extensions (Skill/SlashCommand), and auto-research
 (ResearchBacklog + the `cortex autoresearch` CLI).
 
 ## .env Configuration
@@ -187,9 +187,8 @@ MENTORSHIP_PATTERN_DETECTION=true
 MENTORSHIP_PATTERN_THRESHOLD=3
 
 # CONTEXT MANAGEMENT
-CONTEXT_BUDGET_STRATEGY=sliding-window  # sliding-window | priority-based
-REASONING_PATTERN_OPTIMIZATION=true
-REASONING_KEEP_RECENT_TURNS=3
+THINKING_AS_TEXT_FALLBACK=false  # render prior thinking as <prior_reasoning> text (chat/completions recall)
+# (context selection strategy is model-card derived; the old REASONING_* stripper was removed as harmful)
 
 # SESSION
 SESSION_STORAGE_DIR=.cortex/sessions
@@ -216,7 +215,7 @@ All subsystems accessible via natural language prompts. Control via `.env` or ru
 | Subsystem | Control | What It Does |
 |-----------|---------|--------------|
 | **Reactive Mentorship** | `MENTORSHIP_*` (11 vars) | AI-to-AI self-improvement. Helper model reviews on errors, keywords (`@ultrathink`, `@analyze`, `@rethink`), or every N turns. Pattern detection for repeated failures. |
-| **Context Management** | `CONTEXT_BUDGET_STRATEGY`, `REASONING_*` | Auto-compaction via helper model when context fills. Thinking block optimization for recent turns. Sliding-window or priority-based strategies. |
+| **Context Management** | model-card derived (`compaction.behavior`) | Auto-compaction via helper model when context fills. Selection strategy comes from the model card (preserve-critical vs sliding-window); thinking blocks are NEVER stripped from history. |
 | **Loop Control** | `MAX_TOOL_ITERATIONS`, `MAX_CONSECUTIVE_ERRORS`, `TOOL_TIMEOUT_MS`, `MAX_LOOP_REPETITIONS` | Identical-call detection (hash name+input), circuit breaker on consecutive errors, configurable timeout per tool. |
 | **Prompt Caching** | `ANTHROPIC_PROMPT_CACHING` | Caches system messages and tools. Tracks cache creation/read tokens, hit rate, cost savings ratio. |
 | **Sessions** | `SESSION_STORAGE_DIR` | JSONL append-only history. Tools: ListSessions, LoadSession, SearchConversationHistory, GetConversationSegment, RequestHistoricalContext, ListCompactionBoundaries. |

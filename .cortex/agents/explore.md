@@ -2,9 +2,9 @@
 name: explore
 description: Fast agent for exploring codebases. Use for finding files, searching code, understanding project structure, and answering questions about the codebase.
 tools:
-  - read
-  - glob
-  - grep
+  - Read
+  - Glob
+  - Grep
 model: inherit
 ---
 

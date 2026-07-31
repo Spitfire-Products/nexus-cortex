@@ -2,11 +2,11 @@
 name: doc-writer
 description: Creates and maintains documentation including READMEs, API docs, guides, and code comments. Analyzes code to generate accurate, helpful documentation.
 tools:
-  - read
-  - write
-  - edit
-  - glob
-  - grep
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
 model: inherit
 ---
 

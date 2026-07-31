@@ -70,7 +70,7 @@ Set the keys for the providers you use; leave the rest blank. A model is only av
 | Variable | Default | What it does / how to use it |
 |----------|---------|------------------------------|
 | `ANTHROPIC_PROMPT_CACHING` | `true` | Enable Anthropic prompt caching (up to ~90% input-token savings). |
-| `CONTEXT_BUDGET_STRATEGY` | `priority-based` | `priority-based` (keeps tool pairs) or `sliding-window` (dumb recency). |
+| `THINKING_AS_TEXT_FALLBACK` | `false` | Render prior thinking as `<prior_reasoning>` text on chat/completions — recall for resumed reasoning-heavy sessions. (Context selection strategy is model-card derived, not configurable.) |
 
 #### Session
 

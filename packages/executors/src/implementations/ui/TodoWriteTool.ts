@@ -1,7 +1,7 @@
 /**
  * Split-Tool Todo Executors — TodoCreate, TodoUpdate, TodoList
  *
- * Three targeted tools matching the TaskCreate/TaskUpdate/TaskList.
+ * Three targeted tools: TodoCreate/TodoUpdate/TodoList.
  * Key design decisions:
  * - TodoCreate/TodoUpdate return ONLY the affected task (compact output)
  * - TodoList returns the full list (use it when you need the overview)

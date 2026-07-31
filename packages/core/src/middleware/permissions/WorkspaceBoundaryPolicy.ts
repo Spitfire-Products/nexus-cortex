@@ -38,14 +38,13 @@ const PATH_FIELD_BY_TOOL: Record<string, string[]> = {
   Read: ['file_path', 'path'],
   Write: ['file_path', 'path'],
   Edit: ['file_path', 'path'],
-  MultiEdit: ['file_path', 'path'],
+  NotebookEdit: ['notebook_path', 'file_path', 'path'],
   WriteBinary: ['file_path', 'path'],
   Glob: ['path'],
   Grep: ['path'],
-  // Shell/Bash: only the explicit working-directory param is gated here. The
+  // Bash: only the explicit working-directory param is gated here. The
   // command string itself is the BashCommandPolicy's concern, not this one.
   Bash: ['directory'],
-  Shell: ['directory'],
 };
 
 export class WorkspaceBoundaryPolicy extends BasePermissionPolicy {

@@ -2,11 +2,11 @@
 name: test-writer
 description: Writes comprehensive unit tests and integration tests for code. Analyzes existing code to create test suites covering edge cases, error handling, and happy paths.
 tools:
-  - read
-  - write
-  - glob
-  - grep
-  - bash
+  - Read
+  - Write
+  - Glob
+  - Grep
+  - Bash
 model: inherit
 ---
 

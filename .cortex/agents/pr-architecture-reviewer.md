@@ -2,10 +2,10 @@
 name: pr-architecture-reviewer
 description: Evaluates architectural impact of PR changes — breaking changes, API surface, dependency impact, and design patterns.
 tools:
-  - read
-  - grep
-  - glob
-  - bash
+  - Read
+  - Grep
+  - Glob
+  - Bash
 model: inherit
 ---
 

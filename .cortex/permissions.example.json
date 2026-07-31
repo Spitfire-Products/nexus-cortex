@@ -9,14 +9,13 @@
       "enabled": true,
       "config": {
         "allowedTools": [
-          "read_file",
-          "write_file",
-          "edit_file",
-          "execute_bash",
-          "list_files",
-          "grep",
-          "glob",
-          "create_artifact",
+          "Read",
+          "Write",
+          "Edit",
+          "Bash",
+          "Glob",
+          "Grep",
+          "CreateArtifactTool",
           "MemoryWrite",
           "MemoryRecall"
         ]

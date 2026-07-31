@@ -92,7 +92,7 @@ export interface AuditQueryOptions {
  * await logger.log({
  *   timestamp: new Date(),
  *   sessionId: '123',
- *   toolName: 'read_file',
+ *   toolName: 'Read',
  *   toolInput: { file_path: '/workspace/file.txt' },
  *   decision: { allowed: true },
  *   approvalRequested: false

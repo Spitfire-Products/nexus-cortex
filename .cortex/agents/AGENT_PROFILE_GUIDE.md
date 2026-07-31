@@ -97,7 +97,7 @@ Core file operations:
 - `Glob` - Find files by pattern
 - `Grep` - Search file contents
 
-Shell operations:
+Execution:
 - `Bash` - Execute shell commands
 - `BashOutput` - Get output from background shells
 - `KillShell` - Terminate shells
@@ -107,7 +107,7 @@ Web operations:
 - `WebFetch` - Fetch web pages
 
 Planning and UI:
-- `TodoWrite` - Manage task lists
+- `TodoCreate` / `TodoUpdate` / `TodoList` - Manage task lists
 - `AskUserQuestion` - Ask user questions
 - `ExitPlanMode` - Exit plan mode
 

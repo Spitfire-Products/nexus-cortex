@@ -77,7 +77,7 @@ export interface PermissionsMiddlewareOptions {
  * ```typescript
  * const middleware = new PermissionsMiddleware({
  *   policies: [
- *     new WhitelistPolicy(['read_file', 'write_file']),
+ *     new WhitelistPolicy(['Read', 'Write']),
  *     new FileOperationPolicy({
  *       allowedPaths: ['/workspace'],
  *       blockedPaths: ['/etc', '/root']
@@ -92,7 +92,7 @@ export interface PermissionsMiddlewareOptions {
  * });
  *
  * const decision = await middleware.checkPermission(
- *   'read_file',
+ *   'Read',
  *   { file_path: '/workspace/file.txt' },
  *   context
  * );

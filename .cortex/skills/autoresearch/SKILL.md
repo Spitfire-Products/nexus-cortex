@@ -22,7 +22,7 @@ triggers:
 
 ## 1. PLAN FIRST (the gate)
 Before delegating anything, produce a concrete **experiment plan**. The cortex harness *enforces* this — it blocks the launch until you have:
-- **Interactive (a human is present):** draft the plan in **plan mode** (EnterPlanMode → ExitPlanMode) and get it approved.
+- **Interactive (a human is present):** draft the plan in **plan mode** (present it via ExitPlanMode) and get it approved.
 - **Headless (no human):** create a **TodoCreate** planning checklist.
 
 The plan must define:

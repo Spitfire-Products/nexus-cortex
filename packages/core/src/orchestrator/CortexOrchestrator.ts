@@ -1639,16 +1639,16 @@ export class CortexOrchestrator {
               ? ' You ran edit/write/bash this turn: in `verification` list every build/test/lint command you ACTUALLY ran with the real result line you saw — do not claim a check you did not run.'
               : '';
             const endTurnReminderText = !endTurnCalled
-              ? ('<system-reminder>You used tools this turn but have not called end_turn. ' +
-                 'You MUST call end_turn before any final answer. It is generative, not a checkbox: ' +
+              ? ('<system-reminder>You used tools this turn but have not called EndTurn. ' +
+                 'You MUST call EndTurn before any final answer. It is generative, not a checkbox: ' +
                  'reconstruct `citations` (array of {reference, verbatim_source}), `verification` ' +
                  '(array of {command, observed_result}), `summary`, `open_items`, and a skeptical ' +
                  '`self_review` (what you did NOT check, what is assumed/possibly wrong, what one ' +
                  'more tool call would verify).' +
                  citEmphasis +
                  verEmphasis +
-                 ' Call end_turn now — do not produce a final answer until you have.</system-reminder>')
-              : ('<system-reminder>end_turn REJECTED. Your drafted answer asserts line number(s) ' +
+                 ' Call EndTurn now — do not produce a final answer until you have.</system-reminder>')
+              : ('<system-reminder>EndTurn REJECTED. Your drafted answer asserts line number(s) ' +
                  stage3Violations.map((v) => v.line).join(', ') +
                  ' that are NOT backed by any citation whose verbatim_source actually sits at that ' +
                  "line in what you read this turn — a regurgitated coordinate, not an observation, " +
@@ -1657,7 +1657,7 @@ export class CortexOrchestrator {
                  "is the EXACT code copied from that line of this turn's read output; " +
                  '(2) for any you cannot ground, DELETE the number and quote the verbatim code ' +
                  'instead — a quote with no number is correct; a wrong number is a failed answer. ' +
-                 'Then call end_turn again with corrected citations and produce the answer.</system-reminder>');
+                 'Then call EndTurn again with corrected citations and produce the answer.</system-reminder>');
 
             const endTurnReminder: Message = {
               uuid: uuidv4(),
@@ -1965,9 +1965,9 @@ export class CortexOrchestrator {
                 .join('\n');
               tr.is_error = true;
               tr.content =
-                `end_turn REJECTED — these citations are not grounded in anything you read this turn:\n${bad}\n\n` +
+                `EndTurn REJECTED — these citations are not grounded in anything you read this turn:\n${bad}\n\n` +
                 `A quote or coordinate you did not transcribe from this turn's tool output is a fabrication (a regurgitated guess), exactly like a non-matching edit old_string. ` +
-                `Either RE-READ the exact region and copy the real text, or DELETE that reference from your answer (quote only code you can ground), then call end_turn again.`;
+                `Either RE-READ the exact region and copy the real text, or DELETE that reference from your answer (quote only code you can ground), then call EndTurn again.`;
               console.warn(`[Orchestrator] Stage2: EndTurn rejected — ${verdict.ungrounded.length} ungrounded citation(s).`);
             }
           }
@@ -4362,7 +4362,7 @@ export class CortexOrchestrator {
   isMutationTool(toolName: string): boolean {
     const mutationTools = new Set([
       'Write', 'Edit', 'NotebookEdit',
-      'TodoCreate', 'TodoUpdate', 'TodoWrite',
+      'TodoCreate', 'TodoUpdate',
       'Bash',
     ]);
     return mutationTools.has(toolName);
@@ -5124,7 +5124,7 @@ export class CortexOrchestrator {
 
     const toolLower = toolName.toLowerCase();
     let toolSpecificHint = '';
-    if (toolLower === 'read' || toolLower === 'readfile') {
+    if (toolLower === 'read') {
       toolSpecificHint = `This file is too large to read ${MAX_TOOL_OUTPUT_TOKENS.toLocaleString()} tokens at once. ` +
         `Re-read with limit: 500 (or smaller) and use offset to navigate to the section you need.\n\n`;
     }
@@ -5133,11 +5133,9 @@ export class CortexOrchestrator {
       `Tool result too large (~${estimatedTokens.toLocaleString()} tokens, limit ${MAX_TOOL_OUTPUT_TOKENS.toLocaleString()}).\n\n` +
       toolSpecificHint +
       `Please try a more targeted approach:\n` +
-      `• For read: Use limit: 500 (or smaller) with offset to read manageable chunks\n` +
-      `• For grep/rg: Add --max-count=100 or search specific paths\n` +
-      `• For find: Use -maxdepth N to limit recursion\n` +
-      `• For ls: Target specific directories instead of -R\n` +
-      `• For bash: Pipe to 'head -n 100' or use more specific filters\n\n` +
+      `• For Read: Use limit: 500 (or smaller) with offset to read manageable chunks\n` +
+      `• For Grep: Use head_limit (e.g. 100) or search specific paths\n` +
+      `• For Bash: pipe to 'head -n 100', use find -maxdepth N, and target specific directories instead of ls -R\n\n` +
       `Preview of truncated output (first/last portions shown):\n` +
       `${'='.repeat(70)}\n${truncated}\n${'='.repeat(70)}\n\n` +
       `If you cannot be more specific, acknowledge this and request the truncated output, ` +
@@ -7950,6 +7948,6 @@ export class CortexOrchestrator {
       }
     }
 
-    return `<harness-note source="automated-harness" from-user="false">\nThe following is automated context injected by the harness — NOT a message from the user. The tools below are available but their schemas are NOT loaded yet. To use any of them, call search_tools first to load the schema, then call the tool.\n${lines.join('\n')}\n</harness-note>`;
+    return `<harness-note source="automated-harness" from-user="false">\nThe following is automated context injected by the harness — NOT a message from the user. The tools below are available but their schemas are NOT loaded yet. To use any of them, call ${convert('SearchTools')} first to load the schema, then call the tool.\n${lines.join('\n')}\n</harness-note>`;
   }
 }

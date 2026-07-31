@@ -42,7 +42,7 @@ const mockSystemReminderInjector = {
   createToolCallReminder: vi.fn(),
   createToolResultReminder: vi.fn(),
   createFileSecurityWarning: vi.fn(),
-  createTodoWriteReminder: vi.fn(),
+  createTodoReminder: vi.fn(),
   createCommandCaveat: vi.fn()
 };
 

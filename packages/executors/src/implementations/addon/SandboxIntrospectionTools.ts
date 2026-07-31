@@ -2,7 +2,7 @@
  * Sandbox React-introspection tools: SandboxScan, SandboxGrab, SandboxDetectFramework.
  *
  * These expose the SAME contract as the nexus-browser MCP's scan/grab/detect_framework
- * (provider names: sandbox_scan / sandbox_grab / sandbox_detect_framework), so a model
+ * (canonical tool names: SandboxScan / SandboxGrab / SandboxDetectFramework), so a model
  * that learned the scan -> act -> scan loop against the remote browser uses the
  * identical muscle memory against a LOCAL artifact:
  *  - scan elements carry a unique `cssSelector` (reusable in InteractWithSandbox)
@@ -136,7 +136,7 @@ export class SandboxGrabExecutor extends BaseTool<SandboxGrabParams, ToolResult>
         type: 'object' as const,
         properties: {
           sandboxId: { type: 'string' as const, description: 'ID of the sandbox' },
-          selector: { type: 'string' as const, description: 'CSS selector (use cssSelector from sandbox_scan)' },
+          selector: { type: 'string' as const, description: 'CSS selector (use cssSelector from SandboxScan)' },
           x: { type: 'number' as const, description: 'X coordinate (alternative to selector)' },
           y: { type: 'number' as const, description: 'Y coordinate (alternative to selector)' },
           maxLength: { type: 'number' as const, description: 'Max textContent length (default 500)' }
@@ -329,7 +329,7 @@ export class SandboxRenderTraceExecutor extends BaseTool<SandboxRenderTraceParam
         const r = await visualBridge.sandboxTraceStart(target.url);
         if (r?.error) return this.createErrorResult(r.error);
         return {
-          ...this.createSuccessResult('Render trace started. Interact with the sandbox (interact_with_sandbox), then call sandbox_render_trace with action:"stop".'),
+          ...this.createSuccessResult('Render trace started. Interact with the sandbox (InteractWithSandbox), then call SandboxRenderTrace with action:"stop".'),
           metadata: { sandboxId: params.sandboxId, tracing: true }
         };
       }

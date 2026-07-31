@@ -31,7 +31,7 @@ import { BasePermissionPolicy, PolicyPriority } from './PermissionPolicy.js';
  * }); // Returns { allowed: false, reason: '...', canApprove: false }
  *
  * await policy.evaluate({
- *   toolName: 'read_file',
+ *   toolName: 'Read',
  *   toolInput: {},
  *   sessionId: '123',
  *   timestamp: new Date()

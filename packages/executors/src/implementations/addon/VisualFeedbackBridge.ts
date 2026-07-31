@@ -1092,7 +1092,7 @@ export class VisualFeedbackBridge {
       lines.push('');
       if (r.react) {
         lines.push(`React ${r.reactVersion ?? '(version unknown)'} detected (${r.rendererCount} renderer${r.rendererCount === 1 ? '' : 's'})${r.next ? ' + Next.js' : ''}`);
-        lines.push('Use sandbox_scan / sandbox_grab for component-level inspection (componentName, props, source).');
+        lines.push('Use SandboxScan / SandboxGrab for component-level inspection (componentName, props, source).');
       } else {
         const other = (['vue', 'svelte', 'angular'] as const).filter((k) => r[k]);
         lines.push(other.length ? `Framework: ${other.join(', ')}` : 'No framework detected (vanilla page)');

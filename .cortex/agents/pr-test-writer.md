@@ -2,12 +2,12 @@
 name: pr-test-writer
 description: Writes tests for code changes — unit tests, integration tests, and edge case coverage.
 tools:
-  - read
-  - write
-  - edit
-  - bash
-  - grep
-  - glob
+  - Read
+  - Write
+  - Edit
+  - Bash
+  - Grep
+  - Glob
 model: inherit
 ---
 

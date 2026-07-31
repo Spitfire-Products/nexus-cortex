@@ -2,12 +2,12 @@
 name: refactor
 description: Refactors code to improve quality, performance, or maintainability while preserving functionality. Performs safe transformations with verification.
 tools:
-  - read
-  - write
-  - edit
-  - glob
-  - grep
-  - bash
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+  - Bash
 model: inherit
 ---
 

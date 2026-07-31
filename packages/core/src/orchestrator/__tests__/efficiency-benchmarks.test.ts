@@ -183,7 +183,7 @@ describe('Efficiency Benchmarks', () => {
       const o = track(await makeOrchestrator(dir), dir);
 
       const mutationTools = [
-        'TodoCreate', 'TodoUpdate', 'TodoWrite',
+        'TodoCreate', 'TodoUpdate',
         'Write', 'Edit', 'NotebookEdit',
       ];
       for (const tool of mutationTools) {

@@ -21,10 +21,10 @@ import { BasePermissionPolicy, PolicyPriority } from './PermissionPolicy.js';
  *
  * @example
  * ```typescript
- * const policy = new WhitelistPolicy(['read_file', 'write_file', 'execute_bash']);
+ * const policy = new WhitelistPolicy(['Read', 'Write', 'Bash']);
  *
  * await policy.evaluate({
- *   toolName: 'read_file',
+ *   toolName: 'Read',
  *   toolInput: {},
  *   sessionId: '123',
  *   timestamp: new Date()

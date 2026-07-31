@@ -97,7 +97,7 @@ describeSmoke('Efficiency Benchmark Smoke Tests', () => {
     expect(lower).toContain('prod');
 
     // No mutation tools on a factual question
-    const mutationTools = ['TodoCreate', 'TodoUpdate', 'TodoWrite', 'Write', 'Edit', 'NotebookEdit'];
+    const mutationTools = ['TodoCreate', 'TodoUpdate', 'Write', 'Edit', 'NotebookEdit'];
     for (const tool of result.toolUses) {
       expect(mutationTools).not.toContain(tool.name);
     }
@@ -116,7 +116,7 @@ describeSmoke('Efficiency Benchmark Smoke Tests', () => {
     expect(result.iterations).toBeLessThanOrEqual(10);
     expect(result.content).toContain('50');
 
-    const mutationTools = ['TodoCreate', 'TodoUpdate', 'TodoWrite', 'Write', 'Edit', 'NotebookEdit'];
+    const mutationTools = ['TodoCreate', 'TodoUpdate', 'Write', 'Edit', 'NotebookEdit'];
     for (const tool of result.toolUses) {
       expect(mutationTools).not.toContain(tool.name);
     }
@@ -142,7 +142,7 @@ describeSmoke('Efficiency Benchmark Smoke Tests', () => {
     expect(result.content).toContain('CortexOrchestrator');
 
     // No mutation tools
-    const mutationTools = ['TodoCreate', 'TodoUpdate', 'TodoWrite', 'Write', 'Edit', 'NotebookEdit'];
+    const mutationTools = ['TodoCreate', 'TodoUpdate', 'Write', 'Edit', 'NotebookEdit'];
     for (const tool of result.toolUses) {
       expect(mutationTools).not.toContain(tool.name);
     }
@@ -160,7 +160,7 @@ describeSmoke('Efficiency Benchmark Smoke Tests', () => {
 
     expect(result.iterations).toBeLessThanOrEqual(10);
 
-    const mutationTools = ['TodoCreate', 'TodoUpdate', 'TodoWrite', 'Write', 'Edit', 'NotebookEdit'];
+    const mutationTools = ['TodoCreate', 'TodoUpdate', 'Write', 'Edit', 'NotebookEdit'];
     for (const tool of result.toolUses) {
       expect(mutationTools).not.toContain(tool.name);
     }

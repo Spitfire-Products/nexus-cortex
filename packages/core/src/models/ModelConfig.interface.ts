@@ -105,7 +105,7 @@ export const EXAMPLE_MODEL_CONFIGS: Record<string, Partial<ModelConfig>> = {
     tools: {
       supported: true,
       adapter: 'ChatCompletionsAPIAdapter',
-      namingConvention: 'PascalCase',
+      namingConvention: 'snake_case',
       maxTools: 128,
       parallelToolCalls: true,
       supportsToolChoice: true,

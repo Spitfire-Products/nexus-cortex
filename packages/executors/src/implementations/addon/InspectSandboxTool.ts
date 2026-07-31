@@ -263,10 +263,10 @@ export class InspectSandboxExecutor extends BaseTool<InspectSandboxParams, ToolR
     lines.push('---');
     lines.push('');
     lines.push('**Note**: This is the current state of the sandbox. You can:');
-    lines.push('- Edit code (Use write tool) → Hot reload will trigger automatically');
-    lines.push('- Interact with UI (Use interact_with_sandbox tool)');
-    lines.push('- Re-inspect anytime (Call inspect_sandbox again)');
-    lines.push('- Stop sandbox (Use stop_sandbox tool)');
+    lines.push('- Edit code (Use the Write tool) → Hot reload will trigger automatically');
+    lines.push('- Interact with UI (Use InteractWithSandbox tool)');
+    lines.push('- Re-inspect anytime (Call InspectSandbox again)');
+    lines.push('- Stop sandbox (Use StopSandbox tool)');
 
     return lines.join('\n');
   }

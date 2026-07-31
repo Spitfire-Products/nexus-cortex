@@ -2,9 +2,9 @@
 name: code-reviewer
 description: Performs thorough code reviews focusing on bugs, security issues, performance problems, and code quality. Use when you need a second opinion on code changes.
 tools:
-  - read
-  - glob
-  - grep
+  - Read
+  - Glob
+  - Grep
 model: inherit
 ---
 

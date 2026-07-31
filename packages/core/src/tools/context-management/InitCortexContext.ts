@@ -1203,7 +1203,7 @@ you know the install.
       // getContextManagementTools) — so it's discoverable exactly when initialization is
       // relevant, and out of the way once the project is initialized.
       discoveryTier: 'standard',
-      description: 'Scan the project and return structured data for you to write a CORTEX.md project context file. You will receive file structure, dependencies, scripts, and architecture patterns. Use this data plus your own analysis to write a concise CORTEX.md (like CLAUDE.md). Write the file yourself using WriteFile.',
+      description: 'Scan the project and return structured data for you to write a CORTEX.md project context file. You will receive file structure, dependencies, scripts, and architecture patterns. Use this data plus your own analysis to write a concise CORTEX.md (like CLAUDE.md). Write the file yourself using Write.',
       schema: {
         type: 'object',
         properties: {

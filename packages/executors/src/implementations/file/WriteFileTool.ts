@@ -1,5 +1,5 @@
 /**
- * WriteFile Tool Executor
+ * Write tool executor (file: WriteFileTool.ts — historical name; registers as 'Write')
  *
  * Writes content to a specified file in the local filesystem.
  * Can create new files or overwrite existing ones.
@@ -79,7 +79,7 @@ function detectLanguage(filePath: string): string | undefined {
 }
 
 /**
- * Parameters for the WriteFile tool
+ * Parameters for the Write tool
  */
 export interface WriteFileToolParams {
   /**
@@ -94,7 +94,7 @@ export interface WriteFileToolParams {
 }
 
 /**
- * WriteFile Tool Executor
+ * Write tool executor (file: WriteFileTool.ts — historical name; registers as 'Write')
  *
  * Features:
  * - Creates new files

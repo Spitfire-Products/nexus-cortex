@@ -97,14 +97,14 @@ const SENSITIVE_DIRECTORIES = [
  * });
  *
  * await policy.evaluate({
- *   toolName: 'read_file',
+ *   toolName: 'Read',
  *   toolInput: { file_path: '/home/user/workspace/file.txt' },
  *   sessionId: '123',
  *   timestamp: new Date()
  * }); // Returns { allowed: true }
  *
  * await policy.evaluate({
- *   toolName: 'read_file',
+ *   toolName: 'Read',
  *   toolInput: { file_path: '/etc/passwd' },
  *   sessionId: '123',
  *   timestamp: new Date()

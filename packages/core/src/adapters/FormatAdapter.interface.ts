@@ -50,7 +50,7 @@ export class NamingConvention {
    * @returns snake_case version
    *
    * @example
-   * toSnakeCase('ReadFile') → 'read_file'
+   * toSnakeCase('WebFetch') → 'web_fetch'
    * toSnakeCase('readFile') → 'read_file'
    * toSnakeCase('read_file') → 'read_file'
    */
@@ -68,9 +68,9 @@ export class NamingConvention {
    * @returns PascalCase version
    *
    * @example
-   * toPascalCase('read_file') → 'ReadFile'
-   * toPascalCase('ReadFile') → 'ReadFile'
-   * toPascalCase('readFile') → 'ReadFile'
+   * toPascalCase('web_fetch') → 'WebFetch'
+   * toPascalCase('WebFetch') → 'WebFetch'
+   * toPascalCase('webFetch') → 'WebFetch'
    */
   static toPascalCase(str: string): string {
     return str

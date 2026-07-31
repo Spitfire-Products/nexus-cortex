@@ -164,8 +164,10 @@ export class ToolFactory implements ToolFactoryInterface {
    * standard tools get defer_loading: true and are discovered via Tool Search.
    */
   getEssentialTools(): CanonicalToolDefinition[] {
+    // Backstop set — these must match the registry's canonical tool names so the
+    // file/shell tools stay loaded even if a discoveryTier flag is lost.
     const ESSENTIAL_TOOL_NAMES = new Set([
-      'ReadFile', 'WriteFile', 'EditFile', 'Shell', 'Glob', 'Grep',
+      'Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep',
     ]);
     return this.getAllTools().filter(
       (t) => t.discoveryTier === 'essential' || ESSENTIAL_TOOL_NAMES.has(t.name),

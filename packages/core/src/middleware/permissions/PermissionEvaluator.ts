@@ -67,11 +67,11 @@ export interface EvaluationResult {
  * @example
  * ```typescript
  * const evaluator = new PermissionEvaluator();
- * evaluator.registerPolicy(new WhitelistPolicy(['read_file', 'write_file']));
+ * evaluator.registerPolicy(new WhitelistPolicy(['Read', 'Write']));
  * evaluator.registerPolicy(new FileOperationPolicy(['/workspace'], ['/etc']));
  *
  * const result = await evaluator.evaluate({
- *   toolName: 'read_file',
+ *   toolName: 'Read',
  *   toolInput: { file_path: '/workspace/file.txt' },
  *   sessionId: '123',
  *   timestamp: new Date()

@@ -612,9 +612,11 @@ export class ContextBudgetManager {
     // Fallback: Simple estimation (~4 characters per token)
     let charCount = 0;
 
-    // System messages have direct content
+    // System messages have direct content. Guard the read: cross-harness
+    // system events (e.g. Claude Code turn_duration/stop_hook_summary records
+    // arriving via canon) are metadata-only and may carry no content string.
     if (isSystemMessage(message)) {
-      charCount += message.content.length;
+      charCount += (message.content ?? '').length;
     }
     // Other message types have message.content
     else if ('message' in message && message.message.content) {

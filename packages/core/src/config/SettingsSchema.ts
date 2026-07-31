@@ -136,8 +136,8 @@ export interface EnvironmentVariables {
   // CONTEXT MANAGEMENT
   // ============================================
 
-  /** Context budget strategy */
-  CONTEXT_BUDGET_STRATEGY?: string; // 'sliding-window' | 'priority-based'
+  /** Render prior thinking as <prior_reasoning> text on chat/completions (recall for resumed sessions) */
+  THINKING_AS_TEXT_FALLBACK?: string; // 'true' | 'false'
 
   /** Enable Anthropic prompt caching (default: true) */
   ANTHROPIC_PROMPT_CACHING?: string; // 'true' | 'false'
@@ -373,7 +373,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   TURN_SUMMARY_PREDICTION: 'false',
 
   // Context Management
-  CONTEXT_BUDGET_STRATEGY: 'priority-based',
+  THINKING_AS_TEXT_FALLBACK: 'false',
   // Session Configuration
   SESSION_STORAGE_DIR: '.cortex/sessions',
   MCP_AUTO_INJECT: 'false',
@@ -768,14 +768,19 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
   // ============================================
   // CONTEXT MANAGEMENT
   // ============================================
+  // CONTEXT_BUDGET_STRATEGY was removed 2026-07-28: the setting was read but
+  // never consumed — the selection strategy is derived from the MODEL CARD
+  // (model.compaction.behavior.compactOlder → preserve-critical, else
+  // sliding-window) at the orchestrator call site, per-model, which is
+  // strictly more correct than a global knob. Its schema default
+  // ('priority-based') was not even a valid SelectionStrategy member.
   {
-    key: 'CONTEXT_BUDGET_STRATEGY',
-    displayName: 'Context Budget Strategy',
-    description: 'Strategy when context overflows (priority-based preserves critical context + tool pairs; sliding-window is dumb recency and can orphan tool_use → Anthropic 400)',
-    type: 'choice',
+    key: 'THINKING_AS_TEXT_FALLBACK',
+    displayName: 'Thinking As Text Fallback',
+    description: 'Render prior thinking blocks as visible <prior_reasoning> text on the chat/completions path — recall for resumed reasoning-heavy sessions (canon cross-harness pulls). Providers ignore replayed reasoning_content as context, so without this, resumed reasoning is invisible. Costs tokens (A/B: 0/3 → 3/3 recall for +3.5%).',
+    type: 'boolean',
     category: 'context',
-    choices: ['sliding-window', 'priority-based'],
-    default: 'priority-based'
+    default: 'false'
   },
   // ============================================
   // SESSION CONFIGURATION
@@ -918,7 +923,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
   {
     key: 'ENABLE_DEFERRED_TOOL_LOADING',
     displayName: 'Deferred Tool Loading',
-    description: 'Load only essential tools upfront; discover others on-demand via search_tools. Reduces token cost per request.',
+    description: 'Load only essential tools upfront; discover others on-demand via SearchTools. Reduces token cost per request.',
     type: 'boolean',
     category: 'server_side_tools',
     default: 'true'

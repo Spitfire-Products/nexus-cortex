@@ -27,7 +27,7 @@ export type SystemReminderType =
   | 'tool_call'
   | 'tool_result'
   | 'file_security'
-  | 'todowrite_reminder'
+  | 'todo_reminder'
   | 'command_caveat';
 
 /**
@@ -162,7 +162,7 @@ export class SystemReminderInjector {
       'auto-research tool surface into your own context or run experiments here. Follow this workflow:\n' +
       '\n' +
       '1. PLAN FIRST — the harness BLOCKS the launch until you do (interactive TUI: draft the plan and get it\n' +
-      '   approved in PLAN MODE via EnterPlanMode; headless: create a TodoCreate planning checklist). The plan covers:\n' +
+      '   approved in PLAN MODE, presenting it via ExitPlanMode; headless: create a TodoCreate planning checklist). The plan covers:\n' +
       '   - Evaluate the backlog (ResearchBacklog list/next); triage the SINGLE highest-value deficiency.\n' +
       '   - Define a MEASURABLE experiment: the metric + how it is measured (an eval/command), the pass/fail\n' +
       '     threshold + verifier, the control (base ref vs candidate, train + a HELD-OUT set), and the\n' +
@@ -222,7 +222,7 @@ export class SystemReminderInjector {
 
   /**
    * Pattern 2: Todo List Update Notification
-   * Frequency: After TodoWrite tool usage
+   * Frequency: After TodoCreate/TodoUpdate tool usage
    */
   createTodoUpdateReminder(todos: TodoItem[]): SystemReminder {
     const todoJson = JSON.stringify(todos);
@@ -320,7 +320,7 @@ ${this.claudeMdCache}
    * Pattern 7: Todo Tool Reminder
    * Frequency: Periodic during long conversations
    */
-  createTodoWriteReminder(currentTodos: TodoItem[]): SystemReminder {
+  createTodoReminder(currentTodos: TodoItem[]): SystemReminder {
     const todoJson = JSON.stringify(currentTodos);
     const content = `The task tools haven't been used recently. If you're working on tasks that would benefit from tracking progress, consider using TodoCreate to add new tasks and TodoUpdate to update task status (set to in_progress when starting, completed when done). Also consider cleaning up the task list if it has become stale. Only use these if relevant to the current work. This is just a gentle reminder - ignore if not applicable.
 
@@ -329,7 +329,7 @@ Here are the existing contents of your todo list:
 ${todoJson}`;
 
     return {
-      type: 'todowrite_reminder',
+      type: 'todo_reminder',
       content: this.wrapSystemReminder(content),
       contentHash: this.generateContentHash(content)
     };

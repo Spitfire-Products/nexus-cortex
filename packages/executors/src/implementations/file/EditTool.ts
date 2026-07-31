@@ -1,5 +1,5 @@
 /**
- * EditFile Tool Executor
+ * Edit tool executor
  *
  * Performs exact string replacements within a file.
  * Requires precise matching of old_string for safety.
@@ -550,7 +550,7 @@ export interface EditToolParams {
 }
 
 /**
- * EditFile Tool Executor
+ * Edit tool executor
  *
  * Features:
  * - Exact string replacement (no fuzzy matching)
@@ -665,7 +665,7 @@ IMPORTANT: Include sufficient context (3+ lines before/after) in old_string to e
           const briefModeMsg = editCount >= maxEdits
             ? ` (Reached max ${maxEdits} consecutive edits without re-read.)`
             : '';
-          return `File has been edited since you last read it.${briefModeMsg} You must re-read the file to see the current state before making another edit. Use: read tool with file_path: "${relativePath}", offset: ${suggestedParams.offset}, limit: ${suggestedParams.limit} to see the recently edited section with context.`;
+          return `File has been edited since you last read it.${briefModeMsg} You must re-read the file to see the current state before making another edit. Use: Read tool with file_path: "${relativePath}", offset: ${suggestedParams.offset}, limit: ${suggestedParams.limit} to see the recently edited section with context.`;
         }
 
         // Second try: find where their old_string appears and suggest that location
@@ -673,12 +673,12 @@ IMPORTANT: Include sufficient context (3+ lines before/after) in old_string to e
           return `File has been edited since you last read it. You must re-read the file to see the current state before making another edit.
 
 Your edit target appears around line ${stringLocation.lineNumber}. Use:
-  read(file_path: "${relativePath}", offset: ${stringLocation.offset}, limit: ${stringLocation.limit})
+  Read(file_path: "${relativePath}", offset: ${stringLocation.offset}, limit: ${stringLocation.limit})
 
 This covers lines ${stringLocation.offset + 1}-${stringLocation.offset + stringLocation.limit} where your edit target appears.`;
         }
 
-        return `File has been edited since you last read it. You must re-read the file to see the current state before making another edit. Use the read tool with file_path: "${relativePath}"`;
+        return `File has been edited since you last read it. You must re-read the file to see the current state before making another edit. Use the Read tool with file_path: "${relativePath}"`;
       }
 
       // Never read before - search for where the old_string appears and suggest targeted read
@@ -687,18 +687,18 @@ This covers lines ${stringLocation.offset + 1}-${stringLocation.offset + stringL
         return `You must read the file before editing it.
 
 Your edit target appears around line ${stringLocation.lineNumber}. Use:
-  read(file_path: "${relativePath}", offset: ${stringLocation.offset}, limit: ${stringLocation.limit})
+  Read(file_path: "${relativePath}", offset: ${stringLocation.offset}, limit: ${stringLocation.limit})
 
 This covers lines ${stringLocation.offset + 1}-${stringLocation.offset + stringLocation.limit} where your edit target appears.`;
       }
 
       // Fallback: couldn't find the string, suggest reading the whole file
-      return `You must read the file before editing it. Use the read tool first to see the current file content (file_path: "${relativePath}"), then call edit with the exact text you want to replace. This ensures you have the current file state and prevents edits based on stale or assumed content.`;
+      return `You must read the file before editing it. Use the Read tool first to see the current file content (file_path: "${relativePath}"), then call Edit with the exact text you want to replace. This ensures you have the current file state and prevents edits based on stale or assumed content.`;
     }
 
     // Check file exists for edits
     if (params.old_string !== '' && !fileExists(filePath)) {
-      return `File not found: ${filePath}. Use write tool to create new files.`;
+      return `File not found: ${filePath}. Use the Write tool to create new files.`;
     }
 
     // If old_string is empty but file exists, error

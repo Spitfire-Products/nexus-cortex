@@ -2,13 +2,13 @@
 name: landing-page-designer
 description: A frontend landing page designer for rich beautiful landing pages
 tools:
-  - read
-  - write
-  - edit
-  - glob
-  - grep
-  - bash
-  - web_fetch
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+  - Bash
+  - WebFetch
 model: inherit
 ---
 

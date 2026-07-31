@@ -68,7 +68,7 @@ export interface CreateArtifactToolParams {
   mode?: ArtifactMode;                 // NEW: oneshot, dev, persistent
   persistent?: boolean;
   enableVisualFeedback?: boolean;     // NEW: Enable visual feedback for model
-  enableReactIntrospection?: boolean;  // React fiber introspection in snapshots (sandbox_scan/grab/detect always available)
+  enableReactIntrospection?: boolean;  // React fiber introspection in snapshots (SandboxScan/grab/detect always available)
 
   devConfig?: {                        // NEW: Dev mode configuration
     hotReload?: boolean;               // Auto-reload on code changes
@@ -186,7 +186,7 @@ export class CreateArtifactToolExecutor extends BaseTool<CreateArtifactToolParam
         },
         enableReactIntrospection: {
           type: 'boolean' as const,
-          description: 'Include a framework report (React/Vue/Svelte detection, React version, renderer count) in the initial visual snapshot. The sandbox_scan / sandbox_grab / sandbox_detect_framework tools work regardless of this flag (they enable introspection on first use). Default: false.'
+          description: 'Include a framework report (React/Vue/Svelte detection, React version, renderer count) in the initial visual snapshot. The SandboxScan / SandboxGrab / SandboxDetectFramework tools work regardless of this flag (they enable introspection on first use). Default: false.'
         },
         devConfig: {
           type: 'object' as const,
@@ -221,12 +221,12 @@ export class CreateArtifactToolExecutor extends BaseTool<CreateArtifactToolParam
             framework: {
               type: 'string' as const,
               enum: ['express', 'fastapi', 'flask', 'nextjs', 'react'],
-              description: "Web framework. Use 'react' to build a React artifact from a component in implementation.code (define or default-export `App`). React artifacts are served statically and are introspectable via sandbox_scan/sandbox_grab/sandbox_detect_framework."
+              description: "Web framework. Use 'react' to build a React artifact from a component in implementation.code (define or default-export `App`). React artifacts are served statically and are introspectable via SandboxScan/SandboxGrab/SandboxDetectFramework."
             },
             reactMode: {
               type: 'string' as const,
               enum: ['cdn', 'bundled'],
-              description: "React only. 'bundled' (default when esbuild is available): real source maps, sandbox_grab returns real src/App.tsx:line. 'cdn': zero-install in-browser Babel, faster to start."
+              description: "React only. 'bundled' (default when esbuild is available): real source maps, SandboxGrab returns real src/App.tsx:line. 'cdn': zero-install in-browser Babel, faster to start."
             },
             additionalFiles: {
               type: 'array' as const,
@@ -391,7 +391,7 @@ export class CreateArtifactToolExecutor extends BaseTool<CreateArtifactToolParam
       await fs.mkdir(join(artifactPath, 'snapshots'), { recursive: true });
 
       // React artifacts: introspection on by default so the initial snapshot (and the
-      // sandbox_scan/grab/detect tools) report the fiber tree. Opt out by passing false.
+      // SandboxScan/grab/detect tools) report the fiber tree. Opt out by passing false.
       if (params.uiConfig?.framework === 'react' && params.enableReactIntrospection === undefined) {
         params.enableReactIntrospection = true;
       }

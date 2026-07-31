@@ -68,7 +68,7 @@ export async function configReset(options: ConfigResetOptions = {}): Promise<voi
     console.log();
 
     const highlights = [
-      'DEFAULT_MODEL_ID', 'HELPER_MODEL_ID', 'CONTEXT_BUDGET_STRATEGY',
+      'DEFAULT_MODEL_ID', 'HELPER_MODEL_ID',
       'TOOL_TIMEOUT_MS', 'MODEL_ROUTER_EXPLORATION', 'MODEL_ROUTER_EXCLUDE',
       'MCP_AUTO_INJECT', 'ENABLE_SERVER_SIDE_TOOLS',
     ];

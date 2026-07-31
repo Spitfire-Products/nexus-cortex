@@ -562,7 +562,7 @@ export async function createProductionOrchestrator(config: OrchestratorConfig): 
     enablePermissions: true,
     permissionPolicies: [
       // Strict whitelist - only read operations
-      new WhitelistPolicy(['read_file', 'list_files', 'grep', 'search_conversation_history']),
+      new WhitelistPolicy(['Read', 'Glob', 'Grep', 'SearchConversationHistory']),
       // Very restrictive file access
       new FileOperationPolicy({
         allowedPaths: [`${config.projectPath}/public`],

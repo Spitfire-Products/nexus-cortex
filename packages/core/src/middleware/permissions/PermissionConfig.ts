@@ -229,14 +229,14 @@ export const PermissionPresets = {
       {
         type: 'whitelist',
         config: {
-          allowedTools: ['read_file', 'list_files', 'grep', 'create_artifact'],
+          allowedTools: ['Read', 'Glob', 'Grep', 'CreateArtifactTool'],
         },
       },
       {
         type: 'blacklist',
         priority: 100,
         config: {
-          blockedTools: ['execute_bash', 'write_file', 'delete_file'],
+          blockedTools: ['Bash', 'Write', 'Edit'],
         },
       },
       {

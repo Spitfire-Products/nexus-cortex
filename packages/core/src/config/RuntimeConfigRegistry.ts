@@ -55,6 +55,7 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   YOLO:                           { tier: 'env' },
   DEBUG_PAYLOAD:                  { tier: 'env' },
   DEBUG_THINKING:                 { tier: 'env' },
+  THINKING_AS_TEXT_FALLBACK:      { tier: 'env' },
   AUTO_RESUME:                    { tier: 'env' },
 };
 

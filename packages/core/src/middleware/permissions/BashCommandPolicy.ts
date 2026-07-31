@@ -104,14 +104,14 @@ const DEFAULT_DANGEROUS_PATTERNS = [
  * });
  *
  * await policy.evaluate({
- *   toolName: 'execute_bash',
+ *   toolName: 'Bash',
  *   toolInput: { command: 'ls -la' },
  *   sessionId: '123',
  *   timestamp: new Date()
  * }); // Returns { allowed: true }
  *
  * await policy.evaluate({
- *   toolName: 'execute_bash',
+ *   toolName: 'Bash',
  *   toolInput: { command: 'rm -rf /' },
  *   sessionId: '123',
  *   timestamp: new Date()

@@ -2,12 +2,12 @@
 name: pr-implementer
 description: Implements code changes in a git worktree. Writes production code, follows existing patterns, and creates commits.
 tools:
-  - read
-  - edit
-  - write
-  - bash
-  - grep
-  - glob
+  - Read
+  - Edit
+  - Write
+  - Bash
+  - Grep
+  - Glob
 model: inherit
 ---
 

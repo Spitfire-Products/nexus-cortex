@@ -1,5 +1,5 @@
 /**
- * ReadFile Tool Executor
+ * Read tool executor (file: ReadFileTool.ts — historical name; registers as 'Read')
  *
  * Reads and returns the content of a specified file from the local filesystem.
  * Handles text files with optional line range support and automatic truncation.
@@ -27,7 +27,7 @@ const DEFAULT_MAX_LINES = 2000;
 const MAX_LINE_LENGTH = 2000;
 
 /**
- * Parameters for the ReadFile tool
+ * Parameters for the Read tool
  */
 export interface ReadFileToolParams {
   /**
@@ -47,7 +47,7 @@ export interface ReadFileToolParams {
 }
 
 /**
- * ReadFile Tool Executor
+ * Read tool executor (file: ReadFileTool.ts — historical name; registers as 'Read')
  *
  * Features:
  * - Reads text files

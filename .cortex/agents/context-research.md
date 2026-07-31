@@ -2,11 +2,11 @@
 name: context-research
 description: Context Research - an agent that leverages its large context window to research the user context in preparation for a task
 tools:
-  - read
-  - glob
-  - grep
-  - write
-  - edit
+  - Read
+  - Glob
+  - Grep
+  - Write
+  - Edit
 model: inherit
 ---
 

@@ -1,0 +1,120 @@
+# Canon — the canonical agent history & memory store
+
+**Canon** is Nexus Cortex's answer to a problem the field now calls *portable agent
+memory* or *cross-harness handoff*: agent context locked inside one vendor's runtime
+dies there. Canon stores every session in a provider-neutral, lossless, append-only
+JSONL format and translates **at the edges** — so the same history serves any model,
+any provider, and (by design) any harness.
+
+Canon shipped inside this library before the problem had a name. It was built to solve
+three production failures at once — context ballooning, prompt-cache misses, and the
+inability to switch models mid-session — and all three turn out to be one failure:
+*storing history in a provider's wire format.* Canon fixes the storage; everything
+else follows.
+
+## The contract
+
+1. **Store once, in a superset.** Every message is written in the canonical format —
+   never a provider wire format. Text, thinking/reasoning spans, tool calls with full
+   arguments, tool results, system events, and compaction boundaries are all
+   first-class records. Nothing is lost at write time.
+2. **Translate at the edge, per consumer.** The Gateway Translation Layer + format
+   adapters render canonical history into each provider's exact dialect at request
+   time (and translate responses back). The store never bends toward any provider.
+3. **Append-only, with structure.** One JSON object per line. History is never
+   rewritten: compaction inserts a `CompactBoundary` record and threads
+   `logicalParentUuid` past it, so the full pre-compaction history remains one seek
+   away. Branches are first-class (`parentUuid` graphs, `branchPoint`/`resumePoint`).
+4. **Provenance is recorded, not implied.** Each assistant message carries the model
+   that produced it (`model.id`, `model.provider`, `model.apiPattern`) and its token
+   usage/cache accounting. A session that switched models mid-way says so, per
+   message.
+
+## What this buys you
+
+- **Mid-session model switching** — history is neutral; switching providers is
+  choosing a different render function, not a migration.
+- **Prompt-cache stability** — deterministic rendering of a stable canonical prefix
+  yields byte-stable provider prefixes; cache hits survive session evolution.
+- **Context control without destruction** — curation and budgeting are render-time
+  policies over immutable history, not edits to it.
+- **Cross-harness portability** — the same properties that let one orchestrator serve
+  many providers let many harnesses share one history. Sessions from external
+  harnesses (e.g. Claude Code's session format) are convertible to canon and back;
+  format adapters are the only per-harness cost.
+- **Training-grade fidelity** — because nothing is dropped at write time, canonical
+  history doubles as a faithful substrate for downstream analysis or fine-tuning
+  pipelines, with privacy transforms applied at *export* time, never at capture.
+
+## The record format
+
+Storage layout: `{baseDir}/{normalized-workspace-path}/{sessionUuid}.jsonl`, one
+complete JSON message object per line, append-only (default `baseDir`:
+`.cortex/sessions/`).
+
+Message union (`packages/core/src/session/MessageTypes.ts`):
+
+```
+Message = UserMessage | AssistantMessage | SystemMessage
+        | ToolUseMessage | ToolResultMessage | FileHistorySnapshotMessage
+```
+
+Every message extends `BaseMessage`:
+
+| Field | Purpose |
+|---|---|
+| `uuid`, `timestamp` | identity; ISO 8601 |
+| `parentUuid` | threading / branch graphs |
+| `logicalParentUuid` | threads past compaction boundaries |
+| `timeline.{sessionId, conversationId, turnNumber}` | position |
+| `timeline.{checkpointId, branchPoint, resumePoint}` | branching & resume markers |
+| `model.{id, provider, apiPattern}` | per-message provenance |
+| `usage.{inputTokens, outputTokens, cache…, costUsd…}` | accounting |
+
+`CompactBoundary` is a `SystemMessage` subtype (`subtype: 'compact_boundary'`)
+carrying compaction metadata — compaction is an *event in* history, not an edit *of*
+history.
+
+The shared canonical message type lives in `@nexus-cortex/types`
+(`packages/types/src/messages.ts`); the store implementation is
+`packages/core/src/session/JSONLHistoryStore.ts`.
+
+## The translation layer
+
+`packages/core/src/adapters/`:
+
+- `GatewayTranslationLayer.ts` — orchestrates bidirectional canonical⇄provider
+  conversion for messages and tools.
+- Format adapters per API family: `MessagesAPIAdapter` (Anthropic),
+  `ChatCompletionsAPIAdapter` (OpenAI-compatible), `ResponsesAPIAdapter`
+  (OpenAI/xAI Responses), `GenerateContentAPIAdapter` / `GoogleGenAPIAdapter`
+  (Google), registered through `AdapterRegistry`.
+- `ToolNamingHandler` — tool-name normalization across providers' naming rules.
+
+Adapters own the *deliberate* lossy projections (e.g. a provider that cannot accept
+another provider's signed reasoning blocks): what cannot be replayed is dropped or
+transformed at render time, never at storage time.
+
+## Scope, honestly
+
+Canon fully solves the **transcript** layer of cross-harness portability. Three
+adjacent layers are explicitly out of scope of the store itself and are addressed (or
+tracked) separately:
+
+- **Tool namespace** — a transcript referencing tools the receiving harness lacks is
+  faithfully carried but not automatically executable there; mapping tool ontologies
+  is its own layer.
+- **Distilled memory** — derived memory files ride alongside history and are portable
+  as plain markdown, but distillation policy is harness-specific.
+- **Harness contract** — system prompts, permissions, and skills are not part of
+  history; handoffs that depend on them need explicit context capsules.
+
+## Direction
+
+The roadmap extends canon from a per-harness store to a **user-owned, cross-harness
+hub**: a git repository as the portable canon backend (agents push their native
+session formats; CI runs the gateway to maintain the canonical line and
+per-harness projections), with real-time database backends as an alternative tier
+for live multi-agent workloads. The design keeps one rule fixed: the gateway and
+adapters live in this library and execute wherever canon lives — the format never
+forks.

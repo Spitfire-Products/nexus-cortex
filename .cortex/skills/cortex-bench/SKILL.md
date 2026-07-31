@@ -23,13 +23,17 @@ triggers:
 
 # Cortex-Bench — Multi-Model Benchmark Methodology
 
+> **SURFACE**: benchmarking the **nexus-cortex harness** (omniclaude-v4 — skill:
+> `nexus-cortex-harness`). NOT the Nexus Terminal CORTEX browser agent. Full map:
+> `docs/SURFACES.md`.
+
 Cross-provider benchmark technique for auditing the CORTEX harness and driving recursive iterative self-improvement. The core insight: **many apparent "model quality gaps" between providers are harness-side bugs, not model-side**. Only a side-by-side comparison catches them.
 
-Proven to surface 7+ classes of harness bugs (the running deficiency trail lives in your `.cortex/bench/` ledgers + `research-backlog.jsonl`).
+Proven to surface 7+ classes of harness bugs (R18a/b/c, R19a-d, R20a/b/c, R27, R28a-f, R29a) — see `omniclaude-v4-harness-deficiencies` memory for the full trail.
 
 > ## ⚑ THREE NON-NEGOTIABLE OPERATING RULES (read before any benchmark)
 >
-> 1. **Every benchmark must produce a DEFICIENCY LEDGER, not a pass/fail.** Any agent benchmarking in the CORTEX harness runs tasks *in order to find and fix what's wrong with the harness*. The deliverable of every run is a structured list of (a) harness deficiencies found + their fix, (b) model-disposition gaps to address via prompts/tool-defs/system-msgs, and (c) what was verified clean. A run that ends "all arms agree, looks good" is a wasted run — the task wasn't hard enough or wasn't real-work. Mine every run for deltas.
+> 1. **Every benchmark must produce a DEFICIENCY LEDGER, not a pass/fail.** Any agent benchmarking in the omniclaude-v4 CORTEX harness runs tasks *in order to find and fix what's wrong with the harness*. The deliverable of every run is a structured list of (a) harness deficiencies found + their fix, (b) model-disposition gaps to address via prompts/tool-defs/system-msgs, and (c) what was verified clean. A run that ends "all arms agree, looks good" is a wasted run — the task wasn't hard enough or wasn't real-work. Mine every run for deltas.
 >
 > 2. **NEVER use `model='auto'` / the model router when benchmarking models.** Benchmarking *measures a specific model*, so you must PIN it (`cortex -m <model>` / `Task model='<exact-id>'`). `'auto'` routes to a possibly-different model per task type, silently swapping the variable you're measuring and destroying the comparison. Worse, the router *learns from these runs* (`MODEL_ROUTER_RECORD`), so an auto-routed benchmark poisons the matrix with mislabeled data. The router is for production dispatch; the bench is for controlled measurement. Keep them apart.
 >
@@ -68,10 +72,10 @@ Same exact prompt
 1. **n ≥ 2, different tasks.** One task agreeing three ways is a false positive. Run at least two different tasks in fresh sessions.
 2. **Ground-truth against the real artifact, not an agent.** The parallel sub-agent is a reference that fails differently, not an oracle. The only truth is direct shell/grep/python on actual files. **Existence/resolution claims need a behavioral probe**: an agent asserting "X is registered / X resolves / the alias works" must demonstrate it (run the lookup, hit the endpoint) — in a live audit, 2 of 6 agents asserted a nonexistent alias from a comment they'd read, and only the probe refuted it (which then exposed a real bug).
 3. **Fresh server + fresh session per model probe.** `--new` on every prompt; restart the server between models. Prompt cache and debug logs bleed across models.
-4. **Discard confounded runs.** After every run: `grep -nE "429|capacity|exhausted|rate.?limit|overloaded|quota" /tmp/cortex-server.log`. If it hits, the model was throttled, not benchmarked. Throw it away.
+4. **Discard confounded runs.** After every run: `grep -nE "429|capacity|exhausted|rate.?limit|overloaded|quota" /tmp/omniclaude-server.log`. If it hits, the model was throttled, not benchmarked. Throw it away.
 5. **Real work surface, not toy prompts.** The task must (a) move the harness/platform forward AND (b) have an independently verifiable answer. "Count imports in file X" is verifiable but worthless; "refactor module Z" is real but unverifiable. Find tasks that are BOTH.
 6. **Pin the model — never `auto`.** See operating rule #2. When the variable under test IS the model, routing must be off and the model explicit. Auto-routing during a model benchmark is a methodology error that also corrupts the router matrix.
-7. **Output is a deficiency ledger.** See operating rule #1. End every run by writing the findings to `.cortex/bench/<round>-<tag>.md` AND appending durable harness deficiencies to the `ResearchBacklog` (`.cortex/research-backlog.jsonl`). No ledger → the run didn't happen.
+7. **Output is a deficiency ledger.** See operating rule #1. End every run by writing the findings to `.cortex/bench/<round>-<tag>.md` AND appending durable harness deficiencies to the `omniclaude-v4-harness-deficiencies` memory. No ledger → the run didn't happen.
 
 ## Server Setup for Benchmarking
 
@@ -81,13 +85,13 @@ pkill -9 -f "node dist/index.js" 2>/dev/null; sleep 2
 ps -eo pid,args | grep "[d]ist/index.js" && echo "ZOMBIE — kill -9" || echo "clean"
 
 # Start stateless (CRITICAL — persistent mode leaks context across probes)
-cd packages/server && \
+cd /home/runner/workspace/omniclaude-v4/packages/server && \
   DEBUG=true \
   MENTORSHIP_ENABLED=false \
   ENABLE_SERVER_SIDE_TOOLS=true \
   XAI_API_MODE=messages \
   CORTEX_MODE=stateless \
-  setsid nohup node dist/index.js > /tmp/cortex-server.log 2>&1 < /dev/null &
+  setsid nohup node dist/index.js > /tmp/omniclaude-server.log 2>&1 < /dev/null &
 
 # Poll for boot (~20s cold, not 5s)
 for i in $(seq 1 30); do sleep 2; curl -sf http://localhost:4000/health >/dev/null && break; done
@@ -183,7 +187,7 @@ The harness is now mature enough to **research and improve its own library, auto
 | `prepare.py` — fixed, read-only eval (the ground truth metric) | the cortex-bench task + ground-truth control. **Never modify the check to pass** (operating rule #3) |
 | `program.md` — human-tuned instructions ("a super lightweight skill") | **THIS skill** + the system messages. The human iterates HERE; the agent iterates on the code |
 | `val_bpb` — one comparable metric | the per-run score: correctness-vs-control + deficiency count + the perf fields (input/output tokens, cache hit rate, tool iterations, latency) |
-| `results.tsv` — append-only experiment ledger | `.cortex/bench/<round>-<tag>.md` + `research-backlog.jsonl` + `router-matrix.jsonl` |
+| `results.tsv` — append-only experiment ledger | `.cortex/bench/<round>-<tag>.md` + the `omniclaude-v4-harness-deficiencies` memory + `router-matrix.jsonl` |
 | keep/discard via `git reset` | merge the worktree if the re-bench improves + no regression; else drop the worktree |
 | **simplicity criterion** | a harness fix that *deletes* code/complexity and still holds the benchmark is a top-tier win. Weigh complexity cost vs. improvement; reject ugly hacks for tiny gains |
 | **NEVER STOP** (run until interrupted) | run round after round; do not pause to ask "should I continue?" — escalate task difficulty and keep mining (consistent with the operator's `execute, don't defer` rule) |
@@ -228,7 +232,7 @@ autoresearch isolates by editing one file; we isolate by **one git worktree per 
 
 Experiment loop with the tool:
 1. `WorkspaceManager create` (branch `cortex-exp/<round>`) → isolated `worktreePath`.
-2. **build INSIDE that worktree** (`cd <worktreePath> && npm install && npm run build`) — each worktree is its own checkout with its own `dist/`; never share `dist/`.
+2. **build INSIDE that worktree** (`cd <worktreePath>/omniclaude-v4 && npm install && npm run build`) — each worktree is its own checkout with its own `dist/`; never share `dist/`.
 3. run the experiment server on a **non-default port** (4100, 4101, …) so it doesn't collide with the operator's live :4000.
 4. bench against the experiment port, mine deficiencies, apply **one** coherent fix, rebuild, re-bench. Use `WorkspaceManager diff` to review the experiment's full change set before deciding.
 5. **KEEP** (improved + no regression) → merge the branch to main, then `WorkspaceManager cleanup`. **DISCARD** → `WorkspaceManager cleanup` + delete the branch (cheap revert — the autoresearch keep/discard step).
@@ -245,6 +249,8 @@ The deficiency ledger (operating rule #1) is now a **tracked, triaged task lifec
 - **Lifecycle**: `open → triaged → in_progress → fixed → verified → closed` (+ `wont_fix`, `regressed`). `action:next` returns the top-priority open item — the recursion's "what to fix next."
 - **OVERFITTING GUARD in the status model**: `action:fixed` = passes the task that *surfaced* it; `action:verified` = ALSO holds on **held-out** tasks. **Never `verified` without held-out confirmation** — `fixed` is not done.
 - Store: `.cortex/research-backlog.jsonl` (append-only, two-agent safe). The matrix (`router-matrix.jsonl`) holds the *scores*; the backlog holds the *work items*; they share `harnessRef`/`taskFingerprint` provenance.
+- **View + drive it from the CLI (nexus-cortex 4.46+):** `cortex autoresearch backlog list / show <id> / next` to see the pool; `resolve <id> [--wont-fix|--close|--fixed]` for the PM keep/discard. `--repo <path>`/`CORTEX_ROOT` targets a specific pool. This is the same JSONL the `ResearchBacklog` tool writes — just a human/CLI surface over it.
+- **Work-swarm mode (divide-and-conquer):** when many INDEPENDENT deficiencies should be worked in parallel by different workers (vs `loop`'s competitive same-goal arms), `cortex autoresearch backlog claim-next --owner <id>` gives each worker a DIFFERENT item under a TTL lease (no double-claim); `release [id] [--expired]` frees leases. The per-item `resolve` is the merge. Don't route a divide-and-conquer job through the competitive `loop` gate.
 
 ### Overfitting guards (the recursion's immune system)
 
@@ -262,7 +268,7 @@ The pipeline is **benchmark-source-agnostic**: `BenchmarkRecord.benchmarkSource`
 
 ### North-star: a public verifiable record (SpacetimeDB)
 
-The three local append-only stores — `router-matrix.jsonl` (scores), `research-backlog.jsonl` (work items), and `experiments.jsonl` (keep/discard decisions) — are **deliberately shaped to map onto STDB tables**: each is an append-only event stream keyed by `(taskFingerprint, modelId, harnessRef)` / `deficiency id` / `experimentTag`. Promoting them to a SpacetimeDB module would give a **public, verifiable, tamper-evident record** of the harness's self-improvement — every score, deficiency, and keep/discard decision auditable with commit provenance. (That public-record module lives in a separate service; the JSONL schemas here are the local mirror that ports up.)
+The three local append-only stores — `router-matrix.jsonl` (scores), `research-backlog.jsonl` (work items), and `experiments.jsonl` (keep/discard decisions) — are **deliberately shaped to map onto STDB tables**: each is an append-only event stream keyed by `(taskFingerprint, modelId, harnessRef)` / `deficiency id` / `experimentTag`. Promoting them to a SpacetimeDB module would give a **public, verifiable, tamper-evident record** of the harness's self-improvement — every score, deficiency, and keep/discard decision auditable with commit provenance. (That module lives on the nexus/DBAI side, not in omniclaude-v4; the JSONL schemas here are the local mirror that ports up.)
 
 ### The decision layer is BUILT — call it, don't hand-judge keep/discard
 
@@ -278,8 +284,6 @@ cortex autoresearch bench --task-set <file|dir of *.json> --experiment-tag <id> 
   --runs 2 --split train|holdout [--harness-ref <sha>] [--model <id>]
 ```
 Task = `{id, prompt, verifier, taskType?}`; verifier ∈ `exact|regex|contains|llm-judge`. **Prefer `contains` (partial credit → continuous score) or graded rubrics** over binary exact/regex — the bootstrap/permutation gate separates arms far better on continuous scores. Sample: `.cortex/bench/tasks/sample-tasks.json`. Run it in the base build and the candidate build (different `--harness-ref`/worktree), then `cortex autoresearch evaluate`. Keep holdout task FILES out of any fixing agent's context (overfitting guard).
-
-> **Two different "judges" — don't conflate them.** The `llm-judge` *verifier* above is **task-level**: it scores one task's OUTPUT against a rubric, producing a number that feeds the statistical gate. The autoresearch **judge gate** (`cortex autoresearch judge`, `loop --require-judge`) is **candidate-level**: it reads the whole candidate *diff* and approves/vetoes the MERGE (`accept = mergeEligible ∧ judge-approve`), catching eval-gaming and unsafe code the per-task scores cannot see. Orthogonal roles: one grades outputs, the other gates merges.
 
 **The one-shot runner — `cortex autoresearch experiment` (v4.7.0).** Does the whole single-experiment loop in one call (build+serve both arms → bench train+holdout → gate → `verifyOnHoldout` → teardown), so you don't orchestrate `bench`×2 + `evaluate` by hand:
 ```
@@ -313,7 +317,7 @@ Most benchmarks compare JSON from `/v1/messages` — but that **cannot see what 
 **Use the native `TmuxSession` tool** (proven method — same one used during the earlier active-improvement rounds; it wraps `TmuxCapture.ts`/`TmuxManager.ts`, stores metadata in `.cortex/tmux-sessions/`, binary via `TMUX_BIN`). The tool exposes **create → send commands → capture output → list → kill**. The agentic flow:
 
 1. `TmuxSession create` — a persistent session sized like a real terminal (e.g. 200×50; also test 80×24 — different widths expose different wrapping/overflow bugs).
-2. `TmuxSession send` → from the repo root, launch the TUI (e.g. `neoncortex`, the Ink UI; or `cortex-cli`). Wait for boot.
+2. `TmuxSession send` → `cd /home/runner/workspace/omniclaude-v4 && neoncortex` (Ink UI; or `cortex-cli`). Wait for boot.
 3. `TmuxSession send` → the prompt that exercises the rendering under test (e.g. *"Show a markdown table of the 5 cheapest models with a fenced code example"*). Wait for the stream to finish.
 4. `TmuxSession capture` — **this captured pane IS the metric.** It's the human-visible truth; the raw model text is NOT (a model can emit perfect markdown the TUI then mangles — only the capture shows it).
 5. Evaluate the capture for **frontend-design deficiencies**, treating the render as a real UI surface (hierarchy, alignment, contrast, density — not just "did text appear"):
@@ -321,7 +325,7 @@ Most benchmarks compare JSON from `/v1/messages` — but that **cannot see what 
    - wrapping at the pane width, or overflow / truncation?
    - colors readable, spacing/padding sane, no doubled/garbled lines?
    - thinking & tool-call panes legible and not stealing the answer's space?
-6. Fix the TUI renderer (in the TUI package, where installed), rebuild, **re-capture, diff before/after** — same keep/discard discipline as the code loop. `TmuxSession kill` when done.
+6. Fix the renderer (`packages/tui/src/ink-ui/...`), rebuild, **re-capture, diff before/after** — same keep/discard discipline as the code loop. `TmuxSession kill` when done.
 
 *(Direct shell equivalent without the tool: `tmux new-session -d -s T -x 200 -y 50` → `tmux send-keys -t T '…' Enter` → `tmux capture-pane -p -e -t T > render.txt` (`-e` keeps ANSI color) → inspect → `tmux kill-session -t T`.)*
 
@@ -330,7 +334,7 @@ Most benchmarks compare JSON from `/v1/messages` — but that **cannot see what 
 ```
 I need a multi-model benchmark. Pick a specific task:
 
-TASK: "In this repo, find [specific file/function]. Report: (a) path,
+TASK: "In omniclaude-v4, find [specific file/function]. Report: (a) path,
 (b) complete implementation, (c) [specific detail], (d) [edge case behavior].
 Be precise, cite line numbers."
 
@@ -345,14 +349,49 @@ Then compare all 4 answers side-by-side and report discrepancies.
 
 ## Location Reference
 
-(paths are relative to the repo root)
+- Server: `/home/runner/workspace/omniclaude-v4/packages/server/dist/index.js`
+- Server log: `/tmp/omniclaude-server.log`
+- Bench results / deficiency ledgers: `/home/runner/workspace/omniclaude-v4/.cortex/bench/`
+- Routing matrix (the metric store): `/home/runner/workspace/omniclaude-v4/.cortex/router-matrix.jsonl`
+- **Cortex skill (load it — full tool/subsystem reference incl. `TmuxSession`, `WorkspaceManager`):** `.agents/skills/cortex/SKILL.md`
+- **Worktree/team proven pattern:** `WorkspaceManagerTool` (core: `tools/definitions/`, executor: `executors/.../execution/`) + memory `agent-team-workspace`
+- **TUI capture proven pattern:** `TmuxSession` tool, `TmuxCapture.ts` / `TmuxManager.ts`, sessions in `.cortex/tmux-sessions/`
+- Harness deficiency trail (the running ledger): `.claude/projects/-home-runner-workspace/memory/omniclaude-v4-harness-deficiencies.md`
+- Auto-research source/inspiration: `github.com/karpathy/autoresearch` — `program.md` is the "lightweight skill" analog of THIS file; `prepare.py` (fixed eval) ≙ our ground-truth control; `train.py` (mutable) ≙ the harness code (worktree-isolated).
 
-- Server: `packages/server/dist/index.js`
-- Server log: `/tmp/cortex-server.log`
-- Bench results / deficiency ledgers: `.cortex/bench/`
-- Routing matrix (the metric store): `.cortex/router-matrix.jsonl`
-- Deficiency backlog (the work-item ledger): `.cortex/research-backlog.jsonl`
-- **Worktree/team proven pattern:** the `WorkspaceManager` tool (core: `tools/definitions/`, executor: `executors/.../execution/`)
-- **TUI capture proven pattern:** the `TmuxSession` tool, `TmuxCapture.ts` / `TmuxManager.ts`, sessions in `.cortex/tmux-sessions/`
-- The project `CLAUDE.md` is the full tool & subsystem reference (tools like `TmuxSession`, `WorkspaceManager`, the adapter map, the registries).
-- Auto-research inspiration: the "evolve code → fixed eval → keep/discard → repeat" loop — a fixed eval (`prepare.py` analog) ≙ the ground-truth control; the mutable code (`train.py` analog) ≙ the harness, worktree-isolated; this skill is the human-tuned `program.md` analog.
+## DELTA 2026-07-28 — env-flag benchmarking, zombie definitive check, receipt promotion
+
+**Scope reminder (operator-ratified):** this skill is a GUIDE for driving nexus-cortex
+as a headless subagent — pin model, run task, report. The heavy machinery (worktrees,
+autoresearch gates, ledger ceremony) is for deliberate harness-improvement rounds,
+not every run.
+
+- **Env-flag arms MUST verify the flag reached the server** — the definitive check is
+  `tr '\0' '\n' < /proc/<serverpid>/environ | grep <FLAG>`, run AFTER identifying the
+  pid that actually owns :4000. A 2026-07-28 A/B lost THREE arms to a stale flagless
+  server: even the bracketed full-path pkill (`node [p]ackages/server/dist/index.js`)
+  misses relative-argv instances (`node dist/index.js`, CLI-spawned with cwd inside
+  packages/server). Kill by PID after `ps -eo pid,args | grep "[d]ist/index.js"`,
+  never trust the pattern alone.
+- **`cortex --env KEY=VALUE` delivery to an auto-spawned server is UNVERIFIED** (first
+  probe was confounded by the zombie above). Until verified with a clean /proc check,
+  launch flagged servers manually.
+- **Render-path questions: test the adapter IN-PROCESS before server A/Bs.** Import the
+  built adapter from `packages/core/dist/adapters/`, feed it the REAL session records +
+  a real modelConfig, inspect output. Minutes vs hours; separates "code wrong" from
+  "env/plumbing wrong". A disposable `console.error` sed-patched into dist (rebuilt
+  clean after) resolves the remaining live-path questions.
+- **Recall probes need discriminators.** Facts derivable from visible prompts
+  invalidate a recall probe (the model re-derives). Use exact-string forms only the
+  hidden channel contains (stored `yellowsix` vs re-derivable `yellow6`) + a
+  tag-visibility question as the mechanism check.
+- **Model cards can silently reroute your test path**: both deepseek v4 cards are
+  HYBRID (`reasoning.supported: true`) — a branch keyed on "non-reasoning model"
+  never fires for them. Read the card (`packages/core/src/models/cards/...`) before
+  designing a branch-coverage A/B. Related provider fact: DeepSeek REQUIRES
+  `reasoning_content` on assistant messages yet IGNORES it as prior-turn context —
+  a reasoning-replay channel is not a recall channel.
+- **Publishing results:** promotion to the public proofs is SELECTIVE — one command,
+  `npx tsx scripts/canon/canon-receipt.ts <ledger.md> --claim "..."` (secret-scan
+  refusal, append-only, auto-indexes `nexus-canon-store/receipts/`). Future CLI face:
+  `cortex autoresearch bench --public-benchmark`. Routine runs stay local ledgers.

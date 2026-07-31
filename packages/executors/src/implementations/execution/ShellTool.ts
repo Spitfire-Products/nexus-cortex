@@ -1,5 +1,5 @@
 /**
- * Shell Tool Executor
+ * Bash tool executor (file: ShellTool.ts — historical name; registers as 'Bash')
  *
  * Executes shell commands via bash/cmd and captures output.
  * Supports background processes, timeouts, and abort handling.
@@ -22,7 +22,7 @@ import { BackgroundProcessRegistry } from './BackgroundProcessRegistry.js';
 import type { ExecutorConfig } from '../../base/ToolRegistry.js';
 
 /**
- * Parameters for the Shell tool
+ * Parameters for the Bash tool
  */
 export interface ShellToolParams {
   /**
@@ -63,7 +63,7 @@ export interface ShellToolParams {
 }
 
 /**
- * Shell Tool Executor
+ * Bash tool executor (file: ShellTool.ts — historical name; registers as 'Bash')
  *
  * Features:
  * - Executes commands via bash -c (or cmd.exe on Windows)

@@ -288,7 +288,7 @@ export class InitMcpConfig {
       recommendations.push({
         name: 'nexus-browser',
         priority: 'recommended',
-        reason: 'Browser automation — the canonical nexus-browser MCP that the `browse` tool drives (hosted, auto-provisioning)',
+        reason: 'Browser automation — the canonical nexus-browser MCP that the `Browse` tool drives (hosted, auto-provisioning)',
         autoStart: true
       });
     }

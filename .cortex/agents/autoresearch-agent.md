@@ -2,14 +2,14 @@
 name: autoresearch-agent
 description: Runs one auto-research experiment cycle on a single backlog deficiency — fix in an isolated worktree, measure base-vs-candidate through the statistical gate, and report a verified candidate. One of N the PM spawns per deficiency.
 tools:
-  - read
-  - write
-  - edit
-  - glob
-  - grep
-  - bash
-  - research_backlog
-  - workspace_manager
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+  - Bash
+  - ResearchBacklog
+  - WorkspaceManager
 model: inherit
 ---
 

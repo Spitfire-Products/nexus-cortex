@@ -274,9 +274,12 @@ export class AgentStore extends EventEmitter {
         permissions.blacklist?.includes(tool);
 
       if (!hasExplicitLevel && isExecutionTool) {
-        // Execution tools default to graylist (require approval)
+        // Execution tools default to graylist (require approval). Push the
+        // CANONICAL casing — Whitelist/BlacklistPolicy match case-sensitively,
+        // so a profile-cased 'bash' on the graylist would never fire.
+        const canonical = EXECUTION_TOOLS.find((t) => t.toLowerCase() === toolLower) ?? tool;
         permissions.graylist = permissions.graylist || [];
-        permissions.graylist.push(tool);
+        permissions.graylist.push(canonical);
       }
     }
 

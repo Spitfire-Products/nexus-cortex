@@ -59,7 +59,7 @@ export async function autoResearchFix(options: AutoResearchFixOptions): Promise<
     const response: any = await orchestrator.sendMessage(prompt, { modelId: model } as any);
 
     const toolUses: any[] = Array.isArray(response?.toolUses) ? response.toolUses : [];
-    const editTools = toolUses.filter(t => /^(Edit|Write|MultiEdit|ApplyPatch)$/i.test(t?.name ?? ''));
+    const editTools = toolUses.filter(t => /^(Edit|Write|NotebookEdit|WriteBinary)$/i.test(t?.name ?? ''));
     const filesEdited = [...new Set(editTools.map(t => t?.input?.file_path ?? t?.input?.path).filter(Boolean))];
     const iterations = response?.metadata?.toolCallIterations ?? 0;
     const text = typeof response?.content === 'string'

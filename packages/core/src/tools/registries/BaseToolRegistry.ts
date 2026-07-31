@@ -183,7 +183,7 @@ PARALLEL EXECUTION:
 - Must be sequential: build→test→validate chains, file mutations, package installs
 - Use && to chain sequential commands in a single call
 
-For background execution, set run_in_background: true. Use bash_output to poll results.`,
+For background execution, set run_in_background: true. Use BashOutput to poll results.`,
     schema: {
       type: 'object',
       properties: {
@@ -201,7 +201,7 @@ For background execution, set run_in_background: true. Use bash_output to poll r
         },
         run_in_background: {
           type: 'boolean',
-          description: 'Set to true to run this command in the background. Use bash_output to read the output later.'
+          description: 'Set to true to run this command in the background. Use BashOutput to read the output later.'
         },
         dangerouslyDisableSandbox: {
           type: 'boolean',
@@ -242,9 +242,9 @@ For background execution, set run_in_background: true. Use bash_output to poll r
 
 WORKFLOW:
 1. Start: Bash({ command: "npm test", run_in_background: true }) → returns bash_id
-2. Poll: bash_output({ bash_id }) → check status + read new output
+2. Poll: BashOutput({ bash_id }) → check status + read new output
 3. Done: When status shows "Exited", all output has been captured
-4. Cleanup: kill_shell({ shell_id: bash_id }) if process hangs`,
+4. Cleanup: KillShell({ shell_id: bash_id }) if process hangs`,
     schema: {
       type: 'object',
       properties: {
@@ -276,7 +276,7 @@ WORKFLOW:
       properties: {
         shell_id: {
           type: 'string',
-          description: 'The ID of the background shell to stop (same as bash_id from bash_output)'
+          description: 'The ID of the background shell to stop (same as bash_id from BashOutput)'
         }
       },
       required: ['shell_id']
@@ -316,7 +316,7 @@ CASE SENSITIVITY (important):
   - Exact symbol/identifier searches (class names, function names, env vars)
   - JSON keys, most config keys, most code tokens
 - Only use -i:true when the user explicitly asks OR you're matching free-form natural-language content
-- A case-insensitive search for "TODO" will also match "Todo" in identifiers like TodoItem, TodoWrite, todomethod — inflating counts dramatically. If counts seem unexpectedly high, re-run case-sensitive and verify.
+- A case-insensitive search for "TODO" will also match "Todo" in identifiers like TodoItem, TodoCreate, todomethod — inflating counts dramatically. If counts seem unexpectedly high, re-run case-sensitive and verify.
 
 VERIFY AGGREGATES:
 - When output_mode='count' returns large numbers (>20 per file or >50 total), sample one match with output_mode='content' -n:true to confirm the pattern is matching what was intended. This catches case-insensitive over-matching and ambiguous regexes before you report the result.`,
@@ -425,9 +425,9 @@ BEST PRACTICES:
     description: `Search the web for current information. Use when you need facts, documentation, API references, or recent events beyond your training data.
 
 WHEN TO USE: verifying claims, finding library docs, checking current versions, looking up error messages, researching APIs or services.
-WHEN NOT TO USE: if the answer is in the codebase (use grep/read), or if you need to interact with the page (use browse).
+WHEN NOT TO USE: if the answer is in the codebase (use Grep/Read), or if you need to interact with the page (use Browse).
 
-Results are text snippets from search engines. May not include full page content — use web_fetch to read a specific URL from the results.`,
+Results are text snippets from search engines. May not include full page content — use WebFetch to read a specific URL from the results.`,
     schema: {
       type: 'object',
       properties: {
@@ -467,7 +467,7 @@ Results are text snippets from search engines. May not include full page content
     description: `Fetch and read content from a specific URL. Returns the page's text content (HTML stripped).
 
 WHEN TO USE: reading documentation pages, API references, blog posts, changelogs, or any URL you already have.
-WHEN NOT TO USE: if the page requires JavaScript rendering, login, or interaction (use browse instead). If you need to search first and don't have a URL (use web_search).
+WHEN NOT TO USE: if the page requires JavaScript rendering, login, or interaction (use Browse instead). If you need to search first and don't have a URL (use WebSearch).
 
 The 'prompt' parameter guides what to extract — use it to focus on specific sections rather than getting the entire page.`,
     schema: {
@@ -500,7 +500,7 @@ The 'prompt' parameter guides what to extract — use it to focus on specific se
 
   {
     name: 'Browse',
-    description: 'Drive a headless browser via a nexus-browser subagent. Use for interactive page work (click, form-fill, login), JS-rendered SPA scraping, or anti-bot bypass. For static text search prefer web_search; for plain URL reads prefer web_fetch.',
+    description: 'Drive a headless browser via a nexus-browser subagent. Use for interactive page work (click, form-fill, login), JS-rendered SPA scraping, or anti-bot bypass. For static text search prefer WebSearch; for plain URL reads prefer WebFetch.',
     schema: {
       type: 'object',
       properties: {
@@ -630,7 +630,7 @@ PARALLELISM: When launching multiple agents for independent work, make all calls
   // =====================================
   {
     name: 'TodoCreate',
-    description: `Create a task for tracking multi-step work. All start as pending. Follow lifecycle: todo_update(in_progress) -> work -> todo_update(completed).`,
+    description: `Create a task for tracking multi-step work. All start as pending. Follow lifecycle: TodoUpdate(in_progress) -> work -> TodoUpdate(completed).`,
     schema: {
       type: 'object',
       properties: {
@@ -784,7 +784,7 @@ Do NOT use this to ask "should I proceed?" — just proceed. Use it for genuine 
     name: 'ExitPlanMode',
     description: `Exit planning mode and present a plan for the user to approve before implementation begins.
 
-Use plan mode for tasks with genuine ambiguity — multiple reasonable architectures, unclear requirements, or high-impact restructuring. Skip it for straightforward changes, obvious bug fixes, or when the user's request already implies a clear path. When in doubt, start working and use ask_user_question for narrow clarifications rather than entering a full planning phase.`,
+Use plan mode for tasks with genuine ambiguity — multiple reasonable architectures, unclear requirements, or high-impact restructuring. Skip it for straightforward changes, obvious bug fixes, or when the user's request already implies a clear path. When in doubt, start working and use AskUserQuestion for narrow clarifications rather than entering a full planning phase.`,
     schema: {
       type: 'object',
       properties: {
@@ -962,14 +962,14 @@ Use plan mode for tasks with genuine ambiguity — multiple reasonable architect
   },
   {
     name: 'EndTurn',
-    description: `MANDATORY final step when your turn used any tool. You MUST call end_turn before your user-facing answer — the turn cannot complete until you do. It requires RECONSTRUCTING the evidence for your work, not ticking boxes:
+    description: `MANDATORY final step when your turn used any tool. You MUST call EndTurn before your user-facing answer — the turn cannot complete until you do. It requires RECONSTRUCTING the evidence for your work, not ticking boxes:
 
 - citations: list EACH specific reference in your draft with the exact verbatim source you copied it from this turn. If you cannot produce the verbatim source, the reference is unverified — delete it from your answer and do not list it (quote the code instead of asserting a coordinate). Inventing one is a failed answer, exactly like a non-matching edit old_string.
 - verification: list each build/test/lint command you actually ran with the real result line you saw. Do not list a command you did not run.
 - self_review: re-read your draft as a skeptical reviewer — what you did NOT check, what is assumed/possibly wrong, what one more tool call would verify. This pass exists to catch your own mistakes before they ship.
 - summary / open_items: what you delivered and any gaps — do not hide them.
 
-After end_turn returns, act on your own self_review, then produce your final plain-text answer and call no more tools.`,
+After EndTurn returns, act on your own self_review, then produce your final plain-text answer and call no more tools.`,
     schema: {
       type: 'object',
       properties: {
@@ -1192,7 +1192,7 @@ Use this tool to:
 - Browse all previous conversation sessions
 - Find sessions by age (recent or old)
 - See session metadata (message count, creation date, last activity)
-- Get session IDs for use with load_session tool
+- Get session IDs for use with LoadSession tool
 
 Returns sessions sorted by most recent activity by default.`,
     schema: {
@@ -1236,7 +1236,7 @@ Use this tool to:
 - Load complete conversation context from a past session
 - Access detailed message history beyond search results
 - Continue analysis from a previous conversation
-- Bring full context from identified sessions (via list_sessions or search_conversation_history)
+- Bring full context from identified sessions (via ListSessions or SearchConversationHistory)
 
 Returns actual messages with full content. Use pagination (limit/offset) for large sessions.`,
     schema: {
@@ -1244,7 +1244,7 @@ Returns actual messages with full content. Use pagination (limit/offset) for lar
       properties: {
         sessionId: {
           type: 'string',
-          description: 'Session ID to load (from list_sessions or search_conversation_history results)'
+          description: 'Session ID to load (from ListSessions or SearchConversationHistory results)'
         },
         limit: {
           type: 'number',
@@ -1281,7 +1281,7 @@ Returns actual messages with full content. Use pagination (limit/offset) for lar
     description: `Create artifacts in ANY language with flexible execution - the ultimate workspace for self-development and validation.
 
 NOTE: "Artifact" and "sandbox" mean the same thing - your isolated runtime environment.
-Use the returned artifact ID with inspect_sandbox, interact_with_sandbox, modify_sandbox, stop_sandbox.
+Use the returned artifact ID with InspectSandbox, InteractWithSandbox, ModifySandbox, StopSandbox.
 
 SUPPORTED LANGUAGES:
 - JavaScript/Node.js: Web servers, APIs, scripts
@@ -1311,13 +1311,13 @@ VISUAL FEEDBACK & ITERATION:
 
 WORKFLOW FOR ITERATIVE DEVELOPMENT:
 1. Create artifact with enableVisualFeedback=true
-2. Use inspect_sandbox to observe runtime state (console logs, DOM, etc.)
-3. Use modify_sandbox for quick code edits (automatic hot reload)
-4. Use interact_with_sandbox to test user interactions (click, type, navigate)
-5. Use stop_sandbox to cleanup when finished
+2. Use InspectSandbox to observe runtime state (console logs, DOM, etc.)
+3. Use ModifySandbox for quick code edits (automatic hot reload)
+4. Use InteractWithSandbox to test user interactions (click, type, navigate)
+5. Use StopSandbox to cleanup when finished
 
 ARTIFACT LIFECYCLE:
-- Artifacts persist in memory until explicitly stopped with stop_sandbox
+- Artifacts persist in memory until explicitly stopped with StopSandbox
 - Use mode="dev" for rapid iteration with automatic hot reload
 - Use mode="persistent" for long-running servers (survives restarts via tmux)
 - Artifacts keep running in background until you stop them
@@ -1417,7 +1417,7 @@ Go API Server:
         },
         enableReactIntrospection: {
           type: 'boolean',
-          description: 'Include a framework report (React/Vue/Svelte detection, React version) in the initial visual snapshot. sandbox_scan/sandbox_grab/sandbox_detect_framework work regardless of this flag.',
+          description: 'Include a framework report (React/Vue/Svelte detection, React version) in the initial visual snapshot. SandboxScan/SandboxGrab/SandboxDetectFramework work regardless of this flag.',
           default: false
         },
         uiConfig: {
@@ -1427,12 +1427,12 @@ Go API Server:
             framework: {
               type: 'string',
               enum: ['express', 'fastapi', 'flask', 'nextjs', 'react'],
-              description: "Web framework. 'react' builds a React artifact from implementation.code; introspect it with sandbox_scan/sandbox_grab/sandbox_detect_framework."
+              description: "Web framework. 'react' builds a React artifact from implementation.code; introspect it with SandboxScan/SandboxGrab/SandboxDetectFramework."
             },
             reactMode: {
               type: 'string',
               enum: ['cdn', 'bundled'],
-              description: "React only. 'bundled' (default when available): esbuild + real source maps (sandbox_grab returns real src/App.tsx:line). 'cdn': zero-install in-browser Babel, faster start."
+              description: "React only. 'bundled' (default when available): esbuild + real source maps (SandboxGrab returns real src/App.tsx:line). 'cdn': zero-install in-browser Babel, faster start."
             },
             additionalFiles: {
               type: 'array',
@@ -1475,7 +1475,7 @@ Go API Server:
     name: 'InteractWithSandbox',
     description: `Interact with sandbox/artifact UI programmatically using Playwright.
 
-WHEN TO USE: Test user interactions on artifacts created with create_artifact_tool.
+WHEN TO USE: Test user interactions on artifacts created with CreateArtifactTool.
 
 Supports various interactions:
 - Click buttons, links, elements
@@ -1495,7 +1495,7 @@ COMMON USE CASES:
 
 TIP: Chain multiple actions in one call (click → type → click submit → wait).
 
-WORKFLOW: create_artifact_tool → interact_with_sandbox → inspect_sandbox (see results)`,
+WORKFLOW: CreateArtifactTool → InteractWithSandbox → InspectSandbox (see results)`,
     schema: {
       type: 'object',
       properties: {
@@ -1549,7 +1549,7 @@ WORKFLOW: create_artifact_tool → interact_with_sandbox → inspect_sandbox (se
     name: 'ModifySandbox',
     description: `Modify sandbox/artifact code with automatic hot-reload.
 
-WHEN TO USE: Edit artifact code without recreation (faster than create_artifact_tool for iterations).
+WHEN TO USE: Edit artifact code without recreation (faster than CreateArtifactTool for iterations).
 
 Allows updating sandbox HTML/CSS/JS without recreating the sandbox.
 Changes are applied immediately and the browser reloads automatically.
@@ -1563,7 +1563,7 @@ COMMON USE CASES:
 
 TIP: Changes apply immediately - no need to restart artifact.
 
-WORKFLOW: create_artifact_tool → inspect_sandbox → modify_sandbox → inspect_sandbox (loop)`,
+WORKFLOW: CreateArtifactTool → InspectSandbox → ModifySandbox → InspectSandbox (loop)`,
     schema: {
       type: 'object',
       properties: {
@@ -1614,13 +1614,13 @@ Can retrieve:
 - Screenshots
 
 COMMON USE CASES:
-- Check console errors after modify_sandbox
+- Check console errors after ModifySandbox
 - Verify element visibility or text content
 - Extract data from the page
 - Debug runtime issues
 - Validate state after interactions
 
-WORKFLOW: create_artifact_tool → inspect_sandbox → modify_sandbox → inspect_sandbox (loop)`,
+WORKFLOW: CreateArtifactTool → InspectSandbox → ModifySandbox → InspectSandbox (loop)`,
     schema: {
       type: 'object',
       properties: {
@@ -1664,7 +1664,7 @@ WORKFLOW: create_artifact_tool → inspect_sandbox → modify_sandbox → inspec
     name: 'SandboxScan',
     description: `Discover elements in a running sandbox/artifact. Same contract as the nexus-browser scan tool: each element carries a unique cssSelector (reuse it with InteractWithSandbox), isInteractive, relevanceScore — and componentName on React artifacts.
 
-WORKFLOW (scan -> act -> scan): sandbox_scan -> interact_with_sandbox(click/type with cssSelector) -> sandbox_scan to verify.
+WORKFLOW (scan -> act -> scan): SandboxScan -> InteractWithSandbox(click/type with cssSelector) -> SandboxScan to verify.
 
 FILTERS: tagName, hasText, isInteractive, id, className, placeholder, name, componentName (React).`,
     schema: {
@@ -1699,12 +1699,12 @@ FILTERS: tagName, hasText, isInteractive, id, className, placeholder, name, comp
     name: 'SandboxGrab',
     description: `Query ONE element in a running sandbox by cssSelector or coordinates. Same contract as the nexus-browser grab tool. Returns DOM detail (attributes, rect, computed style, parent chain, HTML preview) and — on React artifacts — react: { componentName, componentStack, props, sourceLocation }.
 
-WHEN TO USE: after sandbox_scan to drill into a specific element, or with x/y after a click to learn WHICH component you hit.`,
+WHEN TO USE: after SandboxScan to drill into a specific element, or with x/y after a click to learn WHICH component you hit.`,
     schema: {
       type: 'object',
       properties: {
         sandboxId: { type: 'string', description: 'ID of the sandbox' },
-        selector: { type: 'string', description: 'CSS selector (use cssSelector from sandbox_scan)' },
+        selector: { type: 'string', description: 'CSS selector (use cssSelector from SandboxScan)' },
         x: { type: 'number', description: 'X coordinate (alternative to selector)' },
         y: { type: 'number', description: 'Y coordinate (alternative to selector)' },
         maxLength: { type: 'number', description: 'Max text length (default 500)' }
@@ -1720,7 +1720,7 @@ WHEN TO USE: after sandbox_scan to drill into a specific element, or with x/y af
     name: 'SandboxDetectFramework',
     description: `Detect the frontend framework of a running sandbox/artifact. Same schema as the nexus-browser detect_framework tool: react, reactVersion, next, remix, gatsby, vue, svelte, angular, compiler, hasDevTools, rendererCount, heavyLibraries.
 
-WHEN TO USE: once after creating an artifact — if react=true, prefer sandbox_scan/sandbox_grab for component-level verification instead of screenshot-only inspection.`,
+WHEN TO USE: once after creating an artifact — if react=true, prefer SandboxScan/SandboxGrab for component-level verification instead of screenshot-only inspection.`,
     schema: {
       type: 'object',
       properties: {
@@ -1737,7 +1737,7 @@ WHEN TO USE: once after creating an artifact — if react=true, prefer sandbox_s
     name: 'SandboxComponentTree',
     description: `Return the React component hierarchy of a running sandbox (host elements collapsed, components only). Equivalent to a DevTools-style component-tree view.
 
-WHEN TO USE: understand a React artifact's structure — which components nest where, and (when available) each component's source file. Use after sandbox_detect_framework reports react:true.`,
+WHEN TO USE: understand a React artifact's structure — which components nest where, and (when available) each component's source file. Use after SandboxDetectFramework reports react:true.`,
     schema: {
       type: 'object',
       properties: {
@@ -1756,7 +1756,7 @@ WHEN TO USE: understand a React artifact's structure — which components nest w
     name: 'SandboxRenderTrace',
     description: `Trace React re-renders in a running sandbox — react-scan's role: which components re-rendered, how often, and total render time. Catches wasted re-renders (unstable props, context churn).
 
-WORKFLOW: sandbox_render_trace(action:'start') -> interact_with_sandbox (click/type to drive renders) -> sandbox_render_trace(action:'stop') returns per-component render counts/timings, most-rendered first. Requires a React artifact in development build (the default).`,
+WORKFLOW: SandboxRenderTrace(action:'start') -> InteractWithSandbox (click/type to drive renders) -> SandboxRenderTrace(action:'stop') returns per-component render counts/timings, most-rendered first. Requires a React artifact in development build (the default).`,
     schema: {
       type: 'object',
       properties: {
@@ -1835,11 +1835,11 @@ MODES:
 - cleanup: Remove a worktree, the branch it created, and (if cloned) its clone directory
 
 WORKFLOW:
-1. workspace_manager(mode=create, branch=feature-x) → returns { worktreePath, branch, cloneDir? }
-2. Assign worktreePath to sub-agent via task tool prompt
+1. WorkspaceManager(mode=create, branch=feature-x) → returns { worktreePath, branch, cloneDir? }
+2. Assign worktreePath to sub-agent via Task tool prompt
 3. Agent works in isolated worktree (no conflicts with main)
-4. workspace_manager(mode=diff, worktreePath=<path>) → review changes
-5. workspace_manager(mode=cleanup, worktreePath=<path>, cloneDir=<dir if from clone>) → remove worktree + branch + clone dir`,
+4. WorkspaceManager(mode=diff, worktreePath=<path>) → review changes
+5. WorkspaceManager(mode=cleanup, worktreePath=<path>, cloneDir=<dir if from clone>) → remove worktree + branch + clone dir`,
     schema: {
       type: 'object',
       properties: {
@@ -1901,9 +1901,9 @@ Returns structured context for the LLM to dispatch Task calls to specialized age
 Does NOT auto-spawn sub-agents — returns data for orchestrator to decide next steps.
 
 WORKFLOW (PR Review):
-1. pr_agent(mode=review, repo=owner/repo, prNumber=42) → diff + metadata
-2. LLM dispatches parallel task agents for security, quality, architecture review
-3. pr_agent(mode=post-review, action=approve/request-changes, body=findings)
+1. PRAgent(mode=review, repo=owner/repo, prNumber=42) → diff + metadata
+2. LLM dispatches parallel Task agents for security, quality, architecture review
+3. PRAgent(mode=post-review, action=approve/request-changes, body=findings)
 
 REQUIRES: gh CLI authenticated and available in PATH.`,
     schema: {

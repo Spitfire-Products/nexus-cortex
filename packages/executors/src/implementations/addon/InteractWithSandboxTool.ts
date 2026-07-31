@@ -451,9 +451,9 @@ export class InteractWithSandboxExecutor extends BaseTool<InteractWithSandboxPar
     lines.push('---');
     lines.push('');
     lines.push('**Next Steps**:');
-    lines.push('- Inspect current state (Use inspect_sandbox)');
-    lines.push('- Continue interactions (Call interact_with_sandbox again)');
-    lines.push('- Edit code based on observations (Use write tool)');
+    lines.push('- Inspect current state (Use InspectSandbox)');
+    lines.push('- Continue interactions (Call InteractWithSandbox again)');
+    lines.push('- Edit code based on observations (Use the Write tool)');
 
     return lines.join('\n');
   }

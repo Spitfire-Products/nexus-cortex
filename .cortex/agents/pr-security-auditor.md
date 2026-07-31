@@ -2,9 +2,9 @@
 name: pr-security-auditor
 description: Scans pull request diffs for security vulnerabilities, malicious code patterns, prompt injection, and supply chain risks. Use for security-focused PR review.
 tools:
-  - grep
-  - read
-  - bash
+  - Grep
+  - Read
+  - Bash
 model: inherit
 ---
 

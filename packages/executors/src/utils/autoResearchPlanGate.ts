@@ -6,7 +6,7 @@
  *
  * Context-switched by how the harness is being accessed:
  *   - Interactive TUI (a TTY): require the plan was drafted + presented in PLAN MODE
- *     (EnterPlanMode → ExitPlanMode marks the signal here; the user approves it via the UI).
+ *     (plan mode → ExitPlanMode marks the signal here; the user approves it via the UI).
  *   - Headless CLI / server (no TTY): require a TODO planning checklist exists (TodoCreate).
  *
  * Scope: this enforces that a plan EXISTS, not that its metric is valid — the semantic
@@ -45,7 +45,7 @@ export function checkAutoResearchPlanGate(subagentType: string): string | null {
     if (planModeUsedAt > 0) return null;
     return 'BLOCKED — plan required before launching autoresearch-agent subagents. You are the PM: in this ' +
       'interactive session, FIRST draft the experiment plan in PLAN MODE and present it for approval ' +
-      '(EnterPlanMode → ExitPlanMode) — the metric + how it is measured, the pass/fail criterion, the ' +
+      '(draft in PLAN MODE, present via ExitPlanMode) — the metric + how it is measured, the pass/fail criterion, the ' +
       'base-vs-candidate control (train + holdout), the per-subagent variation, and the continue/fail rules. ' +
       'Once the plan is approved, launch the agents.';
   }

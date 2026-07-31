@@ -2,9 +2,9 @@
 name: pr-code-quality
 description: Reviews PR code for style, complexity, anti-patterns, and test coverage gaps. Focuses on maintainability and best practices.
 tools:
-  - read
-  - grep
-  - glob
+  - Read
+  - Grep
+  - Glob
 model: inherit
 ---
 
