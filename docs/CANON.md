@@ -75,6 +75,23 @@ Every message extends `BaseMessage`:
 carrying compaction metadata — compaction is an *event in* history, not an edit *of*
 history.
 
+Two optional extensions ride the record format:
+
+- **`jspaceState?`** (assistant turns) — the agent's per-turn "state of mind" in
+  canonical cluster space: `{ lensId, basisVersion, summary: number[],
+  trajectoryRef?, agreement? }`. The inline summary keeps the store light; full
+  per-token trajectories ride the blob tier (`trajectoryRef`), encrypted-at-rest for
+  repo-backed canon. Optional and non-breaking by construction; state trails are
+  partial model internals and are gated before any public exposure.
+- **`ArtifactManifest`** — canon's *second* canonical record kind, for capability
+  artifacts (skills, agents, MCP configs, plugins) and the intent layer (projects,
+  plans): versioned document/config bundles that deliberately do **not** use the
+  Message schema. A manifest records `{ kind, id, version, content[], provenance,
+  harnessCompat?, projectionRules?, state? }` with blob-addressed content; artifacts
+  are translated between harnesses by per-kind *layout* adapters, never by the
+  message gateway. Derived, project-scoped knowledge graphs (`graph.json`, NetworkX
+  node-link with per-edge confidence tagging) consume both record kinds.
+
 The shared canonical message type lives in `@nexus-cortex/types`
 (`packages/types/src/messages.ts`); the store implementation is
 `packages/core/src/session/JSONLHistoryStore.ts`.

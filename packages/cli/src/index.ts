@@ -62,6 +62,8 @@ import {
   autoResearchBacklogClaimNext,
   autoResearchBacklogRelease,
 } from './commands/autoresearch/backlog.js';
+import { canonInit } from './commands/canon/init.js';
+import { canonArtifactsCmd, canonGraphCmd, canonListCmd, canonPullCmd, canonSyncCmd, canonTranslateCmd } from './commands/canon/pipeline.js';
 import { tmuxList } from './commands/tmux/list.js';
 import { middlewareList } from './commands/middleware/list.js';
 import { middlewareStatus } from './commands/middleware/status.js';
@@ -808,6 +810,86 @@ autoresearch
   .action(async (opts) => {
     const globalOpts = program.opts();
     await autoResearchList({ decision: opts.decision, json: globalOpts.json });
+  });
+
+// Canon — the canonical agent history & memory store (docs/CANON.md).
+// Verb roadmap: init (scaffold) now; sync/pull/translate graduate from
+// scripts/canon/ in Phase C part 2 (CANON_CROSS_HARNESS_PLAN.md).
+const canon = program
+  .command('canon')
+  .description('Canonical agent history & memory store — portable agent memory in a git repo you own');
+
+canon
+  .command('init [dir]')
+  .description('Scaffold a canon store repository (layout, .gitattributes, verify workflow, README)')
+  .option('--remote <url>', 'record this URL as the origin remote (no push)')
+  .action(async (dir, opts) => {
+    const globalOpts = program.opts();
+    await canonInit({ dir, remote: opts.remote, json: globalOpts.json });
+  });
+
+canon
+  .command('sync')
+  .description('Copy changed native harness sessions into the store (secret-scrubbed), commit + push')
+  .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
+  .option('--dry-run', 'report what would copy; write nothing')
+  .action(async (opts) => {
+    const globalOpts = program.opts();
+    await canonSyncCmd({ store: opts.store, dryRun: opts.dryRun, json: globalOpts.json });
+  });
+
+canon
+  .command('translate')
+  .description('Maintain the canonical line: /native → /canon + /projections (incremental, deterministic)')
+  .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
+  .option('--dry-run', 'report what would translate; write nothing')
+  .action(async (opts) => {
+    const globalOpts = program.opts();
+    await canonTranslateCmd({ store: opts.store, dryRun: opts.dryRun, json: globalOpts.json });
+  });
+
+canon
+  .command('list')
+  .description('List canon sessions (uuid, size, origin harness, recovered title)')
+  .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
+  .option('--all', 'include sessions under 4KB')
+  .option('--project <id>', 'only sessions of one project (derived project↔session map)')
+  .action(async (opts) => {
+    const globalOpts = program.opts();
+    await canonListCmd({ store: opts.store, all: opts.all, project: opts.project, json: globalOpts.json });
+  });
+
+canon
+  .command('graph')
+  .description('Generate project-scoped knowledge graphs (§27l): /projects/<id>/graph.json, node-link + edge confidence')
+  .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
+  .option('--project <id>', 'limit to one project')
+  .option('--merge-graph <path>', 'fold an external (graphify) node-link graph.json into the output')
+  .option('--dry-run', 'report what would build; write nothing')
+  .action(async (opts) => {
+    const globalOpts = program.opts();
+    await canonGraphCmd({ store: opts.store, project: opts.project, mergeGraph: opts.mergeGraph, dryRun: opts.dryRun, json: globalOpts.json });
+  });
+
+canon
+  .command('artifacts')
+  .description('Capture capability artifacts (skills/agents/mcp/plugins/plans/projects) into the store (§27p)')
+  .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
+  .option('--dry-run', 'report what would capture; write nothing')
+  .action(async (opts) => {
+    const globalOpts = program.opts();
+    await canonArtifactsCmd({ store: opts.store, dryRun: opts.dryRun, json: globalOpts.json });
+  });
+
+canon
+  .command('pull <session>')
+  .description('Materialize a canon session into a native session dir (pull = rehydrate; branch, never clobber)')
+  .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
+  .option('--to <dir>', 'destination dir (default ~/omniclaude-v4/.cortex/sessions)')
+  .option('--force', 'overwrite an existing local session file')
+  .action(async (session, opts) => {
+    const globalOpts = program.opts();
+    await canonPullCmd({ session, to: opts.to, force: opts.force, store: opts.store, json: globalOpts.json });
   });
 
 // Tmux terminal integration commands

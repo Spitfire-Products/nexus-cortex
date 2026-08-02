@@ -102,4 +102,29 @@ export interface CanonicalMessage {
     /** Additional metadata */
     [key: string]: unknown;
   };
+
+  /**
+   * J-space state channel (JSPACE_STATE_CHANNEL_PLAN.md S1) — the agent's
+   * per-turn "state of mind" in canonical cluster space, tied to the
+   * canonical history. Optional and non-breaking by construction. Assistant
+   * turns only. Inline `summary` keeps the store light; full per-token
+   * trajectories ride the blob tier via `trajectoryRef` (R2 / git-LFS,
+   * encrypted-at-rest for repo-backed canon). State trails are partial model
+   * internals — P5-style gate before ANY public exposure.
+   */
+  jspaceState?: JSpaceState;
+}
+
+/** Per-turn j-space state annotation (see CanonicalMessage.jspaceState). */
+export interface JSpaceState {
+  /** Model + lens-fit version (fit-once-cache identity). */
+  lensId: string;
+  /** Cluster-taxonomy version — a new basis is a new league table (D20). */
+  basisVersion: string;
+  /** Per-turn cluster activation vector — small, inline. */
+  summary: number[];
+  /** Blob ref (R2 / git-LFS) for the full per-token trajectory. */
+  trajectoryRef?: string;
+  /** Chaperone cross-checks, when present. */
+  agreement?: Record<string, unknown>;
 }

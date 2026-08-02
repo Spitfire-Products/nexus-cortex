@@ -18,6 +18,7 @@ export * from './tools';
 
 // Export all message-related types
 export * from './messages';
+export * from './artifacts';
 
 // Export all session-related types
 export * from './session';

@@ -15,6 +15,7 @@
 // Phase 1.5 Week 1: Multi-Provider Architecture
 // Adapter exports
 export * from './adapters/index.js';
+export * from './canon/index.js';
 
 // Model registry exports
 export * from './models/index.js';

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.54.0] - 2026-08-02
+
+### Added
+- **`cortex canon` verb suite** — the canon pipeline graduates into the library:
+  `init` (scaffold a canon store repository: directory taxonomy, `merge=union`
+  `.gitattributes`, verification workflow, README), `sync`, `translate`, `list`
+  (+`--project`), `pull`, `artifacts`, and `graph`. The pipeline logic lives in
+  `@nexus-cortex/core` — one implementation serves the CLI and any cron wrapper,
+  byte-identical with the proven standalone scripts it graduates.
+- **`ArtifactManifest`** — canon's second canonical record kind: capability artifacts
+  (skills, agents, MCP configs, plugins) and the intent layer (projects, plans) as
+  versioned, blob-addressed bundles with provenance and per-harness projection rules.
+- **Project-scoped knowledge graphs** — `cortex canon graph` derives
+  `/projects/<id>/graph.json` (NetworkX node-link; every edge carries `confidence` +
+  `confidence_score`) from both record kinds, with a derived project↔session map and a
+  `--merge-graph` seam for folding external code-graph output into the same structure.
+- **`jspaceState?`** — optional per-turn agent-state annotation on canonical messages
+  (lens id, basis version, inline summary vector, blob-tier trajectory ref).
+  Non-breaking by construction. See **[Canon](docs/CANON.md)**.
+
 ## [4.53.0] - 2026-08-02
 
 ### Added
