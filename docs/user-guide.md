@@ -126,6 +126,7 @@ Run `cortex --help`, or `cortex <group> --help` for any group:
 | `mcp` | `list` / `status` / `tools` / `enable` / `disable` / `init` / `validate` / `edit` |
 | `permissions` | `mode` / `set` / `grant` / `revoke` / `policies` / `tools` / `auto-approve` |
 | `autoresearch` | `bench` / `experiment` / `evaluate` / `fix` / `list` |
+| `canon` | `init` / `sync` / `translate` / `list` / `pull` / `artifacts` / `graph` — portable agent memory in a git repo you own ([Canon guide](CANON.md#using-canon-from-the-cli)) |
 | `context` | `status` / `compact` / `boundaries` / `strategy` / `savings` |
 | `middleware` | `list` / `status` / `enable` / `disable` / `config` |
 | `artifact` | `list` / `status` / `restart` / `stop` |

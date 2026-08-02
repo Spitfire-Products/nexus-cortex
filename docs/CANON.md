@@ -112,6 +112,38 @@ Adapters own the *deliberate* lossy projections (e.g. a provider that cannot acc
 another provider's signed reasoning blocks): what cannot be replayed is dropped or
 transformed at render time, never at storage time.
 
+## Using canon from the CLI
+
+The pipeline ships as the `cortex canon` verb suite (run `cortex canon --help` for
+options; every verb accepts `--store <dir>` and most accept `--dry-run` / `--json`):
+
+```bash
+cortex canon init my-canon --remote <private-repo-url>
+                        # scaffold a store: directory taxonomy, .gitattributes
+                        # (jsonl merge=union), verification workflow, README
+cortex canon sync       # copy changed native harness sessions into the store,
+                        # secret-scrubbed, one debounced commit + push
+cortex canon translate  # maintain the canonical line: /native → /canon +
+                        # /projections (deterministic, incremental)
+cortex canon list [--project <id>] [--all]
+                        # sessions with size, origin harness, recovered title
+cortex canon pull <uuid> [--to <dir>] [--force]
+                        # materialize a session into a native session dir —
+                        # a BRANCH of the canonical line, never a clobber
+cortex canon artifacts  # capture skills/agents/mcp/plugins/plans/projects as
+                        # ArtifactManifest records + store taxonomy bytes
+cortex canon graph [--project <id>] [--merge-graph <graph.json>]
+                        # derive project-scoped knowledge graphs (node-link,
+                        # per-edge confidence); --merge-graph folds an external
+                        # code graph (e.g. graphify) into the same structure
+```
+
+Typical loop: `init` once → `sync && translate` on a schedule (cron-friendly:
+both are idempotent and incremental) → `pull` wherever you want to resume. The
+same functions are exported from `@nexus-cortex/core`
+(`canonSync`/`canonTranslate`/`canonPull`/`canonArtifacts`/`canonGraph`) for
+embedding — the CLI and any scheduler run one implementation.
+
 ## Scope, honestly
 
 Canon fully solves the **transcript** layer of cross-harness portability. Three
