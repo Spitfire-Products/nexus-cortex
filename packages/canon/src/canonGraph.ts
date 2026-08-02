@@ -44,50 +44,97 @@ export interface ProjectEntry {
   sessionCounts: Record<string, number>;
 }
 
-/** Known roots: exact encoded-form matches. Everything else derives its own entry. */
-const KNOWN_ROOTS: [id: string, root: string][] = [
-  ['workspace', '/home/runner/workspace'],
-  ['omniclaude-v4', '/home/runner/workspace/omniclaude-v4'],
-  ['nexus-terminal', '/home/runner/workspace/nexus-terminal'],
-];
 const encodeCC = (root: string) => root.replace(/[/.]/g, '-');
-/** cortex label → project id (labels that are sub-roots of a project). */
-const CORTEX_LABEL_PROJECT: Record<string, string> = {
-  workspace: 'workspace', 'omniclaude-v4': 'omniclaude-v4', server: 'omniclaude-v4', 'nexus-terminal': 'nexus-terminal',
-};
 
-/** Derive the authoritative project ↔ session-path map from store paths. */
+/**
+ * Optional user overrides at `<store>/projects/ROOTS.json` — for the cases
+ * derivation cannot decide (dash-ambiguous encodings, sessions recorded on
+ * another machine, cortex sub-root labels belonging to a parent project):
+ * `{ roots: {id: absPath}, claudeDirs: {encodedDirName: id}, cortexLabels: {label: id} }`
+ */
+interface RootsConfig {
+  roots?: Record<string, string>;
+  claudeDirs?: Record<string, string>;
+  cortexLabels?: Record<string, string>;
+}
+
+/**
+ * Decode a Claude-Code-encoded path remainder against the real filesystem.
+ * The encoding maps both `/` and `.` to `-`, so it is lossy; we DFS the
+ * segment joins ('-'-in-name vs '/'-descend) preferring paths that exist.
+ * Falls back to `<base>/<remainder-verbatim>` (unverified) when nothing
+ * matches — e.g. a store cloned on a machine that never held the code.
+ */
+function fsResolveEncoded(base: string, remainder: string): { root: string; verified: boolean } {
+  const segs = remainder.split('-');
+  let best: string | undefined;
+  const walk = (dir: string, i: number, budget: { n: number }): void => {
+    if (best || budget.n-- <= 0) return;
+    if (i >= segs.length) { if (fs.existsSync(dir)) best = dir; return; }
+    // Greedily extend the current path component before descending.
+    for (let j = segs.length; j > i; j--) {
+      const component = segs.slice(i, j).join('-');
+      const candidate = path.join(dir, component);
+      if (fs.existsSync(candidate)) { walk(candidate, j, budget); if (best) return; }
+    }
+  };
+  walk(base, 0, { n: 256 });
+  return best ? { root: best, verified: true } : { root: path.join(base, remainder), verified: false };
+}
+
+/**
+ * Derive the authoritative project ↔ session-path map from store paths.
+ * Fully environment-derived ($HOME + filesystem + the store's own dirs);
+ * `projects/ROOTS.json` overrides win where present. No hardcoded roots.
+ */
 export function deriveProjectSessionMap(store: string): Record<string, ProjectEntry> {
+  const HOME = process.env.HOME ?? process.env.USERPROFILE ?? '';
+  let cfg: RootsConfig = {};
+  try { cfg = JSON.parse(fs.readFileSync(path.join(store, 'projects', 'ROOTS.json'), 'utf8')); } catch { /* optional */ }
+
   const projects: Record<string, ProjectEntry> = {};
   const entry = (id: string, root: string) =>
     (projects[id] ??= { id, root, sessionPaths: {}, sessionCounts: {} });
   const add = (id: string, root: string, harness: string, rel: string) => {
     const e = entry(id, root);
+    if (!e.root && root) e.root = root;
     (e.sessionPaths[harness] ??= []).push(rel);
     e.sessionCounts[harness] = (e.sessionCounts[harness] ?? 0) + 0; // counts filled from sessions below
   };
-  const ccByEncoding = new Map(KNOWN_ROOTS.map(([id, root]) => [encodeCC(root), { id, root }]));
-  const wsPrefix = encodeCC('/home/runner/workspace') + '-';
+  const homeEnc = HOME ? encodeCC(HOME) : '';
 
   const ccRoot = path.join(store, 'canon', 'claude-code');
   let ccDirs: string[] = [];
   try { ccDirs = fs.readdirSync(ccRoot).filter((d) => fs.statSync(path.join(ccRoot, d)).isDirectory()); } catch { /* none */ }
   for (const dir of ccDirs.sort()) {
-    const known = ccByEncoding.get(dir);
-    if (known) add(known.id, known.root, 'claude-code', path.join('claude-code', dir));
-    else if (dir.startsWith(wsPrefix)) {
-      // Unknown root — surfaces as its OWN project (blind-spot closure).
-      const id = dir.slice(wsPrefix.length);
-      add(id, `/home/runner/workspace/${id}` /* best-effort decode */, 'claude-code', path.join('claude-code', dir));
-    } else add(dir, dir, 'claude-code', path.join('claude-code', dir));
+    const rel = path.join('claude-code', dir);
+    const overrideId = cfg.claudeDirs?.[dir];
+    if (overrideId) { add(overrideId, cfg.roots?.[overrideId] ?? '', 'claude-code', rel); continue; }
+    if (homeEnc && dir === homeEnc) { add(path.basename(HOME), HOME, 'claude-code', rel); continue; }
+    if (homeEnc && dir.startsWith(homeEnc + '-')) {
+      const remainder = dir.slice(homeEnc.length + 1);
+      const { root, verified } = fsResolveEncoded(HOME, remainder);
+      // Prefer the resolved basename as the id; keep the raw remainder when
+      // the basename is already claimed by a different root (collision).
+      let id = verified ? path.basename(root) : remainder;
+      if (projects[id] && projects[id]!.root && projects[id]!.root !== root) id = remainder;
+      add(id, cfg.roots?.[id] ?? root, 'claude-code', rel);
+      continue;
+    }
+    // Foreign-machine or unrecognized encoding: its own project, no local root
+    // (sessions still list/graph; touched/auto-detect need a root override).
+    add(dir, cfg.roots?.[dir] ?? '', 'claude-code', rel);
   }
+
   const cxRoot = path.join(store, 'canon', 'nexus-cortex');
   let cxDirs: string[] = [];
   try { cxDirs = fs.readdirSync(cxRoot).filter((d) => fs.statSync(path.join(cxRoot, d)).isDirectory()); } catch { /* none */ }
   for (const label of cxDirs.sort()) {
-    const id = CORTEX_LABEL_PROJECT[label] ?? label;
-    const root = projects[id]?.root ?? KNOWN_ROOTS.find(([k]) => k === id)?.[1] ?? label;
-    add(id, root, 'nexus-cortex', path.join('nexus-cortex', label));
+    const id = cfg.cortexLabels?.[label] ?? label;
+    const existing = projects[id]?.root;
+    const guess = HOME && label === path.basename(HOME) ? HOME
+      : HOME && fs.existsSync(path.join(HOME, label)) ? path.join(HOME, label) : '';
+    add(id, existing ?? cfg.roots?.[id] ?? guess, 'nexus-cortex', path.join('nexus-cortex', label));
   }
   return projects;
 }
@@ -124,6 +171,12 @@ export interface CanonGraphResult {
 export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphResult> {
   const STORE = o.store ?? '/tmp/canon-store';
   const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+  // Auto-clone like every other verb — /tmp stores are disposable by design.
+  if (!fs.existsSync(path.join(STORE, '.git'))) {
+    const repo = process.env.CANON_REPO ?? 'https://github.com/Spitfire-Products/nexus-canon-store';
+    console.log(`[canon-graph] no store at ${STORE} — cloning ${repo}`);
+    execFileSync('git', ['clone', '-q', repo, STORE], { encoding: 'utf8', env });
+  }
   const projects = deriveProjectSessionMap(STORE);
   const sessions = discoverCanonSessions(STORE);
   for (const s of sessions) {
@@ -151,7 +204,7 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
   try { head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: STORE, encoding: 'utf8', env }).trim(); } catch { /* untracked */ }
 
   const wanted = o.project ? [o.project] : Object.keys(projects).sort();
-  let totalNodes = 0, totalLinks = 0;
+  let totalNodes = 0, totalLinks = 0, unchangedGraphs = 0;
   const built: string[] = [];
 
   // Session-content scan (touched edges) — streamed once per changed session,
@@ -168,6 +221,7 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
   // Touched paths are assigned to their MOST SPECIFIC project root (roots nest:
   // the workspace root contains the others — longest-match, never first-match).
   const rootsByLength = Object.values(projects)
+    .filter((p) => p.root) // rootless projects (foreign-machine dirs w/o override) own no paths
     .map((p) => ({ pid: p.id, prefix: (p.root.endsWith(path.sep) ? p.root : p.root + path.sep) }))
     .sort((a, b) => b.prefix.length - a.prefix.length);
   const ownerOf = (abs: string): { pid: string; rel: string } | undefined => {
@@ -234,7 +288,7 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
     // otherwise a lightweight file: node is created so no touch is dropped.
     // Paths owned by NO mapped project are tallied (unownedPaths), not edged.
     let touchedStats:
-      | { edges: number; toCodeNodes: number; toFileNodes: number; foreignSessions: number; unownedPaths: number }
+      | { edges: number; inferredEdges: number; toCodeNodes: number; toFileNodes: number; foreignSessions: number; unownedPaths: number }
       | undefined;
     if (touchedIdx) {
       const fileNodeByPath = new Map<string, string>();
@@ -244,62 +298,70 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
           if (!fileNodeByPath.has(n.source_file)) fileNodeByPath.set(n.source_file, n.id);
         }
       }
-      touchedStats = { edges: 0, toCodeNodes: 0, toFileNodes: 0, foreignSessions: 0, unownedPaths: 0 };
+      touchedStats = { edges: 0, inferredEdges: 0, toCodeNodes: 0, toFileNodes: 0, foreignSessions: 0, unownedPaths: 0 };
       const madeFileNodes = new Map<string, string>();
       const presentSessionNodes = new Set(nodes.filter((n) => n.id.startsWith('sess:')).map((n) => n.id));
       // Edges dedupe by (session node, target): dual-lineage copies of one
       // session share a uuid — overlapping touches keep the MAX weight
       // (lineages are copies; summing would double-count).
-      const touchedEdges = new Map<string, { source: string; target: string; weight: number; source_file: string }>();
+      const touchedEdges = new Map<string, { source: string; target: string; weight: number; source_file: string; inferred?: boolean }>();
       for (const s of sessions) {
         const home = sessionProject(projects, s);
         if (home === undefined) continue;
-        const files = touchedIdx.byRel.get(s.rel);
-        if (!files || files.size === 0) continue;
         const sessNodeId = `sess:${s.uuid}`;
         const sessSource = path.join('canon', s.rel);
-        let touchedHere = false;
-        for (const [abs, count] of files) {
-          const owner = ownerOf(abs);
-          if (!owner) { if (home === pid) touchedStats.unownedPaths++; continue; }
-          if (owner.pid !== pid) continue; // routed to the owning project's graph
-          const rel = owner.rel;
-          let target = fileNodeByPath.get(rel);
-          if (target) touchedStats.toCodeNodes++;
-          else {
-            target = madeFileNodes.get(rel);
-            if (!target) {
-              target = `file:${rel}`;
-              madeFileNodes.set(rel, target);
-              nodes.push({ id: target, label: path.basename(rel), file_type: 'document', source_file: rel, source_location: '' });
+        // Pass 1 = tier 1/2 structured evidence (EXTRACTED); pass 2 = tier 3
+        // Bash-parsed paths (INFERRED). Structured evidence wins per edge.
+        for (const [files, inferred] of [
+          [touchedIdx.byRel.get(s.rel), false],
+          [touchedIdx.inferredByRel.get(s.rel), true],
+        ] as [Map<string, number> | undefined, boolean][]) {
+          if (!files || files.size === 0) continue;
+          for (const [abs, count] of files) {
+            const owner = ownerOf(abs);
+            if (!owner) { if (home === pid && !inferred) touchedStats.unownedPaths++; continue; }
+            if (owner.pid !== pid) continue; // routed to the owning project's graph
+            const rel = owner.rel;
+            let target = fileNodeByPath.get(rel);
+            if (target) { if (!inferred) touchedStats.toCodeNodes++; }
+            else {
+              target = madeFileNodes.get(rel);
+              if (!target) {
+                target = `file:${rel}`;
+                madeFileNodes.set(rel, target);
+                nodes.push({ id: target, label: path.basename(rel), file_type: 'document', source_file: rel, source_location: '' });
+              }
+              if (!inferred) touchedStats.toFileNodes++;
             }
-            touchedStats.toFileNodes++;
+            if (!presentSessionNodes.has(sessNodeId)) {
+              // Foreign session touching this project's files — first-class, marked.
+              nodes.push({ id: sessNodeId, label: s.title ?? s.uuid.slice(0, 8), file_type: 'document', source_file: path.join('canon', s.rel), source_location: '', harness: s.harness, foreign_home: home });
+              presentSessionNodes.add(sessNodeId);
+              touchedStats.foreignSessions++;
+            }
+            const ek = sessNodeId + '|' + target;
+            const prev = touchedEdges.get(ek);
+            if (prev) { if (!inferred) { prev.weight = Math.max(prev.weight, count); prev.inferred = false; } }
+            else touchedEdges.set(ek, { source: sessNodeId, target, weight: count, source_file: sessSource, inferred });
           }
-          if (!presentSessionNodes.has(sessNodeId)) {
-            // Foreign session touching this project's files — first-class, marked.
-            nodes.push({ id: sessNodeId, label: s.title ?? s.uuid.slice(0, 8), file_type: 'document', source_file: path.join('canon', s.rel), source_location: '', harness: s.harness, foreign_home: home });
-            presentSessionNodes.add(sessNodeId);
-            touchedStats.foreignSessions++;
-          }
-          const ek = sessNodeId + '|' + target;
-          const prev = touchedEdges.get(ek);
-          if (prev) prev.weight = Math.max(prev.weight, count);
-          else touchedEdges.set(ek, { source: sessNodeId, target, weight: count, source_file: sessSource });
-          touchedHere = true;
         }
-        void touchedHere;
       }
       for (const e of touchedEdges.values()) {
-        links.push({ source: e.source, target: e.target, relation: 'touched', confidence: 'EXTRACTED', confidence_score: 1.0, source_file: e.source_file, source_location: '', weight: e.weight });
-        touchedStats.edges++;
+        const conf = e.inferred ? 'INFERRED' : 'EXTRACTED';
+        links.push({ source: e.source, target: e.target, relation: 'touched', confidence: conf, confidence_score: CONFIDENCE_SCORE[conf], source_file: e.source_file, source_location: '', weight: e.weight });
+        if (e.inferred) touchedStats.inferredEdges++; else touchedStats.edges++;
       }
     }
 
     const meta: any = {};
     if (codeHalf) meta.code_half = codeHalf;
     if (touchedStats) meta.touched_stats = touchedStats;
-    const graph: any = { directed: true, multigraph: false, graph: meta, nodes, links };
-    if (head) graph.built_at_commit = head;
+    // built_at_commit is stamped ONLY when content actually changed — otherwise
+    // every store commit would rewrite the (multi-MB) graph for a HEAD-only
+    // diff, bloating history for zero information (the G2 churn class). The
+    // guard compares the body sans stamp; an unchanged graph keeps its file
+    // (and its original stamp) untouched.
+    const body: any = { directed: true, multigraph: false, graph: meta, nodes, links };
     totalNodes += nodes.length; totalLinks += links.length;
     built.push(pid);
     if (!o.dryRun) {
@@ -307,13 +369,25 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
       fs.mkdirSync(path.dirname(pj), { recursive: true });
       fs.writeFileSync(pj, JSON.stringify(proj, null, 2) + '\n');
       const gp = path.join(STORE, 'projects', pid, 'graph.json');
-      fs.mkdirSync(path.dirname(gp), { recursive: true });
-      fs.writeFileSync(gp, JSON.stringify(graph, null, 2) + '\n');
+      let unchangedGraph = false;
+      if (fs.existsSync(gp)) {
+        try {
+          const prev = JSON.parse(fs.readFileSync(gp, 'utf8'));
+          delete prev.built_at_commit;
+          unchangedGraph = JSON.stringify(prev) === JSON.stringify(body);
+        } catch { /* rewrite */ }
+      }
+      if (unchangedGraph) unchangedGraphs++;
+      else {
+        if (head) body.built_at_commit = head;
+        fs.mkdirSync(path.dirname(gp), { recursive: true });
+        fs.writeFileSync(gp, JSON.stringify(body, null, 2) + '\n');
+      }
     }
   }
 
   let pushed = false;
-  const summary = `${built.length} project graph(s), ${totalNodes} nodes, ${totalLinks} links`;
+  const summary = `${built.length} project graph(s), ${totalNodes} nodes, ${totalLinks} links` + (unchangedGraphs ? `, ${unchangedGraphs} unchanged (stamp kept)` : '');
   if (!o.dryRun) {
     const git = (a: string[]) => execFileSync('git', a, { cwd: STORE, encoding: 'utf8', env });
     git(['add', '-A']);

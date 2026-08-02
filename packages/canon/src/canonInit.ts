@@ -41,8 +41,13 @@ export async function canonInit(options: CanonInitOptions = {}): Promise<CanonIn
     repoInitialized = true;
   }
 
+  const ROOTS_TEMPLATE = JSON.stringify({
+    _doc: 'Optional project-map overrides for canon graph/list. roots: {projectId: absolutePath}; claudeDirs: {encodedSessionDirName: projectId}; cortexLabels: {cortexSyncLabel: projectId}. Derivation from $HOME + the filesystem covers the common cases; add entries here for dash-ambiguous paths, sessions recorded on other machines, or sub-root labels that belong to a parent project.',
+    roots: {}, claudeDirs: {}, cortexLabels: {},
+  }, null, 2) + '\n';
   const files: [string, string][] = [
     ['.gitattributes', GITATTRIBUTES],
+    [path.join('projects', 'ROOTS.json'), ROOTS_TEMPLATE],
     ['README.md', STORE_README],
     [path.join('.github', 'workflows', 'canon-verify.yml'), VERIFY_YML],
     [path.join('.github', 'scripts', 'canon-verify.mjs'), CANON_VERIFY_MJS],

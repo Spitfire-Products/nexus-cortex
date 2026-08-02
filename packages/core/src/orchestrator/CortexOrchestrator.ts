@@ -1994,6 +1994,37 @@ export class CortexOrchestrator {
           const toolResults = await this.handleToolCalls(toolUseBlocks, abortController.signal, structuredOutputState);
           clearTimeout(timeoutId);
 
+          // File-history snapshots (Claude Code parity — previously built but
+          // UNWIRED: FileCheckpointManager existed with zero markModified
+          // callers and its snapshot message was discarded). Mark files
+          // mutated by file-tools this batch, back them up, and RECORD the
+          // snapshot in the session JSONL. Disk-only: the record is NOT
+          // pushed into messageHistory, so it never reaches provider renders
+          // this turn; resume-tolerance of the record type is proven (canon-
+          // pulled Claude Code sessions carrying these records resume fine).
+          // canon's touched tier-2 consumes snapshot.trackedFileBackups.
+          if (this.fileCheckpointManager && this.currentSessionId) {
+            try {
+              let marked = false;
+              for (const tu of toolUseBlocks) {
+                const failed = toolResults.some(r => r.tool_use_id === (tu as any).id && r.is_error);
+                const fp = (tu as any)?.input?.file_path;
+                if (!failed && typeof fp === 'string' && /write|edit/i.test(String((tu as any).name))) {
+                  this.fileCheckpointManager.markModified(fp);
+                  marked = true;
+                }
+              }
+              if (marked) {
+                const snap = await this.fileCheckpointManager.createSnapshot(uuidv4());
+                if (snap.snapshotMessage?.isSnapshotUpdate) {
+                  await this.historyStore.appendMessage(this.currentSessionId, snap.snapshotMessage as any);
+                }
+              }
+            } catch (e) {
+              console.warn('[Orchestrator] file-history snapshot failed (non-fatal):', e);
+            }
+          }
+
           // R21 (2026-05-15): MAX_CONSECUTIVE_ERRORS now counts CONSECUTIVE
           // ITERATIONS WITH ZERO SUCCESSFUL TOOLS, not cumulative individual
           // failures. Parallel-heavy models (grok-4-1-fast-reasoning emits

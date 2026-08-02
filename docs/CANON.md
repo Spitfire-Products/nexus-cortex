@@ -149,6 +149,10 @@ same functions are exported from `@nexus-cortex/core`
 (`canonSync`/`canonTranslate`/`canonPull`/`canonArtifacts`/`canonGraph`) for
 embedding — the CLI and any scheduler run one implementation.
 
+**Onboarding a new harness:** capture is one `HARNESSES.json` entry; the
+translation adapter is the one per-harness task — protocol, defect-class
+catalog, and acceptance bar in **[HARNESS_ONBOARDING.md](HARNESS_ONBOARDING.md)**.
+
 ## Scope, honestly
 
 Canon fully solves the **transcript** layer of cross-harness portability. Three

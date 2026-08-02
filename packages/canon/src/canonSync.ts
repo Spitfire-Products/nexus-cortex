@@ -1,14 +1,17 @@
 /**
  * canonSync — the canon local-first sync spine, graduated from
- * `scripts/canon/canon-sync.ts` (Phase C part 2; the script is now a thin
- * wrapper over this module, so the cron and the CLI run ONE implementation).
+ * `scripts/canon/canon-sync.ts` (Phase C part 2; the script is a thin wrapper
+ * over this module, so the cron and the CLI run ONE implementation).
  *
- * Copies changed native session files from every registered harness store into
+ * Copies changed native session files from every declared harness source into
  * the canon repo's /native/<harness>/ tree, secret-scrubbed at the push
  * boundary only (sovereignty; no deid/quality transforms — egress concerns),
  * then commits + pushes one debounced commit. Oversized JSONL chunks at line
  * boundaries; skips are visible in /native/SKIPPED.md (D8: never silent).
- * Bodies transplanted verbatim from the proven script.
+ *
+ * Capture sources are DECLARATIVE: built-in defaults cover this environment,
+ * and `<store>/HARNESSES.json` overrides/extends them — adding a harness (or
+ * another machine's layout) is config, not code.
  *
  * @module canon/canonSync
  */
@@ -36,29 +39,50 @@ export interface CanonSyncResult {
   pushed: boolean;
 }
 
-export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResult> {
-  const HOME = o.home ?? process.env.HOME ?? '/home/runner/workspace';
-  const DRY = o.dryRun ?? false;
-  const STORE = o.store ?? '/tmp/canon-store';
-const MANIFEST_PATH = path.join(HOME, '.canon', 'manifest.json');
-const MAX_BYTES = 50 * 1024 * 1024; // GitHub hard-rejects >100MB; margin for scrub growth
+/**
+ * Harness capture sources — DECLARATIVE. Defaults below cover this
+ * environment; `<store>/HARNESSES.json` overrides/extends them:
+ *   { "harnesses": { "<label>": { "exts": [".jsonl"],
+ *       "roots": ["~/.claude/projects"]
+ *              | [{"label":"workspace","path":"~/.cortex/sessions"}] } } }
+ * `~` expands to $HOME. Labeled roots nest under /native/<harness>/<label>/.
+ */
+export interface HarnessSource { exts: string[]; roots: (string | { label: string; path: string })[] }
 
-/** harness label -> { root, include (ext allowlist), maxDepth } */
-const SOURCES: Record<string, { root: string; exts: string[] }> = {
-  'claude-code':  { root: path.join(HOME, '.claude', 'projects'), exts: ['.jsonl'] },
-  'nexus-cortex': { root: '', exts: ['.jsonl', '.json'] }, // multi-root, see below
-  'grok-build':   { root: path.join(HOME, '.grok', 'sessions'), exts: ['.jsonl', '.json'] },
-  'gemini-cli':   { root: path.join(HOME, '.gemini', 'tmp'), exts: ['.jsonl', '.json'] },
-};
-const CORTEX_ROOTS: [string, string][] = [
-  // workspace-root sessions: cortex CLI runs launched from /home/runner/workspace
-  // itself (coverage gap found 2026-07-28 — the grok freeze investigation's
-  // sessions lived here, invisible to canon)
-  ['workspace', path.join(HOME, '.cortex', 'sessions')],
-  ['omniclaude-v4', path.join(HOME, 'omniclaude-v4', '.cortex', 'sessions')],
-  ['server', path.join(HOME, 'omniclaude-v4', 'packages', 'server', '.cortex', 'sessions')],
-  ['nexus-terminal', path.join(HOME, 'nexus-terminal', '.cortex', 'sessions')],
-];
+function defaultHarnessSources(H: string): Record<string, HarnessSource> {
+  return {
+    'claude-code': { exts: ['.jsonl'], roots: [path.join(H, '.claude', 'projects')] },
+    'nexus-cortex': {
+      exts: ['.jsonl', '.json'],
+      roots: [
+        // workspace-root sessions: cortex CLI runs launched from $HOME itself
+        // (coverage gap found 2026-07-28 — sessions there were invisible).
+        { label: 'workspace', path: path.join(H, '.cortex', 'sessions') },
+        { label: 'omniclaude-v4', path: path.join(H, 'omniclaude-v4', '.cortex', 'sessions') },
+        { label: 'server', path: path.join(H, 'omniclaude-v4', 'packages', 'server', '.cortex', 'sessions') },
+        { label: 'nexus-terminal', path: path.join(H, 'nexus-terminal', '.cortex', 'sessions') },
+      ],
+    },
+    'grok-build': { exts: ['.jsonl', '.json'], roots: [path.join(H, '.grok', 'sessions')] },
+    'gemini-cli': { exts: ['.jsonl', '.json'], roots: [path.join(H, '.gemini', 'tmp')] },
+  };
+}
+
+export function loadHarnessSources(store: string, H: string): Record<string, HarnessSource> {
+  const sources = defaultHarnessSources(H);
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(store, 'HARNESSES.json'), 'utf8'));
+    for (const [label, h] of Object.entries<any>(cfg.harnesses ?? {})) {
+      const expand = (p: string) => (p.startsWith('~/') ? path.join(H, p.slice(2)) : p);
+      sources[label] = {
+        exts: h.exts ?? ['.jsonl'],
+        roots: (h.roots ?? []).map((r: any) =>
+          typeof r === 'string' ? expand(r) : { label: r.label, path: expand(r.path) }),
+      };
+    }
+  } catch { /* optional config */ }
+  return sources;
+}
 
 // ── Secret scrub (push-boundary only; patterns = ETL's set MINUS blanket hex64) ──
 const SECRET_PATTERNS: [RegExp, string][] = [
@@ -81,119 +105,117 @@ function scrub(s: string): string {
   return s;
 }
 
+export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResult> {
+  const HOME = o.home ?? process.env.HOME ?? '/home/runner/workspace';
+  const DRY = o.dryRun ?? false;
+  const STORE = o.store ?? '/tmp/canon-store';
+  const MANIFEST_PATH = path.join(HOME, '.canon', 'manifest.json');
+  const MAX_BYTES = 50 * 1024 * 1024; // GitHub hard-rejects >100MB; margin for scrub growth
+  const PART_BYTES = 25 * 1024 * 1024;
+
   const CANON_REPO = o.repoUrl ?? process.env.CANON_REPO ?? 'https://github.com/Spitfire-Products/nexus-canon-store';
-if (!fs.existsSync(path.join(STORE, '.git'))) {
-  // Working clone is disposable (quota lesson 2026-07-27: keep it OFF the
-  // workspace quota — pass --store /tmp/canon-store); remote is the truth.
-  console.log(`[canon-sync] no store at ${STORE} — cloning ${CANON_REPO}`);
-  execFileSync('git', ['clone', '-q', CANON_REPO, STORE], {
-    encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-  });
-}
-
-type Manifest = Record<string, { mtimeMs: number; size: number }>;
-const manifest: Manifest = fs.existsSync(MANIFEST_PATH)
-  ? JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'))
-  : {};
-
-function* walk(dir: string): Generator<string> {
-  let entries: fs.Dirent[] = [];
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-  for (const e of entries) {
-    const p = path.join(dir, e.name);
-    if (e.isDirectory()) yield* walk(p);
-    else if (e.isFile()) yield p;
+  if (!fs.existsSync(path.join(STORE, '.git'))) {
+    // Working clone is disposable (quota lesson 2026-07-27: keep it OFF the
+    // workspace quota — pass --store /tmp/canon-store); remote is the truth.
+    console.log(`[canon-sync] no store at ${STORE} — cloning ${CANON_REPO}`);
+    execFileSync('git', ['clone', '-q', CANON_REPO, STORE], {
+      encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    });
   }
-}
 
-const skipped: string[] = [];
-let copied = 0, unchanged = 0, scrubbedHits = 0, chunked = 0;
+  type Manifest = Record<string, { mtimeMs: number; size: number }>;
+  const manifest: Manifest = fs.existsSync(MANIFEST_PATH)
+    ? JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'))
+    : {};
 
-const PART_BYTES = 25 * 1024 * 1024;
-
-/** Lossless line-boundary chunking: <dest>.part-NNNN files; reassembly = cat in
- *  order. Streams line-by-line (a 200MB read into one string is fine on this box,
- *  but split must respect line boundaries so no record is ever cut). */
-function syncChunked(src: string, destRel: string, st: fs.Stats) {
-  if (DRY) { chunked++; copied++; return; }
-  let content: string;
-  try { content = fs.readFileSync(src, 'utf8'); }
-  catch (e) { skipped.push(`${destRel} — read failed: ${e}`); return; }
-  const out = scrub(content);
-  if (out.length !== content.length) scrubbedHits++;
-  const destBase = path.join(STORE, 'native', destRel);
-  fs.mkdirSync(path.dirname(destBase), { recursive: true });
-  // Remove any prior single-file copy (upgraded to parts).
-  try { fs.unlinkSync(destBase); } catch { /* none */ }
-  let part = 0, offset = 0;
-  while (offset < out.length) {
-    let end = Math.min(offset + PART_BYTES, out.length);
-    if (end < out.length) {
-      const nl = out.lastIndexOf('\n', end);
-      if (nl > offset) end = nl + 1; // never cut a record
+  function* walk(dir: string): Generator<string> {
+    let entries: fs.Dirent[] = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) yield* walk(p);
+      else if (e.isFile()) yield p;
     }
-    const partPath = `${destBase}.part-${String(part).padStart(4, '0')}`;
-    const slice = out.slice(offset, end);
-    // Skip rewriting identical immutable earlier parts (delta-cheap growth).
-    const same = fs.existsSync(partPath) && fs.statSync(partPath).size === Buffer.byteLength(slice)
-      && fs.readFileSync(partPath, 'utf8') === slice;
-    if (!same) fs.writeFileSync(partPath, slice);
-    offset = end; part++;
   }
-  manifest[destRel] = { mtimeMs: st.mtimeMs, size: st.size };
-  chunked++; copied++;
-}
 
-function syncFile(src: string, destRel: string) {
-  let st: fs.Stats;
-  try { st = fs.statSync(src); } catch (e) { skipped.push(`${destRel} — unreadable: ${e}`); return; }
-  const key = destRel;
-  const prev = manifest[key];
-  if (prev && prev.mtimeMs === st.mtimeMs && prev.size === st.size) { unchanged++; return; }
-  // Oversized JSONL: chunk at LINE boundaries into ~25MB parts (lossless: cat
-  // parts = original; growing sessions only rewrite the LAST part, so git deltas
-  // stay cheap). LFS rejected: no delta on growing blobs + 1GB/mo bandwidth cap.
-  // Non-splittable oversized files remain visible skips (D8).
-  if (st.size > MAX_BYTES) {
-    if (src.endsWith('.jsonl')) { syncChunked(src, destRel, st); return; }
-    skipped.push(`${destRel} — ${(st.size / 1e6).toFixed(0)}MB > 50MB cap, not line-splittable`);
-    manifest[key] = { mtimeMs: st.mtimeMs, size: st.size };
-    return;
-  }
-  const dest = path.join(STORE, 'native', destRel);
-  if (!DRY) {
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
+  const skipped: string[] = [];
+  let copied = 0, unchanged = 0, scrubbedHits = 0, chunked = 0;
+
+  /** Lossless line-boundary chunking: <dest>.part-NNNN files; reassembly = cat in
+   *  order. Streams line-by-line (a 200MB read into one string is fine on this box,
+   *  but split must respect line boundaries so no record is ever cut). */
+  function syncChunked(src: string, destRel: string, st: fs.Stats) {
+    if (DRY) { chunked++; copied++; return; }
     let content: string;
     try { content = fs.readFileSync(src, 'utf8'); }
     catch (e) { skipped.push(`${destRel} — read failed: ${e}`); return; }
     const out = scrub(content);
     if (out.length !== content.length) scrubbedHits++;
-    fs.writeFileSync(dest, out);
+    const destBase = path.join(STORE, 'native', destRel);
+    fs.mkdirSync(path.dirname(destBase), { recursive: true });
+    // Remove any prior single-file copy (upgraded to parts).
+    try { fs.unlinkSync(destBase); } catch { /* none */ }
+    let part = 0, offset = 0;
+    while (offset < out.length) {
+      let end = Math.min(offset + PART_BYTES, out.length);
+      if (end < out.length) {
+        const nl = out.lastIndexOf('\n', end);
+        if (nl > offset) end = nl + 1; // never cut a record
+      }
+      const partPath = `${destBase}.part-${String(part).padStart(4, '0')}`;
+      const slice = out.slice(offset, end);
+      // Skip rewriting identical immutable earlier parts (delta-cheap growth).
+      const same = fs.existsSync(partPath) && fs.statSync(partPath).size === Buffer.byteLength(slice)
+        && fs.readFileSync(partPath, 'utf8') === slice;
+      if (!same) fs.writeFileSync(partPath, slice);
+      offset = end; part++;
+    }
+    manifest[destRel] = { mtimeMs: st.mtimeMs, size: st.size };
+    chunked++; copied++;
   }
-  manifest[key] = { mtimeMs: st.mtimeMs, size: st.size };
-  copied++;
-}
 
-// claude-code
-for (const f of walk(SOURCES['claude-code']!.root)) {
-  if (!f.endsWith('.jsonl')) continue;
-  syncFile(f, path.join('claude-code', path.relative(SOURCES['claude-code']!.root, f)));
-}
-// nexus-cortex (multi-root)
-for (const [label, root] of CORTEX_ROOTS) {
-  for (const f of walk(root)) {
-    if (!['.jsonl', '.json'].some((x) => f.endsWith(x))) continue;
-    syncFile(f, path.join('nexus-cortex', label, path.relative(root, f)));
+  function syncFile(src: string, destRel: string) {
+    let st: fs.Stats;
+    try { st = fs.statSync(src); } catch (e) { skipped.push(`${destRel} — unreadable: ${e}`); return; }
+    const key = destRel;
+    const prev = manifest[key];
+    if (prev && prev.mtimeMs === st.mtimeMs && prev.size === st.size) { unchanged++; return; }
+    // Oversized JSONL: chunk at LINE boundaries into ~25MB parts (lossless: cat
+    // parts = original; growing sessions only rewrite the LAST part, so git deltas
+    // stay cheap). LFS rejected: no delta on growing blobs + 1GB/mo bandwidth cap.
+    // Non-splittable oversized files remain visible skips (D8).
+    if (st.size > MAX_BYTES) {
+      if (src.endsWith('.jsonl')) { syncChunked(src, destRel, st); return; }
+      skipped.push(`${destRel} — ${(st.size / 1e6).toFixed(0)}MB > 50MB cap, not line-splittable`);
+      manifest[key] = { mtimeMs: st.mtimeMs, size: st.size };
+      return;
+    }
+    const dest = path.join(STORE, 'native', destRel);
+    if (!DRY) {
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      let content: string;
+      try { content = fs.readFileSync(src, 'utf8'); }
+      catch (e) { skipped.push(`${destRel} — read failed: ${e}`); return; }
+      const out = scrub(content);
+      if (out.length !== content.length) scrubbedHits++;
+      fs.writeFileSync(dest, out);
+    }
+    manifest[key] = { mtimeMs: st.mtimeMs, size: st.size };
+    copied++;
   }
-}
-// grok-build + gemini-cli
-for (const h of ['grok-build', 'gemini-cli'] as const) {
-  const s = SOURCES[h]!;
-  for (const f of walk(s.root)) {
-    if (!s.exts.some((x) => f.endsWith(x))) continue;
-    syncFile(f, path.join(h, path.relative(s.root, f)));
+
+  // Generic capture over the declared sources.
+  const HARNESS_SOURCES = loadHarnessSources(STORE, HOME);
+  for (const [label, src] of Object.entries(HARNESS_SOURCES)) {
+    for (const r of src.roots) {
+      const rootPath = typeof r === 'string' ? r : r.path;
+      const sub = typeof r === 'string' ? '' : r.label;
+      for (const f of walk(rootPath)) {
+        if (!src.exts.some((x) => f.endsWith(x))) continue;
+        syncFile(f, path.join(label, sub, path.relative(rootPath, f)));
+      }
+    }
   }
-}
 
   let pushed = false;
   if (!DRY) {
