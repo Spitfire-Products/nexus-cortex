@@ -137,6 +137,41 @@ transcripts in per-session dirs; >50MB sessions chunked. Thirteen adapter
 revisions (a3.1–a3.13) driven by five receipts; end state: 3,485 canonical
 files, 0 pairing violations, CI-enforced, byte-deterministic.
 
+## Appendix C — worked example: gemini-cli (adapter v1 SHIPPED 2026-08-02)
+
+**Version-skew rule applied**: local natives held only the legacy `logs.json`
+prompt log — the CURRENT CLI (0.55-nightly) writes transcript-grade
+`chats/session-<ts>-<id>.jsonl` via chatRecordingService. With zero local
+corpus for the current format, the protocol's real-corpus rule was satisfied
+by GENERATING one: a headless `npx @google/gemini-cli -p` run
+(`GEMINI_CLI_TRUST_WORKSPACE=true`) produced real sessions incl. a subagent
+transcript (`chats/<sessionId>/<subagentId>.jsonl`, same format).
+
+**Format** (grounded in `chatRecordingTypes.ts` + real records): a mini
+event-sourced log — line 1 = session metadata header; `{$set:{...}}` patch
+records (metadata AND message-array patches); typed MessageRecords where a
+re-appended `id` SUPERSEDES the earlier record (tool results arrive by
+update). Files cap at 50 messages, so the adapter buffers per file:
+keep-last-by-id at first-seen order, `$set.messages` joining the same
+resolution. `gemini` records embed `toolCalls` WITH results; `thoughts`
+{subject, description} and per-message `model`/`tokens` ride along.
+
+**Adapter** (canonTranslate a3.16→a3.17): user → user Message; gemini →
+assistant (thoughts → thinking blocks, content, toolCalls → `tool_use`) + one
+paired user tool_result message from the embedded results (missing → synthetic
+marked error); model/tokens → model/usage provenance. Hardening find:
+user records whose parts are all Gemini-dialect `functionResponse` are the
+WIRE-level duplicate of the embedded results with NON-matching ids — pairing
+them is impossible; they sidecar verbatim (a3.17). Legacy `logs.json` stays
+native-only, listed visibly.
+
+**Acceptance: lint 0 problems, deterministic (run 2 = 0 translated), receipt =
+7 canonical records (10 thinking blocks, 4 tool_use, and per-message model
+provenance capturing a mid-session 3.5-flash → 3.1-pro switch — canon's
+headline property shown on foreign data). Cost: 2 revisions, ~1.5h.**
+Deferred visibly: session-id extraction from `session-<ts>-<shortId>`
+basenames (pull works by basename prefix today).
+
 ## Appendix B — worked example: grok-build (adapter v1.1 SHIPPED 2026-08-02)
 
 **Protocol lesson learned here, now a rule:** the initial survey sampled one

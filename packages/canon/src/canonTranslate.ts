@@ -48,7 +48,7 @@ export async function canonTranslate(o: CanonTranslateOptions = {}): Promise<Can
 const MANIFEST_PATH = path.join(HOME, '.canon', 'translate-manifest.json');
 const MAX_BYTES = 50 * 1024 * 1024;
 const PART_BYTES = 25 * 1024 * 1024;
-const SCRIPT_VERSION = 'a3.15'; // bump to force full re-translate
+const SCRIPT_VERSION = 'a3.17'; // bump to force full re-translate
 
 const MESSAGE_TYPES = new Set(['user', 'assistant', 'system', 'file-history-snapshot']);
 
@@ -243,7 +243,7 @@ function toCanonClaude(rec: any, ctx: Ctx): { canon?: any; event?: any } {
 }
 
 // ── translate one logical native file ──────────────────────────────────────
-async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-cortex' | 'grok-build') {
+async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-cortex' | 'grok-build' | 'gemini-cli') {
   if (manifest[lf.rel] === lf.sig) { unchanged++; return; }
   const st = (stats[harness] ??= { files: 0, messages: 0, events: 0 });
   const destRel = path.join('canon', lf.rel);
@@ -299,6 +299,7 @@ async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-co
   // always writes "[interrupted]" results (this session is the counterexample).
   let ccOpen: { id: string; name?: string }[] = [];
   const grokTurns = new Map<string, number>(); // grok-build: per-session prompt turn counter
+  const gmBuf: { rec: any; line: string; lineNo: number; blob: string }[] = []; // gemini-cli: buffered (supersede-by-id)
   // last-seen valid native timestamp — fallback for synthetic repair records
   // whose stranding/current source record carries none (e.g. Claude Code's
   // file-history-snapshot records: {type,messageId,snapshot,isSnapshotUpdate},
@@ -410,6 +411,15 @@ async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-co
       continue;
     }
     if (rec && rec.timestamp) lastTs = rec.timestamp; // track for synthetic-record fallback
+    if (harness === 'gemini-cli') {
+      // Buffered — the chats format is a mini event-sourced log (see
+      // HARNESS_ONBOARDING.md Appendix C): header + {$set:{...}} patches +
+      // typed MessageRecords where a RE-APPENDED id SUPERSEDES the earlier
+      // record (tool results arrive via update). Files cap at 50 messages
+      // (MAX_HISTORY_MESSAGES) so buffering is bounded by construction.
+      gmBuf.push({ rec, line, lineNo, blob });
+      continue;
+    }
     if (harness === 'grok-build') {
       // MIXED-GRADE harness (HARNESS_ONBOARDING.md Appendix B): sessions that
       // carry chat_history.jsonl are TRANSCRIPT-grade (full messages, OpenAI
@@ -590,6 +600,95 @@ async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-co
       emitCanon(rec, lineNo, blob);
     }
   }
+  if (harness === 'gemini-cli' && gmBuf.length) {
+    // Pass 1 — resolve the event-sourced log: typed records supersede by id
+    // (keep-LAST content at FIRST-seen order); messages inside {$set:{messages}}
+    // patches join the same map; header/$set/info/error/warning → sidecar.
+    const order: string[] = [];
+    const latest = new Map<string, { rec: any; lineNo: number; blob: string }>();
+    const takeMsg = (m: any, lineNo: number, blob: string) => {
+      if (!m || typeof m.id !== 'string' || !m.type) return false;
+      if (!latest.has(m.id)) order.push(m.id);
+      latest.set(m.id, { rec: m, lineNo, blob });
+      return true;
+    };
+    for (const { rec, line, lineNo, blob } of gmBuf) {
+      if (rec && typeof rec === 'object' && rec.$set) {
+        for (const m of rec.$set.messages ?? []) takeMsg(m, lineNo, blob);
+        eventTypeCounts['$set'] = (eventTypeCounts['$set'] ?? 0) + 1;
+        events.push(line);
+      } else if (takeMsg(rec, lineNo, blob)) {
+        /* typed message, buffered */
+      } else {
+        eventTypeCounts[rec?.type ?? 'header'] = (eventTypeCounts[rec?.type ?? 'header'] ?? 0) + 1;
+        events.push(line);
+      }
+    }
+    // Pass 2 — emit canonical messages. gemini records embed toolCalls WITH
+    // results: assistant gets thinking (thoughts) + text + tool_use blocks;
+    // one paired user tool_result message follows (missing results become
+    // synthetic marked errors — the established repair pattern).
+    let turn = 0;
+    for (const id of order) {
+      const { rec, lineNo, blob } = latest.get(id)!;
+      const prov = { harness, native: ctx.nativeRel, line: lineNo, ref: blob };
+      const base = { uuid: rec.id, timestamp: rec.timestamp, provenance: prov };
+      const partsToBlocks = (c: any): any[] => {
+        if (typeof c === 'string') return c ? [{ type: 'text', text: c }] : [];
+        if (!Array.isArray(c)) return c && typeof c === 'object' ? [c] : [];
+        return c.map((p: any) => (typeof p === 'string' ? { type: 'text', text: p } : p?.text !== undefined ? { type: 'text', text: p.text } : p)).filter(Boolean);
+      };
+      if (rec.type === 'user') {
+        // functionResponse parts are the WIRE-level duplicate of results the
+        // gemini record already embeds in toolCalls (and their ids differ
+        // from the ToolCallRecord ids, so pairing them is impossible) —
+        // sidecar them verbatim; keep genuine text parts as the message.
+        const raw = Array.isArray(rec.content) ? rec.content : [rec.content];
+        const frOnly = raw.length > 0 && raw.every((p: any) => p && typeof p === 'object' && p.functionResponse);
+        if (frOnly) {
+          eventTypeCounts['user-functionResponse'] = (eventTypeCounts['user-functionResponse'] ?? 0) + 1;
+          events.push(JSON.stringify(rec));
+          continue;
+        }
+        const blocks = partsToBlocks(Array.isArray(rec.content) ? rec.content.filter((p: any) => !(p && typeof p === 'object' && p.functionResponse)) : rec.content);
+        turn++;
+        out.write(JSON.stringify({ ...rec, ...base, type: 'user',
+          message: { role: 'user', content: blocks },
+          timeline: { sessionId: ctx.sessionId, conversationId: ctx.sessionId, turnNumber: turn } }) + '\n');
+        msgCount++;
+      } else if (rec.type === 'gemini') {
+        const blocks: any[] = [];
+        for (const th of rec.thoughts ?? []) {
+          const t = [th.subject, th.description].filter(Boolean).join(': ');
+          if (t) blocks.push({ type: 'thinking', thinking: t });
+        }
+        blocks.push(...partsToBlocks(rec.content));
+        for (const tc of rec.toolCalls ?? []) blocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.args ?? {} });
+        const canon: any = { ...rec, ...base, type: 'assistant',
+          message: { role: 'assistant', content: blocks },
+          timeline: { sessionId: ctx.sessionId, conversationId: ctx.sessionId, turnNumber: Math.max(1, turn) } };
+        if (rec.model) canon.model = { id: rec.model, provider: 'google', apiPattern: 'generate_content' };
+        if (rec.tokens) canon.usage = { inputTokens: rec.tokens.input ?? 0, outputTokens: rec.tokens.output ?? 0, cache: { cacheReadTokens: rec.tokens.cached } };
+        out.write(JSON.stringify(canon) + '\n');
+        msgCount++;
+        if ((rec.toolCalls ?? []).length) {
+          const results = (rec.toolCalls ?? []).map((tc: any) => tc.result != null
+            ? { type: 'tool_result', tool_use_id: tc.id, content: typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result) }
+            : { type: 'tool_result', tool_use_id: tc.id, is_error: true, content: '[canon repair: no result was recorded for this call]' });
+          if ((rec.toolCalls ?? []).some((tc: any) => tc.result == null)) orphanRepairs++;
+          out.write(JSON.stringify({ uuid: `gmr-${rec.id}`, timestamp: rec.timestamp, type: 'user',
+            message: { role: 'user', content: results },
+            timeline: { sessionId: ctx.sessionId, conversationId: ctx.sessionId, turnNumber: Math.max(1, turn) },
+            provenance: prov }) + '\n');
+          msgCount++;
+        }
+      } else {
+        // info / error / warning notices → sidecar
+        eventTypeCounts[rec.type] = (eventTypeCounts[rec.type] ?? 0) + 1;
+        events.push(JSON.stringify(rec));
+      }
+    }
+  }
   // EOF flush: tail in-flight calls are deliberately left in ccOpen (undrained)
   // — verify's tail window allows them; the next sync completes the pair.
   flushAsst();
@@ -650,6 +749,21 @@ spec: \`docs/CANON.md\`). Derived from /native by \`canon-translate\`; re-deriva
 ## nexus-cortex → canon
 Identity + \`provenance\` stamp (the harness's native format IS canon).
 
+## gemini-cli → canon (transcript-grade, chats format)
+Per-session \`chats/session-*.jsonl\` (current CLI; subagent files under
+\`chats/<sessionId>/\` share the format) — a mini event-sourced log: header +
+\`{$set:{...}}\` patches + typed MessageRecords where a re-appended \`id\`
+SUPERSEDES the earlier record (keep-last content at first-seen order; messages
+inside \`$set.messages\` join the same resolution). \`user\` → user Message
+(Parts→blocks); \`gemini\` → assistant: \`thoughts\` (subject: description) →
+thinking blocks + content + \`toolCalls\` → \`tool_use\` (args as input), with
+ONE paired user tool_result message following (embedded results; missing
+results become synthetic marked errors); \`model\`/\`tokens\` → model/usage.
+User records whose parts are all \`functionResponse\` (the wire-level duplicate
+of the embedded toolCall results, with non-matching ids) → the event sidecar,
+verbatim — never double-paired. Native ids/timestamps retained. info/error/
+warning notices + header + \`$set\` patches → the event sidecar, verbatim.
+
 ## grok-build → canon (mixed-grade)
 Per-session \`chat_history.jsonl\` (TRANSCRIPT-grade, where present): system →
 SystemMessage; user → user Message (blocks passed through); assistant →
@@ -707,9 +821,11 @@ Until then their absence is stated here rather than implied.
   const claudeFiles = discover(path.join(STORE, 'native', 'claude-code'), 'claude-code');
   const cortexFiles = discover(path.join(STORE, 'native', 'nexus-cortex'), 'nexus-cortex');
   const grokFiles = discover(path.join(STORE, 'native', 'grok-build'), 'grok-build');
+  const geminiFiles = discover(path.join(STORE, 'native', 'gemini-cli'), 'gemini-cli');
   for (const lf of claudeFiles) await translateFile(lf, 'claude-code');
   for (const lf of cortexFiles) await translateFile(lf, 'nexus-cortex');
   for (const lf of grokFiles) await translateFile(lf, 'grok-build');
+  for (const lf of geminiFiles) await translateFile(lf, 'gemini-cli');
 
   const translated = Object.values(stats).reduce((n, s) => n + s.files, 0);
   const repairNote = dupResults + orphanRepairs > 0 ? `, ${orphanRepairs} orphan-repair(s), ${dupResults} dup result(s) dropped` : '';
@@ -730,7 +846,7 @@ Until then their absence is stated here rather than implied.
     `# Translation census (regenerated by canon-translate; counts are per-run deltas)\n\n` +
     `| harness | files (this run) | messages | events |\n|---|---|---|---|\n${statLines || '| — | 0 | 0 | 0 |'}\n\n` +
     `Sidecar event records this run:\n${eventLines || '- none'}\n\n` +
-    `## Native-only (no adapter yet — visible, not silent)\n- gemini-cli\n` +
+    `## Native-only (no adapter yet — visible, not silent)\n- gemini-cli legacy \`logs.json\` prompt logs (pre-chats versions — metadata stays native)\n` +
     `- nexus-cortex \`*.json\` metadata files (session metadata stays native)\n` +
     `- grok-build \`*.json\` sidecars (prompt_context/summary — metadata stays native)\n\n` +
     `## grok-build (MIXED-GRADE — see docs/HARNESS_ONBOARDING.md Appendix B)\n` +
