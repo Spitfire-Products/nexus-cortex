@@ -17,6 +17,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { renderCompat, sessionToolNames, toolCompatibility, type HarnessName } from './canonTools.js';
 
 export interface CanonStoreOptions {
   /** Canon store working clone (default /tmp/canon-store — off-quota; auto-cloned). */
@@ -37,6 +38,8 @@ export interface CanonSession {
 export interface CanonPullOptions extends CanonStoreOptions {
   /** Session uuid (or unique prefix) to materialize. */
   session: string;
+  /** Target harness for the tool-compatibility report (default nexus-cortex — where pull lands). */
+  target?: HarnessName;
   /** Destination directory (default {home}/omniclaude-v4/.cortex/sessions). */
   to?: string;
   /** Overwrite an existing local session file (default false — pull is a branch, never a clobber). */
@@ -153,5 +156,12 @@ export async function canonPull(o: CanonPullOptions): Promise<CanonPullResult> {
   console.log(`[canon-pull] materialized ${s.uuid} (${s.harness}${s.title ? ` — "${s.title}"` : ''})`);
   console.log(`[canon-pull]   ${lines} canonical message(s), ${(s.bytes / 1024).toFixed(0)}KB → ${dest}`);
   console.log(`[canon-pull]   resume with: cortex --resume ${s.uuid} "..."`);
+  // Phase E rung 1: the pull-time tool-ontology compatibility report — the
+  // receiving side learns up front which referenced tools are native, which
+  // map by name, and which need relay/re-expression (P4 ladder).
+  try {
+    const names = await sessionToolNames(dest);
+    if (names.length) console.log(renderCompat(toolCompatibility(names, o.target ?? 'nexus-cortex')));
+  } catch { /* report is best-effort — never block a pull */ }
   return { code: 0, dest, session: s };
 }

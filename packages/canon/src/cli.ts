@@ -8,6 +8,7 @@ import { canonGraph } from './canonGraph.js';
 import { canonInit } from './canonInit.js';
 import { canonList, canonPull } from './canonPull.js';
 import { canonSync } from './canonSync.js';
+import { deriveToolInventory, TOOL_CONCEPTS } from './canonTools.js';
 import { canonTranslate } from './canonTranslate.js';
 
 const USAGE = `nexus-canon — portable agent memory in a git repo you own
@@ -21,6 +22,7 @@ Verbs:
   list [--all] [--project N/A] [--store <dir>]  list canon sessions
   pull <uuid> [--to <dir>] [--force] [--store <dir>]  materialize a session
   artifacts [--dry-run] [--store <dir>]  capture capability artifacts
+  tools [--store <dir>] [--json]      observed tool inventory + cross-harness concept map
   graph [--project <id>] [--merge-graph <path>] [--dry-run] [--store <dir>]
 
 Default store: /tmp/canon-store (override with --store or CANON_REPO env for the remote).
@@ -54,6 +56,16 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       if (!positional) { console.error('usage: nexus-canon pull <sessionUuid> [--to <dir>] [--force]'); return 2; }
       const r = await canonPull({ session: positional, to: opt('--to'), force: flag('--force'), store: opt('--store') });
       return r.code;
+    }
+    case 'tools': {
+      const inv = await deriveToolInventory(opt('--store') ?? '/tmp/canon-store');
+      if (flag('--json')) { console.log(JSON.stringify({ inventory: inv, concepts: TOOL_CONCEPTS }, null, 2)); return 0; }
+      for (const [h, tools] of Object.entries(inv)) {
+        const top = Object.entries(tools).sort((a, b) => b[1] - a[1]);
+        console.log(`${h} (${top.length} distinct): ${top.slice(0, 12).map(([n, c]) => `${n}:${c}`).join(', ')}`);
+      }
+      console.log(`concepts mapped: ${Object.keys(TOOL_CONCEPTS).length} (see TOOL_CONCEPTS via --json)`);
+      return 0;
     }
     case 'artifacts':
       await canonArtifacts({ dryRun: flag('--dry-run'), store: opt('--store') });

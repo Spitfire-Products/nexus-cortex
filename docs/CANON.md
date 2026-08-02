@@ -127,11 +127,17 @@ cortex canon translate  # maintain the canonical line: /native → /canon +
                         # /projections (deterministic, incremental)
 cortex canon list [--project <id>] [--all]
                         # sessions with size, origin harness, recovered title
-cortex canon pull <uuid> [--to <dir>] [--force]
+cortex canon pull <uuid> [--to <dir>] [--force] [--target <harness>]
                         # materialize a session into a native session dir —
-                        # a BRANCH of the canonical line, never a clobber
+                        # a BRANCH of the canonical line, never a clobber.
+                        # Prints the tool-ontology compatibility report:
+                        # which referenced tools are native / name-mapped /
+                        # MCP / unmapped for the receiving harness
 cortex canon artifacts  # capture skills/agents/mcp/plugins/plans/projects as
                         # ArtifactManifest records + store taxonomy bytes
+cortex canon tools [--json]
+                        # observed tool inventory per harness (scanned from
+                        # the canonical line) + the cross-harness concept map
 cortex canon graph [--project <id>] [--merge-graph <graph.json>] [--no-touched]
                         # derive project-scoped knowledge graphs (node-link,
                         # per-edge confidence). Two halves in one graph: the
@@ -148,6 +154,12 @@ both are idempotent and incremental) → `pull` wherever you want to resume. The
 same functions are exported from `@nexus-cortex/core`
 (`canonSync`/`canonTranslate`/`canonPull`/`canonArtifacts`/`canonGraph`) for
 embedding — the CLI and any scheduler run one implementation.
+
+**Configuring the store:** `HARNESSES.json` (store root) declares what `sync`
+captures — one entry per harness, config not code; `projects/ROOTS.json`
+overrides the derived project↔session map (roots / claudeDirs / cortexLabels)
+for dash-ambiguous paths or sessions from other machines. Both are scaffolded
+by `canon init` with inline documentation.
 
 **Onboarding a new harness:** capture is one `HARNESSES.json` entry; the
 translation adapter is the one per-harness task — protocol, defect-class

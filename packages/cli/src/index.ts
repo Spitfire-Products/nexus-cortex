@@ -883,14 +883,31 @@ canon
   });
 
 canon
+  .command('tools')
+  .description('Observed tool inventory per harness + the cross-harness concept map (Phase E rung 1)')
+  .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
+  .action(async (opts) => {
+    const globalOpts = program.opts();
+    const { deriveToolInventory, TOOL_CONCEPTS } = await import('@nexus-cortex/core');
+    const inv = await deriveToolInventory(opts.store ?? '/tmp/canon-store');
+    if (globalOpts.json) { console.log(JSON.stringify({ inventory: inv, concepts: TOOL_CONCEPTS }, null, 2)); return; }
+    for (const [h, tools] of Object.entries(inv)) {
+      const top = Object.entries(tools as Record<string, number>).sort((a, b) => b[1] - a[1]);
+      console.log(`${h} (${top.length} distinct): ${top.slice(0, 12).map(([n, c]) => `${n}:${c}`).join(', ')}`);
+    }
+    console.log(`concepts mapped: ${Object.keys(TOOL_CONCEPTS).length} (--json for the full table)`);
+  });
+
+canon
   .command('pull <session>')
   .description('Materialize a canon session into a native session dir (pull = rehydrate; branch, never clobber)')
   .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
   .option('--to <dir>', 'destination dir (default ~/omniclaude-v4/.cortex/sessions)')
   .option('--force', 'overwrite an existing local session file')
+  .option('--target <harness>', 'harness for the tool-compatibility report (default nexus-cortex)')
   .action(async (session, opts) => {
     const globalOpts = program.opts();
-    await canonPullCmd({ session, to: opts.to, force: opts.force, store: opts.store, json: globalOpts.json });
+    await canonPullCmd({ session, to: opts.to, force: opts.force, store: opts.store, target: opts.target, json: globalOpts.json });
   });
 
 // Tmux terminal integration commands
