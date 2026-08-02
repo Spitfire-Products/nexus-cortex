@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.55.0] - 2026-08-02
+
+### Added
+- **Two new harness adapters — all four captured harnesses now translate.**
+  grok-build sessions (`chat_history.jsonl`: xAI reasoning → thinking blocks, OpenAI
+  `tool_calls` → `tool_use`, per-message model provenance; telemetry events → sidecars)
+  and gemini-cli sessions (the current `chats/*.jsonl` event-sourced format with
+  supersede-by-id updates: thoughts → thinking blocks, embedded tool calls + results →
+  paired `tool_use`/`tool_result`, per-message model/usage — mid-session model switches
+  captured). Onboarding runbook: **[HARNESS_ONBOARDING.md](docs/HARNESS_ONBOARDING.md)**.
+- **File-history snapshots in the harness.** File-mutating tool calls are checkpointed
+  content-addressably and recorded as `file-history-snapshot` records in the session
+  JSONL (Claude Code parity) — canon's graph consumes them as write evidence.
+- **The history↔code semantic join.** `canon graph` scans session content for
+  session→file `touched` edges (three evidence tiers incl. Bash command parsing at
+  INFERRED confidence), routes cross-project touches to the owning project's graph, and
+  auto-folds a graphify `graph.json` found at the project root. Content-hash guarded —
+  safe on any cron cadence.
+- **Portability.** Project↔session mapping is fully environment-derived with
+  `projects/ROOTS.json` overrides; capture sources are declarative via
+  `HARNESSES.json` — adding a harness to capture is configuration, not code.
+
 ## [4.54.1] - 2026-08-02
 
 ### Added
