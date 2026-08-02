@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.54.1] - 2026-08-02
+
+### Added
+- **`nexus-canon` 1.0.0 — the canon pipeline as a standalone package.** Portable agent
+  memory without the harness: `npm i -g nexus-canon` gives you `init` / `sync` /
+  `translate` / `list` / `pull` / `artifacts` / `graph` as a tiny, dependency-free
+  install (Node built-ins + `@nexus-cortex/types` only — no provider SDKs).
+  `@nexus-cortex/core` and the `cortex canon` verbs now re-export the same package,
+  so the harness, schedulers, and standalone users run one implementation.
+
 ## [4.54.0] - 2026-08-02
 
 ### Added

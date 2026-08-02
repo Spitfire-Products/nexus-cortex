@@ -87,7 +87,7 @@ jobs:
           DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: |
           set -euo pipefail
-          for pkg in types core executors server cli meta; do
+          for pkg in types canon core executors server cli meta; do
             dir="packages/$pkg"
             if [ ! -d "$dir" ]; then
               echo "::notice::skip $pkg (not in this release)"

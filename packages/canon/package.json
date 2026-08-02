@@ -1,0 +1,55 @@
+{
+  "name": "nexus-canon",
+  "version": "1.0.0",
+  "description": "Portable agent memory in a git repo you own — the canonical agent history & memory store (canon): sync, translate, pull, capability artifacts, and project knowledge graphs across AI coding harnesses.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "nexus-canon": "./bin/nexus-canon.js"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@nexus-cortex/types": "^4.54.0"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "keywords": [
+    "agent-memory",
+    "portable-agent-memory",
+    "cross-harness",
+    "agent-handoff",
+    "canonical-history",
+    "agent-context",
+    "session-history",
+    "jsonl",
+    "knowledge-graph",
+    "llm-agent",
+    "agent-harness",
+    "canon"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Spitfire-Products/nexus-cortex.git",
+    "directory": "packages/canon"
+  },
+  "homepage": "https://github.com/Spitfire-Products/nexus-cortex/blob/main/docs/CANON.md",
+  "bugs": {
+    "url": "https://github.com/Spitfire-Products/nexus-cortex/issues"
+  },
+  "license": "Apache-2.0"
+}

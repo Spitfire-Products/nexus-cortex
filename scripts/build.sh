@@ -23,6 +23,7 @@ echo ""
 # Clean all build artifacts
 echo "Cleaning Nexus Cortex build artifacts..."
 rm -rf packages/types/dist \
+       packages/canon/dist \
        packages/executors/dist \
        packages/core/dist \
        packages/server/dist \
@@ -43,6 +44,14 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "[2/6] Building Nexus Cortex Executors (Pass 1 - Partial)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+# Build canon (standalone pipeline; depends only on types)
+echo ""
+echo "[2/8] Building nexus-canon (portable agent memory) — depends on types"
+echo "─────────────────────────────────────────────────────────"
+cd packages/canon
+npm run build
+cd ../..
+
 cd packages/executors
 npm run build || true  # Allow errors - partial build is expected
 cd ../..

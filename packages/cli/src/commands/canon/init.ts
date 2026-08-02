@@ -21,7 +21,7 @@ import {
   STORE_DIRS,
   STORE_README,
   VERIFY_YML,
-} from './scaffoldAssets.js';
+} from 'nexus-canon';
 
 export interface CanonInitOptions {
   /** Target directory (default: current working directory). */
