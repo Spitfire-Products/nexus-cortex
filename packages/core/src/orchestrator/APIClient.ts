@@ -50,6 +50,17 @@ export interface APIResponse {
 
   /** Response headers */
   headers: Record<string, string>;
+
+  /**
+   * xAI server-advertised effective limits (grok-build parity, 2026-08-01):
+   * parsed from x-grok-context-window / x-grok-max-completion-tokens response
+   * headers on the xAI Messages path. Optional and additive — informational
+   * for budget consumers; nothing in the pipeline requires it.
+   */
+  xaiServerLimits?: {
+    contextWindow?: number;
+    maxCompletionTokens?: number;
+  };
 }
 
 /**
@@ -614,6 +625,17 @@ export class APIClient {
     if (request.conversationId) {
       headers['x-grok-conv-id'] = request.conversationId;
     }
+    // grok-build parity (2026-08-01, operator-approved): per-request id for
+    // server-side tracing/dedup — mirrors grok-build's GrokRequestHeaders
+    // (x-grok-req-id alongside x-grok-conv-id). Additive; request content,
+    // thinking round-trip, and cache keying are untouched.
+    headers['x-grok-req-id'] = uuidv4();
+    // Opt-in server-side doom-loop detection (grok-build sampler parity).
+    // OFF by default; when XAI_DOOM_LOOP_CHECK=true the server may flag
+    // reasoning loops (e.g. tail_repetition triggers) which we surface below.
+    if (process.env.XAI_DOOM_LOOP_CHECK === 'true') {
+      headers['x-grok-doom-loop-check'] = 'true';
+    }
 
     const httpResponse = await fetch(modelConfig.api.endpoint, {
       method: 'POST',
@@ -628,6 +650,27 @@ export class APIClient {
 
     const data = await httpResponse.json() as any;
 
+    // grok-build parity: xAI advertises the effective serving limits on
+    // response headers; parse and surface (informational, additive).
+    const xaiCtxHeader = httpResponse.headers.get('x-grok-context-window');
+    const xaiMaxOutHeader = httpResponse.headers.get('x-grok-max-completion-tokens');
+    const xaiServerLimits = (xaiCtxHeader || xaiMaxOutHeader)
+      ? {
+          ...(xaiCtxHeader && Number.isFinite(Number(xaiCtxHeader)) ? { contextWindow: Number(xaiCtxHeader) } : {}),
+          ...(xaiMaxOutHeader && Number.isFinite(Number(xaiMaxOutHeader)) ? { maxCompletionTokens: Number(xaiMaxOutHeader) } : {}),
+        }
+      : undefined;
+    if (xaiServerLimits && process.env.DEBUG === 'true') {
+      console.log(`[APIClient XAI] Server-advertised limits: ${JSON.stringify(xaiServerLimits)}`);
+    }
+
+    // Opt-in doom-loop detection surface: if the server flagged a reasoning
+    // loop on this terminal response, warn loudly. Pass-through only — the
+    // response content is not modified and normal parsing proceeds.
+    if ((data as any)?.doom_loop_check) {
+      console.warn(`[APIClient XAI] Server doom-loop check flagged: ${JSON.stringify((data as any).doom_loop_check).slice(0, 300)}`);
+    }
+
     // Post-process: extract <thinking> tags from text content into separate thinking blocks
     // grok-4-1-fast-reasoning embeds thinking in text as <thinking>...</thinking> tags
     if (data.content && Array.isArray(data.content)) {
@@ -637,7 +680,8 @@ export class APIClient {
     return {
       data,
       status: httpResponse.status,
-      headers: Object.fromEntries(httpResponse.headers.entries())
+      headers: Object.fromEntries(httpResponse.headers.entries()),
+      ...(xaiServerLimits && { xaiServerLimits })
     };
   }
 
@@ -1101,6 +1145,15 @@ export class APIClient {
       // Deferred until we can investigate: possibly needs to be paired with
       // different content-block wiring in ResponsesAPIAdapter, or only applied
       // when we've explicitly asked for reasoning via the `reasoning` param.
+      //
+      // 2026-08-01 root-cause analysis (grok-build comparison): that include is
+      // half of the STATELESS ZDR state model (store:false + full-input replay
+      // of the encrypted blobs, grok-build's default) and must never be mixed
+      // with the server-stored chaining we run here (store:true +
+      // previous_response_id + input slicing) — the regression above is the
+      // empirical proof. Full design + implementation recipe for a proper
+      // opt-in ZDR mode: "DESIGN NOTE — stateless ZDR mode" in
+      // ResponsesAPIAdapter.ts (adapters/).
     }
 
     // Set extracted system context as instructions (enables provider-side caching)
@@ -1146,12 +1199,22 @@ export class APIClient {
     // Bearer auth — standard Responses API transport auth.
     // OpenAI's own Responses API still uses the SDK (R20-proven, unaffected).
     if (isXAI) {
+      // grok-build parity (2026-08-02): x-grok-req-id (per-request trace/dedup)
+      // + opt-in doom-loop check on the Responses path too — the Messages path
+      // already carries these. conv-id sticky routing is handled on Responses
+      // via the `prompt_cache_key` body field (set above), so no conv-id header
+      // here. Additive; body / reasoning round-trip untouched.
+      const xaiRespHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'x-grok-req-id': uuidv4(),
+      };
+      if (process.env.XAI_DOOM_LOOP_CHECK === 'true') {
+        xaiRespHeaders['x-grok-doom-loop-check'] = 'true';
+      }
       const httpResponse = await fetch(modelConfig.api.endpoint, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
+        headers: xaiRespHeaders,
         body: JSON.stringify(responsesRequest),
       });
       if (!httpResponse.ok) {
@@ -1757,6 +1820,16 @@ export class APIClient {
       if (request.conversationId) {
         xaiDefaultHeaders['x-grok-conv-id'] = request.conversationId;
       }
+      // grok-build parity (2026-08-01, operator-approved): per-request id +
+      // opt-in server-side doom-loop detection header, mirroring the
+      // non-streaming path. Additive headers only — the SDK stream event
+      // handling below is untouched. NOTE: server doom_loop_check SSE events
+      // are NOT consumable on this path (the Anthropic SDK drops unknown
+      // event names); detection surfacing is non-streaming only for now.
+      xaiDefaultHeaders['x-grok-req-id'] = uuidv4();
+      if (process.env.XAI_DOOM_LOOP_CHECK === 'true') {
+        xaiDefaultHeaders['x-grok-doom-loop-check'] = 'true';
+      }
       const xaiClient = new Anthropic({
         apiKey,
         baseURL: modelConfig.api.endpoint.replace('/v1/messages', ''), // Strip path, keep base
@@ -2274,7 +2347,20 @@ export class APIClient {
       // Import OpenAI SDK dynamically — set baseURL from model config endpoint
       const OpenAI = (await import('openai')).default;
       const streamBaseURL = modelConfig.api.endpoint.replace(/\/(messages|responses)$/, '');
-      const client = new OpenAI({ apiKey, baseURL: streamBaseURL });
+      // grok-build parity (2026-08-02): x-grok-req-id + opt-in doom-loop check
+      // on the streaming Responses path (SDK carries them via defaultHeaders).
+      // conv-id sticky routing rides prompt_cache_key in the body (set above).
+      const xaiRespStreamHeaders: Record<string, string> = isXAI
+        ? {
+            'x-grok-req-id': uuidv4(),
+            ...(process.env.XAI_DOOM_LOOP_CHECK === 'true' ? { 'x-grok-doom-loop-check': 'true' } : {}),
+          }
+        : {};
+      const client = new OpenAI({
+        apiKey,
+        baseURL: streamBaseURL,
+        ...(Object.keys(xaiRespStreamHeaders).length > 0 && { defaultHeaders: xaiRespStreamHeaders }),
+      });
 
       // Create streaming request
       // Use modelConfig.modelId if available (for alias models like gpt-5.1-reasoning -> gpt-5.1)
@@ -2299,6 +2385,8 @@ export class APIClient {
       // `prompt_cache_key` routes same-session requests to same server for cache hits.
       // NOTE: `include: ["reasoning.encrypted_content"]` triggered empty-output regression —
       // see sendResponsesAPI comment for details. Not sending it for now.
+      // It belongs to the stateless-ZDR state model, not to chaining: full
+      // recipe in "DESIGN NOTE — stateless ZDR mode" (ResponsesAPIAdapter.ts).
       if (isXAI) {
         responsesRequest.store = true;
         if (request.conversationId) {

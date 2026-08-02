@@ -34,6 +34,7 @@ const DEFAULT_OPTIONS: RetryOptions = {
   maxDelayMs: 30000,
   backoffMultiplier: 2,
   jitterFactor: 0.1,
+  rateLimitMaxRetries: 2,
 };
 
 /**
@@ -179,8 +180,13 @@ export class RetryMiddleware implements IRetryExecutor {
         const classification = this.errorClassifier.classify(error);
         errors.push(classification);
 
-        // Check if we should retry
-        const isLastAttempt = attempt === this.options.maxRetries;
+        // Check if we should retry. Rate limits get a lower attempt cap than
+        // transient faults (grok-build port): a 429 that survives two waits
+        // will usually survive a third.
+        const attemptCap = classification.errorType === 'rate_limit'
+          ? Math.min(this.options.maxRetries, this.options.rateLimitMaxRetries ?? this.options.maxRetries)
+          : this.options.maxRetries;
+        const isLastAttempt = attempt >= attemptCap;
         const shouldRetry = classification.isRetryable && !isLastAttempt;
 
         if (!shouldRetry) {

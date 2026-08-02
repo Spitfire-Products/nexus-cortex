@@ -7,6 +7,10 @@ export * from './CortexOrchestrator.js';
 export * from './OrchestratorFactory.js';
 export * from './APIClient.js';
 
+// StructuredOutput (grok-build port): schema-constrained JSON output via a
+// request-scoped synthetic tool (pure module — no registry, no wire changes)
+export * from './structuredOutput.js';
+
 // Sub-Agent System (Phase 2 - Task Agent Implementation)
 export * from './SubAgentTypes.js';
 export * from './SubAgentEventEmitter.js';

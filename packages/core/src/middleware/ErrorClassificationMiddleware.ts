@@ -73,6 +73,25 @@ export class ErrorClassificationMiddleware implements IErrorClassifier {
   ];
 
   /**
+   * Context-window overflow phrasings (grok-build port, 2026-08-01). Kept
+   * deliberately STRICTER than ErrorDetector.isGenericContextError — that
+   * matcher includes the bare word 'context', which would wrongly veto
+   * retrying transient errors like "context deadline exceeded" 503s. These
+   * are a retry VETO: replaying an oversized payload fails identically.
+   */
+  private readonly contextLengthPatterns = [
+    'context length',
+    'context_length_exceeded',
+    'maximum context',
+    'context window',
+    'prompt is too long',
+    'input is too long',
+    'too many tokens',
+    'exceeds the maximum number of tokens',
+    'reduce the length of the messages',
+  ];
+
+  /**
    * Classify an error and provide detailed information
    *
    * @param error - The error to classify
@@ -137,6 +156,15 @@ export class ErrorClassificationMiddleware implements IErrorClassifier {
     const errorMessage = this.normalizeString(error?.message);
     const errorName = this.normalizeString(error?.name);
 
+    // Context-length veto (grok-build port, 2026-08-01): a context-window
+    // overflow is NEVER retryable — replaying the identical payload fails
+    // identically, even when a provider surfaces it under an otherwise
+    // retryable status. The remedy is compaction upstream, not a retry.
+    // Runs BEFORE the status branch deliberately (the one exception to R13).
+    if (this.matchesPattern(errorMessage, errorName, this.contextLengthPatterns)) {
+      return false;
+    }
+
     // R13 (parallel-bench): HTTP status code is AUTHORITATIVE. A 401 with
     // "ECONNRESET" in the body is still an auth error — message patterns must
     // not override it. Only fall back to pattern matching when there is no
@@ -144,6 +172,17 @@ export class ErrorClassificationMiddleware implements IErrorClassifier {
     const statusCode = error?.status || error?.statusCode;
     if (statusCode) {
       return this.retryableStatusCodes.includes(statusCode) || statusCode >= 500;
+    }
+
+    // Raw-fetch provider errors carry no .status property — the status is
+    // embedded in the message as "... (429): body" (xAI Messages, xAI
+    // Responses, Google HTTP, Gemini paths in APIClient). Without this,
+    // provider 429/5xx from those paths were NEVER retried (2026-08 surface
+    // map finding). The strict "(NNN):" shape avoids false positives on
+    // ordinary numbers in error text.
+    const parsedStatus = this.extractStatusFromMessage(errorMessage);
+    if (parsedStatus) {
+      return this.retryableStatusCodes.includes(parsedStatus) || parsedStatus >= 500;
     }
 
     // No status code → fall back to message-pattern matching.
@@ -193,7 +232,8 @@ export class ErrorClassificationMiddleware implements IErrorClassifier {
     // R13 (parallel-bench): status code is AUTHORITATIVE — a 429 with
     // "invalid" in the body is rate_limit, not validation. Pattern matching
     // only applies when there is no status code.
-    const statusCode = error?.status || error?.statusCode;
+    const statusCode = error?.status || error?.statusCode
+      || this.extractStatusFromMessage(errorMessage);
     if (statusCode) {
       if (statusCode === 429) return 'rate_limit';
       if (statusCode === 401 || statusCode === 403) return 'permission';
@@ -233,6 +273,23 @@ export class ErrorClassificationMiddleware implements IErrorClassifier {
    * @param value - The string to normalize
    * @returns Lowercase string or empty string if null/undefined
    */
+  /**
+   * Extract an HTTP status embedded in a raw-fetch error message. Anchored on
+   * the literal "API error" that every raw-fetch throw site uses, so a bare
+   * number in an error body ("Found 400 records") never matches. Covers all
+   * four raw-fetch throw shapes (2026-08-02):
+   *   "XAI Messages API error (429): ..."          -> paren form
+   *   "Google GenerateContent API error (503): ..." -> paren form
+   *   "XAI Responses API error 429: ..."            -> bare form (was a gap)
+   *   "Gemini API error: 429 - ..."                 -> colon form (was a gap)
+   */
+  private extractStatusFromMessage(message: string): number | undefined {
+    const m = /API error[:\s(]*(\d{3})/i.exec(message);
+    if (!m) return undefined;
+    const status = Number(m[1]);
+    return status >= 100 && status <= 599 ? status : undefined;
+  }
+
   private normalizeString(value: any): string {
     return value?.toLowerCase() || '';
   }

@@ -78,6 +78,15 @@ import { classifyApiError } from './apiErrorClassifier.js';
 import { pinStaticSystemPrompt } from './staticSystemPromptPin.js';
 import { hasVisibleAssistantText, shouldForceSynthesis } from './assistantTextPresence.js';
 import { computeToolBudgetSignal, isToolProgressStalled } from './toolBudgetSignal.js';
+import {
+  createStructuredOutputTurnState,
+  ensureStructuredOutputTool,
+  evaluateStructuredOutputCall,
+  finalizeStructuredOutput,
+  isStructuredOutputToolName,
+  type StructuredOutputResult,
+  type StructuredOutputTurnState,
+} from './structuredOutput.js';
 
 // Phase 2.6: MCP Model Management Tools
 import {
@@ -95,6 +104,9 @@ import { InitCortexContext, MemoryWrite, MemoryRecall } from '../tools/context-m
 
 // Phase 2.2.1: Context Management
 import { ContextBudgetManager } from '../conversation/ContextBudgetManager.js';
+import { pruneAgedToolResults } from '../conversation/ToolResultPruner.js';
+import { detectTailRepetition, tailLoopGuardEnabled } from './tailRepetitionDetector.js';
+import { classifyEmptyResponse, emptyResponseNudge } from './emptyResponseClassifier.js';
 
 // Phase 2.5: Tool Execution Integration
 import type { ExecutorRegistry } from '@nexus-cortex/types';
@@ -320,6 +332,15 @@ export interface SendMessageOptions {
   /** User metadata */
   metadata?: Record<string, any>;
 
+  /**
+   * JSON Schema for schema-constrained structured output (grok-build port).
+   * When set, a request-scoped synthetic StructuredOutput tool is injected for
+   * every request of the turn; the model's accepted call surfaces as
+   * `metadata.structuredOutput` (non-streaming) / `message_stop` chunk data
+   * (streaming). Expected to be a top-level `object` JSON Schema.
+   */
+  jsonSchema?: object;
+
   /** Abort signal for cancelling long-running operations (e.g., ESC key in CLI) */
   abortSignal?: AbortSignal;
 
@@ -382,6 +403,11 @@ export interface OrchestratorResponse {
     serverSideTools?: ServerSideToolMetadata;
     turnSummary?: string;
     nextActionPrediction?: string;
+    /** Structured-output capture — present when options.jsonSchema was set. */
+    structuredOutput?: StructuredOutputResult;
+    /** Served-model drift: provider served a different backend than requested. */
+    servedModel?: string;
+    servedModelDrift?: boolean;
   };
 }
 
@@ -464,6 +490,9 @@ export class CortexOrchestrator {
   // in messageHistory — they're sent separately to the API — so the budget must
   // reserve space for them. The old hardcoded estimate (2000) was ~4-5x too low.
   private currentToolTokens: number = 0;
+  /** Active model's context window, captured by ensureHistoryFitsModel for
+   *  the request-build pruning gate (pruneAgedForRequest). */
+  private lastKnownContextWindow: number | undefined;
 
   // Responses API stateful chaining: track last response ID for XAI/OpenAI
   // When set, continuation requests send previous_response_id instead of full history,
@@ -1052,6 +1081,20 @@ export class CortexOrchestrator {
       toolsToUse = this.toolFilter.getFilteredTools(toolsToUse);
     }
 
+    // StructuredOutput (grok-build port): when the caller requested
+    // schema-constrained output, inject the request-scoped synthetic tool.
+    // Appended AFTER server-side detection and the deferred filter so it can
+    // neither trigger endpoint switching nor be stripped; `toolsToUse` is the
+    // variable every request of this turn (initial, retries, EndTurn-gate,
+    // continuations) is prepared from, so one append covers the whole loop —
+    // except the deferred re-filter inside the loop, which re-appends.
+    const structuredOutputState: StructuredOutputTurnState | undefined = options.jsonSchema
+      ? createStructuredOutputTurnState(options.jsonSchema)
+      : undefined;
+    if (structuredOutputState) {
+      toolsToUse = ensureStructuredOutputTool(toolsToUse, structuredOutputState);
+    }
+
     // Reset sequential call counter at start of each user turn
     this.mentorshipMiddleware?.resetSequentialCalls(this.currentSessionId);
 
@@ -1218,7 +1261,7 @@ export class CortexOrchestrator {
     }
 
     // 9. Convert response back to canonical format
-    const convertedResponse = this.gatewayTranslation.convertResponse(
+    let convertedResponse = this.gatewayTranslation.convertResponse(
       apiResponse.data,
       effectiveModel,  // Use effectiveModel (may have switched to Responses API)
       {
@@ -1227,6 +1270,33 @@ export class CortexOrchestrator {
         turnNumber: this.turnNumber + 1
       }
     );
+
+    // Non-streaming tail-repetition doom-loop guard (grok-build port) — OPT-IN,
+    // default OFF. The streaming path aborts mid-stream; on a single response
+    // we detect a repeating thinking tail POST-HOC and resample ONCE (a fresh
+    // sample at temp>0 escapes the attractor). Same flag + detector as the
+    // streaming guard, bounded to one extra call. OFF = byte-identical.
+    if (tailLoopGuardEnabled(effectiveModel.provider)) {
+      const thinkingText = (convertedResponse.messages || [])
+        .flatMap((m: any) => (Array.isArray(m.content) ? m.content : []))
+        .filter((b: any) => b?.type === 'thinking' && typeof b.thinking === 'string')
+        .map((b: any) => b.thinking)
+        .join('\n');
+      const loop = detectTailRepetition(thinkingText);
+      if (loop.looping) {
+        console.warn(`[TailLoopGuard] xAI thinking loop detected (non-streaming, ${loop.trigger}) — resampling once`);
+        apiResponse = await this.apiClient.sendRequest(preparedRequest, effectiveModel);
+        convertedResponse = this.gatewayTranslation.convertResponse(
+          apiResponse.data,
+          effectiveModel,
+          {
+            sessionId: this.currentSessionId,
+            conversationId: this.currentConversationId,
+            turnNumber: this.turnNumber + 1
+          }
+        );
+      }
+    }
 
     // Track Responses API response ID for stateful chaining (XAI, OpenAI)
     // R20a: also track which provider produced it — prevents cross-provider
@@ -1435,10 +1505,22 @@ export class CortexOrchestrator {
           // emit thinking blocks then stop without producing the final
           // answer. Retry ONCE with an explicit completion prompt.
           const hasVisibleText = hasVisibleAssistantText(currentAssistantCanonicalMessage.content);
-          if (!hasVisibleText && !emptyResponseRetryUsed) {
+          // R18b skip-when-captured (2026-08-01): when the caller requested
+          // structured output and a StructuredOutput call was already captured,
+          // an empty visible-text turn is EXPECTED — the model correctly ended
+          // after its final tool call. Nudging it for "no text" would burn an
+          // extra round-trip (observed with haiku in the structured-output
+          // canary). The structured result IS the deliverable, so skip R18b.
+          if (!hasVisibleText && !emptyResponseRetryUsed && !structuredOutputState?.result) {
             emptyResponseRetryUsed = true;
+            // Typed empty-response classification (grok-build port): distinguish
+            // reasoning_only (model reasoned but never answered) from
+            // no_visible_content (nothing at all) for observability + a nudge
+            // tailored to the failure shape. Does NOT change the one-bounded-retry
+            // decision — only the log + nudge text.
+            const emptyClass = classifyEmptyResponse(currentAssistantCanonicalMessage.content);
             console.warn(
-              `[Orchestrator] Empty response detected (no tool_use, no text, iteration=${toolCallIteration}). ` +
+              `[Orchestrator] Empty response detected (${emptyClass.kind}, hadReasoning=${emptyClass.hadReasoning}, iteration=${toolCallIteration}). ` +
               `Retrying once with explicit completion prompt.`,
             );
 
@@ -1480,7 +1562,7 @@ export class CortexOrchestrator {
                 role: 'user',
                 content: [{
                   type: 'text',
-                  text: '<system-reminder>Your previous response had no visible text. Please provide your final answer in plain text now — summarize your findings or complete the requested task. Do not call any more tools.</system-reminder>',
+                  text: `<system-reminder>${emptyResponseNudge(emptyClass.kind)} Do not call any more tools.</system-reminder>`,
                 }],
               },
               timeline: {
@@ -1909,7 +1991,7 @@ export class CortexOrchestrator {
         const processedToolUseIds = new Set<string>();
 
         try {
-          const toolResults = await this.handleToolCalls(toolUseBlocks, abortController.signal);
+          const toolResults = await this.handleToolCalls(toolUseBlocks, abortController.signal, structuredOutputState);
           clearTimeout(timeoutId);
 
           // R21 (2026-05-15): MAX_CONSECUTIVE_ERRORS now counts CONSECUTIVE
@@ -2185,6 +2267,12 @@ export class CortexOrchestrator {
       if (this.config.enableDeferredToolLoading && !isPTCEnabled) {
         const beforeCount = toolsToUse.length;
         toolsToUse = this.toolFilter.getFilteredTools(allTools);
+        // StructuredOutput: the re-filter rebuilds from allTools (which never
+        // contained the request-scoped tool) — re-append so it stays present
+        // on every request of the turn.
+        if (structuredOutputState) {
+          toolsToUse = ensureStructuredOutputTool(toolsToUse, structuredOutputState);
+        }
         if (this.config.debug && toolsToUse.length !== beforeCount) {
           console.log(`[Deferred] Tools re-filtered: ${beforeCount} → ${toolsToUse.length} (${toolsToUse.map(t => t.name).join(', ')})`);
         }
@@ -2513,7 +2601,14 @@ export class CortexOrchestrator {
         const synthCanonicalHistory = this.convertToCanonicalMessages([...this.messageHistory]);
         const synthRequest = this.gatewayTranslation.prepareRequest(
           synthCanonicalHistory,
-          [], // tools suppressed — the model MUST produce text, not call more tools
+          // Tools suppressed — the model MUST produce text, not call more tools.
+          // NOTE (structured-output constraint, 2026-08-02): this is R29a's
+          // plain-text escape hatch for tool-loop EXHAUSTION (30+ calls). A
+          // jsonSchema turn that gets here degrades to text; StructuredOutput
+          // is deliberately NOT re-forced (this terminal synth turn has no
+          // tool-interception, so a StructuredOutput call would go uncaptured —
+          // worse than the graceful text fallback + structuredOutput.valid=false).
+          [],
           effectiveModel,
           {
             temperature: options.parameters?.temperature,
@@ -2695,6 +2790,16 @@ export class CortexOrchestrator {
         // Phase 2.5 Day 2: Multi-turn tool execution metadata
         toolCallIterations: toolCallIteration,
         multiTurnToolExecution: toolCallIteration > 0,
+        // StructuredOutput (grok-build port): surfaced whenever the caller
+        // set options.jsonSchema — deterministic even if the tool was never called.
+        ...(structuredOutputState
+          ? { structuredOutput: finalizeStructuredOutput(structuredOutputState) }
+          : {}),
+        // Served-model drift (2026-08-01): provider served a different backend
+        // than the requested slug (see GatewayTranslationLayer.convertResponse).
+        ...(convertedResponse?.servedModelDrift
+          ? { servedModel: convertedResponse.servedModel, servedModelDrift: true }
+          : {}),
         ...(usedHelperModel ? helperModelMetadata : {}),
         ...(turnSummaryData ? {
           turnSummary: turnSummaryData.summary,
@@ -3024,6 +3129,17 @@ export class CortexOrchestrator {
       toolsToUse = this.toolFilter.getFilteredTools(toolsToUse);
     }
 
+    // StructuredOutput (grok-build port) — streaming mirror of the sendMessage
+    // injection: appended AFTER server-side detection and the deferred filter;
+    // covers every request of the turn via the shared `toolsToUse` variable
+    // (the in-loop deferred re-filter re-appends).
+    const structuredOutputState: StructuredOutputTurnState | undefined = options.jsonSchema
+      ? createStructuredOutputTurnState(options.jsonSchema)
+      : undefined;
+    if (structuredOutputState) {
+      toolsToUse = ensureStructuredOutputTool(toolsToUse, structuredOutputState);
+    }
+
     // Reset sequential call counter at start of each user turn
     this.mentorshipMiddleware?.resetSequentialCalls(this.currentSessionId);
 
@@ -3074,7 +3190,7 @@ export class CortexOrchestrator {
     }
 
     // 7. Stream request (NEW: Use streaming API)
-    const streamingResponse = this.apiClient.streamRequest(preparedRequest, effectiveModel);
+    let streamingResponse = this.apiClient.streamRequest(preparedRequest, effectiveModel);
 
     // CRITICAL: Attach a catch handler to finalMessage immediately to prevent unhandled rejection
     // If stream is interrupted (ESC), the SDK may reject finalMessage after we've exited
@@ -3088,20 +3204,59 @@ export class CortexOrchestrator {
     // Track whether stream completed normally (vs interrupted by ESC/abort)
     let streamCompleted = false;
 
+    // Tail-repetition doom-loop guard (grok-build port, 2026-08-01) — OPT-IN,
+    // default OFF. When XAI_TAIL_LOOP_GUARD=true and the provider is xAI, watch
+    // the thinking channel (chunks already flowing past us — NO edit to the
+    // sacred APIClient reader) for a repeating tail; on a confident loop,
+    // abandon the doomed stream and resample ONCE (a fresh sample at temp>0
+    // usually escapes the attractor — grok-build's own remedy). Bounded to one
+    // resample; when off, the loop body is byte-identical to before.
+    const tailGuardOn = tailLoopGuardEnabled(effectiveModel.provider);
+    let tailResampleUsed = false;
+
     // 8. Yield chunks in real-time
-    try {
-      for await (const chunk of streamingResponse.chunks) {
-        if (this.config.debug) {
-          console.log(`[Orchestrator] Yielding chunk type: ${chunk.type}, delta length: ${chunk.delta?.length || 0}`);
+    while (true) {
+      let tailLoopTrigger: string | null = null;
+      let thinkingBuf = '';
+      let lastTailCheck = 0;
+      try {
+        for await (const chunk of streamingResponse.chunks) {
+          if (this.config.debug) {
+            console.log(`[Orchestrator] Yielding chunk type: ${chunk.type}, delta length: ${chunk.delta?.length || 0}`);
+          }
+          if (tailGuardOn && !tailResampleUsed
+              && (chunk as any).data?.reasoning === true && typeof chunk.delta === 'string') {
+            thinkingBuf += chunk.delta;
+            if (thinkingBuf.length - lastTailCheck >= 400) {
+              lastTailCheck = thinkingBuf.length;
+              const d = detectTailRepetition(thinkingBuf);
+              if (d.looping) { tailLoopTrigger = d.trigger || 'tail_repetition@thinking'; break; }
+            }
+          }
+          yield chunk;
         }
-        yield chunk;
+        if (tailLoopTrigger === null) {
+          streamCompleted = true;
+        }
+      } catch (streamError) {
+        // Stream was interrupted or errored - log but don't throw yet
+        if (this.config.debug) {
+          console.log(`[Orchestrator] Stream interrupted:`, streamError);
+        }
       }
-      streamCompleted = true;
-    } catch (streamError) {
-      // Stream was interrupted or errored - log but don't throw yet
-      if (this.config.debug) {
-        console.log(`[Orchestrator] Stream interrupted:`, streamError);
+
+      if (tailLoopTrigger !== null && !tailResampleUsed) {
+        // One bounded resample: re-issue the identical prepared request (fresh
+        // sample). The abandoned stream's finalMessage rejection is already
+        // caught above; re-point to the new stream.
+        tailResampleUsed = true;
+        console.warn(`[TailLoopGuard] xAI thinking loop detected (${tailLoopTrigger}) — resampling once`);
+        streamingResponse = this.apiClient.streamRequest(preparedRequest, effectiveModel);
+        finalMessageError = null;
+        streamingResponse.finalMessage.catch((err) => { finalMessageError = err; });
+        continue;
       }
+      break;
     }
 
     // 9. Get final accumulated message (SDK accumulates internally)
@@ -3444,7 +3599,7 @@ export class CortexOrchestrator {
 
       try {
         // Execute tools (reuse existing method)
-        const toolResults = await this.handleToolCalls(toolUseBlocks, abortController.signal);
+        const toolResults = await this.handleToolCalls(toolUseBlocks, abortController.signal, structuredOutputState);
         clearTimeout(timeoutId);
 
         // R21 (2026-05-15): same fix as non-streaming path — count consecutive
@@ -3668,6 +3823,11 @@ export class CortexOrchestrator {
         // Re-filter tools after SearchTools discovery (same as sendMessage path)
         if (this.config.enableDeferredToolLoading && !isPTCEnabled) {
           toolsToUse = this.toolFilter.getFilteredTools(allTools);
+          // StructuredOutput: re-filter rebuilds from allTools — re-append the
+          // request-scoped tool (same as the sendMessage continuation path).
+          if (structuredOutputState) {
+            toolsToUse = ensureStructuredOutputTool(toolsToUse, structuredOutputState);
+          }
         }
 
         // Input-slicing for stateful Responses API (same logic as non-streaming path)
@@ -4142,6 +4302,16 @@ export class CortexOrchestrator {
         },
         durationMs: Date.now() - turnStartMs,
         toolCallIterations: toolCallIteration,
+        // StructuredOutput (grok-build port): streaming surface — present
+        // whenever the caller set options.jsonSchema.
+        ...(structuredOutputState
+          ? { structuredOutput: finalizeStructuredOutput(structuredOutputState) }
+          : {}),
+        // Served-model drift (2026-08-01): best-effort on streaming (the
+        // provider model field is present when the SDK final message carries it).
+        ...(convertedResponse?.servedModelDrift
+          ? { servedModel: convertedResponse.servedModel, servedModelDrift: true }
+          : {}),
       },
     } as StreamChunk;
 
@@ -5009,6 +5179,11 @@ export class CortexOrchestrator {
    * - Preserves critical messages (tool calls, recent context)
    */
   private async ensureHistoryFitsModel(model: ModelConfig): Promise<void> {
+    // Capture the active model's context window for request-build-time
+    // pruning (pruneAgedForRequest) — set before any early return so the
+    // gate works even when compaction itself is disabled.
+    this.lastKnownContextWindow = model.limits?.contextWindow;
+
     // Skip if compaction disabled in config
     if (!this.config.autoCompact) {
       return;
@@ -5385,8 +5560,54 @@ export class CortexOrchestrator {
    */
   private async handleToolCalls(
     toolUseBlocks: Array<{ id: string; name: string; input: any }>,
-    signal: AbortSignal
+    signal: AbortSignal,
+    structuredOutputState?: StructuredOutputTurnState
   ): Promise<Array<{ tool_use_id: string; tool_name: string; content: string; is_error?: boolean; metadata?: any }>> {
+    // StructuredOutput (grok-build port): intercept BEFORE any dispatch — the
+    // synthetic tool is request-scoped (never in a registry) and must NEVER
+    // reach a real executor. Each call gets a synthesized tool_result:
+    // co-emission steering (other tools in the same round), corrective
+    // validation errors (bounded retries), or acceptance (valid or fail-open).
+    // Remaining tools are dispatched normally via recursion.
+    if (structuredOutputState && toolUseBlocks.some((t) => isStructuredOutputToolName(t.name))) {
+      const structuredCalls = toolUseBlocks.filter((t) => isStructuredOutputToolName(t.name));
+      const otherCalls = toolUseBlocks.filter((t) => !isStructuredOutputToolName(t.name));
+      // Co-emission = any other tool in the round, or multiple simultaneous
+      // StructuredOutput calls (it must be the single final action).
+      const hasOthersInRound = toolUseBlocks.length > 1;
+
+      const syntheticResults: Array<{ tool_use_id: string; tool_name: string; content: string; is_error?: boolean; metadata?: any }> = [];
+      for (const call of structuredCalls) {
+        const decision = evaluateStructuredOutputCall(
+          structuredOutputState.schema,
+          call.input,
+          structuredOutputState.attempts,
+          hasOthersInRound,
+        );
+        structuredOutputState.attempts = decision.attemptsAfter;
+        if (decision.result) {
+          structuredOutputState.result = decision.result;
+        }
+        if (this.config.debug) {
+          console.log(
+            `[Orchestrator] StructuredOutput call: accepted=${decision.accepted} ` +
+            `attempts=${decision.attemptsAfter} coEmission=${hasOthersInRound}`,
+          );
+        }
+        syntheticResults.push({
+          tool_use_id: call.id,
+          tool_name: call.name,
+          content: decision.toolResultText,
+          is_error: decision.isError,
+        });
+      }
+
+      const otherResults = otherCalls.length > 0
+        ? await this.handleToolCalls(otherCalls, signal)
+        : [];
+      return [...otherResults, ...syntheticResults];
+    }
+
     const results: Array<{ tool_use_id: string; tool_name: string; content: string; is_error?: boolean; metadata?: any }> = [];
 
     if (this.config.debug) {
@@ -7465,7 +7686,48 @@ export class CortexOrchestrator {
     });
 
     // Validate and repair any orphaned tool_use blocks (crash recovery)
-    return this.validateAndRepairMessages(converted);
+    const repaired = this.validateAndRepairMessages(converted);
+    // Age-tiered tool-result pruning on the outgoing request copy (all
+    // request-build call sites flow through here). No-op below the
+    // utilization gate; never touches the cache (pruner clones).
+    return this.pruneAgedForRequest(repaired);
+  }
+
+  /**
+   * Apply age-tiered tool-result pruning to an outgoing canonical request
+   * copy (grok-build port, 2026-08-01). Gated on estimated context
+   * utilization > 50% — below that, the identity function, so ordinary
+   * conversations keep byte-stable request prefixes for prompt caching. At
+   * high utilization the trade inverts: pruning old tool results is strictly
+   * gentler than the compaction it defers (which rewrites the whole history).
+   *
+   * The context window is captured by ensureHistoryFitsModel (which every
+   * request path calls before converting); when it has not run yet, this is
+   * a no-op.
+   */
+  private pruneAgedForRequest(messages: CanonicalMessage[]): CanonicalMessage[] {
+    const window = this.lastKnownContextWindow;
+    if (!window || window <= 0) return messages;
+
+    let approxChars = 0;
+    for (const m of messages) {
+      for (const b of m.content) {
+        if (b.type === 'text' && b.text) approxChars += b.text.length;
+        else if (b.type === 'thinking' && b.thinking) approxChars += b.thinking.length;
+        else approxChars += JSON.stringify(b)?.length ?? 0;
+      }
+    }
+    const approxTokens = Math.ceil(approxChars / 4) + (this.currentToolTokens || 0);
+    if (approxTokens / window <= 0.5) return messages;
+
+    const pruned = pruneAgedToolResults(messages);
+    if (pruned.prunedCount > 0 && this.config.debug) {
+      console.log(
+        `[Orchestrator Context] Aged tool-result pruning: ${pruned.prunedCount} results, ` +
+        `~${pruned.savedChars} chars removed from request copy (history unchanged)`,
+      );
+    }
+    return pruned.messages;
   }
 
   /**

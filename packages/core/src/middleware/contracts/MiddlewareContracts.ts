@@ -91,7 +91,11 @@ export interface RetryOptions {
   baseDelayMs: number;          // Default: 1000
   maxDelayMs: number;           // Default: 30000
   backoffMultiplier: number;    // Default: 2
-  jitterFactor: number;         // Default: 0.1
+  jitterFactor: number;        // Default: 0.1
+  /** Separate, lower attempt cap for rate-limit (429) errors — a 429 that
+   *  survives two waits usually survives a third; burning the full backoff
+   *  ladder wastes wall-clock (grok-build port, 2026-08-01). Default: 2. */
+  rateLimitMaxRetries?: number;
 }
 
 /**

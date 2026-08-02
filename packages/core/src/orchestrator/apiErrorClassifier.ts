@@ -23,7 +23,14 @@ export function classifyApiError(errorMessage: string): ApiErrorCategory {
     msg.includes('429') ||
     msg.includes('context length exceeded') ||
     msg.includes('maximum context') ||
-    msg.includes('token limit');
+    msg.includes('token limit') ||
+    // Cross-provider overflow phrasings (grok-build port, 2026-08-01 — no
+    // stable error code exists, so providers are matched by message text):
+    msg.includes('context_length_exceeded') ||
+    msg.includes('prompt is too long') ||
+    msg.includes('input is too long') ||
+    msg.includes('exceeds the maximum number of tokens') ||
+    msg.includes('reduce the length of the messages');
   if (isCapacity) return 'capacity';
 
   const isStructural =

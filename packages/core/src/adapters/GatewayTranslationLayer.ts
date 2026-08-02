@@ -15,6 +15,7 @@ import {
 import { ModelConfig } from '../models/ModelConfig.interface.js';
 import { AdapterRegistry } from '../adapters/AdapterRegistry.js';
 import { ToolNamingHandler } from '../adapters/ToolNamingHandler.js';
+import { noteServedModel, formatDriftWarning } from './servedModelDrift.js';
 
 /**
  * Decode HTML entities in tool arguments (recursive).
@@ -150,6 +151,16 @@ export interface ConvertedResponse {
 
   /** Raw provider response (for debugging) */
   rawResponse?: unknown;
+
+  /**
+   * Served-model drift (2026-08-01): the provider's response `model` field
+   * when it differs from the requested wire id (backend aliasing, e.g. xAI
+   * serving grok-4-1-fast-* requests with grok-4.3). Informational only —
+   * budgets are never auto-adjusted from this. Absent when no drift or when
+   * the response carries no model field.
+   */
+  servedModel?: string;
+  servedModelDrift?: boolean;
 }
 
 /**
@@ -390,11 +401,34 @@ export class GatewayTranslationLayer {
     // Extract stop reason
     const stopReason = this.extractStopReason(providerResponse, modelConfig);
 
+    // Served-model drift check (2026-08-01): compare the wire id we sent
+    // (same priority chain as prepareRequest: modelId > openRouterModelId >
+    // id) against the response `model` field. Discovered live on xAI: slugs
+    // are silently served by different backends (grok-4-1-fast-* -> grok-4.3,
+    // grok-code-fast-1 -> grok-build-0.1), so card limits may not match the
+    // serving backend. Warn ONCE per (requested, served) pair per process;
+    // surface additively; NEVER auto-adjust budgets from this signal.
+    const requestedWireId = (modelConfig as any).modelId || (modelConfig as any).openRouterModelId || modelConfig.id;
+    const servedModelId = (providerResponse as any)?.model;
+    let servedModel: string | undefined;
+    let servedModelDrift: boolean | undefined;
+    if (typeof servedModelId === 'string' && typeof requestedWireId === 'string') {
+      const sighting = noteServedModel(requestedWireId, servedModelId);
+      if (sighting.drift) {
+        servedModel = servedModelId;
+        servedModelDrift = true;
+        if (sighting.firstSighting) {
+          console.warn(formatDriftWarning(requestedWireId, servedModelId));
+        }
+      }
+    }
+
     return {
       messages: canonicalMessages,
       usage,
       stopReason,
-      rawResponse: providerResponse
+      rawResponse: providerResponse,
+      ...(servedModelDrift ? { servedModel, servedModelDrift } : {})
     };
   }
 

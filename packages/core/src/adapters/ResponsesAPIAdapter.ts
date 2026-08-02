@@ -21,6 +21,72 @@
  * - Endpoint: /v1/responses (not /v1/chat/completions)
  * - Format: Input items array with typed content blocks
  * - Output: Response object with output items array
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * DESIGN NOTE — stateless ZDR mode (NOT implemented; read before attempting)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The Responses API supports two MUTUALLY EXCLUSIVE state models. This harness
+ * implements only the first:
+ *
+ *   1. SERVER-STORED CHAINING (current): store defaults true; each request
+ *      sends previous_response_id + ONLY the new input items (input slicing).
+ *      The server replays full context INCLUDING the model's prior reasoning
+ *      items — reasoning continuity is server-side and invisible to us.
+ *      Wiring: CortexOrchestrator lastResponseId/lastResponseIdProvider (R20a
+ *      cross-provider guard), messageCountAtLastResponse slicing (initial +
+ *      continuation sites), persisted responsesApiChain for resume-across-
+ *      restart. APIClient sets previous_response_id at both Responses call
+ *      sites (search "Stateful chaining").
+ *
+ *   2. STATELESS ZDR (grok-build's model, per its sampler client.rs
+ *      apply_response_defaults): store:false ("default is true, but that
+ *      breaks ZDR compliance") + include:["reasoning.encrypted_content"].
+ *      Nothing is retained server-side; the FULL conversation is re-sent every
+ *      turn, and reasoning continuity survives because reasoning items return
+ *      as opaque ENCRYPTED blobs the client replays verbatim next turn.
+ *
+ * DO NOT MIX THEM — THIS ALREADY FAILED LIVE ONCE:
+ * - Adding include:reasoning.encrypted_content while chaining was tried and
+ *   caused a real regression (visible output collapsed to ~6 tokens vs ~220
+ *   reasoning on a basic 3-turn test) — see the NOTE at the APIClient
+ *   sendResponsesAPI isXAI block (search "reasoning.encrypted_content").
+ *   Even absent that, it is pure payload waste while chaining (the server
+ *   already has the reasoning), and blob replay alongside
+ *   previous_response_id duplicates chain context — the same failure class
+ *   as the R27 "duplicate content -> empty output" regression that input
+ *   slicing exists to prevent.
+ * - Flipping store:false without the full ZDR plumbing silently severs
+ *   reasoning continuity between tool calls.
+ *
+ * IF ZDR MODE IS EVER NEEDED (compliance requirement, stored-responses
+ * deprecation, or cross-backend conversation portability), implement it as an
+ * opt-in mode (e.g. XAI_RESPONSES_ZDR=true), fully disjoint from chaining:
+ *   a. Request assembly: store:false + include:["reasoning.encrypted_content"];
+ *      NEVER set previous_response_id in this mode; always send full input.
+ *   b. Response conversion (this adapter): preserve returned reasoning items
+ *      (type "reasoning" with encrypted_content) as opaque canonical blocks —
+ *      byte-exact, no summarization, no re-encoding.
+ *   c. Canonical/history layer: the opaque blocks must survive
+ *      convertToCanonicalMessages + JSONL history round-trip verbatim, then be
+ *      re-emitted as input items on the next request. This is ADJACENT TO THE
+ *      PROTECTED THINKING-PRESERVATION SURFACES (see the
+ *      feedback_xai_interleaved_sacred memory + docs/THINKING_GLOSSARY.md) —
+ *      map downstream consumers first and canary before/after.
+ *   d. Compaction policy: encrypted blobs cannot be summarized — decide
+ *      keep-vs-drop explicitly (dropping breaks reasoning continuity for the
+ *      dropped span).
+ *   e. Disable the chain persistence (responsesApiChain) in this mode; resume
+ *      = replay full stored history instead.
+ *   f. Canary: multi-turn tool loop on an xAI Responses model with reasoning,
+ *      assert (i) reasoning blobs round-trip byte-exact, (ii) no
+ *      previous_response_id ever sent, (iii) answer quality parity vs chained
+ *      mode on the same task.
+ * Reference implementation to crib from: grok-build OSS sampler
+ * (github.com/xai-org/grok-build, crates/codegen/xai-grok-sampler/src/
+ * client.rs apply_response_defaults + its Responses L2 transform).
+ * Analysis provenance: 2026-08-01 session ledger
+ * .cortex/bench/r-structured-output-dialect-canary.md +
+ * memory/xai-messages-transport-surface-map.md.
  */
 
 import {

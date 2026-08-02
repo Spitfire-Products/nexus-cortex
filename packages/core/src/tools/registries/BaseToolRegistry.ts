@@ -183,7 +183,7 @@ PARALLEL EXECUTION:
 - Must be sequential: build→test→validate chains, file mutations, package installs
 - Use && to chain sequential commands in a single call
 
-For background execution, set run_in_background: true. Use BashOutput to poll results.`,
+For background execution, set run_in_background: true, then continue with other useful work — check results ONCE with BashOutput when you need them. Never busy-wait by repeatedly running sleep or re-running the same status command while a background task runs.`,
     schema: {
       type: 'object',
       properties: {

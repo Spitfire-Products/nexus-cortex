@@ -33,7 +33,8 @@ messagesRouter.post('/v1/messages', async (req: Request, res: Response, next) =>
       max_tokens,
       temperature,
       top_p,
-      stream
+      stream,
+      json_schema
     } = req.body;
 
     // Model resolution order:
@@ -114,7 +115,13 @@ messagesRouter.post('/v1/messages', async (req: Request, res: Response, next) =>
       modelId: model,
       system,
       ...(toolsToUse !== undefined && { tools: toolsToUse }),
-      ...(Object.keys(parameters).length > 0 && { parameters })
+      ...(Object.keys(parameters).length > 0 && { parameters }),
+      // StructuredOutput (grok-build port): schema-constrained JSON output via
+      // a request-scoped synthetic tool. The captured result comes back as
+      // metadata.structuredOutput (non-streaming) / message_stop data (streaming).
+      ...(json_schema !== undefined && typeof json_schema === 'object' && json_schema !== null
+        ? { jsonSchema: json_schema as object }
+        : {})
     };
 
     // Handle streaming vs non-streaming
