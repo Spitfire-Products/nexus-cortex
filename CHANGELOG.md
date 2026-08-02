@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.55.1] - 2026-08-02
+
+### Added
+- **Tool-ontology compatibility (Phase E rung 1).** `canon pull` prints a per-harness
+  compatibility report (native / name-mapped via the 14-concept cross-harness table /
+  MCP / unmapped — comprehension is never capability-bound); `canon tools` derives the
+  observed tool inventory per harness from the canonical line.
+- **Touched tier 2b.** `file-history-delta` sidecar events contribute EXTRACTED-grade
+  write evidence — covering Bash/interpreter-body mutations of tracked files.
+
 ## [4.55.0] - 2026-08-02
 
 ### Added

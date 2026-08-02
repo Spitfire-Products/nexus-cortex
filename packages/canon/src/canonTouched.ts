@@ -91,7 +91,7 @@ export function bashCommandPaths(cmd: string, cwd: string | undefined, out: Map<
   for (const m of text.matchAll(new RegExp(String.raw`\b(?:cat|head|tail)\s+(?:-\S+\s+)*` + TOKEN, 'g'))) add(m[1]!);
 }
 
-/** Extract touched absolute paths from one canon record. Two tiers:
+/** Extract touched absolute paths from one canon record. Tiers here:
  *  tier 1 — structured tool_use inputs (Read/Edit/Write file_path etc.);
  *  tier 2 — file-history-snapshot trackedFileBackups: the harness's own
  *  checkpoint tracker, which records EVERY mutated file regardless of
@@ -145,9 +145,15 @@ export async function buildTouchedIndex(
   let scanned = 0, cached = 0;
 
   for (const s of sessions) {
-    const sig = 'v3|' + s.parts
+    // Sidecar participates in the signature: tier 2b mines file-history-delta
+    // events from <session>.events.jsonl, so sidecar changes must invalidate.
+    const logicalAbs = s.parts[0]!.replace(/\.part-\d{4}$/, '');
+    const sidecar = logicalAbs.replace(/\.jsonl$/, '.events.jsonl');
+    let sidecarSig = '0:0';
+    try { const st = fs.statSync(sidecar); sidecarSig = `${st.size}:${Math.round(st.mtimeMs)}`; } catch { /* none */ }
+    const sig = 'v4|' + s.parts
       .map((p) => { const st = fs.statSync(p); return `${st.size}:${Math.round(st.mtimeMs)}`; })
-      .join('|');
+      .join('|') + '|' + sidecarSig;
     const hit = cache[s.rel];
     if (hit && hit.sig === sig) {
       byRel.set(s.rel, new Map(Object.entries(hit.files)));
@@ -162,6 +168,21 @@ export async function buildTouchedIndex(
       for await (const line of rl) {
         if (!line.includes('tool_use') && !line.includes('trackedFileBackups')) continue; // cheap pre-filter
         try { recordPaths(JSON.parse(line), files, inferred); } catch { /* verify's job */ }
+      }
+    }
+    // Tier 2b — file-history-delta sidecar events: the harness's per-file
+    // change tracker fires for ANY mutation of a tracked file, including
+    // Bash/interpreter-body writes tier 3 cannot see. Harness-recorded fact
+    // => EXTRACTED-grade; one count per delta event.
+    if (fs.existsSync(sidecar)) {
+      const rl2 = readline.createInterface({ input: fs.createReadStream(sidecar), crlfDelay: Infinity });
+      for await (const line of rl2) {
+        if (!line.includes('file-history-delta')) continue;
+        try {
+          const r = JSON.parse(line);
+          const p = r?.trackingPath;
+          if (typeof p === 'string' && p.startsWith('/')) files.set(p, (files.get(p) ?? 0) + 1);
+        } catch { /* verify's job */ }
       }
     }
     for (const k of files.keys()) inferred.delete(k); // structured evidence wins
