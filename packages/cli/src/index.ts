@@ -865,10 +865,11 @@ canon
   .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
   .option('--project <id>', 'limit to one project')
   .option('--merge-graph <path>', 'fold an external (graphify) node-link graph.json into the output')
+  .option('--no-touched', 'skip the session-content scan (session→file touched edges)')
   .option('--dry-run', 'report what would build; write nothing')
   .action(async (opts) => {
     const globalOpts = program.opts();
-    await canonGraphCmd({ store: opts.store, project: opts.project, mergeGraph: opts.mergeGraph, dryRun: opts.dryRun, json: globalOpts.json });
+    await canonGraphCmd({ store: opts.store, project: opts.project, mergeGraph: opts.mergeGraph, touched: opts.touched, dryRun: opts.dryRun, json: globalOpts.json });
   });
 
 canon

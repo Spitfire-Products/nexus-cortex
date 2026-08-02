@@ -25,3 +25,5 @@ export type { CanonArtifactsOptions, CanonArtifactsResult } from './canonArtifac
 export { canonGraph, deriveProjectSessionMap, sessionProject } from './canonGraph.js';
 export type { CanonGraphOptions, CanonGraphResult, ProjectEntry } from './canonGraph.js';
 export { CANON_VERIFY_MJS, GITATTRIBUTES, STORE_DIRS, STORE_README, VERIFY_YML } from './scaffoldAssets.js';
+export { buildTouchedIndex } from './canonTouched.js';
+export type { TouchedIndex } from './canonTouched.js';

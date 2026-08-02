@@ -132,10 +132,15 @@ cortex canon pull <uuid> [--to <dir>] [--force]
                         # a BRANCH of the canonical line, never a clobber
 cortex canon artifacts  # capture skills/agents/mcp/plugins/plans/projects as
                         # ArtifactManifest records + store taxonomy bytes
-cortex canon graph [--project <id>] [--merge-graph <graph.json>]
+cortex canon graph [--project <id>] [--merge-graph <graph.json>] [--no-touched]
                         # derive project-scoped knowledge graphs (node-link,
-                        # per-edge confidence); --merge-graph folds an external
-                        # code graph (e.g. graphify) into the same structure
+                        # per-edge confidence). Two halves in one graph: the
+                        # HISTORY half (sessions, artifacts, and session->file
+                        # `touched` edges scanned from tool-call content —
+                        # incremental, cached) and the CODE half (a graphify
+                        # graph.json at <project-root>/graphify-out/ is folded
+                        # in automatically; --merge-graph overrides). Cross-
+                        # project touches route to the owning project's graph.
 ```
 
 Typical loop: `init` once → `sync && translate` on a schedule (cron-friendly:

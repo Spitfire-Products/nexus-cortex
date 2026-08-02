@@ -8,7 +8,10 @@ provider, and any harness. This package is the standalone pipeline: scaffold a
 store, sync native harness session files into it, maintain the canonical line,
 and pull sessions back out wherever you want to resume. Capability artifacts
 (skills, agents, MCP configs) and project-scoped knowledge graphs ride the same
-store.
+store — graphs join the history and code halves in one NetworkX node-link file:
+session→file `touched` edges scanned from tool-call content, plus an
+auto-detected [graphify](https://github.com/Graphify-Labs/graphify) code graph
+when present, every edge confidence-tagged.
 
 ```bash
 npm i -g nexus-canon

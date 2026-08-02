@@ -49,9 +49,9 @@ export async function canonListCmd(o: CanonPipelineOptions & { all?: boolean; pr
   if (o.json) console.log(JSON.stringify(sessions, null, 2));
 }
 
-export async function canonGraphCmd(o: CanonPipelineOptions & { project?: string; mergeGraph?: string }): Promise<void> {
+export async function canonGraphCmd(o: CanonPipelineOptions & { project?: string; mergeGraph?: string; touched?: boolean }): Promise<void> {
   const { canonGraph } = await import('@nexus-cortex/core');
-  const result = await canonGraph({ store: o.store, project: o.project, mergeGraph: o.mergeGraph, dryRun: o.dryRun });
+  const result = await canonGraph({ store: o.store, project: o.project, mergeGraph: o.mergeGraph, touched: o.touched, dryRun: o.dryRun });
   if (o.json) console.log(JSON.stringify(result, null, 2));
 }
 

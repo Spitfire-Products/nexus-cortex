@@ -83,3 +83,4 @@ packages/server/.env.example
 # package-lock.json
 # yarn.lock
 **/.addon-tools/
+graphify-out/

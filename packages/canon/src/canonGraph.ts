@@ -31,6 +31,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { discoverCanonSessions, type CanonSession } from './canonPull.js';
+import { buildTouchedIndex } from './canonTouched.js';
 
 const CONFIDENCE_SCORE: Record<string, number> = { EXTRACTED: 1.0, INFERRED: 0.5, AMBIGUOUS: 0.2 };
 
@@ -107,6 +108,8 @@ export interface CanonGraphOptions {
   project?: string;
   /** Path to an external (graphify) node-link graph.json to fold into each project graph. */
   mergeGraph?: string;
+  /** Scan session content for session→file `touched` edges (default true; cached, incremental). */
+  touched?: boolean;
   dryRun?: boolean;
 }
 
@@ -151,6 +154,27 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
   let totalNodes = 0, totalLinks = 0;
   const built: string[] = [];
 
+  // Session-content scan (touched edges) — streamed once per changed session,
+  // cache-served afterwards. Scans ALL mapped sessions (not just the wanted
+  // projects'): cross-project touches route to the OWNING project's graph, so
+  // a foreign session's edges into a wanted project must be discoverable.
+  let touchedIdx: Awaited<ReturnType<typeof buildTouchedIndex>> | undefined;
+  if (o.touched !== false) {
+    const mapped = sessions.filter((s) => sessionProject(projects, s) !== undefined);
+    touchedIdx = await buildTouchedIndex(mapped);
+    console.log(`[canon-graph] touched scan: ${touchedIdx.scanned} session(s) scanned, ${touchedIdx.cached} from cache`);
+  }
+
+  // Touched paths are assigned to their MOST SPECIFIC project root (roots nest:
+  // the workspace root contains the others — longest-match, never first-match).
+  const rootsByLength = Object.values(projects)
+    .map((p) => ({ pid: p.id, prefix: (p.root.endsWith(path.sep) ? p.root : p.root + path.sep) }))
+    .sort((a, b) => b.prefix.length - a.prefix.length);
+  const ownerOf = (abs: string): { pid: string; rel: string } | undefined => {
+    for (const r of rootsByLength) if (abs.startsWith(r.prefix)) return { pid: r.pid, rel: abs.slice(r.prefix.length) };
+    return undefined;
+  };
+
   for (const pid of wanted) {
     const proj = projects[pid];
     if (!proj) continue;
@@ -177,19 +201,104 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
       else edge(nid, projNodeId, 'available_to', 'INFERRED', a._manifestPath);
     }
 
-    // Optional CODE half: fold an external graphify node-link graph (mode A join).
-    if (o.mergeGraph && fs.existsSync(o.mergeGraph)) {
+    // CODE half (mode A): fold an external graphify node-link graph. An explicit
+    // --merge-graph targets the selected project; otherwise AUTO-DETECT the
+    // standard graphify output at the project root (graphify-out/graph.json —
+    // written by `graphify update <root>`), so keeping the code half fresh is
+    // just re-running graphify; the next canon graph build folds it in.
+    const codeGraphPath = o.mergeGraph && (!o.project || o.project === pid)
+      ? o.mergeGraph
+      : path.join(proj.root, 'graphify-out', 'graph.json');
+    let codeHalf: { source: string; nodes: number; links: number } | undefined;
+    if (fs.existsSync(codeGraphPath)) {
       try {
-        const g = JSON.parse(fs.readFileSync(o.mergeGraph, 'utf8'));
-        for (const n of g.nodes ?? []) nodes.push(n); // graphify ids are un-namespaced; canon ids can't collide (namespaced)
-        for (const l of g.links ?? g.edges ?? []) {
+        const g = JSON.parse(fs.readFileSync(codeGraphPath, 'utf8'));
+        const gn = g.nodes ?? [];
+        const gl = g.links ?? g.edges ?? [];
+        for (const n of gn) nodes.push(n); // graphify ids are un-namespaced; canon ids can't collide (namespaced)
+        for (const l of gl) {
           if (l.confidence_score === undefined) l.confidence_score = CONFIDENCE_SCORE[l.confidence ?? 'EXTRACTED'] ?? 1.0;
           links.push(l);
         }
+        codeHalf = { source: codeGraphPath, nodes: gn.length, links: gl.length };
       } catch { /* malformed external graph — skip, lint covers our own outputs */ }
     }
 
-    const graph: any = { directed: true, multigraph: false, graph: {}, nodes, links };
+    // HISTORY↔CODE JOIN: session→file `touched` edges from the content scan.
+    // Edges route to the OWNING project (longest-root-match): every session —
+    // home or foreign — contributes edges for the paths THIS project owns. A
+    // foreign session (homed elsewhere) gets a marked sess: node here
+    // (foreign_home = its own project) so cross-project work is first-class,
+    // not a tally. Target resolution: prefer the code half's FILE-level node
+    // (source_location L1 + label = basename — graphify's file-node shape);
+    // otherwise a lightweight file: node is created so no touch is dropped.
+    // Paths owned by NO mapped project are tallied (unownedPaths), not edged.
+    let touchedStats:
+      | { edges: number; toCodeNodes: number; toFileNodes: number; foreignSessions: number; unownedPaths: number }
+      | undefined;
+    if (touchedIdx) {
+      const fileNodeByPath = new Map<string, string>();
+      for (const n of nodes) {
+        if (/^(sess|art|proj|file):/.test(n.id)) continue; // code-half nodes only
+        if (n.source_file && n.source_location === 'L1' && n.label === path.basename(n.source_file)) {
+          if (!fileNodeByPath.has(n.source_file)) fileNodeByPath.set(n.source_file, n.id);
+        }
+      }
+      touchedStats = { edges: 0, toCodeNodes: 0, toFileNodes: 0, foreignSessions: 0, unownedPaths: 0 };
+      const madeFileNodes = new Map<string, string>();
+      const presentSessionNodes = new Set(nodes.filter((n) => n.id.startsWith('sess:')).map((n) => n.id));
+      // Edges dedupe by (session node, target): dual-lineage copies of one
+      // session share a uuid — overlapping touches keep the MAX weight
+      // (lineages are copies; summing would double-count).
+      const touchedEdges = new Map<string, { source: string; target: string; weight: number; source_file: string }>();
+      for (const s of sessions) {
+        const home = sessionProject(projects, s);
+        if (home === undefined) continue;
+        const files = touchedIdx.byRel.get(s.rel);
+        if (!files || files.size === 0) continue;
+        const sessNodeId = `sess:${s.uuid}`;
+        const sessSource = path.join('canon', s.rel);
+        let touchedHere = false;
+        for (const [abs, count] of files) {
+          const owner = ownerOf(abs);
+          if (!owner) { if (home === pid) touchedStats.unownedPaths++; continue; }
+          if (owner.pid !== pid) continue; // routed to the owning project's graph
+          const rel = owner.rel;
+          let target = fileNodeByPath.get(rel);
+          if (target) touchedStats.toCodeNodes++;
+          else {
+            target = madeFileNodes.get(rel);
+            if (!target) {
+              target = `file:${rel}`;
+              madeFileNodes.set(rel, target);
+              nodes.push({ id: target, label: path.basename(rel), file_type: 'document', source_file: rel, source_location: '' });
+            }
+            touchedStats.toFileNodes++;
+          }
+          if (!presentSessionNodes.has(sessNodeId)) {
+            // Foreign session touching this project's files — first-class, marked.
+            nodes.push({ id: sessNodeId, label: s.title ?? s.uuid.slice(0, 8), file_type: 'document', source_file: path.join('canon', s.rel), source_location: '', harness: s.harness, foreign_home: home });
+            presentSessionNodes.add(sessNodeId);
+            touchedStats.foreignSessions++;
+          }
+          const ek = sessNodeId + '|' + target;
+          const prev = touchedEdges.get(ek);
+          if (prev) prev.weight = Math.max(prev.weight, count);
+          else touchedEdges.set(ek, { source: sessNodeId, target, weight: count, source_file: sessSource });
+          touchedHere = true;
+        }
+        void touchedHere;
+      }
+      for (const e of touchedEdges.values()) {
+        links.push({ source: e.source, target: e.target, relation: 'touched', confidence: 'EXTRACTED', confidence_score: 1.0, source_file: e.source_file, source_location: '', weight: e.weight });
+        touchedStats.edges++;
+      }
+    }
+
+    const meta: any = {};
+    if (codeHalf) meta.code_half = codeHalf;
+    if (touchedStats) meta.touched_stats = touchedStats;
+    const graph: any = { directed: true, multigraph: false, graph: meta, nodes, links };
     if (head) graph.built_at_commit = head;
     totalNodes += nodes.length; totalLinks += links.length;
     built.push(pid);
