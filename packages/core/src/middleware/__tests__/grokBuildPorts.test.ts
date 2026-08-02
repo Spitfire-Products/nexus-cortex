@@ -9,7 +9,7 @@
  *    overflow phrasings.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { ErrorClassificationMiddleware } from '../ErrorClassificationMiddleware.js';
 import { RetryMiddleware } from '../RetryMiddleware.js';
 import { classifyApiError } from '../../orchestrator/apiErrorClassifier.js';
@@ -72,44 +72,31 @@ describe('raw-fetch message status extraction', () => {
 });
 
 describe('rate-limit low cap (RetryMiddleware)', () => {
-  let classifier: ErrorClassificationMiddleware;
-
-  beforeEach(() => {
-    classifier = new ErrorClassificationMiddleware();
-    vi.useFakeTimers();
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  async function runWithTimers<T>(p: Promise<T>): Promise<T> {
-    const settled = p.catch((e) => { throw e; });
-    await vi.runAllTimersAsync();
-    return settled;
-  }
+  // Real timers with sub-millisecond delays — omniclaude's classifier does NOT
+  // set a 60s retryAfterMs for 429 (calculateDelay caps at maxDelayMs), so the
+  // whole retry ladder finishes in a few ms. This avoids the fake-timer +
+  // async-rejection pattern that leaks unhandled rejections and fails CI.
+  const classifier = new ErrorClassificationMiddleware();
+  const fastOpts = { maxRetries: 3, rateLimitMaxRetries: 2, baseDelayMs: 1, maxDelayMs: 2, jitterFactor: 0 };
 
   it('caps 429 retries at rateLimitMaxRetries instead of maxRetries', async () => {
-    const retry = new RetryMiddleware(classifier, {
-      maxRetries: 3, rateLimitMaxRetries: 2, baseDelayMs: 1,
-    });
+    const retry = new RetryMiddleware(classifier, fastOpts);
     const fn = vi.fn().mockRejectedValue(statusError(429, 'Too Many Requests'));
-    await expect(runWithTimers(retry.executeWithRetry(fn, 'op'))).rejects.toThrow('Too Many Requests');
+    await expect(retry.executeWithRetry(fn, 'op')).rejects.toThrow('Too Many Requests');
     expect(fn).toHaveBeenCalledTimes(3); // initial + 2, NOT initial + 3
   });
 
   it('non-rate-limit retryable errors still use the full maxRetries budget', async () => {
-    const retry = new RetryMiddleware(classifier, {
-      maxRetries: 3, rateLimitMaxRetries: 2, baseDelayMs: 1,
-    });
+    const retry = new RetryMiddleware(classifier, fastOpts);
     const fn = vi.fn().mockRejectedValue(statusError(503, 'Service Unavailable'));
-    await expect(runWithTimers(retry.executeWithRetry(fn, 'op'))).rejects.toThrow('Service Unavailable');
+    await expect(retry.executeWithRetry(fn, 'op')).rejects.toThrow('Service Unavailable');
     expect(fn).toHaveBeenCalledTimes(4); // initial + 3
   });
 
   it('context-length errors are thrown immediately with no retry', async () => {
-    const retry = new RetryMiddleware(classifier, { maxRetries: 3, baseDelayMs: 1 });
+    const retry = new RetryMiddleware(classifier, fastOpts);
     const fn = vi.fn().mockRejectedValue(statusError(429, 'context_length_exceeded'));
-    await expect(runWithTimers(retry.executeWithRetry(fn, 'op'))).rejects.toThrow('context_length_exceeded');
+    await expect(retry.executeWithRetry(fn, 'op')).rejects.toThrow('context_length_exceeded');
     expect(fn).toHaveBeenCalledTimes(1);
   });
 });
