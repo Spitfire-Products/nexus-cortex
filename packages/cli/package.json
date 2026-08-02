@@ -1,6 +1,6 @@
 {
   "name": "@nexus-cortex/cli",
-  "version": "4.52.0",
+  "version": "4.53.0",
   "description": "Nexus Cortex CLI - Terminal interface for multi-provider LLM orchestration",
   "main": "dist/index.js",
   "type": "module",
@@ -19,7 +19,7 @@
     "prepack": "node ../../scripts/copy-pkg-cortex-scaffold.mjs"
   },
   "dependencies": {
-    "@nexus-cortex/core": "4.52.0",
+    "@nexus-cortex/core": "4.53.0",
     "chalk": "^4.1.2",
     "cli-spinners": "^2.9.0",
     "commander": "^11.0.0",
@@ -61,7 +61,18 @@
     "gpt",
     "gemini",
     "terminal",
-    "cortex"
+    "cortex",
+    "agent-memory",
+    "portable-agent-memory",
+    "cross-harness",
+    "agent-handoff",
+    "canonical-history",
+    "agent-context",
+    "session-history",
+    "jsonl",
+    "multi-provider",
+    "llm-agent",
+    "agent-harness"
   ],
   "author": "",
   "license": "Apache-2.0",

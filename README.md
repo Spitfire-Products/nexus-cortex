@@ -89,6 +89,7 @@ These folders are created for you on first run, each with a short README. Agent 
 - **Headless and scriptable by design.** No UI required. Pipe JSON, resume sessions by ID, and chain multi-turn agent workflows — the server is a *stateful agent*, not a stateless endpoint. Drop it in a container with secrets in the environment and it's a true one-shot: `npm i -g nexus-cortex` → `cortex "…"`.
 - **An embeddable engine, not a closed app.** The orchestrator, adapters, <!--AUTO-COUNT:tools-->47<!--/AUTO-COUNT--> built-in tools, and middleware are a clean TypeScript library you build on.
 - **A real harness, batteries included.** Parallel sub-agents (`Task`) with per-agent permissions, MCP tool integration (incl. a zero-config headless browser), a sandboxed-artifact toolset (run + inspect real web apps), git/PR tooling, a policy-based permission engine, token-budget + prompt-cache context management, and append-only JSONL sessions with file checkpoints.
+- **Portable agent memory (canon).** Sessions live in a provider-neutral canonical JSONL store — the pattern the field now calls *portable agent memory* / *cross-harness handoff*. History is written once, lossless and append-only, and translated per provider at the edge: switch models mid-session, keep prompt caches warm, and carry context across harnesses. A git-backed backend (`GitHistoryStore`) makes that store a repo you own. See **[Canon](docs/CANON.md)**.
 - **A built-in improvement loop (opt-in).** Build a baseline and a candidate, benchmark both on a graded task set, and gate a keep/discard decision with real statistics — driving the harness's own self-improvement (inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch)).
 
 ## Documentation
@@ -97,6 +98,7 @@ These folders are created for you on first run, each with a short README. Agent 
 |-----|--------------|
 | **[User Guide](docs/user-guide.md)** | The `cortex` CLI in full, running the HTTP server, the REST API, sessions, PR review, production deployment, troubleshooting |
 | **[Architecture](docs/architecture.md)** | Monorepo layout, the orchestrator, providers, tools, sub-agents, auto-research, and the other core systems |
+| **[Canon](docs/CANON.md)** | The canonical history & memory store — portable agent memory, the record format, the translation layer, cross-harness scope |
 | **[Authentication](docs/authentication.md)** | Provider API keys and Claude OAuth setup |
 | **[Configuration](docs/configuration.md)** | Every environment variable, annotated |
 | **[Embed the library](docs/user-guide.md#install)** | Use `@nexus-cortex/core` directly in your own code |

@@ -14,5 +14,7 @@
 
 export { NodeConfigProvider } from './NodeConfigProvider.js';
 export { NodeHistoryStoreAdapter } from './NodeHistoryStoreAdapter.js';
+export { GitHistoryStore } from './GitHistoryStore.js';
+export type { GitHistoryStoreConfig } from './GitHistoryStore.js';
 export { NodeToolExecutorAdapter } from './NodeToolExecutorAdapter.js';
 export { NodePermissionAdapter } from './NodePermissionAdapter.js';

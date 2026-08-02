@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.53.0] - 2026-08-02
+
+### Added
+- **`GitHistoryStore` — a git-backed session history backend.** Canon's session store gains
+  a git backend: canonical session JSONL lives inside a git working clone, each write is a
+  commit, with optional pull-on-read and push-on-write — *your agent memory is a git repo
+  you own*. It decorates the existing `JSONLHistoryStore` (the canonical record format is
+  reused verbatim), is dependency-free, and never mutates your global git config. Exported
+  from `@nexus-cortex/core`. See **[Canon](docs/CANON.md)**.
+- **Portable-agent-memory positioning.** README and npm keywords now name the pattern the
+  field calls *portable agent memory* / *cross-harness handoff*, matching what canon has
+  done since before the term existed.
+
 ## [4.50.2] - 2026-07-24
 
 ### Fixed
