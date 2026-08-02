@@ -48,7 +48,7 @@ export async function canonTranslate(o: CanonTranslateOptions = {}): Promise<Can
 const MANIFEST_PATH = path.join(HOME, '.canon', 'translate-manifest.json');
 const MAX_BYTES = 50 * 1024 * 1024;
 const PART_BYTES = 25 * 1024 * 1024;
-const SCRIPT_VERSION = 'a3.13'; // bump to force full re-translate
+const SCRIPT_VERSION = 'a3.15'; // bump to force full re-translate
 
 const MESSAGE_TYPES = new Set(['user', 'assistant', 'system', 'file-history-snapshot']);
 
@@ -243,7 +243,7 @@ function toCanonClaude(rec: any, ctx: Ctx): { canon?: any; event?: any } {
 }
 
 // ── translate one logical native file ──────────────────────────────────────
-async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-cortex') {
+async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-cortex' | 'grok-build') {
   if (manifest[lf.rel] === lf.sig) { unchanged++; return; }
   const st = (stats[harness] ??= { files: 0, messages: 0, events: 0 });
   const destRel = path.join('canon', lf.rel);
@@ -298,6 +298,7 @@ async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-co
   // no abandoned-CALL repair — built on the wrong assumption that Claude Code
   // always writes "[interrupted]" results (this session is the counterexample).
   let ccOpen: { id: string; name?: string }[] = [];
+  const grokTurns = new Map<string, number>(); // grok-build: per-session prompt turn counter
   // last-seen valid native timestamp — fallback for synthetic repair records
   // whose stranding/current source record carries none (e.g. Claude Code's
   // file-history-snapshot records: {type,messageId,snapshot,isSnapshotUpdate},
@@ -409,6 +410,77 @@ async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-co
       continue;
     }
     if (rec && rec.timestamp) lastTs = rec.timestamp; // track for synthetic-record fallback
+    if (harness === 'grok-build') {
+      // MIXED-GRADE harness (HARNESS_ONBOARDING.md Appendix B): sessions that
+      // carry chat_history.jsonl are TRANSCRIPT-grade (full messages, OpenAI
+      // tool_calls dialect + xAI reasoning + model provenance); sessions
+      // without it are telemetry-only. Record-shape dispatch, per record:
+      //  - prompt_history entries ({prompt, session_id}) -> canonical user Message
+      //  - chat_history entries ({type: system|user|assistant|tool_result})
+      //    -> canonical Messages (thinking/tool_use/tool_result blocks)
+      //  - everything else (events telemetry) -> event sidecar, verbatim (D8)
+      // chat_history records carry NO ids/timestamps: uuid = gbc-<sess>-<line>
+      // (deterministic); timestamp derived from the session dir's uuidv7
+      // (first 48 bits = ms epoch), marked timestamp_source.
+      if (typeof rec.prompt === 'string' && typeof rec.session_id === 'string') {
+        const turn = (grokTurns.get(rec.session_id) ?? 0) + 1;
+        grokTurns.set(rec.session_id, turn);
+        const canon: any = {
+          ...rec,
+          uuid: `gbp-${rec.session_id}-${lineNo}`,
+          type: 'user',
+          message: { role: 'user', content: [{ type: 'text', text: rec.prompt }] },
+          timeline: { sessionId: rec.session_id, conversationId: rec.session_id, turnNumber: turn },
+          provenance: { harness, native: ctx.nativeRel, line: lineNo, ref: blob },
+        };
+        out.write(JSON.stringify(canon) + '\n');
+        msgCount++;
+      } else if (['system', 'user', 'assistant', 'tool_result'].includes(rec.type)) {
+        const segs = ctx.nativeRel.split(path.sep);
+        const sess = segs.length >= 3 ? segs[segs.length - 2]! : ctx.sessionId;
+        let ts = lastTs;
+        const hex = sess.replace(/-/g, '').slice(0, 12);
+        if (/^[0-9a-f]{12}$/.test(hex)) ts = new Date(parseInt(hex, 16)).toISOString();
+        const canon: any = {
+          ...rec,
+          uuid: `gbc-${sess}-${lineNo}`,
+          timestamp: ts,
+          timestamp_source: 'uuidv7-session',
+          timeline: { sessionId: sess, conversationId: sess, turnNumber: Math.max(1, grokTurns.get(sess) ?? 1) },
+          provenance: { harness, native: ctx.nativeRel, line: lineNo, ref: blob },
+        };
+        if (rec.type === 'user') {
+          grokTurns.set(sess, (grokTurns.get(sess) ?? 0) + 1);
+          canon.timeline.turnNumber = grokTurns.get(sess)!;
+          const blocks = Array.isArray(rec.content) ? rec.content : [{ type: 'text', text: String(rec.content ?? '') }];
+          canon.message = { role: 'user', content: blocks };
+        } else if (rec.type === 'assistant') {
+          const blocks: any[] = [];
+          if (rec.reasoning?.text) blocks.push({ type: 'thinking', thinking: rec.reasoning.text });
+          if (typeof rec.content === 'string' && rec.content) blocks.push({ type: 'text', text: rec.content });
+          else if (Array.isArray(rec.content)) blocks.push(...rec.content);
+          for (const tc of rec.tool_calls ?? []) {
+            let input: any;
+            try { input = JSON.parse(tc.arguments); } catch { input = { raw: tc.arguments }; }
+            blocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input });
+          }
+          canon.message = { role: 'assistant', content: blocks };
+          canon.model = { id: rec.model_id ?? 'grok-build', provider: 'xai', apiPattern: 'chat_completions' };
+        } else if (rec.type === 'tool_result') {
+          canon.type = 'user';
+          canon.message = { role: 'user', content: [{ type: 'tool_result', tool_use_id: rec.tool_call_id, content: rec.content }] };
+        } else {
+          // system: canonical SystemMessage — content stays the string it is.
+          canon.content = typeof rec.content === 'string' ? rec.content : JSON.stringify(rec.content ?? '');
+        }
+        out.write(JSON.stringify(canon) + '\n');
+        msgCount++;
+      } else {
+        if (rec.type) eventTypeCounts[rec.type] = (eventTypeCounts[rec.type] ?? 0) + 1;
+        events.push(line);
+      }
+      continue;
+    }
     if (harness === 'nexus-cortex') {
       // Identity — EXCEPT structural repairs the A4 pairing lint demands:
       // (1) wrapped-block normalization: older JSONLHistoryStore versions
@@ -578,6 +650,19 @@ spec: \`docs/CANON.md\`). Derived from /native by \`canon-translate\`; re-deriva
 ## nexus-cortex → canon
 Identity + \`provenance\` stamp (the harness's native format IS canon).
 
+## grok-build → canon (mixed-grade)
+Per-session \`chat_history.jsonl\` (TRANSCRIPT-grade, where present): system →
+SystemMessage; user → user Message (blocks passed through); assistant →
+thinking block (xAI \`reasoning.text\`) + text + \`tool_calls\` (OpenAI flat
+{id,name,arguments}) → \`tool_use\` blocks (arguments JSON-parsed, raw kept on
+failure) + per-message \`model\` {model_id, xai, chat_completions};
+tool_result → user tool_result block. Records carry NO native ids/timestamps:
+uuid = \`gbc-<session>-<line>\` (deterministic), timestamp derived from the
+session dir uuidv7 (first 48 bits = ms epoch), marked \`timestamp_source\`.
+\`prompt_history.jsonl\` → user Messages (\`gbp-<session_id>-<line>\`).
+Per-session \`events.jsonl\` telemetry (tool names/timings/phases, no content)
+→ the \`.events.jsonl\` sidecar, verbatim. All native fields retained (superset).
+
 ## Provenance
 \`provenance.ref\` = git BLOB SHA (12 hex) of the native file (or .part chunk)
 containing the source line — content-stable, so re-translating unchanged natives
@@ -621,8 +706,10 @@ Until then their absence is stated here rather than implied.
 
   const claudeFiles = discover(path.join(STORE, 'native', 'claude-code'), 'claude-code');
   const cortexFiles = discover(path.join(STORE, 'native', 'nexus-cortex'), 'nexus-cortex');
+  const grokFiles = discover(path.join(STORE, 'native', 'grok-build'), 'grok-build');
   for (const lf of claudeFiles) await translateFile(lf, 'claude-code');
   for (const lf of cortexFiles) await translateFile(lf, 'nexus-cortex');
+  for (const lf of grokFiles) await translateFile(lf, 'grok-build');
 
   const translated = Object.values(stats).reduce((n, s) => n + s.files, 0);
   const repairNote = dupResults + orphanRepairs > 0 ? `, ${orphanRepairs} orphan-repair(s), ${dupResults} dup result(s) dropped` : '';
@@ -643,8 +730,16 @@ Until then their absence is stated here rather than implied.
     `# Translation census (regenerated by canon-translate; counts are per-run deltas)\n\n` +
     `| harness | files (this run) | messages | events |\n|---|---|---|---|\n${statLines || '| — | 0 | 0 | 0 |'}\n\n` +
     `Sidecar event records this run:\n${eventLines || '- none'}\n\n` +
-    `## Native-only (no adapter yet — visible, not silent)\n- grok-build\n- gemini-cli\n` +
-    `- nexus-cortex \`*.json\` metadata files (session metadata stays native)\n`);
+    `## Native-only (no adapter yet — visible, not silent)\n- gemini-cli\n` +
+    `- nexus-cortex \`*.json\` metadata files (session metadata stays native)\n` +
+    `- grok-build \`*.json\` sidecars (prompt_context/summary — metadata stays native)\n\n` +
+    `## grok-build (MIXED-GRADE — see docs/HARNESS_ONBOARDING.md Appendix B)\n` +
+    `Sessions carrying chat_history.jsonl are TRANSCRIPT-grade: full canonical\n` +
+    `Messages (thinking from xAI reasoning.text, OpenAI tool_calls -> tool_use,\n` +
+    `tool_result, per-message model provenance). Sessions without it are\n` +
+    `telemetry-only (events sidecar + prompt_history user Messages). chat_history\n` +
+    `records carry no native ids/timestamps: uuids are deterministic\n` +
+    `gbc-<session>-<line>; timestamps derive from the session uuidv7.\n`);
   writeIfChanged(path.join(STORE, 'canon', 'MAPPING.md'), MAPPING_MD);
   writeIfChanged(path.join(STORE, 'projections', 'nexus-cortex', 'PROJECTIONS.md'), PROJECTIONS_MD);
   }

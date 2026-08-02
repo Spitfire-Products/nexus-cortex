@@ -87,8 +87,15 @@ export function discoverCanonSessions(store: string): CanonSession[] {
   for (const [logical, parts] of groups) {
     parts.sort();
     const rel = path.relative(root, logical);
-    const uuid = path.basename(rel, '.jsonl');
+    let uuid = path.basename(rel, '.jsonl');
+    // Dir-per-session envelopes (grok-build: <uuid>/chat_history.jsonl) name
+    // the session by DIRECTORY; adopt the parent when the basename isn't
+    // uuid-ish and the parent is. (claude-code subagents live under a
+    // 'subagents' dir — non-uuid parent — and keep their basename ids.)
+    const parent = path.basename(path.dirname(rel));
+    if (!/^[0-9a-f]{8}-/i.test(uuid) && /^[0-9a-f]{8}-[0-9a-f-]{10,}$/i.test(parent)) uuid = parent;
     const bytes = parts.reduce((n, p) => n + fs.statSync(p).size, 0);
+    if (bytes === 0) continue; // empty canon mains (telemetry-only grok sessions) — nothing to pull
     let title: string | undefined;
     const eventsPath = logical.replace(/\.jsonl$/, '.events.jsonl');
     if (fs.existsSync(eventsPath)) {

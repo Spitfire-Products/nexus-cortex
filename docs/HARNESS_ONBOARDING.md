@@ -137,7 +137,33 @@ transcripts in per-session dirs; >50MB sessions chunked. Thirteen adapter
 revisions (a3.1–a3.13) driven by five receipts; end state: 3,485 canonical
 files, 0 pairing violations, CI-enforced, byte-deterministic.
 
-## Appendix B — worked example: grok-build (surveyed 2026-08-02, adapter pending)
+## Appendix B — worked example: grok-build (adapter v1.1 SHIPPED 2026-08-02)
+
+**Protocol lesson learned here, now a rule:** the initial survey sampled one
+project's sessions and classified the harness telemetry-grade — then the first
+full-corpus translate surfaced `chat_history.jsonl` in other sessions:
+**transcript-grade content the survey missed**. Persistence grade can vary
+per-session and per-version; enumerate the complete per-session file roster
+across MULTIPLE projects and harness versions before classifying. Grade:
+**MIXED** — transcript where `chat_history.jsonl` exists, telemetry otherwise.
+
+**Shipped adapter (canonTranslate a3.15)**: `chat_history.jsonl` → full
+canonical Messages — system → SystemMessage; user blocks pass through;
+assistant → thinking block (xAI `reasoning.text`) + text + OpenAI flat
+`tool_calls {id,name,arguments}` → `tool_use` blocks (arguments JSON-parsed) +
+per-message `model` provenance; `tool_result` → user tool_result block. No
+native ids/timestamps → deterministic `gbc-<session>-<line>` uuids +
+timestamps derived from the session dir's uuidv7 (marked `timestamp_source`).
+`prompt_history.jsonl` → user Messages; `events.jsonl` telemetry → event
+sidecar verbatim. Session discovery handles the dir-per-session envelope
+(session id = parent dir when the basename isn't uuid-ish — found by the
+resume receipt, not the lint). **Acceptance: lint 0 problems (324 records),
+deterministic (run 2 = 0 translated), CI green, receipt = real session pulled
+as 33 canonical records (8 assistant msgs, 8 thinking blocks, 20 tool_use)
+into a cortex-resumable file. Hardening cost: 2 adapter revisions
+(a3.14→a3.15) + 1 discovery fix, ~2 hours.**
+
+### Original survey (kept for the record — note what it missed)
 
 Evidence: real sessions at `~/.grok/sessions/` + the OSS source
 (github.com/xai-org/grok-build, Rust).
