@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.55.2] - 2026-08-03
+
+### Added
+- **Arg-schema morphisms (Phase E rung 2).** `morphToolCall(call, source, target)`
+  re-expresses a tool call in the target harness's argument dialect via the
+  empirically-seeded `ARG_MORPHISMS` table — renames applied, unsupported fields
+  dropped and reported (never silent), each morphism graded observed/spec/unverified.
+  The `canon pull` compatibility report now shows per-mapped-tool arg fidelity.
+- **Touched tier 3b.** Interpreter-body write parsing (python `open(w/a)`/`write_text`,
+  node `writeFileSync` literals, effective-cwd resolution) contributes AMBIGUOUS-grade
+  touched evidence — the third evidence channel.
+
 ## [4.55.1] - 2026-08-02
 
 ### Added

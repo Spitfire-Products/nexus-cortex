@@ -45,6 +45,173 @@ export const TOOL_CONCEPTS: Record<string, Partial<Record<HarnessName, string[]>
   skill:        { 'claude-code': ['Skill'], 'nexus-cortex': ['Skill'] },
 };
 
+/**
+ * Rung 2 — arg-schema morphisms. Canonical field dialect = claude-code's
+ * (canon IS the Anthropic wire shape; cortex is field-identical, verified).
+ * Seeded EMPIRICALLY from the observed local four-harness corpus (2026-08-03
+ * scan: claude-code 34 tools/6.4k calls; cortex 12; grok-build 4; gemini 11).
+ * evidence grades: 'observed' = field names seen in real calls;
+ * 'spec' = read from the harness's published tool schema, not yet observed;
+ * 'unverified' = name-mapped at rung 1 but arg shape unconfirmed either way.
+ */
+export interface ArgMorph {
+  /** Target tool name this morphism renders into. */
+  tool: string;
+  /** canonical field → target field (identity fields omitted). */
+  rename?: Record<string, string>;
+  /** Canonical fields with no target equivalent — reported, never silently lost. */
+  drop?: string[];
+  /** Target-required fields canon can't supply — value is a note/default hint. */
+  require?: Record<string, string>;
+  evidence: 'observed' | 'spec' | 'unverified';
+}
+
+export const ARG_MORPHISMS: Record<string, { canonical: string[]; byHarness: Partial<Record<HarnessName, ArgMorph>> }> = {
+  shell: {
+    canonical: ['command', 'description', 'timeout', 'run_in_background'],
+    byHarness: {
+      'claude-code': { tool: 'Bash', evidence: 'observed' },
+      'nexus-cortex': { tool: 'Bash', evidence: 'observed' },
+      'grok-build': { tool: 'run_terminal_command', drop: ['timeout', 'run_in_background'], evidence: 'observed' },
+      'gemini-cli': { tool: 'run_shell_command', drop: ['timeout', 'run_in_background'], evidence: 'observed' },
+    },
+  },
+  read_file: {
+    canonical: ['file_path', 'offset', 'limit'],
+    byHarness: {
+      'claude-code': { tool: 'Read', evidence: 'observed' },
+      'nexus-cortex': { tool: 'Read', evidence: 'observed' },
+      'grok-build': { tool: 'read_file', rename: { file_path: 'target_file' }, drop: ['offset', 'limit'], evidence: 'observed' },
+      'gemini-cli': { tool: 'read_file', drop: ['offset', 'limit'], evidence: 'observed' },
+    },
+  },
+  write_file: {
+    canonical: ['file_path', 'content'],
+    byHarness: {
+      'claude-code': { tool: 'Write', evidence: 'observed' },
+      'nexus-cortex': { tool: 'Write', evidence: 'observed' },
+      'grok-build': { tool: 'write', evidence: 'unverified' },
+      'gemini-cli': { tool: 'write_file', evidence: 'observed' },
+    },
+  },
+  edit_file: {
+    canonical: ['file_path', 'old_string', 'new_string', 'replace_all'],
+    byHarness: {
+      'claude-code': { tool: 'Edit', evidence: 'observed' },
+      'nexus-cortex': { tool: 'Edit', evidence: 'observed' },
+      'grok-build': { tool: 'search_replace', evidence: 'unverified' },
+      // gemini uses expected_replacements (count), not a boolean — different
+      // semantics, so replace_all is dropped rather than faked.
+      'gemini-cli': { tool: 'replace', drop: ['replace_all'], evidence: 'observed' },
+    },
+  },
+  list_dir: {
+    canonical: ['path'],
+    byHarness: {
+      'nexus-cortex': { tool: 'ListDirectory', evidence: 'spec' },
+      'grok-build': { tool: 'list_dir', rename: { path: 'target_directory' }, evidence: 'observed' },
+      'gemini-cli': { tool: 'list_directory', rename: { path: 'dir_path' }, evidence: 'observed' },
+    },
+  },
+  glob: {
+    canonical: ['pattern', 'path'],
+    byHarness: {
+      'claude-code': { tool: 'Glob', evidence: 'observed' },
+      'nexus-cortex': { tool: 'Glob', evidence: 'spec' },
+      'gemini-cli': { tool: 'glob', rename: { path: 'dir_path' }, evidence: 'observed' },
+    },
+  },
+  grep: {
+    canonical: ['pattern', 'path', 'output_mode', 'glob', 'head_limit', '-i', '-A', '-B'],
+    byHarness: {
+      'claude-code': { tool: 'Grep', evidence: 'observed' },
+      'nexus-cortex': { tool: 'Grep', evidence: 'spec' },
+      // grok's grep clones the ripgrep-tool schema — field-identical, observed.
+      'grok-build': { tool: 'grep', evidence: 'observed' },
+      'gemini-cli': { tool: 'search_file_content', drop: ['output_mode', 'glob', 'head_limit', '-i', '-A', '-B'], evidence: 'spec' },
+    },
+  },
+  web_search: {
+    canonical: ['query'],
+    byHarness: {
+      'claude-code': { tool: 'WebSearch', evidence: 'observed' },
+      'nexus-cortex': { tool: 'WebSearch', evidence: 'spec' },
+      'grok-build': { tool: 'web_search', evidence: 'unverified' },
+      'gemini-cli': { tool: 'google_web_search', evidence: 'observed' },
+    },
+  },
+  web_fetch: {
+    canonical: ['url', 'prompt'],
+    byHarness: {
+      'claude-code': { tool: 'WebFetch', evidence: 'observed' },
+      'nexus-cortex': { tool: 'WebFetch', evidence: 'spec' },
+      'gemini-cli': { tool: 'web_fetch', evidence: 'unverified' },
+    },
+  },
+  spawn_agent: {
+    canonical: ['description', 'prompt', 'subagent_type'],
+    byHarness: {
+      'claude-code': { tool: 'Agent', evidence: 'observed' },
+      'nexus-cortex': { tool: 'Task', evidence: 'spec' },
+      'gemini-cli': { tool: 'invoke_agent', rename: { subagent_type: 'agent_name', prompt: 'task' }, drop: ['description'], evidence: 'observed' },
+    },
+  },
+  plan_mode: {
+    canonical: [],
+    byHarness: {
+      'claude-code': { tool: 'EnterPlanMode', evidence: 'observed' },
+      'gemini-cli': { tool: 'enter_plan_mode', require: { reason: 'derive from surrounding turn text' }, evidence: 'observed' },
+    },
+  },
+};
+
+export interface MorphResult {
+  status: 'ok' | 'partial' | 'unverified' | 'unmapped';
+  concept?: string;
+  targetTool?: string;
+  input?: Record<string, unknown>;
+  /** Canonical fields that had no target equivalent (with their values' presence). */
+  dropped: string[];
+  notes: string[];
+}
+
+/**
+ * Re-express one tool call in a target harness's arg dialect.
+ * Never silent (D8): drops and unverified grades are surfaced in the result.
+ */
+export function morphToolCall(
+  call: { name: string; input: Record<string, unknown> },
+  source: HarnessName,
+  target: HarnessName,
+): MorphResult {
+  const concept = nameToConcept().get(call.name);
+  const spec = concept ? ARG_MORPHISMS[concept] : undefined;
+  if (!concept || !spec) return { status: 'unmapped', dropped: [], notes: [`no rung-2 morphism for ${call.name}`] };
+  const src = spec.byHarness[source];
+  const dst = spec.byHarness[target];
+  if (!dst) return { status: 'unmapped', concept, dropped: [], notes: [`concept ${concept} has no ${target} tool`] };
+
+  // 1. Normalize source input to canonical fields (invert the source rename).
+  const toCanonical = new Map<string, string>();
+  for (const [canon, tgt] of Object.entries(src?.rename ?? {})) toCanonical.set(tgt, canon);
+  const canonical: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(call.input ?? {})) canonical[toCanonical.get(k) ?? k] = v;
+
+  // 2. Render into the target dialect.
+  const dropSet = new Set(dst.drop ?? []);
+  const input: Record<string, unknown> = {};
+  const dropped: string[] = [];
+  for (const [k, v] of Object.entries(canonical)) {
+    if (dropSet.has(k)) { if (v !== undefined) dropped.push(k); continue; }
+    input[dst.rename?.[k] ?? k] = v;
+  }
+  const notes: string[] = [];
+  for (const [f, hint] of Object.entries(dst.require ?? {})) if (!(f in input)) notes.push(`target requires ${f}: ${hint}`);
+  if (dst.evidence === 'unverified') notes.push(`arg shape for ${target}/${dst.tool} is name-mapped only (unverified)`);
+  const status = dst.evidence === 'unverified' ? 'unverified' : dropped.length || notes.length ? 'partial' : 'ok';
+  return { status, concept, targetTool: dst.tool, input, dropped, notes };
+}
+
 /** name (per harness) → concept, inverted from TOOL_CONCEPTS. */
 function nameToConcept(): Map<string, string> {
   const m = new Map<string, string>();
@@ -86,7 +253,7 @@ export async function deriveToolInventory(store: string): Promise<ToolInventory>
 export interface ToolCompatReport {
   target: HarnessName;
   referenced: string[];
-  mapped: { name: string; concept: string; targetNames: string[] }[];
+  mapped: { name: string; concept: string; targetNames: string[]; argEvidence?: ArgMorph['evidence']; argDrops?: string[] }[];
   native: string[];          // already the target's own names
   mcp: string[];             // MCP tools — attach the server or relay to origin
   unmapped: string[];        // no rung-1 mapping — relay or intent re-expression
@@ -103,7 +270,10 @@ export function toolCompatibility(referenced: string[], target: HarnessName): To
     if (targetNames.has(name)) { report.native.push(name); continue; }
     const concept = n2c.get(name);
     const tn = concept ? TOOL_CONCEPTS[concept]![target] : undefined;
-    if (concept && tn?.length) report.mapped.push({ name, concept, targetNames: tn });
+    if (concept && tn?.length) {
+      const m = ARG_MORPHISMS[concept]?.byHarness[target];
+      report.mapped.push({ name, concept, targetNames: tn, argEvidence: m?.evidence, argDrops: m?.drop });
+    }
     else report.unmapped.push(name);
   }
   return report;
@@ -128,7 +298,13 @@ export function renderCompat(r: ToolCompatReport): string {
   const lines: string[] = [];
   lines.push(`[canon] tool compatibility vs ${r.target}: ${r.referenced.length} referenced — ` +
     `${r.native.length} native, ${r.mapped.length} mapped, ${r.mcp.length} mcp, ${r.unmapped.length} unmapped`);
-  for (const m of r.mapped) lines.push(`  map   ${m.name} → ${m.targetNames.join('|')} (${m.concept})`);
+  for (const m of r.mapped) {
+    const arg = m.argEvidence
+      ? m.argEvidence === 'unverified' ? ' [args unverified]'
+        : m.argDrops?.length ? ` [args ${m.argEvidence}; drops: ${m.argDrops.join(',')}]` : ` [args ${m.argEvidence}]`
+      : '';
+    lines.push(`  map   ${m.name} → ${m.targetNames.join('|')} (${m.concept})${arg}`);
+  }
   if (r.mcp.length) lines.push(`  mcp   ${r.mcp.join(', ')} — attach the MCP server(s) or relay to origin`);
   if (r.unmapped.length) lines.push(`  gap   ${r.unmapped.join(', ')} — no rung-1 mapping: relay to origin harness or let the model re-express intent`);
   lines.push(`  note  comprehension is unaffected either way — canon stores tool RESULTS verbatim; only future agency is capability-bound`);

@@ -288,7 +288,7 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
     // otherwise a lightweight file: node is created so no touch is dropped.
     // Paths owned by NO mapped project are tallied (unownedPaths), not edged.
     let touchedStats:
-      | { edges: number; inferredEdges: number; toCodeNodes: number; toFileNodes: number; foreignSessions: number; unownedPaths: number }
+      | { edges: number; inferredEdges: number; ambiguousEdges: number; toCodeNodes: number; toFileNodes: number; foreignSessions: number; unownedPaths: number }
       | undefined;
     if (touchedIdx) {
       const fileNodeByPath = new Map<string, string>();
@@ -298,13 +298,14 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
           if (!fileNodeByPath.has(n.source_file)) fileNodeByPath.set(n.source_file, n.id);
         }
       }
-      touchedStats = { edges: 0, inferredEdges: 0, toCodeNodes: 0, toFileNodes: 0, foreignSessions: 0, unownedPaths: 0 };
+      touchedStats = { edges: 0, inferredEdges: 0, ambiguousEdges: 0, toCodeNodes: 0, toFileNodes: 0, foreignSessions: 0, unownedPaths: 0 };
       const madeFileNodes = new Map<string, string>();
       const presentSessionNodes = new Set(nodes.filter((n) => n.id.startsWith('sess:')).map((n) => n.id));
       // Edges dedupe by (session node, target): dual-lineage copies of one
       // session share a uuid — overlapping touches keep the MAX weight
       // (lineages are copies; summing would double-count).
-      const touchedEdges = new Map<string, { source: string; target: string; weight: number; source_file: string; inferred?: boolean }>();
+      const RANK: Record<string, number> = { EXTRACTED: 3, INFERRED: 2, AMBIGUOUS: 1 };
+      const touchedEdges = new Map<string, { source: string; target: string; weight: number; source_file: string; conf: string }>();
       for (const s of sessions) {
         const home = sessionProject(projects, s);
         if (home === undefined) continue;
@@ -312,11 +313,13 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
         const sessSource = path.join('canon', s.rel);
         // Pass 1 = tier 1/2 structured evidence (EXTRACTED); pass 2 = tier 3
         // Bash-parsed paths (INFERRED). Structured evidence wins per edge.
-        for (const [files, inferred] of [
-          [touchedIdx.byRel.get(s.rel), false],
-          [touchedIdx.inferredByRel.get(s.rel), true],
-        ] as [Map<string, number> | undefined, boolean][]) {
+        for (const [files, conf] of [
+          [touchedIdx.byRel.get(s.rel), 'EXTRACTED'],
+          [touchedIdx.inferredByRel.get(s.rel), 'INFERRED'],
+          [touchedIdx.ambiguousByRel.get(s.rel), 'AMBIGUOUS'],
+        ] as [Map<string, number> | undefined, string][]) {
           if (!files || files.size === 0) continue;
+          const inferred = conf !== 'EXTRACTED';
           for (const [abs, count] of files) {
             const owner = ownerOf(abs);
             if (!owner) { if (home === pid && !inferred) touchedStats.unownedPaths++; continue; }
@@ -341,15 +344,18 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
             }
             const ek = sessNodeId + '|' + target;
             const prev = touchedEdges.get(ek);
-            if (prev) { if (!inferred) { prev.weight = Math.max(prev.weight, count); prev.inferred = false; } }
-            else touchedEdges.set(ek, { source: sessNodeId, target, weight: count, source_file: sessSource, inferred });
+            if (prev) {
+              if (RANK[conf]! > RANK[prev.conf]!) { prev.conf = conf; prev.weight = count; }
+              else if (RANK[conf] === RANK[prev.conf]) prev.weight = Math.max(prev.weight, count);
+            } else touchedEdges.set(ek, { source: sessNodeId, target, weight: count, source_file: sessSource, conf });
           }
         }
       }
       for (const e of touchedEdges.values()) {
-        const conf = e.inferred ? 'INFERRED' : 'EXTRACTED';
-        links.push({ source: e.source, target: e.target, relation: 'touched', confidence: conf, confidence_score: CONFIDENCE_SCORE[conf], source_file: e.source_file, source_location: '', weight: e.weight });
-        if (e.inferred) touchedStats.inferredEdges++; else touchedStats.edges++;
+        links.push({ source: e.source, target: e.target, relation: 'touched', confidence: e.conf, confidence_score: CONFIDENCE_SCORE[e.conf], source_file: e.source_file, source_location: '', weight: e.weight });
+        if (e.conf === 'EXTRACTED') touchedStats.edges++;
+        else if (e.conf === 'INFERRED') touchedStats.inferredEdges++;
+        else touchedStats.ambiguousEdges++;
       }
     }
 

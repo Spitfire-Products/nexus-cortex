@@ -25,12 +25,14 @@ export interface TouchedIndex {
   byRel: Map<string, Map<string, number>>;
   /** tier-3 (Bash command-string parsing) — heuristic, INFERRED-grade; structured evidence wins */
   inferredByRel: Map<string, Map<string, number>>;
+  /** tier-3b (interpreter-body write idioms in heredocs/-e code) — AMBIGUOUS-grade */
+  ambiguousByRel: Map<string, Map<string, number>>;
   /** sessions actually re-scanned this run (rest served from cache) */
   scanned: number;
   cached: number;
 }
 
-interface CacheEntry { sig: string; files: Record<string, number>; inferred?: Record<string, number> }
+interface CacheEntry { sig: string; files: Record<string, number>; inferred?: Record<string, number>; ambiguous?: Record<string, number> }
 
 const looksLikeFile = (p: string): boolean =>
   !p.endsWith('/') && /\.[A-Za-z0-9]{1,8}$/.test(path.basename(p));
@@ -91,13 +93,31 @@ export function bashCommandPaths(cmd: string, cwd: string | undefined, out: Map<
   for (const m of text.matchAll(new RegExp(String.raw`\b(?:cat|head|tail)\s+(?:-\S+\s+)*` + TOKEN, 'g'))) add(m[1]!);
 }
 
+/**
+ * Tier 3b — parse INTERPRETER BODIES (heredoc scripts, quoted -e code) for
+ * WRITE idioms with string-literal paths. This is exactly the content tier 3
+ * deliberately excludes (heredoc truncation + quote stripping), so it is
+ * heuristic-on-heuristic => AMBIGUOUS-grade downstream. Write idioms only
+ * (reads inside scripts are unbounded noise): python open(p,'w'|'a'),
+ * Path(p).write_text, node writeFileSync/appendFileSync/writeFile.
+ */
+export function interpreterBodyPaths(cmd: string, cwd: string | undefined, out: Map<string, number>): void {
+  const add = (tok: string) => {
+    const p = resolveCandidate(tok, cwd);
+    if (p) out.set(p, (out.get(p) ?? 0) + 1);
+  };
+  for (const m of cmd.matchAll(/\bopen\(\s*['"]([^'"\n]+)['"]\s*,\s*['"][wa]/g)) add(m[1]!);
+  for (const m of cmd.matchAll(/\bPath\(\s*['"]([^'"\n]+)['"]\s*\)\.write_text/g)) add(m[1]!);
+  for (const m of cmd.matchAll(/\b(?:writeFileSync|appendFileSync|writeFile)\(\s*['"]([^'"\n]+)['"]/g)) add(m[1]!);
+}
+
 /** Extract touched absolute paths from one canon record. Tiers here:
  *  tier 1 — structured tool_use inputs (Read/Edit/Write file_path etc.);
  *  tier 2 — file-history-snapshot trackedFileBackups: the harness's own
  *  checkpoint tracker, which records EVERY mutated file regardless of
  *  mechanism (incl. Bash heredocs/redirections/sed -i that tier 1 cannot
  *  see). Harness-recorded fact => EXTRACTED-grade; `version` = intensity. */
-function recordPaths(rec: any, out: Map<string, number>, inferred: Map<string, number>): void {
+function recordPaths(rec: any, out: Map<string, number>, inferred: Map<string, number>, ambiguous: Map<string, number>): void {
   const tf = rec?.snapshot?.trackedFileBackups;
   if (tf && typeof tf === 'object') {
     for (const [key, v] of Object.entries<any>(tf)) {
@@ -119,7 +139,17 @@ function recordPaths(rec: any, out: Map<string, number>, inferred: Map<string, n
     if (typeof b.input.file_path === 'string') candidates.push(b.input.file_path);
     if (typeof b.input.notebook_path === 'string') candidates.push(b.input.notebook_path);
     if (typeof b.input.path === 'string' && looksLikeFile(b.input.path)) candidates.push(b.input.path);
-    if (typeof b.input.command === 'string') bashCommandPaths(b.input.command, typeof rec.cwd === 'string' ? rec.cwd : undefined, inferred);
+    if (typeof b.input.command === 'string') {
+      const cwd = typeof rec.cwd === 'string' ? rec.cwd : undefined;
+      bashCommandPaths(b.input.command, cwd, inferred);
+      // Interpreter bodies resolve against the EFFECTIVE cwd: the dominant
+      // agent pattern is `cd <dir> && python3 - <<EOF`, where the record's
+      // cwd is the session dir, not the interpreter's. Use the last absolute
+      // `cd` in the command when present.
+      let bodyCwd = cwd;
+      for (const m of b.input.command.matchAll(/(?:^|&&|;|\|\|)\s*cd\s+(\/[^\s;&|]+)/g)) bodyCwd = m[1]!;
+      interpreterBodyPaths(b.input.command, bodyCwd, ambiguous);
+    }
     for (const p of candidates) {
       if (!p.startsWith('/')) continue; // relative tool paths lack a reliable base — skip
       out.set(p, (out.get(p) ?? 0) + 1);
@@ -142,6 +172,7 @@ export async function buildTouchedIndex(
 
   const byRel = new Map<string, Map<string, number>>();
   const inferredByRel = new Map<string, Map<string, number>>();
+  const ambiguousByRel = new Map<string, Map<string, number>>();
   let scanned = 0, cached = 0;
 
   for (const s of sessions) {
@@ -151,23 +182,25 @@ export async function buildTouchedIndex(
     const sidecar = logicalAbs.replace(/\.jsonl$/, '.events.jsonl');
     let sidecarSig = '0:0';
     try { const st = fs.statSync(sidecar); sidecarSig = `${st.size}:${Math.round(st.mtimeMs)}`; } catch { /* none */ }
-    const sig = 'v4|' + s.parts
+    const sig = 'v6|' + s.parts
       .map((p) => { const st = fs.statSync(p); return `${st.size}:${Math.round(st.mtimeMs)}`; })
       .join('|') + '|' + sidecarSig;
     const hit = cache[s.rel];
     if (hit && hit.sig === sig) {
       byRel.set(s.rel, new Map(Object.entries(hit.files)));
       inferredByRel.set(s.rel, new Map(Object.entries(hit.inferred ?? {})));
+      ambiguousByRel.set(s.rel, new Map(Object.entries(hit.ambiguous ?? {})));
       cached++;
       continue;
     }
     const files = new Map<string, number>();
     const inferred = new Map<string, number>();
+    const ambiguous = new Map<string, number>();
     for (const part of s.parts) {
       const rl = readline.createInterface({ input: fs.createReadStream(part), crlfDelay: Infinity });
       for await (const line of rl) {
         if (!line.includes('tool_use') && !line.includes('trackedFileBackups')) continue; // cheap pre-filter
-        try { recordPaths(JSON.parse(line), files, inferred); } catch { /* verify's job */ }
+        try { recordPaths(JSON.parse(line), files, inferred, ambiguous); } catch { /* verify's job */ }
       }
     }
     // Tier 2b — file-history-delta sidecar events: the harness's per-file
@@ -186,13 +219,16 @@ export async function buildTouchedIndex(
       }
     }
     for (const k of files.keys()) inferred.delete(k); // structured evidence wins
+    for (const k of files.keys()) ambiguous.delete(k);
+    for (const k of inferred.keys()) ambiguous.delete(k); // higher tier wins
     byRel.set(s.rel, files);
     inferredByRel.set(s.rel, inferred);
-    cache[s.rel] = { sig, files: Object.fromEntries(files), inferred: Object.fromEntries(inferred) };
+    ambiguousByRel.set(s.rel, ambiguous);
+    cache[s.rel] = { sig, files: Object.fromEntries(files), inferred: Object.fromEntries(inferred), ambiguous: Object.fromEntries(ambiguous) };
     scanned++;
   }
 
   fs.mkdirSync(path.dirname(cachePath), { recursive: true });
   fs.writeFileSync(cachePath, JSON.stringify(cache));
-  return { byRel, inferredByRel, scanned, cached };
+  return { byRel, inferredByRel, ambiguousByRel, scanned, cached };
 }

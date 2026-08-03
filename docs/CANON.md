@@ -132,12 +132,22 @@ cortex canon pull <uuid> [--to <dir>] [--force] [--target <harness>]
                         # a BRANCH of the canonical line, never a clobber.
                         # Prints the tool-ontology compatibility report:
                         # which referenced tools are native / name-mapped /
-                        # MCP / unmapped for the receiving harness
+                        # MCP / unmapped for the receiving harness, with
+                        # rung-2 arg fidelity per mapped tool ([args observed],
+                        # [args observed; drops: ...], [args unverified])
 cortex canon artifacts  # capture skills/agents/mcp/plugins/plans/projects as
                         # ArtifactManifest records + store taxonomy bytes
 cortex canon tools [--json]
                         # observed tool inventory per harness (scanned from
-                        # the canonical line) + the cross-harness concept map
+                        # the canonical line) + the cross-harness concept map.
+                        # Rung 2 (library API): `morphToolCall(call, source,
+                        # target)` re-expresses one tool call in the target
+                        # harness's arg dialect via ARG_MORPHISMS — renames
+                        # applied, unsupported fields DROPPED (reported, never
+                        # silent), evidence graded observed/spec/unverified.
+                        # Morphisms are empirically seeded from the real
+                        # four-harness corpus; consumers: the pull report
+                        # today, the rung-3 relay next.
 cortex canon graph [--project <id>] [--merge-graph <graph.json>] [--no-touched]
                         # derive project-scoped knowledge graphs (node-link,
                         # per-edge confidence). Two halves in one graph: the

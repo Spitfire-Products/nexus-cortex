@@ -27,5 +27,5 @@ export type { CanonGraphOptions, CanonGraphResult, ProjectEntry } from './canonG
 export { CANON_VERIFY_MJS, GITATTRIBUTES, STORE_DIRS, STORE_README, VERIFY_YML } from './scaffoldAssets.js';
 export { buildTouchedIndex } from './canonTouched.js';
 export type { TouchedIndex } from './canonTouched.js';
-export { deriveToolInventory, toolCompatibility, sessionToolNames, renderCompat, TOOL_CONCEPTS, HARNESSES } from './canonTools.js';
-export type { ToolInventory, ToolCompatReport, HarnessName } from './canonTools.js';
+export { deriveToolInventory, toolCompatibility, sessionToolNames, renderCompat, morphToolCall, TOOL_CONCEPTS, ARG_MORPHISMS, HARNESSES } from './canonTools.js';
+export type { ToolInventory, ToolCompatReport, HarnessName, ArgMorph, MorphResult } from './canonTools.js';
