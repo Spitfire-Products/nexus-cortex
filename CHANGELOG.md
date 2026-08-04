@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.56.0] - 2026-08-04
+
+### Added
+- **Reactive canon capture.** The canon store now updates itself instead of waiting
+  for a manual `canon sync`:
+  - **Turn hook** — with `CANON_AUTO_SYNC=true`, the orchestrator schedules a
+    debounced sync after every completed turn (a burst of turns collapses into one
+    commit). Opt-in, best-effort, never affects the turn. Configure with
+    `cortex config set CANON_AUTO_SYNC true` (hot-applies, no restart) plus
+    `CANON_AUTO_SYNC_DEBOUNCE_MS` / `CANON_STORE` / `CANON_REPO` (category: session).
+  - **`cortex canon watch`** — a long-running watcher over every declared harness
+    session root (Claude Code, grok, gemini, cortex — the `HARNESSES.json`-driven
+    list) that fires the same debounced sync when any session file changes. Covers
+    sessions written by *other* processes; an initial catch-up sync runs at startup.
+    Also available on the standalone bin: `nexus-canon watch`.
+- **Pull tool capsule (Phase E rung 4, shipped in the 1.3.0 artifact, recorded here).**
+  `canon pull` writes `<uuid>.tools.md` next to the materialized session: the
+  tool-compatibility report plus original calls (count + sample inputs) of every
+  unmapped/MCP tool, so the receiving model can re-express intent against its local
+  tool menu. New exports: `sessionToolCalls`, `renderCapsule`.
+
 ## [4.55.2] - 2026-08-03
 
 ### Added

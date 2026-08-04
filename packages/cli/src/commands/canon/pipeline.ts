@@ -68,3 +68,25 @@ export async function canonArtifactsCmd(o: CanonPipelineOptions): Promise<void> 
   const result = await canonArtifacts({ store: o.store, dryRun: o.dryRun });
   if (o.json) console.log(JSON.stringify(result, null, 2));
 }
+
+export async function canonWatchCmd(o: CanonPipelineOptions & { debounceMs?: number }): Promise<void> {
+  const { canonWatch } = await import('@nexus-cortex/core');
+  const controller = new AbortController();
+  const stop = () => controller.abort();
+  process.once('SIGINT', stop);
+  process.once('SIGTERM', stop);
+  console.log('[canon-watch] watching harness session roots — auto-sync on change (Ctrl-C to stop)');
+  await canonWatch({
+    store: o.store,
+    debounceMs: o.debounceMs,
+    dryRun: o.dryRun,
+    signal: controller.signal,
+    onWatch: (root) => console.log(`[canon-watch] watching ${root}`),
+    onSync: (r) => console.log(
+      `[canon-watch] synced: +${r.copied} copied, ${r.unchanged} unchanged` +
+      `${r.chunked ? `, ${r.chunked} chunked` : ''}${r.scrubbedHits ? `, ${r.scrubbedHits} scrubbed` : ''}` +
+      `${r.pushed ? ', pushed' : ''}`,
+    ),
+  });
+  console.log('[canon-watch] stopped');
+}

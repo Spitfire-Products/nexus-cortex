@@ -10,6 +10,7 @@ import { canonList, canonPull } from './canonPull.js';
 import { canonSync } from './canonSync.js';
 import { deriveToolInventory, TOOL_CONCEPTS } from './canonTools.js';
 import { canonTranslate } from './canonTranslate.js';
+import { canonWatch } from './canonWatch.js';
 
 const USAGE = `nexus-canon — portable agent memory in a git repo you own
 
@@ -24,9 +25,17 @@ Verbs:
   artifacts [--dry-run] [--store <dir>]  capture capability artifacts
   tools [--store <dir>] [--json]      observed tool inventory + cross-harness concept map
   graph [--project <id>] [--merge-graph <path>] [--dry-run] [--store <dir>]
+  watch [--debounce <ms>] [--dry-run] [--store <dir>]  watch harness roots & auto-sync on change
 
 Default store: /tmp/canon-store (override with --store or CANON_REPO env for the remote).
 Spec: docs/CANON.md in the nexus-cortex repository.`;
+
+function signal(): AbortSignal {
+  const ctrl = new AbortController();
+  process.once('SIGINT', () => ctrl.abort());
+  process.once('SIGTERM', () => ctrl.abort());
+  return ctrl.signal;
+}
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   const [verb, ...rest] = argv;
@@ -73,6 +82,21 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     case 'graph':
       await canonGraph({ store: opt('--store'), project: opt('--project'), mergeGraph: opt('--merge-graph'), dryRun: flag('--dry-run') });
       return 0;
+    case 'watch': {
+      const debounceMs = opt('--debounce');
+      const debounce = debounceMs ? parseInt(debounceMs, 10) : undefined;
+      if (debounceMs && (isNaN(debounce!) || debounce! < 0)) { console.error('--debounce must be a non-negative ms value'); return 2; }
+      console.log(`[canon-watch] watching harness session roots (debounce ${debounce ?? 60_000}ms)`);
+      await canonWatch({
+        store: opt('--store'),
+        dryRun: flag('--dry-run'),
+        debounceMs: debounce,
+        onSync: (r) => console.log(`[canon-watch] synced ${r.copied} (${r.unchanged} unchanged, ${r.skipped.length} skipped, pushed=${r.pushed})`),
+        onWatch: (root) => console.log(`[canon-watch] watching ${root}`),
+        signal: signal(),
+      });
+      return 0;
+    }
     default:
       console.log(USAGE);
       return verb ? 2 : 0;

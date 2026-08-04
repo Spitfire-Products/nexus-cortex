@@ -17,7 +17,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { renderCompat, sessionToolNames, toolCompatibility, type HarnessName } from './canonTools.js';
+import { renderCapsule, renderCompat, sessionToolCalls, sessionToolNames, toolCompatibility, type HarnessName } from './canonTools.js';
 
 export interface CanonStoreOptions {
   /** Canon store working clone (default /tmp/canon-store — off-quota; auto-cloned). */
@@ -161,7 +161,16 @@ export async function canonPull(o: CanonPullOptions): Promise<CanonPullResult> {
   // map by name, and which need relay/re-expression (P4 ladder).
   try {
     const names = await sessionToolNames(dest);
-    if (names.length) console.log(renderCompat(toolCompatibility(names, o.target ?? 'nexus-cortex')));
+    if (names.length) {
+      const report = toolCompatibility(names, o.target ?? 'nexus-cortex');
+      console.log(renderCompat(report));
+      // Phase E rung 4: the capsule — compat report + original calls for every
+      // unmapped tool, written NEXT TO the pulled session so the receiving
+      // model can re-express intent against its local menu (§27c).
+      const capsule = path.join(destDir, `${s.uuid}.tools.md`);
+      fs.writeFileSync(capsule, renderCapsule(report, await sessionToolCalls(dest), { uuid: s.uuid, harness: s.harness }));
+      console.log(`[canon-pull]   tool capsule → ${capsule}`);
+    }
   } catch { /* report is best-effort — never block a pull */ }
   return { code: 0, dest, session: s };
 }

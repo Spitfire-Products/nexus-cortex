@@ -19,7 +19,19 @@ nexus-canon init my-canon --remote <private-repo-url>
 nexus-canon sync && nexus-canon translate
 nexus-canon list
 nexus-canon pull <session-uuid> --to .cortex/sessions
+nexus-canon watch          # daemon: auto-sync on any session-file change
 ```
+
+**Keep the store current automatically.** `watch` fs-watches every declared
+harness session root (Claude Code, grok, gemini, cortex — built-in defaults
+plus `HARNESSES.json` overrides) and runs a debounced `sync` whenever a session
+file changes; an initial catch-up sync fires at startup. Run it in the
+background (`nexus-canon watch &`), and/or add a cron catch-up for gaps when
+nothing is running (`41 */6 * * * nexus-canon sync && nexus-canon translate` —
+sync is idempotent and manifest-diffed, so runs are cheap). Inside the
+nexus-cortex harness there is additionally a per-turn hook: `cortex config set
+CANON_AUTO_SYNC true` schedules the same debounced sync after every completed
+turn.
 
 Dependency-free (Node built-ins; canonical record types from
 `@nexus-cortex/types`). The [nexus-cortex](https://www.npmjs.com/package/nexus-cortex)

@@ -133,6 +133,22 @@ export interface EnvironmentVariables {
   TURN_SUMMARY_PREDICTION?: string; // 'true' | 'false'
 
   // ============================================
+  // CANON (reactive session capture)
+  // ============================================
+
+  /** Auto-sync sessions to the canon store after each turn (debounced; opt-in — pushes to a git remote) */
+  CANON_AUTO_SYNC?: string; // 'true' | 'false'
+
+  /** Debounce window (ms) before a reactive canon sync fires after the last turn */
+  CANON_AUTO_SYNC_DEBOUNCE_MS?: string;
+
+  /** Canon store working clone path (empty = /tmp/canon-store) */
+  CANON_STORE?: string;
+
+  /** Canon store git remote URL (empty = the canonical nexus-canon-store repo) */
+  CANON_REPO?: string;
+
+  // ============================================
   // CONTEXT MANAGEMENT
   // ============================================
 
@@ -371,6 +387,12 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
 
   // Turn Summary & Prediction
   TURN_SUMMARY_PREDICTION: 'false',
+
+  // Canon (reactive session capture)
+  CANON_AUTO_SYNC: 'false',
+  CANON_AUTO_SYNC_DEBOUNCE_MS: '60000',
+  CANON_STORE: '',
+  CANON_REPO: '',
 
   // Context Management
   THINKING_AS_TEXT_FALLBACK: 'false',
@@ -763,6 +785,46 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     type: 'boolean',
     category: 'mentorship',
     default: 'false'
+  },
+
+  // ============================================
+  // CANON (reactive session capture)
+  // ============================================
+  {
+    key: 'CANON_AUTO_SYNC',
+    displayName: 'Canon Auto-Sync',
+    description: 'Auto-sync sessions to the canon store after each turn (debounced; opt-in — commits and pushes to your canon git remote)',
+    type: 'boolean',
+    category: 'session',
+    default: 'false'
+  },
+  {
+    key: 'CANON_AUTO_SYNC_DEBOUNCE_MS',
+    displayName: 'Canon Auto-Sync Debounce (ms)',
+    description: 'Quiet window after the last turn before a reactive canon sync fires (a burst of turns collapses into one sync)',
+    type: 'number',
+    category: 'session',
+    default: '60000',
+    validation: (val) => {
+      const num = parseInt(val);
+      return (!isNaN(num) && num >= 1000) || 'Must be >= 1000 (ms)';
+    }
+  },
+  {
+    key: 'CANON_STORE',
+    displayName: 'Canon Store Path',
+    description: 'Canon store working clone directory (empty = /tmp/canon-store, off-quota)',
+    type: 'string',
+    category: 'session',
+    default: ''
+  },
+  {
+    key: 'CANON_REPO',
+    displayName: 'Canon Store Remote',
+    description: 'Git remote URL for the canon store (empty = the canonical nexus-canon-store repo)',
+    type: 'string',
+    category: 'session',
+    default: ''
   },
 
   // ============================================

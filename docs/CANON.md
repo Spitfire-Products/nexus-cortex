@@ -134,7 +134,12 @@ cortex canon pull <uuid> [--to <dir>] [--force] [--target <harness>]
                         # which referenced tools are native / name-mapped /
                         # MCP / unmapped for the receiving harness, with
                         # rung-2 arg fidelity per mapped tool ([args observed],
-                        # [args observed; drops: ...], [args unverified])
+                        # [args observed; drops: ...], [args unverified]).
+                        # Also writes the rung-4 TOOL CAPSULE next to the
+                        # pulled session (<uuid>.tools.md): the report + the
+                        # original calls of every unmapped/MCP tool, so the
+                        # receiving model can re-express intent against its
+                        # LOCAL tool menu. Capsule = untrusted input.
 cortex canon artifacts  # capture skills/agents/mcp/plugins/plans/projects as
                         # ArtifactManifest records + store taxonomy bytes
 cortex canon tools [--json]
@@ -157,6 +162,12 @@ cortex canon graph [--project <id>] [--merge-graph <graph.json>] [--no-touched]
                         # graph.json at <project-root>/graphify-out/ is folded
                         # in automatically; --merge-graph overrides). Cross-
                         # project touches route to the owning project's graph.
+cortex canon watch [--debounce <ms>] [--dry-run]
+                        # long-running watcher: fs-watch every declared harness
+                        # session root and auto-run `sync` (debounced, default
+                        # 60s) whenever a session file changes. Initial catch-up
+                        # sync at startup; Ctrl-C to stop. Also on the
+                        # standalone bin: `nexus-canon watch`.
 ```
 
 Typical loop: `init` once → `sync && translate` on a schedule (cron-friendly:
@@ -164,6 +175,51 @@ both are idempotent and incremental) → `pull` wherever you want to resume. The
 same functions are exported from `@nexus-cortex/core`
 (`canonSync`/`canonTranslate`/`canonPull`/`canonArtifacts`/`canonGraph`) for
 embedding — the CLI and any scheduler run one implementation.
+
+## Keeping the store current (reactive capture)
+
+Manual `canon sync` still works, but the store can keep itself current. Two
+reactive triggers ride the same `canonSync()` spine — both **opt-in** (a sync
+commits and pushes to your canon remote, so nothing fires until you turn it on):
+
+**1. The turn hook (your own cortex sessions).** After each completed cortex
+turn, the orchestrator schedules a debounced sync — a burst of turns collapses
+into one commit. Best-effort and fire-and-forget: a capture failure never
+affects the turn. Activate after install:
+
+```bash
+cortex config set CANON_AUTO_SYNC true          # hot-applies, no restart
+cortex config set CANON_AUTO_SYNC_DEBOUNCE_MS 60000   # optional (default 60s)
+cortex config set CANON_STORE /tmp/canon-store  # optional (this is the default)
+cortex config set CANON_REPO <your-store-remote-url>  # optional override
+```
+
+All four live in `cortex config category session` and persist to `~/.cortex/.env`.
+
+**2. `cortex canon watch` (everything else on disk).** Sessions written by
+*other* processes — Claude Code, grok, gemini, another machine syncing into a
+shared root — never pass through your orchestrator's turn loop. The watcher
+covers them: it fs-watches every declared harness root (the same built-in +
+`HARNESSES.json`-driven list `sync` uses) and fires the same debounced sync on
+any change. Run it as a background daemon:
+
+```bash
+cortex canon watch &          # or: nexus-canon watch (standalone install)
+```
+
+**3. Cron fallback (catch-up while nothing is running).** Both triggers only
+fire while a process is alive. For gaps (reboots, idle machines), schedule the
+classic catch-up — `sync` is idempotent and diffs against a persistent
+mtime/size manifest, so an occasional run captures exactly what changed:
+
+```bash
+# crontab: every 6 hours
+41 */6 * * * cortex canon sync && cortex canon translate
+```
+
+A typical always-current setup after `npm i -g nexus-cortex`: `canon init` once,
+`config set CANON_AUTO_SYNC true` once, `canon watch` in the background (or the
+cron line), done — every harness's sessions flow into the store as they happen.
 
 **Configuring the store:** `HARNESSES.json` (store root) declares what `sync`
 captures — one entry per harness, config not code; `projects/ROOTS.json`

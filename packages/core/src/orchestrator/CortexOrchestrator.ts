@@ -2798,6 +2798,14 @@ export class CortexOrchestrator {
       }
     }
 
+    // Reactive canon capture (opt-in via CANON_AUTO_SYNC): the node analog of the
+    // browser's recordSessionTurn → scheduleCanonSync. Debounced + fire-and-forget —
+    // a capture failure must never affect the turn (same contract as the prediction
+    // side effect above). No-op unless the env flag is set.
+    if (process.env.CANON_AUTO_SYNC) {
+      void import('../canon/index.js').then((m) => m.scheduleCanonSync()).catch(() => {});
+    }
+
     // 16. Build orchestrator response (use final message from multi-turn loop)
     // Include all executed tool uses from all iterations (not just final message)
     return {
@@ -4320,6 +4328,12 @@ export class CortexOrchestrator {
           console.warn('[Orchestrator Streaming] Turn summary generation failed:', (err as Error)?.message);
         }
       }
+    }
+
+    // Reactive canon capture (opt-in via CANON_AUTO_SYNC) — streaming path mirror
+    // of the non-streaming hook. Debounced, fire-and-forget, no-op unless enabled.
+    if (process.env.CANON_AUTO_SYNC) {
+      void import('../canon/index.js').then((m) => m.scheduleCanonSync()).catch(() => {});
     }
 
     // Yield message_stop with usage data for CLI turn summary display

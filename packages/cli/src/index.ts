@@ -63,7 +63,7 @@ import {
   autoResearchBacklogRelease,
 } from './commands/autoresearch/backlog.js';
 import { canonInit } from './commands/canon/init.js';
-import { canonArtifactsCmd, canonGraphCmd, canonListCmd, canonPullCmd, canonSyncCmd, canonTranslateCmd } from './commands/canon/pipeline.js';
+import { canonArtifactsCmd, canonGraphCmd, canonListCmd, canonPullCmd, canonSyncCmd, canonTranslateCmd, canonWatchCmd } from './commands/canon/pipeline.js';
 import { tmuxList } from './commands/tmux/list.js';
 import { middlewareList } from './commands/middleware/list.js';
 import { middlewareStatus } from './commands/middleware/status.js';
@@ -908,6 +908,16 @@ canon
   .action(async (session, opts) => {
     const globalOpts = program.opts();
     await canonPullCmd({ session, to: opts.to, force: opts.force, store: opts.store, target: opts.target, json: globalOpts.json });
+  });
+
+canon
+  .command('watch')
+  .description('Watch harness session roots and auto-sync on change (reactive canon capture for external harnesses)')
+  .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
+  .option('--debounce <ms>', 'debounce window before a sync fires (default 60000)', (v) => parseInt(v, 10))
+  .option('--dry-run', 'refresh the local manifest only; do not commit/push')
+  .action(async (opts) => {
+    await canonWatchCmd({ store: opts.store, debounceMs: opts.debounce, dryRun: opts.dryRun });
   });
 
 // Tmux terminal integration commands
