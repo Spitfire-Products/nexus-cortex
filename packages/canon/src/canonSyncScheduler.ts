@@ -17,7 +17,8 @@
  *
  * @module canon/canonSyncScheduler
  */
-import { canonSync, type CanonSyncOptions } from './canonSync.js';
+import { type CanonSyncOptions } from './canonSync.js';
+import { canonPipeline } from './canonPipeline.js';
 
 export interface CanonAutoSyncConfig {
   /** Opt-in gate. False → scheduleCanonSync is a no-op. */
@@ -48,9 +49,11 @@ let _syncing = false;
 let _cfg: CanonAutoSyncConfig | null = null;
 
 // Test seam — override what the debounce fires (see canonSyncScheduler.test.ts).
-let _runner: (o: CanonSyncOptions) => unknown | Promise<unknown> = (o) => canonSync(o);
+// Default = the FULL pipeline (sync → translate → graph), so the canonical line
+// and the §27l knowledge graphs stay current reactively, not just the natives.
+let _runner: (o: CanonSyncOptions) => unknown | Promise<unknown> = (o) => canonPipeline(o);
 export function __setCanonSyncRunner(fn: ((o: CanonSyncOptions) => unknown | Promise<unknown>) | null): void {
-  _runner = fn ?? ((o) => canonSync(o));
+  _runner = fn ?? ((o) => canonPipeline(o));
 }
 
 async function runAutoSync(options: CanonSyncOptions): Promise<void> {

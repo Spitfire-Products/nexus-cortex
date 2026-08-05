@@ -56,9 +56,9 @@ export async function canonGraphCmd(o: CanonPipelineOptions & { project?: string
 }
 
 export async function canonPullCmd(
-  o: CanonPipelineOptions & { session: string; to?: string; force?: boolean; target?: string },
+  o: CanonPipelineOptions & { session: string; to?: string; force?: boolean; target?: string; stripSignatures?: boolean },
 ): Promise<void> {
-  const result = await canonPull({ session: o.session, to: o.to, force: o.force, store: o.store, target: o.target as any });
+  const result = await canonPull({ session: o.session, to: o.to, force: o.force, store: o.store, target: o.target as any, stripSignatures: o.stripSignatures });
   if (o.json) console.log(JSON.stringify(result, null, 2));
   if (result.code !== 0) process.exitCode = result.code;
 }

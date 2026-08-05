@@ -15,6 +15,7 @@
  *
  * @module canon/canonSync
  */
+import { requireCanonRepo } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -26,7 +27,7 @@ export interface CanonSyncOptions {
   home?: string;
   /** Report what would copy; write nothing. */
   dryRun?: boolean;
-  /** Store remote for the auto-clone (default env CANON_REPO or the canonical repo). */
+  /** Store remote for the auto-clone (or env CANON_REPO). Unconfigured + no store = fail-fast. */
   repoUrl?: string;
 }
 
@@ -113,10 +114,10 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
   const MAX_BYTES = 50 * 1024 * 1024; // GitHub hard-rejects >100MB; margin for scrub growth
   const PART_BYTES = 25 * 1024 * 1024;
 
-  const CANON_REPO = o.repoUrl ?? process.env.CANON_REPO ?? 'https://github.com/Spitfire-Products/nexus-canon-store';
   if (!fs.existsSync(path.join(STORE, '.git'))) {
     // Working clone is disposable (quota lesson 2026-07-27: keep it OFF the
     // workspace quota — pass --store /tmp/canon-store); remote is the truth.
+    const CANON_REPO = requireCanonRepo(o.repoUrl, STORE, 'canon-sync');
     console.log(`[canon-sync] no store at ${STORE} — cloning ${CANON_REPO}`);
     execFileSync('git', ['clone', '-q', CANON_REPO, STORE], {
       encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
@@ -229,6 +230,25 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
     fs.mkdirSync(path.dirname(MANIFEST_PATH), { recursive: true });
     fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest));
     const git = (a: string[]) => execFileSync('git', a, { cwd: STORE, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+    // BROWSER-BRANCH INTEGRATION: each browser SPA pushes its own
+    // `browser-cortex-<id>` branch (its in-browser repo has UNRELATED history, so
+    // it can never fast-forward main — and force would clobber the store). Fold
+    // each branch's /native/browser-cortex/ tree into main's working tree here,
+    // where real git lives; the add/commit/push below carries it into main.
+    try {
+      const heads = git(['ls-remote', '--heads', 'origin', 'browser-cortex-*']);
+      for (const line of heads.split('\n')) {
+        const m = line.match(/refs\/heads\/(browser-cortex-[A-Za-z0-9_-]+)$/);
+        if (!m) continue;
+        try {
+          git(['fetch', '--depth', '1', 'origin', m[1]!]);
+          git(['checkout', 'FETCH_HEAD', '--', 'native/browser-cortex']);
+          console.log(`[canon-sync] integrated browser branch ${m[1]}`);
+        } catch (e) {
+          console.warn(`[canon-sync] browser branch ${m[1]} integration failed: ${(e as Error)?.message ?? e}`);
+        }
+      }
+    } catch { /* no browser branches yet / offline — nothing to integrate */ }
     git(['add', '-A']);
     const status = git(['status', '--porcelain']);
     if (status.trim()) {

@@ -18,6 +18,7 @@
  *
  * @module canon/canonArtifacts
  */
+import { requireCanonRepo } from './canonRepo.js';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -80,9 +81,9 @@ export async function canonArtifacts(o: CanonArtifactsOptions = {}): Promise<Can
   const DRY = o.dryRun ?? false;
   const STORE = o.store ?? '/tmp/canon-store';
   const MANIFEST_PATH = path.join(HOME, '.canon', 'artifacts-manifest.json');
-  const CANON_REPO = o.repoUrl ?? process.env.CANON_REPO ?? 'https://github.com/Spitfire-Products/nexus-canon-store';
   const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
   if (!fs.existsSync(path.join(STORE, '.git'))) {
+    const CANON_REPO = requireCanonRepo(o.repoUrl, STORE, 'canon-artifacts');
     console.log(`[canon-artifacts] no store at ${STORE} — cloning ${CANON_REPO}`);
     execFileSync('git', ['clone', '-q', CANON_REPO, STORE], { encoding: 'utf8', env });
   }

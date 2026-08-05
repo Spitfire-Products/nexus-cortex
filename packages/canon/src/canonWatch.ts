@@ -19,7 +19,9 @@
  */
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
-import { canonSync, loadHarnessSources, type CanonSyncOptions, type CanonSyncResult } from './canonSync.js';
+import { setMaxListeners } from 'node:events';
+import { loadHarnessSources, type CanonSyncOptions, type CanonSyncResult } from './canonSync.js';
+import { canonPipeline } from './canonPipeline.js';
 
 export interface CanonWatchOptions extends CanonSyncOptions {
   /** Debounce window before a sync fires after the last change (default 60s). */
@@ -55,6 +57,11 @@ export async function canonWatch(options: CanonWatchOptions = {}): Promise<void>
   }
   const isCaptureFile = (name: string) => [...exts].some((e) => name.endsWith(e));
 
+  // Every fsp.watch(dir, { signal }) registers an abort listener on the shared
+  // signal; watching many roots+subdirs blows past the default cap of 10 and
+  // logs a spurious MaxListenersExceededWarning. Lift the cap (0 = unlimited).
+  if (options.signal) setMaxListeners(0, options.signal);
+
   let timer: ReturnType<typeof setTimeout> | null = null;
   let syncing = false;
   let pendingWhileSyncing = false;
@@ -63,8 +70,11 @@ export async function canonWatch(options: CanonWatchOptions = {}): Promise<void>
     if (syncing) { pendingWhileSyncing = true; return; }
     syncing = true;
     try {
-      const result = await canonSync({ store: STORE, home: HOME, dryRun: options.dryRun, repoUrl: options.repoUrl });
-      options.onSync?.(result);
+      // Full pipeline: sync → translate → graph (§27l graphs stay current reactively).
+      const pipe = await canonPipeline({ store: STORE, home: HOME, dryRun: options.dryRun, repoUrl: options.repoUrl });
+      if (pipe.errors.length) console.warn(`[canon-watch] pipeline warnings: ${pipe.errors.slice(0, 3).join(' | ')}`);
+      if (pipe.translated || pipe.graphed) console.log(`[canon-watch] derived layers refreshed (translate=${pipe.translated} graph=${pipe.graphed})`);
+      options.onSync?.(pipe.sync);
     } catch (err) {
       console.warn(`[canon-watch] sync failed: ${(err as Error)?.message ?? String(err)}`);
     } finally {

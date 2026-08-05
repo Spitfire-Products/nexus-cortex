@@ -19,18 +19,27 @@ nexus-canon init my-canon --remote <private-repo-url>
 nexus-canon sync && nexus-canon translate
 nexus-canon list
 nexus-canon pull <session-uuid> --to .cortex/sessions
-nexus-canon watch          # daemon: auto-sync on any session-file change
+nexus-canon pull <session-uuid> --strip-signatures   # shared-store portability:
+                           # thinking signatures validate against the ORIGINATING
+                           # account; the flag converts thinking to <prior_reasoning>
+                           # text in the materialized COPY only (canon line untouched)
+nexus-canon watch          # daemon: full pipeline (sync→translate→graph) on change
 ```
 
 **Keep the store current automatically.** `watch` fs-watches every declared
 harness session root (Claude Code, grok, gemini, cortex — built-in defaults
-plus `HARNESSES.json` overrides) and runs a debounced `sync` whenever a session
-file changes; an initial catch-up sync fires at startup. Run it in the
-background (`nexus-canon watch &`), and/or add a cron catch-up for gaps when
+plus `HARNESSES.json` overrides) and runs the full pipeline debounced — sync,
+then translate, then graph, so the canonical line and the project knowledge
+graphs stay current, not just the native copies (derivation is skipped when the
+sync copied nothing); an initial catch-up fires at startup. Browser sessions
+join automatically: a browser SPA pushes its capture to per-client
+`browser-cortex-<id>` branches of the same remote, and every `sync` folds those
+branches into main before committing. Run the watcher in the background
+(`nexus-canon watch &`), and/or add a cron catch-up for gaps when
 nothing is running (`41 */6 * * * nexus-canon sync && nexus-canon translate` —
 sync is idempotent and manifest-diffed, so runs are cheap). Inside the
 nexus-cortex harness there is additionally a per-turn hook: `cortex config set
-CANON_AUTO_SYNC true` schedules the same debounced sync after every completed
+CANON_AUTO_SYNC true` schedules the same debounced pipeline after every completed
 turn.
 
 Dependency-free (Node built-ins; canonical record types from

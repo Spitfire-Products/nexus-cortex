@@ -18,7 +18,7 @@ export { canonSync } from './canonSync.js';
 export type { CanonSyncOptions, CanonSyncResult } from './canonSync.js';
 export { canonTranslate } from './canonTranslate.js';
 export type { CanonTranslateOptions, CanonTranslateResult } from './canonTranslate.js';
-export { canonList, canonPull, discoverCanonSessions } from './canonPull.js';
+export { canonList, canonPull, discoverCanonSessions, stripThinkingSignatures } from './canonPull.js';
 export type { CanonStoreOptions, CanonSession, CanonPullOptions, CanonPullResult } from './canonPull.js';
 export { canonArtifacts } from './canonArtifacts.js';
 export type { CanonArtifactsOptions, CanonArtifactsResult } from './canonArtifacts.js';
@@ -37,3 +37,5 @@ export { scheduleCanonSync, flushCanonSync, canonAutoSyncConfig, __setCanonSyncR
 export type { CanonAutoSyncConfig } from './canonSyncScheduler.js';
 export { canonWatch } from './canonWatch.js';
 export type { CanonWatchOptions } from './canonWatch.js';
+export { canonPipeline } from './canonPipeline.js';
+export type { CanonPipelineResult } from './canonPipeline.js';

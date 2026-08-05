@@ -127,9 +127,16 @@ cortex canon translate  # maintain the canonical line: /native → /canon +
                         # /projections (deterministic, incremental)
 cortex canon list [--project <id>] [--all]
                         # sessions with size, origin harness, recovered title
-cortex canon pull <uuid> [--to <dir>] [--force] [--target <harness>]
+cortex canon pull <uuid> [--to <dir>] [--force] [--target <harness>] [--strip-signatures]
                         # materialize a session into a native session dir —
                         # a BRANCH of the canonical line, never a clobber.
+                        # --strip-signatures: portability projection for shared
+                        # stores — provider thinking signatures validate against
+                        # the ORIGINATING account, so a teammate's pull can fail
+                        # signature replay; the flag converts thinking blocks to
+                        # <prior_reasoning> text and drops org-bound redacted
+                        # thinking IN THE COPY ONLY (counted, explicit; the
+                        # canonical line is never modified).
                         # Prints the tool-ontology compatibility report:
                         # which referenced tools are native / name-mapped /
                         # MCP / unmapped for the receiving harness, with
@@ -164,9 +171,11 @@ cortex canon graph [--project <id>] [--merge-graph <graph.json>] [--no-touched]
                         # project touches route to the owning project's graph.
 cortex canon watch [--debounce <ms>] [--dry-run]
                         # long-running watcher: fs-watch every declared harness
-                        # session root and auto-run `sync` (debounced, default
-                        # 60s) whenever a session file changes. Initial catch-up
-                        # sync at startup; Ctrl-C to stop. Also on the
+                        # session root and auto-run the full pipeline (sync →
+                        # translate → graph; debounced, default 60s) whenever a
+                        # session file changes — derived layers only recompute
+                        # when the sync actually copied something. Initial
+                        # catch-up at startup; Ctrl-C to stop. Also on the
                         # standalone bin: `nexus-canon watch`.
 ```
 
@@ -183,9 +192,12 @@ reactive triggers ride the same `canonSync()` spine — both **opt-in** (a sync
 commits and pushes to your canon remote, so nothing fires until you turn it on):
 
 **1. The turn hook (your own cortex sessions).** After each completed cortex
-turn, the orchestrator schedules a debounced sync — a burst of turns collapses
-into one commit. Best-effort and fire-and-forget: a capture failure never
-affects the turn. Activate after install:
+turn, the orchestrator schedules a debounced run of the full pipeline — sync,
+then translate, then graph, so the canonical line and the project knowledge
+graphs stay current, not just the native copies (derivation is skipped when the
+sync copied nothing). A burst of turns collapses into one commit. Best-effort
+and fire-and-forget: a capture failure never affects the turn. Activate after
+install:
 
 ```bash
 cortex config set CANON_AUTO_SYNC true          # hot-applies, no restart
@@ -200,8 +212,8 @@ All four live in `cortex config category session` and persist to `~/.cortex/.env
 *other* processes — Claude Code, grok, gemini, another machine syncing into a
 shared root — never pass through your orchestrator's turn loop. The watcher
 covers them: it fs-watches every declared harness root (the same built-in +
-`HARNESSES.json`-driven list `sync` uses) and fires the same debounced sync on
-any change. Run it as a background daemon:
+`HARNESSES.json`-driven list `sync` uses) and fires the same debounced pipeline
+on any change. Run it as a background daemon:
 
 ```bash
 cortex canon watch &          # or: nexus-canon watch (standalone install)
@@ -216,6 +228,15 @@ mtime/size manifest, so an occasional run captures exactly what changed:
 # crontab: every 6 hours
 41 */6 * * * cortex canon sync && cortex canon translate
 ```
+
+**4. Browser sessions (the browser-cortex harness).** A browser SPA can't write
+to your disk, so its canon capture pushes to per-client `browser-cortex-<id>`
+branches of the same store remote (an in-browser repo has unrelated history and
+must never force main). `canon sync` integrates those branches automatically —
+each branch's `/native/browser-cortex/` tree is folded into main before the
+commit — and `translate` carries the sessions into the canonical line like any
+other harness. Nothing to configure on the CLI side; any sync/watch/cron cycle
+picks up whatever browsers have pushed.
 
 A typical always-current setup after `npm i -g nexus-cortex`: `canon init` once,
 `config set CANON_AUTO_SYNC true` once, `canon watch` in the background (or the

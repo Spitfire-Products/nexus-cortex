@@ -62,8 +62,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       await canonList({ store: opt('--store'), all: flag('--all') });
       return 0;
     case 'pull': {
-      if (!positional) { console.error('usage: nexus-canon pull <sessionUuid> [--to <dir>] [--force]'); return 2; }
-      const r = await canonPull({ session: positional, to: opt('--to'), force: flag('--force'), store: opt('--store') });
+      if (!positional) { console.error('usage: nexus-canon pull <sessionUuid> [--to <dir>] [--force] [--strip-signatures]'); return 2; }
+      const r = await canonPull({ session: positional, to: opt('--to'), force: flag('--force'), store: opt('--store'), stripSignatures: flag('--strip-signatures') });
       return r.code;
     }
     case 'tools': {

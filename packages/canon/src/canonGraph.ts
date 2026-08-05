@@ -27,6 +27,7 @@
  *
  * @module canon/canonGraph
  */
+import { requireCanonRepo } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -173,7 +174,7 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
   const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
   // Auto-clone like every other verb — /tmp stores are disposable by design.
   if (!fs.existsSync(path.join(STORE, '.git'))) {
-    const repo = process.env.CANON_REPO ?? 'https://github.com/Spitfire-Products/nexus-canon-store';
+    const repo = requireCanonRepo(undefined, STORE, 'canon-graph');
     console.log(`[canon-graph] no store at ${STORE} — cloning ${repo}`);
     execFileSync('git', ['clone', '-q', repo, STORE], { encoding: 'utf8', env });
   }

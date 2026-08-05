@@ -17,6 +17,7 @@
  *
  * @module canon/canonTranslate
  */
+import { requireCanonRepo } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
@@ -243,7 +244,7 @@ function toCanonClaude(rec: any, ctx: Ctx): { canon?: any; event?: any } {
 }
 
 // ── translate one logical native file ──────────────────────────────────────
-async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-cortex' | 'grok-build' | 'gemini-cli') {
+async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-cortex' | 'browser-cortex' | 'grok-build' | 'gemini-cli') {
   if (manifest[lf.rel] === lf.sig) { unchanged++; return; }
   const st = (stats[harness] ??= { files: 0, messages: 0, events: 0 });
   const destRel = path.join('canon', lf.rel);
@@ -491,7 +492,11 @@ async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-co
       }
       continue;
     }
-    if (harness === 'nexus-cortex') {
+    if (harness === 'nexus-cortex' || harness === 'browser-cortex') {
+      // browser-cortex: the SPA's CanonSyncService serializes IndexedDB sessions
+      // into this same canonical envelope (uuid/parentUuid/type/message/timeline,
+      // secret-scrubbed at browser write time) — so it rides the identity branch
+      // and inherits the same structural repairs.
       // Identity — EXCEPT structural repairs the A4 pairing lint demands:
       // (1) wrapped-block normalization: older JSONLHistoryStore versions
       //     wrote {type:'tool_use', toolUse:{id,name,input,metadata}} instead
@@ -749,6 +754,13 @@ spec: \`docs/CANON.md\`). Derived from /native by \`canon-translate\`; re-deriva
 ## nexus-cortex → canon
 Identity + \`provenance\` stamp (the harness's native format IS canon).
 
+## browser-cortex → canon
+Identity + \`provenance\` stamp, same branch as nexus-cortex: the SPA's
+CanonSyncService serializes browser CORTEX sessions (IndexedDB) into the
+canonical envelope at capture time (secret-scrubbed in the browser), so
+translation is identity plus the shared structural repairs (wrapped-block
+normalization, duplicate-result drop, orphan-result synthetic repair).
+
 ## gemini-cli → canon (transcript-grade, chats format)
 Per-session \`chats/session-*.jsonl\` (current CLI; subagent files under
 \`chats/<sessionId>/\` share the format) — a mini event-sourced log: header +
@@ -805,10 +817,10 @@ Divergent projections (claude-code, gemini, grok renderings of canon) are produc
 by the library's gateway adapters and arrive with Phase C (\`cortex canon translate\`).
 Until then their absence is stated here rather than implied.
 `;
-  const CANON_REPO = o.repoUrl ?? process.env.CANON_REPO ?? 'https://github.com/Spitfire-Products/nexus-canon-store';
   if (!fs.existsSync(path.join(STORE, '.git'))) {
     // Working clone is disposable (quota lesson 2026-07-27: keep it OFF the
     // workspace quota — pass --store /tmp/canon-store); remote is the truth.
+    const CANON_REPO = requireCanonRepo(o.repoUrl, STORE, 'canon-translate');
     console.log(`[canon-translate] no store at ${STORE} — cloning ${CANON_REPO}`);
     execFileSync('git', ['clone', '-q', CANON_REPO, STORE], {
       encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
@@ -820,10 +832,12 @@ Until then their absence is stated here rather than implied.
 
   const claudeFiles = discover(path.join(STORE, 'native', 'claude-code'), 'claude-code');
   const cortexFiles = discover(path.join(STORE, 'native', 'nexus-cortex'), 'nexus-cortex');
+  const browserFiles = discover(path.join(STORE, 'native', 'browser-cortex'), 'browser-cortex');
   const grokFiles = discover(path.join(STORE, 'native', 'grok-build'), 'grok-build');
   const geminiFiles = discover(path.join(STORE, 'native', 'gemini-cli'), 'gemini-cli');
   for (const lf of claudeFiles) await translateFile(lf, 'claude-code');
   for (const lf of cortexFiles) await translateFile(lf, 'nexus-cortex');
+  for (const lf of browserFiles) await translateFile(lf, 'browser-cortex');
   for (const lf of grokFiles) await translateFile(lf, 'grok-build');
   for (const lf of geminiFiles) await translateFile(lf, 'gemini-cli');
 

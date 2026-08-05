@@ -14,6 +14,7 @@
  *
  * @module canon/canonPull
  */
+import { requireCanonRepo } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -22,7 +23,7 @@ import { renderCapsule, renderCompat, sessionToolCalls, sessionToolNames, toolCo
 export interface CanonStoreOptions {
   /** Canon store working clone (default /tmp/canon-store — off-quota; auto-cloned). */
   store?: string;
-  /** Store remote for the auto-clone (default env CANON_REPO or the canonical repo). */
+  /** Store remote for the auto-clone (or env CANON_REPO). Unconfigured + no store = fail-fast. */
   repoUrl?: string;
 }
 
@@ -44,6 +45,15 @@ export interface CanonPullOptions extends CanonStoreOptions {
   to?: string;
   /** Overwrite an existing local session file (default false — pull is a branch, never a clobber). */
   force?: boolean;
+  /**
+   * G1 (signature portability): strip provider thinking signatures from the
+   * MATERIALIZED COPY — thinking blocks become `<prior_reasoning>` text (the
+   * harness's own text-fallback convention), redacted_thinking is dropped.
+   * Use when pulling a session recorded under a DIFFERENT provider account/org
+   * (signatures validate against the originating org; foreign replay fails).
+   * The canonical line in the store is never modified — pull is a branch.
+   */
+  stripSignatures?: boolean;
   home?: string;
 }
 
@@ -56,9 +66,9 @@ export interface CanonPullResult {
 
 /** Clone the store if absent, else pull — rehydrate freshness on arrival. */
 function ensureFreshStore(store: string, repoUrl?: string, label = 'canon-pull'): void {
-  const repo = repoUrl ?? process.env.CANON_REPO ?? 'https://github.com/Spitfire-Products/nexus-canon-store';
   const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
   if (!fs.existsSync(path.join(store, '.git'))) {
+    const repo = requireCanonRepo(repoUrl, store, label);
     console.log(`[${label}] no store at ${store} — cloning ${repo}`);
     execFileSync('git', ['clone', '-q', repo, store], { encoding: 'utf8', env });
   } else {
@@ -126,6 +136,42 @@ export async function canonList(o: CanonStoreOptions & { all?: boolean } = {}): 
   return rows;
 }
 
+/**
+ * G1 signature-strip on a materialized session file (pull-side lossy projection,
+ * explicit and counted — never silent). Thinking blocks (signed or not) become
+ * the harness text-fallback shape `<prior_reasoning>…</prior_reasoning>` — same
+ * convention as THINKING_AS_TEXT_FALLBACK — so a foreign-org replay can never
+ * hit signature validation; `redacted_thinking` (opaque, org-bound) is dropped.
+ * Unparseable lines pass through verbatim.
+ */
+export function stripThinkingSignatures(file: string): { stripped: number; dropped: number } {
+  let stripped = 0, dropped = 0;
+  const out = fs.readFileSync(file, 'utf8').split('\n').map((line) => {
+    if (!line.trim()) return line;
+    try {
+      const rec = JSON.parse(line);
+      const content = rec?.message?.content;
+      if (!Array.isArray(content)) return line;
+      let changed = false;
+      const blocks = content.flatMap((b: any) => {
+        if (b?.type === 'thinking' && typeof b.thinking === 'string') {
+          stripped++; changed = true;
+          return [{ type: 'text', text: `<prior_reasoning>\n${b.thinking}\n</prior_reasoning>` }];
+        }
+        if (b?.type === 'redacted_thinking') { dropped++; changed = true; return []; }
+        return [b];
+      });
+      if (!changed) return line;
+      // A message left empty by dropping its only (redacted) block keeps a stub —
+      // an empty content array is invalid on replay.
+      rec.message.content = blocks.length ? blocks : [{ type: 'text', text: '[canon G1: redacted thinking removed for foreign-account replay]' }];
+      return JSON.stringify(rec);
+    } catch { return line; }
+  });
+  fs.writeFileSync(file, out.join('\n'));
+  return { stripped, dropped };
+}
+
 /** Materialize one canon session into a native session directory. */
 export async function canonPull(o: CanonPullOptions): Promise<CanonPullResult> {
   const store = o.store ?? '/tmp/canon-store';
@@ -152,6 +198,12 @@ export async function canonPull(o: CanonPullOptions): Promise<CanonPullResult> {
   fs.mkdirSync(destDir, { recursive: true });
   fs.writeFileSync(dest, '');
   for (const p of s.parts) fs.appendFileSync(dest, fs.readFileSync(p));
+  if (o.stripSignatures) {
+    const { stripped, dropped } = stripThinkingSignatures(dest);
+    if (stripped || dropped) {
+      console.log(`[canon-pull]   G1: ${stripped} thinking block(s) → <prior_reasoning> text, ${dropped} redacted block(s) dropped (foreign-account replay safety)`);
+    }
+  }
   const lines = fs.readFileSync(dest, 'utf8').split('\n').filter(Boolean).length;
   console.log(`[canon-pull] materialized ${s.uuid} (${s.harness}${s.title ? ` — "${s.title}"` : ''})`);
   console.log(`[canon-pull]   ${lines} canonical message(s), ${(s.bytes / 1024).toFixed(0)}KB → ${dest}`);
