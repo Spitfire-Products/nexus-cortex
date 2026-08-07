@@ -33,6 +33,8 @@ import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { discoverCanonSessions, type CanonSession } from './canonPull.js';
 import { buildTouchedIndex } from './canonTouched.js';
+import { extractCognition, readSessionCognitionRecords } from './canonCognition.js';
+import { scrubSecrets } from './canonSync.js';
 
 const CONFIDENCE_SCORE: Record<string, number> = { EXTRACTED: 1.0, INFERRED: 0.5, AMBIGUOUS: 0.2 };
 
@@ -158,6 +160,17 @@ export interface CanonGraphOptions {
   mergeGraph?: string;
   /** Scan session content for session→file `touched` edges (default true; cached, incremental). */
   touched?: boolean;
+  /**
+   * OPT-IN COGNITION DIMENSION (default false → default graph output byte-
+   * identical). Folds each session's reasoning into `thought` nodes joined on
+   * session_id+turn, with thought→tool_call / thought→source_file /
+   * thought→thought edges. Thought nodes carry ONLY structural/derived data
+   * (session_id, turn, block_type, counts, a secret-scrubbed ~80-char label) —
+   * see `includeThoughtText` before widening what a SHAREABLE graph exposes.
+   */
+  cognition?: boolean;
+  /** SHARING RISK: include fuller (still-scrubbed) thinking text on thought nodes. Only meaningful with `cognition`. Default false. */
+  includeThoughtText?: boolean;
   dryRun?: boolean;
 }
 
@@ -360,9 +373,65 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
       }
     }
 
+    // COGNITION dimension (opt-in): the reasoning half. Runs AFTER touched so
+    // it reuses the file nodes already present (code-half FILE nodes + touched's
+    // `file:` nodes); its resolveFile mirrors the touched join — path→owning
+    // project (longest-root-match) → the project-relative file node, creating a
+    // lightweight `file:` node only when nothing represents the path yet. Thought
+    // labels/text route through the SAME push-boundary scrub as canonSync, so a
+    // thought node can never be a leak vector in a shareable graph.
+    let cognitionStats: { thoughts: number; toolEdges: number; fileEdges: number; continuityEdges: number } | undefined;
+    if (o.cognition) {
+      cognitionStats = { thoughts: 0, toolEdges: 0, fileEdges: 0, continuityEdges: 0 };
+      // Index file nodes present so far (code-half FILE-level + any `file:` node).
+      const cogFileByRel = new Map<string, string>();
+      const nodeIds = new Set<string>();
+      for (const n of nodes) {
+        nodeIds.add(n.id);
+        if (n.id.startsWith('file:') && n.source_file) { if (!cogFileByRel.has(n.source_file)) cogFileByRel.set(n.source_file, n.id); }
+        else if (!/^(sess|art|proj|thought|tool):/.test(n.id) && n.source_file && n.source_location === 'L1' && n.label === path.basename(n.source_file)) {
+          if (!cogFileByRel.has(n.source_file)) cogFileByRel.set(n.source_file, n.id);
+        }
+      }
+      const resolveFile = (abs: string): string | undefined => {
+        const owner = ownerOf(abs);
+        if (!owner || owner.pid !== pid) return undefined; // routed to the owning project's graph
+        const rel = owner.rel;
+        const existing = cogFileByRel.get(rel);
+        if (existing) return existing;
+        const id = `file:${rel}`;
+        cogFileByRel.set(rel, id);
+        if (!nodeIds.has(id)) {
+          nodeIds.add(id);
+          nodes.push({ id, label: path.basename(rel), file_type: 'document', source_file: rel, source_location: '' });
+        }
+        return id;
+      };
+      for (const s of sessions) {
+        if (sessionProject(projects, s) !== pid) continue;
+        let recs: any[] = [];
+        try { recs = await readSessionCognitionRecords(s.parts); } catch { continue; }
+        if (!recs.length) continue;
+        const cog = extractCognition(recs, {
+          sessionSourceFile: path.join('canon', s.rel),
+          scrub: scrubSecrets,
+          includeThoughtText: o.includeThoughtText === true,
+          resolveFile,
+        });
+        for (const n of cog.nodes) nodes.push(n);
+        for (const l of cog.links) links.push(l);
+        cognitionStats.thoughts += cog.thoughts;
+        cognitionStats.toolEdges += cog.toolEdges;
+        cognitionStats.fileEdges += cog.fileEdges;
+        cognitionStats.continuityEdges += cog.continuityEdges;
+      }
+      console.log(`[canon-graph] cognition: ${cognitionStats.thoughts} thought(s), ${cognitionStats.toolEdges} tool + ${cognitionStats.fileEdges} file + ${cognitionStats.continuityEdges} continuity edge(s) [${pid}]`);
+    }
+
     const meta: any = {};
     if (codeHalf) meta.code_half = codeHalf;
     if (touchedStats) meta.touched_stats = touchedStats;
+    if (cognitionStats) meta.cognition_stats = cognitionStats;
     // built_at_commit is stamped ONLY when content actually changed — otherwise
     // every store commit would rewrite the (multi-MB) graph for a HEAD-only
     // diff, bloating history for zero information (the G2 churn class). The

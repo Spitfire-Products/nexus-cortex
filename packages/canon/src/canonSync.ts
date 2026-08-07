@@ -106,6 +106,16 @@ function scrub(s: string): string {
   return s;
 }
 
+/**
+ * The push-boundary secret-scrub, exported so DERIVED layers that surface
+ * session-content-derived strings into shareable artifacts (e.g. the graph's
+ * cognition dimension, whose thought labels are drawn from thinking text) route
+ * through the SAME pattern set — one scrub authority, never a per-layer fork.
+ */
+export function scrubSecrets(s: string): string {
+  return scrub(s);
+}
+
 export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResult> {
   const HOME = o.home ?? process.env.HOME ?? '/home/runner/workspace';
   const DRY = o.dryRun ?? false;

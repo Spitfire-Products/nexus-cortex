@@ -24,7 +24,7 @@ Verbs:
   pull <uuid> [--to <dir>] [--force] [--store <dir>]  materialize a session
   artifacts [--dry-run] [--store <dir>]  capture capability artifacts
   tools [--store <dir>] [--json]      observed tool inventory + cross-harness concept map
-  graph [--project <id>] [--merge-graph <path>] [--dry-run] [--store <dir>]
+  graph [--project <id>] [--merge-graph <path>] [--cognition] [--include-thought-text] [--dry-run] [--store <dir>]
   watch [--debounce <ms>] [--dry-run] [--store <dir>]  watch harness roots & auto-sync on change
 
 Default store: /tmp/canon-store (override with --store or CANON_REPO env for the remote).
@@ -80,7 +80,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       await canonArtifacts({ dryRun: flag('--dry-run'), store: opt('--store') });
       return 0;
     case 'graph':
-      await canonGraph({ store: opt('--store'), project: opt('--project'), mergeGraph: opt('--merge-graph'), dryRun: flag('--dry-run') });
+      await canonGraph({ store: opt('--store'), project: opt('--project'), mergeGraph: opt('--merge-graph'), dryRun: flag('--dry-run'), cognition: flag('--cognition'), includeThoughtText: flag('--include-thought-text') });
       return 0;
     case 'watch': {
       const debounceMs = opt('--debounce');

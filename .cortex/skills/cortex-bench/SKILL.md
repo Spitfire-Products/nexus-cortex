@@ -128,6 +128,47 @@ cortex --new --quiet -m deepseek-v4-pro "[TASK]" &
 # + Task agent with Opus as control
 ```
 
+## Sub-agent Orchestration: isolation vs throughput (learned live, 2026-08-05)
+
+Dispatching N agents at once raises the question this skill left implicit: **do they
+share a working tree, or get isolated ones?** Both are right — for different task
+shapes. Choosing wrong costs either wall-clock or a phantom bug hunt.
+
+| | **Worktree isolation** (`isolation: "worktree"`) | **Disjoint file sets** (shared tree) |
+|---|---|---|
+| Mechanism | Each agent gets its own checkout off the same `.git` | All agents edit the live tree; each is *told* which files it owns |
+| Enforcement | Structural — collisions impossible | By instruction only — nothing prevents an overlap |
+| Agent can build/test itself | **No** — a fresh worktree has no `node_modules` (gitignored) until you install there | Yes (deps already present) |
+| Cost | N× dependency install on a monorepo; disk; time | Main tree holds unverified code mid-flight |
+| Use when | Agents edit **existing shared** files · large change · agent must self-verify | **New-file / additive** work · low collision surface · env can't afford N installs |
+
+**The phantom-error trap.** A shared-tree agent that runs a *whole-project* typecheck
+will observe peers' half-written files and report errors that are not its own. In a
+live run the RelayExecutor agent reported a TS error in `ConnectionsPage.tsx` — a file
+it never touched — because a concurrent agent was mid-write; that cost a real
+debugging detour. **Rule: a shared-tree agent verifies ONLY its own files (or not at
+all); the orchestrator owns whole-project verification.** Worktrees make this
+structurally impossible — that's their value beyond collision safety.
+
+**Central verification pattern (resource-constrained boxes).** Agents write; the
+orchestrator compiles, tests, and ships — ONE build at a time. `main` stays at a
+known-good checkpoint until each piece is proven, and you never hang a small box with
+N concurrent builds. Trade-off: verification serializes through the orchestrator. Want
+parallel self-verification? Pay for worktrees + installs. Don't pretend it's free.
+
+**Trust on-disk state, not the agent's report.** An agent killed mid-flight (session
+restart, timeout) may have *fully landed* its work with no report, or landed half of
+it. Check the files before re-dispatching — blind re-runs duplicate work or clobber
+good output. Corollary: when no report arrives, the BUILD is the verification, not the
+missing summary.
+
+**Let agents refute your assumptions.** Brief them to VERIFY identifiers against the
+registry instead of accepting yours. In a live ontology build two of the tool IDs I
+asserted (`searchTools`, `skills`) were wrong; the agent grepped the real registry and
+returned `cortex_search_tools` / `cortex_skill`. An agent told to "use these names"
+would have shipped the bug. This is Cardinal Rule 2 (behavioral probe) applied to
+delegation.
+
 ## The Comparison Table (copy this format)
 
 | Metric | Arm A (model) | Arm B (model) | Arm C (model) | Control (Opus) | Verdict |

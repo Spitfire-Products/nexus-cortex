@@ -589,7 +589,13 @@ WRITING THE PROMPT — Brief the agent like a colleague who just walked in:
 - Include file paths, line numbers, what specifically to change
 - If you need a short response, say so ("report in under 200 words")
 
-PARALLELISM: When launching multiple agents for independent work, make all calls in the same response so they run concurrently.`,
+PARALLELISM: When launching multiple agents for independent work, make all calls in the same response so they run concurrently.
+
+ISOLATION (worktree vs shared tree): agents that edit the SAME files, or that must build/test their own work, belong in an isolated git worktree. Agents doing additive/new-file work can share the tree — cheaper, because a fresh worktree has NO node_modules (gitignored) until you install there, which is expensive on a monorepo.
+
+SHARED-TREE RULE: a shared-tree agent verifies ONLY its own files. A whole-project typecheck will pick up a peer's half-written state and report errors that aren't its own (a real, costly false alarm). Whole-project verification belongs to the orchestrator — one build at a time, after the agents report.
+
+VERIFY, DON'T ASSUME: tell the agent to check identifiers (tool names, ids, paths, exports) against the source of truth rather than trusting the ones you supplied — a compliant agent will faithfully ship your wrong name. And if an agent is killed mid-flight, inspect on-disk state before re-dispatching: its work may have landed fully, or half.`,
     schema: {
       type: 'object',
       properties: {

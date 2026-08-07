@@ -19,30 +19,35 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 
-export type HarnessName = 'claude-code' | 'nexus-cortex' | 'grok-build' | 'gemini-cli';
-export const HARNESSES: HarnessName[] = ['claude-code', 'nexus-cortex', 'grok-build', 'gemini-cli'];
+export type HarnessName = 'claude-code' | 'nexus-cortex' | 'grok-build' | 'gemini-cli' | 'browser-cortex';
+export const HARNESSES: HarnessName[] = ['claude-code', 'nexus-cortex', 'grok-build', 'gemini-cli', 'browser-cortex'];
 
 /**
  * Canonical concept → per-harness tool names. Seeded from the observed
- * four-harness corpus plus each CLI's documented surface; extend as the
+ * FIVE-harness corpus plus each CLI's documented surface; extend as the
  * §27n roster lands. A name may map to several concepts' worth of behavior —
  * rung 1 keeps it 1:1 on the dominant sense.
+ *
+ * browser-cortex is the in-browser Nexus Terminal CORTEX agent (distinct from
+ * the nexus-cortex CLI harness). Its tool surface is the `cortex_*` VFS family
+ * (toolSeedData.ts, verified 2026-08-05); it omits concepts with no clean
+ * dedicated equivalent (list_dir, todo, plan_mode) rather than inventing names.
  */
 export const TOOL_CONCEPTS: Record<string, Partial<Record<HarnessName, string[]>>> = {
-  shell:        { 'claude-code': ['Bash'], 'nexus-cortex': ['Bash'], 'grok-build': ['run_terminal_command'], 'gemini-cli': ['run_shell_command'] },
-  read_file:    { 'claude-code': ['Read'], 'nexus-cortex': ['Read'], 'grok-build': ['read_file'], 'gemini-cli': ['read_file', 'read_many_files'] },
-  write_file:   { 'claude-code': ['Write'], 'nexus-cortex': ['Write'], 'grok-build': ['write'], 'gemini-cli': ['write_file'] },
-  edit_file:    { 'claude-code': ['Edit'], 'nexus-cortex': ['Edit'], 'grok-build': ['search_replace'], 'gemini-cli': ['replace'] },
+  shell:        { 'claude-code': ['Bash'], 'nexus-cortex': ['Bash'], 'grok-build': ['run_terminal_command'], 'gemini-cli': ['run_shell_command'], 'browser-cortex': ['cortex_bash'] },
+  read_file:    { 'claude-code': ['Read'], 'nexus-cortex': ['Read'], 'grok-build': ['read_file'], 'gemini-cli': ['read_file', 'read_many_files'], 'browser-cortex': ['cortex_read'] },
+  write_file:   { 'claude-code': ['Write'], 'nexus-cortex': ['Write'], 'grok-build': ['write'], 'gemini-cli': ['write_file'], 'browser-cortex': ['cortex_write'] },
+  edit_file:    { 'claude-code': ['Edit'], 'nexus-cortex': ['Edit'], 'grok-build': ['search_replace'], 'gemini-cli': ['replace'], 'browser-cortex': ['cortex_edit'] },
   list_dir:     { 'nexus-cortex': ['ListDirectory'], 'grok-build': ['list_dir'], 'gemini-cli': ['list_directory'] },
-  glob:         { 'claude-code': ['Glob'], 'nexus-cortex': ['Glob'], 'gemini-cli': ['glob'] },
-  grep:         { 'claude-code': ['Grep'], 'nexus-cortex': ['Grep'], 'grok-build': ['grep'], 'gemini-cli': ['search_file_content'] },
-  web_search:   { 'claude-code': ['WebSearch'], 'nexus-cortex': ['WebSearch'], 'grok-build': ['web_search'], 'gemini-cli': ['google_web_search'] },
-  web_fetch:    { 'claude-code': ['WebFetch'], 'nexus-cortex': ['WebFetch'], 'gemini-cli': ['web_fetch'] },
-  spawn_agent:  { 'claude-code': ['Agent'], 'nexus-cortex': ['Task'], 'gemini-cli': ['invoke_agent'] },
+  glob:         { 'claude-code': ['Glob'], 'nexus-cortex': ['Glob'], 'gemini-cli': ['glob'], 'browser-cortex': ['cortex_glob'] },
+  grep:         { 'claude-code': ['Grep'], 'nexus-cortex': ['Grep'], 'grok-build': ['grep'], 'gemini-cli': ['search_file_content'], 'browser-cortex': ['cortex_grep'] },
+  web_search:   { 'claude-code': ['WebSearch'], 'nexus-cortex': ['WebSearch'], 'grok-build': ['web_search'], 'gemini-cli': ['google_web_search'], 'browser-cortex': ['cortex_web_search'] },
+  web_fetch:    { 'claude-code': ['WebFetch'], 'nexus-cortex': ['WebFetch'], 'gemini-cli': ['web_fetch'], 'browser-cortex': ['cortex_web_fetch'] },
+  spawn_agent:  { 'claude-code': ['Agent'], 'nexus-cortex': ['Task'], 'gemini-cli': ['invoke_agent'], 'browser-cortex': ['dispatch_agent'] },
   todo:         { 'claude-code': ['TaskCreate', 'TaskUpdate'], 'nexus-cortex': ['TodoWrite', 'TodoCreate', 'TodoUpdate'] },
   plan_mode:    { 'claude-code': ['EnterPlanMode', 'ExitPlanMode'], 'gemini-cli': ['enter_plan_mode'] },
-  tool_search:  { 'claude-code': ['ToolSearch'], 'nexus-cortex': ['SearchTools'] },
-  skill:        { 'claude-code': ['Skill'], 'nexus-cortex': ['Skill'] },
+  tool_search:  { 'claude-code': ['ToolSearch'], 'nexus-cortex': ['SearchTools'], 'browser-cortex': ['cortex_search_tools'] },
+  skill:        { 'claude-code': ['Skill'], 'nexus-cortex': ['Skill'], 'browser-cortex': ['cortex_skill'] },
 };
 
 /**
@@ -74,6 +79,9 @@ export const ARG_MORPHISMS: Record<string, { canonical: string[]; byHarness: Par
       'nexus-cortex': { tool: 'Bash', evidence: 'observed' },
       'grok-build': { tool: 'run_terminal_command', drop: ['timeout', 'run_in_background'], evidence: 'observed' },
       'gemini-cli': { tool: 'run_shell_command', drop: ['timeout', 'run_in_background'], evidence: 'observed' },
+      // cortex_bash schema confirms command/description/timeout; run_in_background
+      // is PTY-only (unavailable in the virtual-FS mode, the common case) → dropped.
+      'browser-cortex': { tool: 'cortex_bash', drop: ['run_in_background'], evidence: 'observed' },
     },
   },
   read_file: {
@@ -83,6 +91,8 @@ export const ARG_MORPHISMS: Record<string, { canonical: string[]; byHarness: Par
       'nexus-cortex': { tool: 'Read', evidence: 'observed' },
       'grok-build': { tool: 'read_file', rename: { file_path: 'target_file' }, drop: ['offset', 'limit'], evidence: 'observed' },
       'gemini-cli': { tool: 'read_file', drop: ['offset', 'limit'], evidence: 'observed' },
+      // cortex_read schema = file_path/offset/limit — field-identical to canonical.
+      'browser-cortex': { tool: 'cortex_read', evidence: 'spec' },
     },
   },
   write_file: {
@@ -92,6 +102,8 @@ export const ARG_MORPHISMS: Record<string, { canonical: string[]; byHarness: Par
       'nexus-cortex': { tool: 'Write', evidence: 'observed' },
       'grok-build': { tool: 'write', evidence: 'unverified' },
       'gemini-cli': { tool: 'write_file', evidence: 'observed' },
+      // cortex_write schema = file_path/content — field-identical to canonical.
+      'browser-cortex': { tool: 'cortex_write', evidence: 'spec' },
     },
   },
   edit_file: {
@@ -103,6 +115,8 @@ export const ARG_MORPHISMS: Record<string, { canonical: string[]; byHarness: Par
       // gemini uses expected_replacements (count), not a boolean — different
       // semantics, so replace_all is dropped rather than faked.
       'gemini-cli': { tool: 'replace', drop: ['replace_all'], evidence: 'observed' },
+      // cortex_edit schema confirms file_path/old_string/new_string/replace_all — identical.
+      'browser-cortex': { tool: 'cortex_edit', evidence: 'observed' },
     },
   },
   list_dir: {
@@ -119,6 +133,8 @@ export const ARG_MORPHISMS: Record<string, { canonical: string[]; byHarness: Par
       'claude-code': { tool: 'Glob', evidence: 'observed' },
       'nexus-cortex': { tool: 'Glob', evidence: 'spec' },
       'gemini-cli': { tool: 'glob', rename: { path: 'dir_path' }, evidence: 'observed' },
+      // cortex_glob schema = pattern/path(+limit/offset) — canonical fields identical.
+      'browser-cortex': { tool: 'cortex_glob', evidence: 'spec' },
     },
   },
   grep: {
@@ -129,6 +145,8 @@ export const ARG_MORPHISMS: Record<string, { canonical: string[]; byHarness: Par
       // grok's grep clones the ripgrep-tool schema — field-identical, observed.
       'grok-build': { tool: 'grep', evidence: 'observed' },
       'gemini-cli': { tool: 'search_file_content', drop: ['output_mode', 'glob', 'head_limit', '-i', '-A', '-B'], evidence: 'spec' },
+      // cortex_grep clones the ripgrep-tool schema (pattern/path/glob/output_mode/-i/-A/-B/head_limit) — field-identical.
+      'browser-cortex': { tool: 'cortex_grep', evidence: 'spec' },
     },
   },
   web_search: {
@@ -138,6 +156,7 @@ export const ARG_MORPHISMS: Record<string, { canonical: string[]; byHarness: Par
       'nexus-cortex': { tool: 'WebSearch', evidence: 'spec' },
       'grok-build': { tool: 'web_search', evidence: 'unverified' },
       'gemini-cli': { tool: 'google_web_search', evidence: 'observed' },
+      'browser-cortex': { tool: 'cortex_web_search', evidence: 'spec' },
     },
   },
   web_fetch: {
@@ -146,6 +165,7 @@ export const ARG_MORPHISMS: Record<string, { canonical: string[]; byHarness: Par
       'claude-code': { tool: 'WebFetch', evidence: 'observed' },
       'nexus-cortex': { tool: 'WebFetch', evidence: 'spec' },
       'gemini-cli': { tool: 'web_fetch', evidence: 'unverified' },
+      'browser-cortex': { tool: 'cortex_web_fetch', evidence: 'spec' },
     },
   },
   spawn_agent: {
@@ -154,6 +174,9 @@ export const ARG_MORPHISMS: Record<string, { canonical: string[]; byHarness: Par
       'claude-code': { tool: 'Agent', evidence: 'observed' },
       'nexus-cortex': { tool: 'Task', evidence: 'spec' },
       'gemini-cli': { tool: 'invoke_agent', rename: { subagent_type: 'agent_name', prompt: 'task' }, drop: ['description'], evidence: 'observed' },
+      // dispatch_agent uses a different arg shape (task/model/name/context/team/…),
+      // not the canonical description/prompt/subagent_type — renames unverified, so 'spec'.
+      'browser-cortex': { tool: 'dispatch_agent', evidence: 'spec' },
     },
   },
   plan_mode: {
