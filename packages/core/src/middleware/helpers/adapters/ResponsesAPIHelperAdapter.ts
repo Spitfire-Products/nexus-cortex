@@ -17,6 +17,7 @@
  * - Supports GPT-5 Codex, Codex Mini, and future Responses API models
  * - Handles stateful conversation continuity
  */
+import { cortexProxyFetch } from '../../../orchestrator/cortexProxyFetch.js';
 
 import {
   BaseHelperAdapter,
@@ -197,7 +198,7 @@ export class ResponsesAPIHelperAdapter extends BaseHelperAdapter {
     const OpenAI = (await import('openai')).default;
 
     // Create client
-    const client = new OpenAI({ apiKey });
+    const client = new OpenAI({ apiKey, fetch: cortexProxyFetch });
 
     // Make API call to /v1/responses endpoint
     // NOTE: Uses max_output_tokens (not max_tokens!)

@@ -11,6 +11,7 @@
  * - Converts canonical format to Messages API format internally
  * - Handles compaction and tool result summarization
  */
+import { cortexProxyFetch } from '../../../orchestrator/cortexProxyFetch.js';
 
 import {
   BaseHelperAdapter,
@@ -384,7 +385,7 @@ export class MessagesAPIHelperAdapter extends BaseHelperAdapter {
     }
 
     // Make real API call
-    const response = await fetch(url, {
+    const response = await cortexProxyFetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(requestBody)

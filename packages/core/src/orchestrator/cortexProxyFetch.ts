@@ -31,6 +31,44 @@ const AI_PROVIDER_HOSTS = new Set<string>([
 
 let installed = false;
 
+/**
+ * Standalone, call-time proxy-aware fetch. Reads `CORTEX_PROXY_BASE_URL` on EVERY call (not at
+ * install time) and rewrites AI-provider URLs to the proxy `?url=` contract; passes everything
+ * else through untouched, and is a plain fetch when the env var is unset.
+ *
+ * Pass this EXPLICITLY as the `fetch` option to every provider SDK client
+ * (`new OpenAI({ fetch: cortexProxyFetch })`, `new Anthropic({ fetch: cortexProxyFetch })`, …).
+ * That makes proxy routing DETERMINISTIC per-client — independent of `globalThis.fetch` patch
+ * timing and of any SDK that snapshots the original `fetch` at construction. This is the fix for
+ * the confirmed bug where the DeepSeek OpenAI-SDK client sent the raw job token to api.deepseek.com
+ * because the global patch didn't apply to its calls.
+ */
+export const cortexProxyFetch: typeof fetch = ((input: any, init?: any): Promise<Response> => {
+  const orig = globalThis.fetch;
+  const raw = process.env.CORTEX_PROXY_BASE_URL;
+  if (!raw || !raw.trim()) return orig(input, init);
+  const base = raw.trim().replace(/\/+$/, '');
+  let url: string | null = null;
+  try {
+    if (typeof input === 'string') url = input;
+    else if (input instanceof URL) url = input.href;
+    else if (typeof Request !== 'undefined' && input instanceof Request) url = input.url;
+    else if (input && typeof input.url === 'string') url = input.url;
+  } catch { url = null; }
+  if (url) {
+    try {
+      if (AI_PROVIDER_HOSTS.has(new URL(url).hostname)) {
+        const proxied = `${base}/?url=${encodeURIComponent(url)}`;
+        if (typeof Request !== 'undefined' && input instanceof Request) {
+          return orig(new Request(proxied, input), init);
+        }
+        return orig(proxied, init);
+      }
+    } catch { /* not absolute — pass through */ }
+  }
+  return orig(input, init);
+}) as typeof fetch;
+
 export function installCortexProxyFetch(): void {
   if (installed) return;
   const raw = process.env.CORTEX_PROXY_BASE_URL;

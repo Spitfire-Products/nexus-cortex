@@ -8,7 +8,10 @@
 // Install the AI-provider proxy-fetch wrapper FIRST (before the SDKs load), so
 // outbound provider calls route through CORTEX_PROXY_BASE_URL when set (autoresearch
 // user-funded jobs). Inert unless the env var is present.
-import './cortexProxyFetch.js';
+// Named import still runs the module's global-patch install side-effect (kept for the Google
+// SDKs, which can't take an explicit fetch) AND provides the standalone proxy fetch we pass
+// explicitly to every OpenAI/Anthropic client + raw provider fetch (deterministic routing).
+import { cortexProxyFetch } from './cortexProxyFetch.js';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -514,10 +517,12 @@ export class APIClient {
       if (credential.type === 'oauth') {
         return new Anthropic({
           authToken: credential.token, // Uses Authorization: Bearer header
+          fetch: cortexProxyFetch,
         });
       } else {
         return new Anthropic({
           apiKey: credential.token, // Uses x-api-key header
+          fetch: cortexProxyFetch,
         });
       }
     } catch (error) {
@@ -637,7 +642,7 @@ export class APIClient {
       headers['x-grok-doom-loop-check'] = 'true';
     }
 
-    const httpResponse = await fetch(modelConfig.api.endpoint, {
+    const httpResponse = await cortexProxyFetch(modelConfig.api.endpoint, {
       method: 'POST',
       headers,
       body: JSON.stringify(messagesRequest)
@@ -778,6 +783,7 @@ export class APIClient {
       : new OpenAI({
           apiKey,
           baseURL,
+          fetch: cortexProxyFetch,
           ...(Object.keys(defaultHeaders).length > 0 && { defaultHeaders })
         });
 
@@ -1212,7 +1218,7 @@ export class APIClient {
       if (process.env.XAI_DOOM_LOOP_CHECK === 'true') {
         xaiRespHeaders['x-grok-doom-loop-check'] = 'true';
       }
-      const httpResponse = await fetch(modelConfig.api.endpoint, {
+      const httpResponse = await cortexProxyFetch(modelConfig.api.endpoint, {
         method: 'POST',
         headers: xaiRespHeaders,
         body: JSON.stringify(responsesRequest),
@@ -1228,7 +1234,7 @@ export class APIClient {
     // OpenAI Responses API — SDK path (R20-proven working)
     const OpenAI = (await import('openai')).default;
     const baseURL = modelConfig.api.endpoint.replace(/\/(messages|responses)$/, '');
-    const client = new OpenAI({ apiKey, baseURL });
+    const client = new OpenAI({ apiKey, baseURL, fetch: cortexProxyFetch });
     const data = await client.responses.create(responsesRequest);
 
     return {
@@ -1336,7 +1342,7 @@ export class APIClient {
     }
 
     // Make HTTP request
-    const httpResponse = await fetch(url, {
+    const httpResponse = await cortexProxyFetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1833,7 +1839,8 @@ export class APIClient {
       const xaiClient = new Anthropic({
         apiKey,
         baseURL: modelConfig.api.endpoint.replace('/v1/messages', ''), // Strip path, keep base
-        defaultHeaders: xaiDefaultHeaders
+        defaultHeaders: xaiDefaultHeaders,
+        fetch: cortexProxyFetch,
       });
 
       // Extract internal flags before spreading into API request
@@ -2359,6 +2366,7 @@ export class APIClient {
       const client = new OpenAI({
         apiKey,
         baseURL: streamBaseURL,
+        fetch: cortexProxyFetch,
         ...(Object.keys(xaiRespStreamHeaders).length > 0 && { defaultHeaders: xaiRespStreamHeaders }),
       });
 
@@ -2771,7 +2779,7 @@ export class APIClient {
     }
 
     // Start the fetch request
-    const fetchPromise = fetch(url, {
+    const fetchPromise = cortexProxyFetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
