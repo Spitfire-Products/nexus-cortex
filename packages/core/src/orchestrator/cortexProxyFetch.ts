@@ -29,6 +29,27 @@ const AI_PROVIDER_HOSTS = new Set<string>([
   'api.mistral.ai',
 ]);
 
+/**
+ * User-Agent forced onto every request we rewrite to the proxy. Provider SDKs
+ * (notably the OpenAI SDK, used for DeepSeek + all OpenAI-compatible providers)
+ * send a bot-flagged UA — e.g. `OpenAI/JS` — which Cloudflare's Bot Fight Mode /
+ * "Block AI bots" on the proxy's OWN zone rejects with 403 "Your request was
+ * blocked" before the proxy Worker even runs. The ai-proxy is our own
+ * infrastructure and does not care about the client UA, so we overwrite it with a
+ * benign identifier. This makes harness→proxy traffic immune to the proxy zone's
+ * AI-bot filtering regardless of its (auto-updating) managed-bot ruleset — a fix
+ * that needs no Cloudflare config change and survives future rule updates.
+ */
+const PROXY_USER_AGENT = 'nexus-cortex-proxy/1.0';
+
+/** Clone the caller's headers (from an init object or a Request) and force our
+ *  benign User-Agent, so the proxied request never carries the SDK's bot signature. */
+function proxyHeaders(source?: any): Headers {
+  const h = new Headers(source ?? undefined);
+  h.set('User-Agent', PROXY_USER_AGENT);
+  return h;
+}
+
 let installed = false;
 
 /**
@@ -60,9 +81,10 @@ export const cortexProxyFetch: typeof fetch = ((input: any, init?: any): Promise
       if (AI_PROVIDER_HOSTS.has(new URL(url).hostname)) {
         const proxied = `${base}/?url=${encodeURIComponent(url)}`;
         if (typeof Request !== 'undefined' && input instanceof Request) {
-          return orig(new Request(proxied, input), init);
+          // Override the SDK's bot UA (headers live on the Request) via the fetch init.
+          return orig(new Request(proxied, input), { ...(init || {}), headers: proxyHeaders((input as Request).headers) });
         }
-        return orig(proxied, init);
+        return orig(proxied, { ...(init || {}), headers: proxyHeaders(init && init.headers) });
       }
     } catch { /* not absolute — pass through */ }
   }
@@ -94,11 +116,12 @@ export function installCortexProxyFetch(): void {
       try {
         if (AI_PROVIDER_HOSTS.has(new URL(url).hostname)) {
           const proxied = `${base}/?url=${encodeURIComponent(url)}`;
-          // Preserve method/headers/body when the caller passed a Request object.
+          // Preserve method/headers/body when the caller passed a Request object,
+          // but force our benign UA so the proxy zone's bot rules don't block us.
           if (typeof Request !== 'undefined' && input instanceof Request) {
-            return orig(new Request(proxied, input), init);
+            return orig(new Request(proxied, input), { ...(init || {}), headers: proxyHeaders((input as Request).headers) });
           }
-          return orig(proxied, init);
+          return orig(proxied, { ...(init || {}), headers: proxyHeaders(init && init.headers) });
         }
       } catch {
         // not a parseable absolute URL — fall through to the original call
