@@ -5,19 +5,16 @@
  * CHALK interactiveChat REPL; `ui` browsers; other subcommands delegate to the
  * headless @nexus-cortex/cli).
  */
-import { config } from 'dotenv';
+import { bootstrapEnv } from '@nexus-cortex/core';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { existsSync, realpathSync } from 'fs';
+import { realpathSync } from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(realpathSync(__filename));
 const PKG_ROOT = join(__dirname, '..', '..', '..');
 
-const cwdEnv = join(process.cwd(), '.env');
-const pkgEnv = join(PKG_ROOT, '.env');
-
-if (existsSync(cwdEnv)) config({ path: cwdEnv, quiet: true });
-if (existsSync(pkgEnv)) config({ path: pkgEnv, quiet: true });
+// Canonical .env bootstrap (one implementation in @nexus-cortex/core).
+bootstrapEnv(PKG_ROOT);
 
 await import('../dist/index.js');

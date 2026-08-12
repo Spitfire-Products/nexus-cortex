@@ -6,12 +6,11 @@
  * All orchestration logic lives in @nexus-cortex/core.
  */
 import express from 'express';
-import { config } from 'dotenv';
+import { bootstrapEnv } from '@nexus-cortex/core';
 import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs';
-import os from 'os';
 
 // Resolve paths for .env loading
 const __filename = fileURLToPath(import.meta.url);
@@ -37,22 +36,11 @@ if (!process.env.CORTEX_ROOT) {
   else if (fs.existsSync(path.join(serverPkgRoot, '.cortex'))) process.env.CORTEX_ROOT = serverPkgRoot;
 }
 
-// Load .env from cwd first (user's project), then package root (dev/monorepo).
-// dotenv's default is "first wins" — cwd values take priority.
-const cwdEnv = path.join(process.cwd(), '.env');
-const cwdEnvLocal = path.join(process.cwd(), '.env.local');
-const pkgEnv = path.join(packageRoot, '.env');
-const pkgEnvLocal = path.join(packageRoot, '.env.local');
-
-config({ path: cwdEnv, quiet: true });
-config({ path: pkgEnv, quiet: true });
-// Global user config (~/.cortex/.env): lowest priority among non-.local files (dotenv is
-// "first wins", so a project ./.env already loaded above still overrides it). This is what
-// puts keys set via `cortex config set` — which writes ~/.cortex/.env — into process.env,
-// where the API-key consumers (APIClient, web tool backends) actually read them.
-config({ path: path.join(os.homedir() || process.cwd(), '.cortex', '.env'), quiet: true });
-config({ path: cwdEnvLocal, override: true, quiet: true });
-config({ path: pkgEnvLocal, override: true, quiet: true });
+// Canonical .env bootstrap — the SINGLE implementation in @nexus-cortex/core:
+// cwd/.env > packageRoot/.env > global ~/.cortex/.env (where `cortex config set`
+// writes), + .local overrides; first-wins so real injected env is never clobbered.
+// (Replaces the hand-rolled dotenv block so the loader lives in one place.)
+bootstrapEnv(packageRoot);
 
 // HF token aliases. The `hf` CLI, huggingface_hub, and hosting platforms (e.g. Replit)
 // use HF_TOKEN; the harness's HF model card reads HUGGINGFACE_API_KEY. Treat all three

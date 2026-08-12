@@ -70,6 +70,58 @@ export function getGlobalEnvPath(): string {
   return path.join(getGlobalConfigDir(), '.env');
 }
 
+/**
+ * THE canonical .env → process.env bootstrap for every CLI/TUI entry point.
+ *
+ * One implementation, so a consumer never hand-rolls dotenv loading (and can't
+ * forget the global `~/.cortex/.env` — the install/hosted location where the
+ * shipped `.env.example` is copied on first run). All bins call this ONCE at
+ * startup; a change here takes effect for every launcher.
+ *
+ * Precedence (highest → lowest): a `.env.local` beside any of the base files wins
+ * over everything; then project `./.env` (or `packageRoot/.env`) beats the global
+ * `~/.cortex/.env`. Matches `loadEnvFile()`'s layering.
+ *
+ * FIRST-WINS over the real environment: a value already present in `process.env`
+ * (e.g. a key the hosting container injected) is NEVER overwritten by a base .env
+ * file — so a blank baked template can't clobber an injected secret. `.local`
+ * files DO override (they are explicit developer overrides).
+ *
+ * @param packageRoot optional install/monorepo root to also check for a `.env`
+ *        (the dev/`omniclaude-v4/.env` location); pass the bin's resolved root.
+ * @returns the list of files actually loaded (for an [OK]/[WARN] startup log).
+ */
+export function bootstrapEnv(packageRoot?: string): { loadedFrom: string[] } {
+  const cwd = process.cwd();
+  // Base files, HIGHEST precedence first (first-wins → earlier entries win).
+  const baseFiles = [
+    path.join(cwd, '.env'),
+    ...(packageRoot ? [path.join(packageRoot, '.env')] : []),
+    getGlobalEnvPath(),
+  ];
+  // `.local` overrides beside each base location (these DO override existing env).
+  const localFiles = [
+    path.join(cwd, '.env.local'),
+    ...(packageRoot ? [path.join(packageRoot, '.env.local')] : []),
+  ];
+
+  const loadedFrom: string[] = [];
+  const apply = (file: string, override: boolean) => {
+    if (!fs.existsSync(file)) return;
+    let parsed: EnvironmentVariables;
+    try { parsed = parseEnvFile(fs.readFileSync(file, 'utf-8')); } catch { return; }
+    let used = false;
+    for (const [k, v] of Object.entries(parsed)) {
+      if (override || process.env[k] === undefined) { process.env[k] = v as string; used = true; }
+    }
+    if (used || fs.existsSync(file)) loadedFrom.push(file);
+  };
+
+  for (const f of baseFiles) apply(f, false);   // first-wins, never clobber real env
+  for (const f of localFiles) apply(f, true);    // explicit overrides
+  return { loadedFrom };
+}
+
 /** Read+parse a single .env file; returns {} if absent or unreadable. */
 function readEnvFileAt(envPath: string): EnvironmentVariables {
   if (!fs.existsSync(envPath)) return {};

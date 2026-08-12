@@ -7,10 +7,10 @@
  * The UI is adapted from Gemini CLI but wired to our core orchestrator.
  */
 
-import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync, realpathSync } from 'fs';
+import { bootstrapEnv } from '@nexus-cortex/core';
 import React from 'react';
 import { render } from 'ink';
 import { CortexApp } from '../dist/ink-ui/CortexApp.js';
@@ -25,15 +25,8 @@ const PKG_ROOT = join(__dirname, '..', '..', '..');
 // regardless of the cwd the user launches from. Honors a pre-set CORTEX_ROOT.
 process.env.CORTEX_ROOT = process.env.CORTEX_ROOT || PKG_ROOT;
 
-const cwdEnv = join(process.cwd(), '.env');
-const pkgEnv = join(PKG_ROOT, '.env');
-const cwdEnvLocal = join(process.cwd(), '.env.local');
-const pkgEnvLocal = join(PKG_ROOT, '.env.local');
-
-if (existsSync(cwdEnv)) config({ path: cwdEnv, quiet: true });
-if (existsSync(pkgEnv)) config({ path: pkgEnv, quiet: true });
-if (existsSync(cwdEnvLocal)) config({ path: cwdEnvLocal, override: true, quiet: true });
-if (existsSync(pkgEnvLocal)) config({ path: pkgEnvLocal, override: true, quiet: true });
+// Canonical .env bootstrap (one implementation in @nexus-cortex/core).
+bootstrapEnv(PKG_ROOT);
 
 // Parse CLI arguments
 const args = process.argv.slice(2);

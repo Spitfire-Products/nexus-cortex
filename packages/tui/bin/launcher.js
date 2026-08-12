@@ -16,7 +16,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync, realpathSync } from 'fs';
 import http from 'http';
-import { config } from 'dotenv';
+import { bootstrapEnv } from '@nexus-cortex/core';
 
 const __filename = fileURLToPath(import.meta.url);
 // Resolve symlinks to get actual path (important for npm link)
@@ -32,17 +32,10 @@ const PKG_ROOT = join(CLI_DIR, '..', '..');
 // Spawned children inherit this via process.env.
 process.env.CORTEX_ROOT = process.env.CORTEX_ROOT || PKG_ROOT;
 
-// Load .env: cwd first (user's project), then package root (dev/monorepo).
-// dotenv's default is "first wins" — cwd values take priority.
-const cwdEnv = join(process.cwd(), '.env');
-const pkgEnv = join(PKG_ROOT, '.env');
-const cwdEnvLocal = join(process.cwd(), '.env.local');
-const pkgEnvLocal = join(PKG_ROOT, '.env.local');
-
-if (existsSync(cwdEnv)) config({ path: cwdEnv, quiet: true });
-if (existsSync(pkgEnv)) config({ path: pkgEnv, quiet: true });
-if (existsSync(cwdEnvLocal)) config({ path: cwdEnvLocal, override: true, quiet: true });
-if (existsSync(pkgEnvLocal)) config({ path: pkgEnvLocal, override: true, quiet: true });
+// Canonical .env bootstrap (ONE implementation in @nexus-cortex/core) — loads
+// cwd/.env > packageRoot/.env > global ~/.cortex/.env (+ .local overrides), never
+// clobbering real injected env. A change to the loader lives in core, not here.
+const { loadedFrom: envLoadedFrom } = bootstrapEnv(PKG_ROOT);
 
 // Parse arguments
 const args = process.argv.slice(2);
@@ -456,14 +449,12 @@ async function main() {
     log(`  Nexus Cortex - ${modeStr} DEV`, mode === 'direct' ? 'cyan' : 'magenta');
     log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n', 'cyan');
 
-    if (existsSync(cwdEnv)) {
-      log(`[OK] Configuration loaded from: ${cwdEnv}`, 'dim');
-    } else if (existsSync(pkgEnv)) {
-      log(`[OK] Configuration loaded from: ${pkgEnv}`, 'dim');
+    if (envLoadedFrom.length > 0) {
+      log(`[OK] Configuration loaded from: ${envLoadedFrom[0]}`, 'dim');
     } else {
       log(`[WARN] No .env file found`, 'yellow');
     }
-  } else if (!existsSync(cwdEnv) && !existsSync(pkgEnv)) {
+  } else if (envLoadedFrom.length === 0) {
     log(`[WARN] No .env file found`, 'yellow');
   }
 
