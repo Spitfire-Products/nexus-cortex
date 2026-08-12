@@ -17,8 +17,11 @@
  *
  * @module canon/canonSyncScheduler
  */
-import { type CanonSyncOptions } from './canonSync.js';
+import * as fs from 'fs';
+import * as path from 'path';
+import { type CanonSyncOptions, scrubSecrets } from './canonSync.js';
 import { canonPipeline } from './canonPipeline.js';
+import { redactRepoUrl } from './canonRepo.js';
 
 export interface CanonAutoSyncConfig {
   /** Opt-in gate. False → scheduleCanonSync is a no-op. */
@@ -48,12 +51,40 @@ let _pending = false;
 let _syncing = false;
 let _cfg: CanonAutoSyncConfig | null = null;
 
+/**
+ * Run the reactive pipeline with its status output routed to CANON_LOG_FILE
+ * (append, credential-redacted + secret-scrubbed) instead of stdout. The hosted
+ * container sets CANON_LOG_FILE so canon's console output never bleeds into — and
+ * corrupts — the interactive TUI render. CLI / cron (no CANON_LOG_FILE) print
+ * normally. Console is swapped only for the (coalesced, single-in-flight) sync
+ * window and always restored.
+ */
+async function runQuietly(fn: () => unknown | Promise<unknown>): Promise<void> {
+  const logFile = process.env.CANON_LOG_FILE;
+  if (!logFile) { await fn(); return; }
+  try { fs.mkdirSync(path.dirname(logFile), { recursive: true }); } catch { /* best-effort */ }
+  const orig = { log: console.log, warn: console.warn, error: console.error };
+  const sink = (...a: unknown[]): void => {
+    try {
+      const line = scrubSecrets(redactRepoUrl(a.map((x) => (typeof x === 'string' ? x : String(x))).join(' ')));
+      fs.appendFileSync(logFile, `${new Date().toISOString()} ${line}\n`);
+    } catch { /* logging must never throw into the turn */ }
+  };
+  console.log = sink as typeof console.log;
+  console.warn = sink as typeof console.warn;
+  console.error = sink as typeof console.error;
+  try { await fn(); } finally {
+    console.log = orig.log; console.warn = orig.warn; console.error = orig.error;
+  }
+}
+
 // Test seam — override what the debounce fires (see canonSyncScheduler.test.ts).
 // Default = the FULL pipeline (sync → translate → graph), so the canonical line
 // and the §27l knowledge graphs stay current reactively, not just the natives.
-let _runner: (o: CanonSyncOptions) => unknown | Promise<unknown> = (o) => canonPipeline(o);
+// Wrapped in runQuietly so the container's reactive output goes to a log file.
+let _runner: (o: CanonSyncOptions) => unknown | Promise<unknown> = (o) => runQuietly(() => canonPipeline(o));
 export function __setCanonSyncRunner(fn: ((o: CanonSyncOptions) => unknown | Promise<unknown>) | null): void {
-  _runner = fn ?? ((o) => canonPipeline(o));
+  _runner = fn ?? ((o) => runQuietly(() => canonPipeline(o)));
 }
 
 async function runAutoSync(options: CanonSyncOptions): Promise<void> {

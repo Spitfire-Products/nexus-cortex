@@ -31,3 +31,14 @@ export function requireCanonRepo(explicit: string | undefined, storePath: string
   }
   return url;
 }
+
+/**
+ * Strip any embedded credential from a git URL before it is logged. Turns
+ * `https://x-access-token:<TOKEN>@github.com/owner/repo` into
+ * `https://***@github.com/owner/repo`. Defense-in-depth: the token should not be
+ * in the URL at all (it rides in GH_TOKEN + http.extraheader), but any URL that
+ * still carries one must never reach a log line, PTY, or captured transcript.
+ */
+export function redactRepoUrl(url: string): string {
+  return url.replace(/\/\/[^/@]*@/, '//***@');
+}
