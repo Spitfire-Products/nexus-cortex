@@ -38,6 +38,7 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   CANON_STORE:                    { tier: 'env' },
   CANON_REPO:                     { tier: 'env' },
   CORTEX_ENDTURN_GATE:        { tier: 'env' },
+  CORTEX_TOOL_PROFILE:        { tier: 'env' },
   XAI_API_MODE:                   { tier: 'env' },
   OPENAI_API_MODE:                { tier: 'env' },
   ENABLE_PTC:                     { tier: 'env' },

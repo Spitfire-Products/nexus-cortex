@@ -61,6 +61,7 @@ import type { AgentDefinition, SubAgentResult, ISubAgentEventEmitter } from './S
 
 // Phase 1: Tool Architecture Refactor - Unified Tool Registry
 import { toolFactory } from '../tools/ToolFactory.js';
+import { resolveToolProfile, isToolAllowedByProfile } from '../tools/ToolProfile.js';
 
 // Phase 2.9: MCP Integration
 import { McpClientManager } from '../mcp/index.js';
@@ -805,9 +806,13 @@ export class CortexOrchestrator {
         ? toolFactory.getAllTools()
         : toolFactory.getAllTools().filter(t => t.name !== 'EndTurn'),
     );
-    const mcpTools = this.mcpAutoInject ? this.getMcpToolsAsCanonical() : [];
-    const mcpManagementTools = this.getMcpManagementTools();
-    const contextManagementTools = this.getContextManagementTools();
+    // Tool-profile: MCP/management/context tools bypass ToolFactory, so the
+    // bash-only arm must suppress them here or the surface leaks (lean keeps
+    // them — they are part of the "guided" surface under test).
+    const bashOnlyProfile = resolveToolProfile() === 'bash-only';
+    const mcpTools = this.mcpAutoInject && !bashOnlyProfile ? this.getMcpToolsAsCanonical() : [];
+    const mcpManagementTools = bashOnlyProfile ? [] : this.getMcpManagementTools();
+    const contextManagementTools = bashOnlyProfile ? [] : this.getContextManagementTools();
 
     // Include all default tools by default, or custom tools if provided
     const allTools = options.tools !== undefined
@@ -2958,9 +2963,11 @@ export class CortexOrchestrator {
         ? toolFactory.getAllTools()
         : toolFactory.getAllTools().filter(t => t.name !== 'EndTurn'),
     );
-    const mcpTools = this.mcpAutoInject ? this.getMcpToolsAsCanonical() : [];
-    const mcpManagementTools = this.getMcpManagementTools();
-    const contextManagementTools = this.getContextManagementTools();
+    // Tool-profile: streaming mirror of the non-streaming suppression above.
+    const bashOnlyProfile2 = resolveToolProfile() === 'bash-only';
+    const mcpTools = this.mcpAutoInject && !bashOnlyProfile2 ? this.getMcpToolsAsCanonical() : [];
+    const mcpManagementTools = bashOnlyProfile2 ? [] : this.getMcpManagementTools();
+    const contextManagementTools = bashOnlyProfile2 ? [] : this.getContextManagementTools();
     const allTools = options.tools !== undefined
       ? [...factoryTools, ...mcpTools, ...mcpManagementTools, ...contextManagementTools, ...options.tools]
       : [...factoryTools, ...mcpTools, ...mcpManagementTools, ...contextManagementTools];
@@ -5776,6 +5783,21 @@ export class CortexOrchestrator {
           continue;
         }
 
+        // Tool-profile dispatch gate: a tool hidden by the active profile must
+        // not EXECUTE either (executors register unconditionally, so a model
+        // hallucinating a hidden tool name would otherwise run it and leak the
+        // A/B). MCP/context tools are already suppressed at assembly.
+        if (!isContextManagementTool && !isMcpManagementTool && !isMcpTool
+            && !isToolAllowedByProfile(toolUse.name, (n) => toolFactory.getTool(n)?.discoveryTier)) {
+          results.push({
+            tool_use_id: toolUse.id,
+            tool_name: toolUse.name,
+            content: `Tool '${toolUse.name}' is not available under the active tool profile (${resolveToolProfile()}). Use the tools offered in this session.`,
+            is_error: true,
+          });
+          continue;
+        }
+
         // Phase 2.5 Day 3: Execute tool with retry logic for transient failures
         const MAX_RETRIES = 2;
         const BASE_DELAY_MS = 1000;
@@ -6281,6 +6303,18 @@ export class CortexOrchestrator {
           tool_name: toolUse.name,
           content: errorMessage,
           is_error: true
+        };
+      }
+
+      // Tool-profile dispatch gate (streaming-path mirror — see the batch-path
+      // comment): hidden-by-profile tools must not execute.
+      if (!isContextManagementTool && !isMcpManagementTool && !isMcpTool
+          && !isToolAllowedByProfile(toolUse.name, (n) => toolFactory.getTool(n)?.discoveryTier)) {
+        return {
+          tool_use_id: toolUse.id,
+          tool_name: toolUse.name,
+          content: `Tool '${toolUse.name}' is not available under the active tool profile (${resolveToolProfile()}). Use the tools offered in this session.`,
+          is_error: true,
         };
       }
 

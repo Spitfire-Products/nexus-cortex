@@ -72,6 +72,9 @@ export interface BenchmarkRecord {
   temperature?: number;
   /** the PM-assigned arm persona/strategy label (auto-stamped from CORTEX_ARM_STRATEGY). */
   strategy?: string;
+  /** tool-surface arm this run used (auto-stamped from CORTEX_TOOL_PROFILE;
+   *  absent = 'full'). The tool-profile A/B's per-run provenance. */
+  toolProfile?: string;
 }
 
 export interface ModelScore {
@@ -326,6 +329,10 @@ export class ModelRouterMatrix {
       // Effectiveness arm — stamp from the dispatch env when the caller didn't pass it.
       temperature: entry.temperature ?? envTemperature(),
       strategy: entry.strategy ?? process.env.CORTEX_ARM_STRATEGY ?? undefined,
+      toolProfile: entry.toolProfile
+        ?? (process.env.CORTEX_TOOL_PROFILE && process.env.CORTEX_TOOL_PROFILE !== 'full'
+          ? process.env.CORTEX_TOOL_PROFILE
+          : undefined),
       _ts: Date.now(),
     };
     fs.mkdirSync(path.dirname(this.storePath), { recursive: true });

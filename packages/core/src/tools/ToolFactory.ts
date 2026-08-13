@@ -14,6 +14,7 @@ import type {
 } from './types/CanonicalTool.js';
 import { baseToolRegistry } from './registries/BaseToolRegistry.js';
 import { addonToolRegistry } from './registries/AddonToolRegistry.js';
+import { applyToolProfile } from './ToolProfile.js';
 
 /**
  * Unified tool factory
@@ -48,7 +49,12 @@ export class ToolFactory implements ToolFactoryInterface {
       }
     });
 
-    return Array.from(toolMap.values());
+    // Tool-profile experiment surface (CORTEX_TOOL_PROFILE=full|lean|bash-only):
+    // applied HERE because every model-facing path funnels through getAllTools —
+    // turn assembly, SearchTools discovery, deferred announcement, {{toolNames}},
+    // server /tools, and the essential/standard tiering below. Resolved fresh
+    // per call (env tier, hot-toggleable). 'full' (default) is a no-op.
+    return applyToolProfile(Array.from(toolMap.values()));
   }
 
   /**

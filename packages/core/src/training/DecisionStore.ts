@@ -34,6 +34,9 @@ export interface Decision {
   inputSummary: string;
   success: boolean;
   errorSnippet?: string;
+  /** Active tool-surface arm (CORTEX_TOOL_PROFILE) — stamped when not 'full',
+   *  so the tool-profile A/B can slice selection/success per arm. */
+  toolProfile?: string;
 }
 
 export interface DecisionStats {
@@ -123,6 +126,11 @@ export class DecisionStore {
       success: input.success,
       ...(input.errorSnippet
         ? { errorSnippet: truncate(input.errorSnippet, MAX_ERROR_SNIPPET) }
+        : {}),
+      // Tool-profile arm provenance (env-stamped; omitted for the default so
+      // existing rows stay comparable as implicit 'full').
+      ...(process.env.CORTEX_TOOL_PROFILE && process.env.CORTEX_TOOL_PROFILE !== 'full'
+        ? { toolProfile: process.env.CORTEX_TOOL_PROFILE }
         : {}),
     };
     await fs.mkdir(path.dirname(this.storePath), { recursive: true });

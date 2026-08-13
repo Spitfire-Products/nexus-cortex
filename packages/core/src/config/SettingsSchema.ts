@@ -267,6 +267,7 @@ export interface EnvironmentVariables {
 
   /** Mandatory EndTurn pre-delivery self-audit + Stage 2/3 verifiers */
   CORTEX_ENDTURN_GATE?: string; // 'true' | 'false'
+  CORTEX_TOOL_PROFILE?: string; // 'full' | 'lean' | 'bash-only' — tool-surface experiment arm
 
   // ============================================
   // DECISION STORE
@@ -443,6 +444,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
 
   // Endturn Gate / Training
   CORTEX_ENDTURN_GATE: 'false',
+  CORTEX_TOOL_PROFILE: 'full',
 
   // Decision Store
   CORTEX_RECORD_DECISIONS: 'true',
@@ -1125,6 +1127,15 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     type: 'boolean',
     category: 'training',
     default: 'false'
+  },
+  {
+    key: 'CORTEX_TOOL_PROFILE',
+    displayName: 'Tool Profile',
+    description: 'Tool-surface experiment arm: full (all tools), lean (essential tier only), bash-only (Bash + interaction). Stamped into decision/router records for the tool-profile A/B.',
+    type: 'choice',
+    category: 'training',
+    choices: ['full', 'lean', 'bash-only'],
+    default: 'full'
   },
 
   // ============================================
