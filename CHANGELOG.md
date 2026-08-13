@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.57.0] - 2026-08-13
+
+### Added
+- **xAI Grok 4.6.** New frontier model — 500K context, vision (image → text), reasoning,
+  function calling, structured outputs; $2.00 / $0.50 cached / $6.00 output per 1M tokens
+  (<200k prompt). Two transport variants are registered: `grok-4.6` (Messages API,
+  interleaved thinking via `reasoning_content`) and `grok-4.6-responses` (Responses API,
+  encrypted reasoning + xAI server-side tools). Both adapters verified operational.
+
+## [4.56.5] - 2026-08-12
+
+### Fixed
+- **Canon-store git token no longer leaks into logs or the terminal.** The hosted harness
+  embedded the token in the `CANON_REPO` clone URL and `canon-sync` logged that URL, printing
+  it into the interactive terminal. The token now rides in `GH_TOKEN` and git authenticates via
+  `http.extraheader` (never in a URL, `.git/config`, argv, or a log line); any credentialed URL
+  is redacted before logging (`redactRepoUrl`). A git identity is set so the container commit
+  succeeds (fixes "Author identity unknown"), and reactive canon-sync status is routed to
+  `CANON_LOG_FILE` instead of corrupting the TUI render. (nexus-canon 1.6.1.)
+
+## [4.56.4] - 2026-08-12
+
+### Changed
+- **One canonical `.env` loader for every entry point.** CLI, TUI, and server now bootstrap
+  the environment through a single `bootstrapEnv()` in `@nexus-cortex/core` (resolves cwd →
+  package root → global `~/.cortex/.env`, first-wins so an injected key is never clobbered),
+  replacing per-binary dotenv handling. Fixes the spurious "No .env found" warning some TUIs
+  emitted and makes key/config resolution consistent across all surfaces.
+
+## [4.56.3] - 2026-08-11
+
+### Fixed
+- **Proxied provider calls no longer blocked by Cloudflare "Block AI bots" / Bot Fight Mode.**
+  When routing through `CORTEX_PROXY_BASE_URL`, `cortexProxyFetch` now overrides the provider
+  SDK's `User-Agent` (e.g. the OpenAI SDK's `OpenAI/JS`, used for DeepSeek + OpenAI-compatible
+  providers) with a benign `nexus-cortex-proxy/1.0`, so a proxy zone with AI-bot filtering no
+  longer rejects requests with 403 "Your request was blocked." No Cloudflare config change
+  needed, and immune to future managed-bot rule updates.
+
+## [4.56.2] - 2026-08-10
+
+### Fixed
+- **Deterministic proxy routing for provider calls.** With `CORTEX_PROXY_BASE_URL` set (hosted
+  / user-funded jobs), provider API calls now use a call-time proxy-aware `fetch` passed
+  explicitly to every OpenAI and Anthropic SDK client (and every raw provider `fetch`), instead
+  of a `globalThis.fetch` monkey-patch the OpenAI SDK bypassed — fixing spurious "invalid api
+  key" 401s where a per-job proxy token was sent directly to the provider. Google SDKs keep the
+  global patch (they accept no `fetch` option).
+
+### Added
+- **Canon graph cognition dimension (§27l).** `canon graph` can fold agent reasoning / j-space
+  state into the project knowledge graph (opt-in). (nexus-canon 1.6.0.)
+
+## [4.56.1] - 2026-08-05
+
+### Added
+- **Browser CORTEX is the fifth captured harness.** Canon now captures browser CORTEX sessions
+  (`/native/browser-cortex/`), integrating per-client `browser-cortex-<id>` branches into main
+  automatically (browsers never force main); reactive capture runs the full pipeline
+  (sync → translate → graph). (nexus-canon 1.5.0.)
+
 ## [4.56.0] - 2026-08-04
 
 ### Added

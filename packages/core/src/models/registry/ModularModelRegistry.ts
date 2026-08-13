@@ -68,6 +68,8 @@ export class ModularModelRegistry implements ModelRegistry {
     const hfSpaceCard = huggingfaceModels.hfSpace;   // ModelConfig | null (set via HF_SPACE_ID)
     const allModelCards: ModelConfig[] = [
       // XAI models
+      xaiModels.grok46,
+      xaiModels.grok46Responses,
       xaiModels.grok45,
       xaiModels.grok43,
       xaiModels.grok420Reasoning,
