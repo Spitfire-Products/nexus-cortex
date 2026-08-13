@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.57.1] - 2026-08-13
+
+### Added
+- **True reasoning-cost visibility.** Normalized usage now surfaces `reasoningTokens`
+  (read from `completion_tokens_details` / `output_tokens_details` / flat
+  `usage.reasoning_tokens`) — on the xAI Responses path this is the only client-visible
+  accounting of internal-reasoning spend, since the reasoning body is an encrypted blob.
+  `TokenUsageMetrics` now documents that `costUsd` (returned on xAI paths) is the
+  authoritative post-discount billed amount and should be preferred over token-math
+  estimates when present.
+
 ## [4.57.0] - 2026-08-13
 
 ### Added

@@ -134,6 +134,19 @@ export interface TokenUsageMetrics {
 
   /** Number of server-side tool invocations xAI billed for this request. */
   serverSideToolsUsed?: number;
+
+  /**
+   * Internal-reasoning tokens billed as output but NOT included in the visible
+   * text (xAI docs tools/tool-usage-details: `completion_tokens` = final text
+   * ONLY; reasoning is separate — and on the Responses path the reasoning body
+   * is an encrypted blob the client cannot tokenize). Read from whichever field
+   * the wire provides: `completion_tokens_details.reasoning_tokens` (OpenAI
+   * chat), `output_tokens_details.reasoning_tokens` (Responses), or flat
+   * `usage.reasoning_tokens`. Absent when the provider doesn't report it.
+   * NOTE for cost consumers: when `costUsd` is present it is the authoritative
+   * post-discount billed amount — prefer it over any token-math estimate.
+   */
+  reasoningTokens?: number;
 }
 
 /**
@@ -941,6 +954,16 @@ export class GatewayTranslationLayer {
     const costUsdTicks = typeof costTicksRaw === 'number' ? costTicksRaw : undefined;
     const serverSideToolsRaw = resp.usage?.num_server_side_tools_used;
 
+    // Internal-reasoning tokens (billed as output, excluded from visible text) —
+    // provider-agnostic read across the three wire conventions. On the Responses
+    // path the reasoning body is an encrypted blob, so this field is the ONLY
+    // client-visible accounting of that spend (xAI docs tools/tool-usage-details).
+    const reasoningRaw =
+      resp.usage?.completion_tokens_details?.reasoning_tokens ??
+      resp.usage?.output_tokens_details?.reasoning_tokens ??
+      resp.usage?.reasoning_tokens;
+    const reasoningTokens = typeof reasoningRaw === 'number' ? reasoningRaw : undefined;
+
     return {
       inputTokens,
       outputTokens,
@@ -951,7 +974,8 @@ export class GatewayTranslationLayer {
         : {}),
       ...(typeof serverSideToolsRaw === 'number'
         ? { serverSideToolsUsed: serverSideToolsRaw }
-        : {})
+        : {}),
+      ...(reasoningTokens !== undefined ? { reasoningTokens } : {})
     };
   }
 
