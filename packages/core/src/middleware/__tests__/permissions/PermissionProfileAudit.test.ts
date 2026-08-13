@@ -23,7 +23,8 @@ import * as path from 'path';
 //   • CortexOrchestrator switch/case for orchestrator-managed tools
 //     that aren't in the executor registry.
 const EXECUTOR_REGISTRY_TOOLS = [
-  'AskUserQuestion', 'Bash', 'BashOutput', 'CodeExecute', 'CreateArtifactTool',
+  'AskUserQuestion', 'Bash', 'BashOutput', 'CanonListSessions', 'CanonPullSession',
+  'CodeExecute', 'CreateArtifactTool',
   'Edit', 'ExitPlanMode', 'GetConversationSegment', 'Glob', 'Grep',
   'InspectSandbox', 'InteractWithSandbox', 'KillShell',
   'ListCompactionBoundaries', 'ListSessions', 'LoadSession',
@@ -54,6 +55,7 @@ const PROD_READ_ONLY_TOOLS = [
   'RequestHistoricalContext', 'SearchConversationHistory',
   'GetConversationSegment', 'ListCompactionBoundaries',
   'TodoList', 'SearchTools', 'MemoryRecall',
+  'CanonListSessions',
 ];
 
 // Approval handlers that can run safely without an interactive TTY.
