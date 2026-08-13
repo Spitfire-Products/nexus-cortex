@@ -69,6 +69,12 @@ import {
 } from './implementations/historical/index.js';
 
 import {
+  // Canon store operations (cross-harness memory rail)
+  CanonListSessionsToolExecutor,
+  CanonPullSessionToolExecutor,
+} from './implementations/canon/index.js';
+
+import {
   // Extension operations
   SlashCommandToolExecutor,
   SkillToolExecutor,
@@ -162,6 +168,10 @@ export class ExecutorRegistry implements IExecutorRegistry {
     this.register(new ListCompactionBoundariesToolExecutor(this.config));
     this.register(new ListSessionsToolExecutor(this.config));
     this.register(new LoadSessionToolExecutor(this.config));
+
+    // Canon store operations (cross-harness memory rail)
+    this.register(new CanonListSessionsToolExecutor(this.config));
+    this.register(new CanonPullSessionToolExecutor(this.config));
 
     // MCP operations
     // Note: DiscoveredMcpToolExecutor is created dynamically when MCP servers are discovered

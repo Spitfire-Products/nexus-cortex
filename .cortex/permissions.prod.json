@@ -27,7 +27,9 @@
           "TodoList",
           "SearchTools",
           "MemoryWrite",
-          "MemoryRecall"
+          "MemoryRecall",
+          "CanonListSessions",
+          "CanonPullSession"
         ]
       }
     },

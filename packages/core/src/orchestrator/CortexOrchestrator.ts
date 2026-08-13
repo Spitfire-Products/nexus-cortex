@@ -8205,6 +8205,7 @@ export class CortexOrchestrator {
       'Session & History': [
         'ListSessions', 'LoadSession', 'SearchConversationHistory',
         'GetConversationSegment', 'ListCompactionBoundaries', 'RequestHistoricalContext',
+        'CanonListSessions', 'CanonPullSession',
       ],
       'Sandbox & Artifacts': [
         'CreateArtifactTool', 'InteractWithSandbox', 'ModifySandbox',

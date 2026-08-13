@@ -45,6 +45,10 @@ export const whitelistPolicy: PermissionPolicy = {
       'SearchConversationHistory',
       'TodoList',
       'SearchTools',
+      // Canon store: list is read-only; pull only writes a session COPY into
+      // the local session directory (no arbitrary-path writes).
+      'CanonListSessions',
+      'CanonPullSession',
     ];
 
     if (whitelistTools.includes(context.toolName)) {

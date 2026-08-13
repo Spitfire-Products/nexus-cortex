@@ -2089,6 +2089,81 @@ Query forms: keyword search ("notebook jupyter"), category filter ("execution"),
       executionEnvironment: 'client',
       version: '1.0.0'
     }
+  },
+
+  {
+    name: 'CanonListSessions',
+    description: `List prior agent sessions in the canon store — the portable, cross-harness memory rail: a git repo the user owns that captures sessions from every harness (this one, Claude Code, the browser agent, grok, gemini) on every machine.
+
+Use when you need context from earlier work: recovering after a compaction, continuing a project started elsewhere, or answering "how did we do X before". Each row has the session uuid, size, origin harness, and recovered title. Follow up with CanonPullSession({ session }) to materialize one.
+
+Requires a configured canon store (CANON_REPO/CANON_STORE environment; hosted sessions have it set when the user saved a canon connection).`,
+    schema: {
+      type: 'object',
+      properties: {
+        all: {
+          type: 'boolean',
+          description: 'Include small sessions (<4KB) normally filtered out',
+          default: false
+        },
+        project: {
+          type: 'string',
+          description: 'Restrict to one project id from the canon project map'
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum sessions to return',
+          default: 50
+        }
+      }
+    },
+    category: 'base',
+    discoveryTier: 'standard',
+    metadata: {
+      immutable: true,
+      executionEnvironment: 'client',
+      version: '1.0.0'
+    }
+  },
+
+  {
+    name: 'CanonPullSession',
+    description: `Materialize one canon-store session into the local session directory — the cross-harness "pull my history here" move. Works on any harness's sessions: a session from this harness becomes resumable; a foreign-harness session (Claude Code, browser agent, grok, gemini) becomes a readable transcript plus a tool-compatibility capsule.
+
+Use after CanonListSessions to rehydrate prior work: post-compaction recovery, continuing a project from another machine or surface, or reading exactly what happened in an earlier session.
+
+Set stripSignatures=true when the session was recorded under a DIFFERENT provider account (thinking signatures only validate against the originating account).`,
+    schema: {
+      type: 'object',
+      properties: {
+        session: {
+          type: 'string',
+          description: 'Canon session uuid, or a unique prefix of one'
+        },
+        to: {
+          type: 'string',
+          description: 'Destination directory (default: the local session storage dir)'
+        },
+        force: {
+          type: 'boolean',
+          description: 'Overwrite an existing local copy (resuming elsewhere is a branch)',
+          default: false
+        },
+        stripSignatures: {
+          type: 'boolean',
+          description: 'Convert thinking blocks to plain text in the copy (foreign-account replay safety)',
+          default: false
+        }
+      },
+      required: ['session']
+    },
+    category: 'base',
+    discoveryTier: 'standard',
+    metadata: {
+      immutable: true,
+      executionEnvironment: 'client',
+      version: '1.0.0'
+    }
   }
 ];
 
