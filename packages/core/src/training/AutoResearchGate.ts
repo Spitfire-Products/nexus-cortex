@@ -84,7 +84,7 @@ export function evaluateExperiment(
 
   // 3. Monte-Carlo gate over the raw per-run arrays (sufficient cells only —
   //    decideExperiment re-applies the minRunsPerArm filter itself).
-  const arms: TaskArms[] = comparisons.map(c => ({ baseScores: c.baseScores, candScores: c.candScores }));
+  const arms: TaskArms[] = comparisons.map(c => ({ baseScores: c.baseScores, candScores: c.candScores, taskFamily: c.taskFamily }));
   const verdict = decideExperiment(arms, {
     ...input.gate,
     nFamilyExperiments: input.nFamilyExperiments ?? 1,
@@ -132,6 +132,6 @@ export function verifyOnHoldout(
   });
   const comparisons = [...holdout.improvements, ...holdout.regressions, ...holdout.neutral];
   if (comparisons.length === 0) return null; // no held-out evidence → unverifiable
-  const arms: TaskArms[] = comparisons.map(c => ({ baseScores: c.baseScores, candScores: c.candScores }));
+  const arms: TaskArms[] = comparisons.map(c => ({ baseScores: c.baseScores, candScores: c.candScores, taskFamily: c.taskFamily }));
   return decideExperiment(arms, { ...input.gate, nFamilyExperiments: input.nFamilyExperiments ?? 1 });
 }

@@ -114,6 +114,8 @@ export class ModularModelRegistry implements ModelRegistry {
       // Google Gemini models (gemini-3.5-flash GA added 2026-05-27;
       // gemini-3-pro-preview + gemini-3.1-flash-lite-preview discontinued)
       googleModels.gemini35Flash,
+      googleModels.gemini36Flash,
+      googleModels.gemini37Flash,
       googleModels.gemini3FlashPreview,
       googleModels.gemini31ProPreview,
       googleModels.gemini25Pro,
@@ -126,6 +128,7 @@ export class ModularModelRegistry implements ModelRegistry {
       openaiModels.gpt4o,
       openaiModels.gpt4oMini,
       openaiModels.gpt55,
+      openaiModels.gpt56,
       openaiModels.gpt54,
       openaiModels.gpt54Mini,
       openaiModels.gpt5,

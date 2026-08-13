@@ -46,6 +46,11 @@ export function mulberry32(seed: number): RNG {
 export interface TaskArms {
   baseScores: number[];
   candScores: number[];
+  /** Task-family label (TaskClassifier taxonomy, e.g. 'T1'…'T5'|'GENERAL').
+   *  Optional; when present the verdict reports distinct-family BREADTH — the
+   *  Bennett weakness-first signal (a keep spanning many families generalizes
+   *  better than an equal-effect keep concentrated in one). */
+  taskFamily?: string;
 }
 
 export interface GateOptions {
@@ -78,6 +83,10 @@ export interface ExperimentVerdict {
   alphaAdjusted?: number;
   nRuns: number;
   nTasks: number;
+  /** Distinct task families among the USABLE tasks (Bennett breadth). Present
+   *  only when the caller labeled tasks with taskFamily. Prefer the broader of
+   *  two equal-effect keeps; treat a 1-family keep as narrow evidence. */
+  familiesCovered?: number;
   reason: string;
 }
 
@@ -251,9 +260,20 @@ export function decideExperiment(tasks: TaskArms[], opts: GateOptions = {}): Exp
   const significant = pValue <= alphaAdjusted;
   const keep = ciExcludesZero && significant;
 
-  const reason = keep
+  // Bennett breadth (weakness-first): distinct task families among the usable
+  // tasks, when the caller labeled them. NOT a gate input — the keep/discard
+  // rule stays purely statistical — but surfaced on the verdict so arbitration
+  // between equal-effect keeps can prefer the broader one, and a narrow keep
+  // is visibly narrow in its reason string.
+  const families = new Set(usable.map(t => t.taskFamily).filter((f): f is string => !!f));
+  const familiesCovered = families.size > 0 ? families.size : undefined;
+  const breadthNote = familiesCovered !== undefined
+    ? `; breadth: ${familiesCovered} task famil${familiesCovered === 1 ? 'y' : 'ies'}${keep && familiesCovered === 1 && usable.length > 1 ? ' (NARROW keep — evidence concentrated in one family)' : ''}`
+    : '';
+
+  const reason = (keep
     ? `keep: effect +${effect} (95% CI [${ciLow}, ${ciHigh}] excludes 0), p=${pValue} <= alpha_adj=${alphaAdjusted} (N=${nFamily})`
-    : `discard: ${!ciExcludesZero ? `CI [${ciLow}, ${ciHigh}] includes 0` : `p=${pValue} > alpha_adj=${alphaAdjusted} (N=${nFamily})`}`;
+    : `discard: ${!ciExcludesZero ? `CI [${ciLow}, ${ciHigh}] includes 0` : `p=${pValue} > alpha_adj=${alphaAdjusted} (N=${nFamily})`}`) + breadthNote;
 
   return {
     decision: keep ? 'keep' : 'discard',
@@ -265,6 +285,7 @@ export function decideExperiment(tasks: TaskArms[], opts: GateOptions = {}): Exp
     alphaAdjusted,
     nRuns,
     nTasks: usable.length,
+    ...(familiesCovered !== undefined ? { familiesCovered } : {}),
     reason,
   };
 }

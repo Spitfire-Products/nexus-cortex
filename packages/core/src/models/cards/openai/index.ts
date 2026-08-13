@@ -18,6 +18,7 @@ export { o1Pro } from './o1-pro.js';
 
 // GPT-5 family
 export { gpt55 } from './gpt-5-5.js';
+export { gpt56 } from './gpt-5-6.js';
 export { gpt54 } from './gpt-5-4.js';
 export { gpt54Mini } from './gpt-5-4-mini.js';
 export { gpt5 } from './gpt-5.js';

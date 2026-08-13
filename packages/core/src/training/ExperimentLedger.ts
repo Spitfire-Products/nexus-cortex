@@ -52,6 +52,9 @@ export interface ExperimentTaskResult {
   baseN: number;
   /** number of candidate-version runs aggregated into candScore. */
   candN: number;
+  /** Task-family label (TaskClassifier taxonomy). Optional; enables the
+   *  Bennett breadth readout (distinct families covered by a keep). */
+  taskFamily?: string;
 }
 
 /**

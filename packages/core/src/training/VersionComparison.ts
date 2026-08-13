@@ -24,6 +24,9 @@ import type { ModelRouterMatrix, BenchmarkRecord } from './ModelRouterMatrix.js'
 /** Per-task comparison evidence for one (taskFingerprint, base, candidate) cell. */
 export interface TaskComparison {
   taskFingerprint: string;
+  /** Task-family label (TaskClassifier taxonomy, from the records' taskType) —
+   *  feeds the verdict's Bennett breadth readout. Absent on unlabeled legacy rows. */
+  taskFamily?: string;
   baseRef: string;
   candidateRef: string;
   /** raw per-run scores on the base version (for bootstrap/permutation). */
@@ -92,19 +95,28 @@ export function compareVersions(
   const scoreOf = opts.scoreOf ?? defaultScoreOf;
   const minN = opts.minN ?? 2;
 
-  const pull = (harnessRef: string): number[] =>
-    matrix
-      .getRecords({ taskFingerprint, harnessRef, split, benchmarkSource: opts.benchmarkSource, modelId: opts.modelId })
-      .map(scoreOf)
-      .filter((n): n is number => typeof n === 'number' && !Number.isNaN(n));
+  const pullRecords = (harnessRef: string) =>
+    matrix.getRecords({ taskFingerprint, harnessRef, split, benchmarkSource: opts.benchmarkSource, modelId: opts.modelId });
 
-  const baseScores = pull(baseRef);
-  const candScores = pull(candidateRef);
+  const baseRecords = pullRecords(baseRef);
+  const candRecords = pullRecords(candidateRef);
+  const scores = (rs: BenchmarkRecord[]): number[] =>
+    rs.map(scoreOf).filter((n): n is number => typeof n === 'number' && !Number.isNaN(n));
+
+  const baseScores = scores(baseRecords);
+  const candScores = scores(candRecords);
   const baseMean = round3(mean(baseScores));
   const candMean = round3(mean(candScores));
+  // Task-family label for the Bennett breadth readout: taskType is stamped on
+  // every benchmark record and is constant per fingerprint — take the first
+  // labeled record (candidate side preferred; taskType is required on records,
+  // but stay defensive about legacy rows).
+  const taskFamily = candRecords.find(r => r.taskType)?.taskType
+    ?? baseRecords.find(r => r.taskType)?.taskType;
 
   return {
     taskFingerprint,
+    ...(taskFamily ? { taskFamily } : {}),
     baseRef,
     candidateRef,
     baseScores,
@@ -170,6 +182,7 @@ export function toTaskResult(experimentTag: string, cmp: TaskComparison) {
   return {
     experimentTag,
     taskFingerprint: cmp.taskFingerprint,
+    ...(cmp.taskFamily ? { taskFamily: cmp.taskFamily } : {}),
     baseScore: cmp.baseMean,
     candScore: cmp.candMean,
     delta: cmp.delta,

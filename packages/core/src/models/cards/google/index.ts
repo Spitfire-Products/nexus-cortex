@@ -8,6 +8,8 @@
  */
 
 export { gemini35Flash } from './gemini-3-5-flash.js';
+export { gemini36Flash } from './gemini-3-6-flash.js';
+export { gemini37Flash } from './gemini-3-7-flash.js';
 export { gemini3FlashPreview } from './gemini-3-flash-preview.js';
 export { gemini31ProPreview } from './gemini-3-1-pro-preview.js';
 export { gemini25Pro } from './gemini-2-5-pro.js';

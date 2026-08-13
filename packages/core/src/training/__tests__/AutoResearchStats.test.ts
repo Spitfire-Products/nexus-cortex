@@ -100,3 +100,45 @@ describe('AutoResearchStats — Monte-Carlo keep/discard gate', () => {
     expect(p).toBeLessThan(0.05);
   });
 });
+
+// ── Bennett breadth (familiesCovered) ────────────────────────────────────────
+import { decideExperiment as decideForBreadth } from '../AutoResearchStats.js';
+
+describe('decideExperiment — Bennett breadth readout', () => {
+  const win = { baseScores: [0, 0, 0], candScores: [100, 100, 100] };
+
+  it('reports distinct families and flags a narrow keep', () => {
+    const v = decideForBreadth(
+      [
+        { ...win, taskFamily: 'T1' },
+        { ...win, taskFamily: 'T1' },
+        { ...win, taskFamily: 'T1' },
+      ],
+      { seed: 7 },
+    );
+    expect(v.decision).toBe('keep');
+    expect(v.familiesCovered).toBe(1);
+    expect(v.reason).toContain('NARROW keep');
+  });
+
+  it('broad keep reports the family count without the narrow flag', () => {
+    const v = decideForBreadth(
+      [
+        { ...win, taskFamily: 'T1' },
+        { ...win, taskFamily: 'T3' },
+        { ...win, taskFamily: 'GENERAL' },
+      ],
+      { seed: 7 },
+    );
+    expect(v.decision).toBe('keep');
+    expect(v.familiesCovered).toBe(3);
+    expect(v.reason).not.toContain('NARROW');
+  });
+
+  it('unlabeled tasks: familiesCovered absent, verdict unchanged (back-compat)', () => {
+    const v = decideForBreadth([win, win], { seed: 7 });
+    expect(v.decision).toBe('keep');
+    expect(v.familiesCovered).toBeUndefined();
+    expect(v.reason).not.toContain('breadth');
+  });
+});

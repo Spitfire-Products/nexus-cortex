@@ -92,6 +92,7 @@ describe('VersionComparison — base-vs-candidate harness comparison', () => {
     m.record(rec({ taskFingerprint: 'fp1', harnessRef: 'bbb', qualitativeScore: 70 }));
     m.record(rec({ taskFingerprint: 'fp1', harnessRef: 'bbb', qualitativeScore: 70 }));
     const row = toTaskResult('swarm-01', compareVersions(m, 'fp1', 'aaa', 'bbb'));
-    expect(row).toEqual({ experimentTag: 'swarm-01', taskFingerprint: 'fp1', baseScore: 60, candScore: 70, delta: 10, baseN: 2, candN: 2 });
+    // taskFamily rides through from the records' taskType (Bennett breadth label).
+    expect(row).toEqual({ experimentTag: 'swarm-01', taskFingerprint: 'fp1', taskFamily: 'T1', baseScore: 60, candScore: 70, delta: 10, baseN: 2, candN: 2 });
   });
 });
