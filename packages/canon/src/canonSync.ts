@@ -15,7 +15,7 @@
  *
  * @module canon/canonSync
  */
-import { requireCanonRepo, redactRepoUrl } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, gitAuthArgs, canonGit } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -130,19 +130,6 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
   const MAX_BYTES = 50 * 1024 * 1024; // GitHub hard-rejects >100MB; margin for scrub growth
   const PART_BYTES = 25 * 1024 * 1024;
 
-  // Git auth + identity. The token rides in env (GH_TOKEN/GITHUB_TOKEN) and is
-  // applied PER-INVOCATION via http.extraheader — never embedded in the clone URL,
-  // .git/config, argv, or a log line. Identity is set per-call so a container with
-  // no global git identity can still commit (fixes 'Author identity unknown').
-  const GIT_TOKEN = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '';
-  const GIT_AUTH_ARGS = GIT_TOKEN
-    ? ['-c', `http.extraheader=AUTHORIZATION: basic ${Buffer.from(`x-access-token:${GIT_TOKEN}`).toString('base64')}`]
-    : [];
-  const GIT_ID_ARGS = [
-    '-c', `user.email=${process.env.CANON_GIT_EMAIL || 'canon-sync@nexus-cortex.local'}`,
-    '-c', `user.name=${process.env.CANON_GIT_NAME || 'nexus-cortex canon-sync'}`,
-  ];
-
   if (!fs.existsSync(path.join(STORE, '.git'))) {
     // Working clone is disposable (quota lesson 2026-07-27: keep it OFF the
     // workspace quota — pass --store /tmp/canon-store); remote is the truth.
@@ -151,7 +138,7 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
     try {
       // stdio piped: git's stderr must NEVER bleed into the host terminal (an
       // interactive PTY renders it as corruption); captured on the error instead.
-      execFileSync('git', [...GIT_AUTH_ARGS, 'clone', '-q', CANON_REPO, STORE], {
+      execFileSync('git', [...gitAuthArgs(), 'clone', '-q', CANON_REPO, STORE], {
         encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -275,7 +262,7 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
     }
     fs.mkdirSync(path.dirname(MANIFEST_PATH), { recursive: true });
     fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest));
-    const git = (a: string[]) => execFileSync('git', [...GIT_AUTH_ARGS, ...GIT_ID_ARGS, ...a], { cwd: STORE, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const git = canonGit(STORE, 'canon-sync');
     // BROWSER-BRANCH INTEGRATION: each browser SPA pushes its own
     // `browser-cortex-<id>` branch (its in-browser repo has UNRELATED history, so
     // it can never fast-forward main — and force would clobber the store). Fold

@@ -18,11 +18,10 @@
  *
  * @module canon/canonArtifacts
  */
-import { requireCanonRepo } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit } from './canonRepo.js';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import type { ArtifactManifest, ArtifactContentEntry } from '@nexus-cortex/types';
 
 export interface CanonArtifactsOptions {
@@ -81,11 +80,10 @@ export async function canonArtifacts(o: CanonArtifactsOptions = {}): Promise<Can
   const DRY = o.dryRun ?? false;
   const STORE = o.store ?? '/tmp/canon-store';
   const MANIFEST_PATH = path.join(HOME, '.canon', 'artifacts-manifest.json');
-  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
   if (!fs.existsSync(path.join(STORE, '.git'))) {
     const CANON_REPO = requireCanonRepo(o.repoUrl, STORE, 'canon-artifacts');
-    console.log(`[canon-artifacts] no store at ${STORE} — cloning ${CANON_REPO}`);
-    execFileSync('git', ['clone', '-q', CANON_REPO, STORE], { encoding: 'utf8', env });
+    console.log(`[canon-artifacts] no store at ${STORE} — cloning ${redactRepoUrl(CANON_REPO)}`);
+    canonGit(null, 'canon-artifacts')(['clone', '-q', CANON_REPO, STORE]);
   }
   const incr: Record<string, string> = fs.existsSync(MANIFEST_PATH)
     ? JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8')) : {};
@@ -243,7 +241,7 @@ export async function canonArtifacts(o: CanonArtifactsOptions = {}): Promise<Can
     fs.writeFileSync(mdPath, md);
     fs.mkdirSync(path.dirname(MANIFEST_PATH), { recursive: true });
     fs.writeFileSync(MANIFEST_PATH, JSON.stringify(incr));
-    const git = (a: string[]) => execFileSync('git', a, { cwd: STORE, encoding: 'utf8', env });
+    const git = canonGit(STORE, 'canon-artifacts');
     git(['add', '-A']);
     if (git(['status', '--porcelain']).trim()) {
       git(['commit', '-q', '-m', `canon-artifacts: ${summary}`]);

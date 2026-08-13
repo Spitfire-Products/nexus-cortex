@@ -17,11 +17,10 @@
  *
  * @module canon/canonTranslate
  */
-import { requireCanonRepo } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
-import { execFileSync } from 'node:child_process';
 
 export interface CanonTranslateOptions {
   /** Canon store working clone (default /tmp/canon-store — off-quota; auto-cloned). */
@@ -73,7 +72,7 @@ interface LogicalFile { rel: string; parts: string[]; sig: string }
  *  Merkle anchor for both provenance and the incremental manifest. */
 function blobMap(): Map<string, string> {
   const out = new Map<string, string>();
-  const ls = execFileSync('git', ['ls-files', '-s', '--', 'native'], { cwd: STORE, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const ls = canonGit(STORE, 'canon-translate')(['ls-files', '-s', '--', 'native']);
   for (const line of ls.split('\n')) {
     const m = line.match(/^\d+ ([0-9a-f]{40}) \d\t(.+)$/);
     if (m) out.set(m[2]!, m[1]!.slice(0, 12));
@@ -821,13 +820,10 @@ Until then their absence is stated here rather than implied.
     // Working clone is disposable (quota lesson 2026-07-27: keep it OFF the
     // workspace quota — pass --store /tmp/canon-store); remote is the truth.
     const CANON_REPO = requireCanonRepo(o.repoUrl, STORE, 'canon-translate');
-    console.log(`[canon-translate] no store at ${STORE} — cloning ${CANON_REPO}`);
-    execFileSync('git', ['clone', '-q', CANON_REPO, STORE], {
-      encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-    });
+    console.log(`[canon-translate] no store at ${STORE} — cloning ${redactRepoUrl(CANON_REPO)}`);
+    canonGit(null, 'canon-translate')(['clone', '-q', CANON_REPO, STORE]);
   }
-  const git = (a: string[]) =>
-    execFileSync('git', a, { cwd: STORE, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+  const git = canonGit(STORE, 'canon-translate');
   blobs = blobMap();
 
   const claudeFiles = discover(path.join(STORE, 'native', 'claude-code'), 'claude-code');

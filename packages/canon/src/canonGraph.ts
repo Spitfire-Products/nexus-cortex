@@ -27,10 +27,9 @@
  *
  * @module canon/canonGraph
  */
-import { requireCanonRepo } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { discoverCanonSessions, type CanonSession } from './canonPull.js';
 import { buildTouchedIndex } from './canonTouched.js';
 import { extractCognition, readSessionCognitionRecords } from './canonCognition.js';
@@ -184,12 +183,11 @@ export interface CanonGraphResult {
 /** Generate /projects/<id>.json manifests + /projects/<id>/graph.json (node-link, 🔒 criteria). */
 export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphResult> {
   const STORE = o.store ?? '/tmp/canon-store';
-  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
   // Auto-clone like every other verb — /tmp stores are disposable by design.
   if (!fs.existsSync(path.join(STORE, '.git'))) {
     const repo = requireCanonRepo(undefined, STORE, 'canon-graph');
-    console.log(`[canon-graph] no store at ${STORE} — cloning ${repo}`);
-    execFileSync('git', ['clone', '-q', repo, STORE], { encoding: 'utf8', env });
+    console.log(`[canon-graph] no store at ${STORE} — cloning ${redactRepoUrl(repo)}`);
+    canonGit(null, 'canon-graph')(['clone', '-q', repo, STORE]);
   }
   const projects = deriveProjectSessionMap(STORE);
   const sessions = discoverCanonSessions(STORE);
@@ -215,7 +213,7 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
   walkJson(artRoot);
 
   let head = '';
-  try { head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: STORE, encoding: 'utf8', env }).trim(); } catch { /* untracked */ }
+  try { head = canonGit(STORE, 'canon-graph')(['rev-parse', 'HEAD']).trim(); } catch { /* untracked */ }
 
   const wanted = o.project ? [o.project] : Object.keys(projects).sort();
   let totalNodes = 0, totalLinks = 0, unchangedGraphs = 0;
@@ -465,7 +463,7 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
   let pushed = false;
   const summary = `${built.length} project graph(s), ${totalNodes} nodes, ${totalLinks} links` + (unchangedGraphs ? `, ${unchangedGraphs} unchanged (stamp kept)` : '');
   if (!o.dryRun) {
-    const git = (a: string[]) => execFileSync('git', a, { cwd: STORE, encoding: 'utf8', env });
+    const git = canonGit(STORE, 'canon-graph');
     git(['add', '-A']);
     if (git(['status', '--porcelain']).trim()) {
       git(['commit', '-q', '-m', `canon-graph: ${summary}`]);

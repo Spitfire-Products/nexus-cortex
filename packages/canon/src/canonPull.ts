@@ -14,10 +14,9 @@
  *
  * @module canon/canonPull
  */
-import { requireCanonRepo } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { renderCapsule, renderCompat, sessionToolCalls, sessionToolNames, toolCompatibility, type HarnessName } from './canonTools.js';
 
 export interface CanonStoreOptions {
@@ -66,13 +65,12 @@ export interface CanonPullResult {
 
 /** Clone the store if absent, else pull — rehydrate freshness on arrival. */
 function ensureFreshStore(store: string, repoUrl?: string, label = 'canon-pull'): void {
-  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
   if (!fs.existsSync(path.join(store, '.git'))) {
     const repo = requireCanonRepo(repoUrl, store, label);
-    console.log(`[${label}] no store at ${store} — cloning ${repo}`);
-    execFileSync('git', ['clone', '-q', repo, store], { encoding: 'utf8', env });
+    console.log(`[${label}] no store at ${store} — cloning ${redactRepoUrl(repo)}`);
+    canonGit(null, label)(['clone', '-q', repo, store]);
   } else {
-    execFileSync('git', ['pull', '-q', 'origin', 'main'], { cwd: store, encoding: 'utf8', env });
+    canonGit(store, label)(['pull', '-q', 'origin', 'main']);
   }
 }
 
