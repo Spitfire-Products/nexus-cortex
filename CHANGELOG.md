@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.57.2] - 2026-08-13
+
+### Fixed
+- **Canon-sync git errors no longer print into the hosted terminal.** Git stderr is
+  captured (piped) instead of inherited, and clone failures now log a redacted,
+  actionable line — a missing/revoked token tells hosted users to re-save the canon
+  store credential in CORTEX -> Connections (nexus-canon 1.6.2).
+
 ## [4.57.1] - 2026-08-13
 
 ### Added

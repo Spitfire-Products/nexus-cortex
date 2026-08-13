@@ -148,9 +148,26 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
     // workspace quota — pass --store /tmp/canon-store); remote is the truth.
     const CANON_REPO = requireCanonRepo(o.repoUrl, STORE, 'canon-sync');
     console.log(`[canon-sync] no store at ${STORE} — cloning ${redactRepoUrl(CANON_REPO)}`);
-    execFileSync('git', [...GIT_AUTH_ARGS, 'clone', '-q', CANON_REPO, STORE], {
-      encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-    });
+    try {
+      // stdio piped: git's stderr must NEVER bleed into the host terminal (an
+      // interactive PTY renders it as corruption); captured on the error instead.
+      execFileSync('git', [...GIT_AUTH_ARGS, 'clone', '-q', CANON_REPO, STORE], {
+        encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (e) {
+      // Surface an ACTIONABLE, redacted failure line (console → CANON_LOG_FILE in
+      // hosted mode) instead of the previous silent forever-retry. The classic
+      // signature `could not read Username` / 401 = missing OR REVOKED token —
+      // in the hosted flow that means the vault credential is stale: re-save the
+      // canon store in CORTEX -> Connections ("Save for hosted sessions").
+      const stderr = redactRepoUrl(String((e as { stderr?: string }).stderr ?? (e as Error).message ?? e));
+      const hint = /could not read Username|Authentication failed|401|403/.test(stderr)
+        ? ' — token missing/invalid (GH_TOKEN). Hosted: re-save the canon store in CORTEX -> Connections (Save for hosted sessions) and reconnect.'
+        : '';
+      console.error(`[canon-sync] clone FAILED: ${stderr.trim().split('\n').pop()}${hint}`);
+      throw e;
+    }
   }
 
   type Manifest = Record<string, { mtimeMs: number; size: number }>;
@@ -258,7 +275,7 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
     }
     fs.mkdirSync(path.dirname(MANIFEST_PATH), { recursive: true });
     fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest));
-    const git = (a: string[]) => execFileSync('git', [...GIT_AUTH_ARGS, ...GIT_ID_ARGS, ...a], { cwd: STORE, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+    const git = (a: string[]) => execFileSync('git', [...GIT_AUTH_ARGS, ...GIT_ID_ARGS, ...a], { cwd: STORE, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, stdio: ['ignore', 'pipe', 'pipe'] });
     // BROWSER-BRANCH INTEGRATION: each browser SPA pushes its own
     // `browser-cortex-<id>` branch (its in-browser repo has UNRELATED history, so
     // it can never fast-forward main — and force would clobber the store). Fold
