@@ -1,0 +1,26 @@
+[
+  {
+    "id": "p2-debug-fix-inventory",
+    "taskType": "T2",
+    "prompt": "The Node project at /home/runner/workspace/omniclaude-v4/.cortex/bench/fixtures/p2-tool-profile has a bug: `node src/report.js` crashes. First run `git -C /home/runner/workspace/omniclaude-v4/.cortex/bench/fixtures/p2-tool-profile checkout -- .` to reset the fixture. Then find and FIX all bugs in src/inventory.js so report.js prints the mathematically correct result for the data in src/report.js (a 20% discount means the customer pays 80%). Actually edit the file, run report.js to verify, and reply with the final JSON line it prints.",
+    "verifier": { "type": "contains", "all": ["\"total\":50", "\"discounted\":40"], "caseInsensitive": true }
+  },
+  {
+    "id": "p2-multifile-trace",
+    "taskType": "T3",
+    "prompt": "In this repository, trace the CORTEX_TOOL_PROFILE feature end to end and report: (1) the exact function name that filters a tool list by profile, (2) the file where the filter is applied inside getAllTools, (3) the two tool names that are ALWAYS retained regardless of profile, (4) the field name stamped into decision records for the active profile. Cite exact identifiers.",
+    "verifier": { "type": "contains", "all": ["applyToolProfile", "ToolFactory", "EndTurn", "AskUserQuestion", "toolProfile"], "caseInsensitive": false }
+  },
+  {
+    "id": "p2-write-tested-util",
+    "taskType": "T2",
+    "prompt": "In the project at /home/runner/workspace/omniclaude-v4/.cortex/bench/fixtures/p2-tool-profile, create a new file src/median.js exporting a function median(nums) that returns the median of a numeric array (average of two middles for even length; throw a TypeError on empty input). Then create src/median.test.js that requires it and asserts median([1,3,2])===2, median([1,2,3,4])===2.5, and that median([]) throws — printing PASS for each assertion that holds and FAIL otherwise, using plain Node (no test framework). Run it with node and reply with the full test output.",
+    "verifier": { "type": "regex", "pattern": "PASS[\\s\\S]*PASS[\\s\\S]*PASS" }
+  },
+  {
+    "id": "p2-cross-module-count",
+    "taskType": "T3",
+    "prompt": "Across packages/core/src/training in this repository, determine: (1) which file computes the FWER-adjusted alpha threshold and the exact function name, (2) which file auto-stamps experimentTag from CORTEX_EXPERIMENT_TAG into benchmark records, (3) the name of the verdict field that reports distinct task families. Cite exact identifiers.",
+    "verifier": { "type": "contains", "all": ["mcFwerThreshold", "AutoResearchStats", "ModelRouterMatrix", "familiesCovered"], "caseInsensitive": false }
+  }
+]

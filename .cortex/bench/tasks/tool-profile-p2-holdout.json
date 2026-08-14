@@ -1,0 +1,14 @@
+[
+  {
+    "id": "p2h-refactor-discount",
+    "taskType": "T2",
+    "prompt": "In the project at /home/runner/workspace/omniclaude-v4/.cortex/bench/fixtures/p2-tool-profile (run `git -C /home/runner/workspace/omniclaude-v4/.cortex/bench/fixtures/p2-tool-profile checkout -- .` first, then re-apply the known fixes: loop bound < and pct/100), refactor src/inventory.js to add a new exported function netTotal(items, pct) that composes totalValue and applyDiscount, update src/report.js to ALSO print {\"net\": netTotal(items, 20)} on a second line, run it, and reply with both output lines.",
+    "verifier": { "type": "contains", "all": ["\"discounted\":40", "\"net\":40"], "caseInsensitive": true }
+  },
+  {
+    "id": "p2h-harness-usage-trace",
+    "taskType": "T3",
+    "prompt": "In this repository, packages/core/src/adapters/GatewayTranslationLayer.ts extracts token usage. Report: (1) the exact interface field that carries tokens read from cache, (2) which provider convention EXCLUDES cached tokens from its reported input_tokens (name the provider), (3) the field name added 2026-08 that carries reasoning token counts. Cite exact identifiers.",
+    "verifier": { "type": "contains", "all": ["cacheReadTokens", "anthropic", "reasoningTokens"], "caseInsensitive": true }
+  }
+]

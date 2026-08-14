@@ -27,6 +27,12 @@ export const grokBuild01: ModelConfig = createXAIModelConfig({
   outputCost: 2.00,
   supportsReasoning: true,
   reasoningToggleable: false,  // Native interleaved thinking — always on
+  // 🔴 TRANSPORT TAX (measured 2026-08-14): on /v1/messages this model bills a
+  // ~16K-token fixed input overhead xAI-side — a bare "hi" request costs 24.5K
+  // input vs 8.6K on grok-4.6 through the IDENTICAL harness path, and vs ~5.3K
+  // for the SAME model on /v1/responses (historical avg, n=29 vs n=32).
+  // Prefer grok-build-0.1-responses for cost-sensitive work; this messages pin
+  // remains for interleaved-thinking parity benchmarking only.
   apiMode: 'messages',          // Pin to /v1/messages (preferred coding harness)
   // Messages route — ENABLE_SERVER_SIDE_TOOLS must not force this to Responses.
   supportsServerSideTools: false,

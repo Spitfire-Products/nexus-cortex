@@ -103,7 +103,11 @@ const SECRET_PATTERNS: [RegExp, string][] = [
   // Financial / PII (DBPEN 2026-08-08 flagged an unscrubbed value in the browser
   // canon FS). Card-prefix-anchored so we don't shred arbitrary long digit runs in
   // the lossless canon line: Visa / Mastercard(51-55) / Amex(34,37) / Discover(6011,65).
-  [/\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b/g, '[redacted:cc]'],
+  // (?<![.\d]) / (?!\.\d): \b treats '.' as a boundary, so the FRACTION digits of
+  // a float ("cacheHitRate":0.4106091035703747) matched the Visa pattern and the
+  // redaction TORE the JSON line (store-verify failures 2026-08-14). A card number
+  // never sits directly after a decimal point or continues into one.
+  [/(?<![.\d])(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b(?!\.\d)/g, '[redacted:cc]'],
   // US SSN (dash form only — bare 9-digit runs are too false-positive-prone to scrub).
   [/\b[0-9]{3}-[0-9]{2}-[0-9]{4}\b/g, '[redacted:ssn]'],
 ];
@@ -256,8 +260,16 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
       try { content = fs.readFileSync(src, 'utf8'); }
       catch (e) { skipped.push(`${destRel} — read failed: ${e}`); return; }
       const probe = src.endsWith('.jsonl') ? probeJsonl(content, destRel) : { content, torn: false };
-      const out = scrub(probe.content);
+      let out = scrub(probe.content);
       if (out.length !== probe.content.length) scrubbedHits++;
+      // POST-scrub re-probe: a scrub pattern that mangles JSON (the 2026-08-14
+      // cc-vs-float incident) is a SCRUB BUG, not a writer race — flag loudly
+      // and ship the parseable prefix so the store never fails verify; the
+      // manifest still advances (retrying would loop forever on a scrub bug).
+      if (src.endsWith('.jsonl')) {
+        const post = probeJsonl(out, `${destRel} (POST-SCRUB — scrub-pattern bug, report it)`);
+        if (post.torn) out = post.content;
+      }
       fs.writeFileSync(dest, out);
       // Torn tail → manifest NOT advanced (recopy next cycle picks up the completed file).
       if (probe.torn) { copied++; return; }
