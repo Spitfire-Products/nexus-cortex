@@ -8,8 +8,26 @@
  * Cards WITHOUT the field must send NO thinkingConfig (ride the API default —
  * zero behavior change for the shipped cards).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { GatewayTranslationLayer } from '../GatewayTranslationLayer.js';
+
+// prepareRequest resolves auth headers, which throws when the provider env key
+// is absent — CI's fresh-clone job runs with NO API keys, so stub them.
+// (This is a translation test; the key value is never sent anywhere.)
+const STUB_KEYS = ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'XAI_API_KEY'] as const;
+const saved: Record<string, string | undefined> = {};
+beforeAll(() => {
+  for (const k of STUB_KEYS) {
+    saved[k] = process.env[k];
+    if (!process.env[k]) process.env[k] = 'test-key-not-real';
+  }
+});
+afterAll(() => {
+  for (const k of STUB_KEYS) {
+    if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+  }
+});
 import { createGeminiModelConfig } from '../../models/configurators/GoogleConfigurator.js';
 import { gemini36Flash } from '../../models/cards/google/gemini-3-6-flash.js';
 import { gemini37Flash } from '../../models/cards/google/gemini-3-7-flash.js';
