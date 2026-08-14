@@ -56,6 +56,29 @@ export interface AutoResearchBenchOptions {
   strategy?: string;
 }
 
+/** Normalize a raw CORTEX_TOOL_PROFILE value the way the server's ToolProfile
+ *  resolver does (unknown → 'full', fail-open) so the stamp reflects what
+ *  actually ran. Returns undefined for empty/unset (distinct from 'full'). */
+function normalizeToolProfile(raw: string | undefined): 'full' | 'lean' | 'bash-only' | undefined {
+  const v = raw?.trim().toLowerCase();
+  if (!v) return undefined;
+  return v === 'lean' || v === 'bash-only' ? v : 'full';
+}
+
+/** Ask the target server for its effective CORTEX_TOOL_PROFILE via the /config
+ *  route. Returns undefined when the server is unreachable or the route is
+ *  missing (older builds) — the caller must warn, not guess. */
+async function fetchServerToolProfile(serverUrl: string): Promise<'full' | 'lean' | 'bash-only' | undefined> {
+  try {
+    const resp = await fetch(`${serverUrl}/config/CORTEX_TOOL_PROFILE`, { signal: AbortSignal.timeout(5000) });
+    if (!resp.ok) return undefined;
+    const data: any = await resp.json();
+    return typeof data?.value === 'string' ? normalizeToolProfile(data.value) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Load tasks from a file (array or single object) or a directory of *.json. */
 function loadTasks(taskSetPath: string): TaskSpec[] {
   const st = statSync(taskSetPath);
@@ -93,6 +116,14 @@ export async function autoResearchBench(options: AutoResearchBenchOptions): Prom
 
     let runner: HarnessRunner;
     let source: string;
+    // Tool-surface arm stamp (BenchmarkRecord.toolProfile). The CLI process
+    // writes the records but the SERVER's env decides which tool surface the
+    // runs actually used — so for server benches, resolve the profile from the
+    // server (/config route) with the CLI's own env as fallback. Command-target
+    // benches (--run-cmd) run in the CLI's env, so the legacy env stamp inside
+    // ModelRouterMatrix.record() is already correct there.
+    let toolProfile: 'full' | 'lean' | 'bash-only' | undefined;
+    const warn = (m: string) => console.error(theme.colors.warning(`[WARN] ${m}`));
     if (options.runCmd) {
       // Non-cortex command target: optionally build once, then grade a shell command per task.
       const cwd = options.cwd ? resolve(options.cwd) : projectRoot;
@@ -108,6 +139,23 @@ export async function autoResearchBench(options: AutoResearchBenchOptions): Prom
       const serverUrl = options.serverUrl ?? process.env.CORTEX_SERVER_URL ?? 'http://localhost:4000';
       runner = serverRunner(serverUrl, model);
       source = serverUrl;
+
+      const cliProfile = normalizeToolProfile(process.env.CORTEX_TOOL_PROFILE);
+      const serverProfile = await fetchServerToolProfile(serverUrl);
+      toolProfile = serverProfile ?? cliProfile;
+      if (!serverProfile) {
+        if (cliProfile) {
+          warn(`could not read the server's tool profile (GET ${serverUrl}/config/CORTEX_TOOL_PROFILE) — stamping records from this CLI's env ('${cliProfile}'). Verify the server was started with the same CORTEX_TOOL_PROFILE or the A/B data is mislabeled.`);
+        } else {
+          warn(`server tool profile UNKNOWN (GET ${serverUrl}/config/CORTEX_TOOL_PROFILE failed) and CORTEX_TOOL_PROFILE is unset on this CLI — records will be stamped as 'full' (field omitted). If the server runs lean/bash-only, re-run with CORTEX_TOOL_PROFILE exported here.`);
+        }
+      } else if (cliProfile && cliProfile !== serverProfile) {
+        warn(`tool-profile mismatch: server='${serverProfile}' but this CLI's CORTEX_TOOL_PROFILE='${cliProfile}' — stamping the SERVER's profile (it executed the runs).`);
+      }
+      // Align this process's env with the resolved truth so the legacy env
+      // fallback inside ModelRouterMatrix.record() can never contradict the
+      // explicit stamp (e.g. server=full but CLI env=lean).
+      if (toolProfile) process.env.CORTEX_TOOL_PROFILE = toolProfile;
     }
 
     if (!options.json) {
@@ -124,6 +172,7 @@ export async function autoResearchBench(options: AutoResearchBenchOptions): Prom
       harnessRef: options.harnessRef,
       temperature: options.temperature !== undefined && Number.isFinite(Number(options.temperature)) ? Number(options.temperature) : undefined,
       strategy: options.strategy,
+      toolProfile,
       backlog: options.seedBacklog === false ? undefined : new ResearchBacklog(projectRoot),
       discoveredRound: options.experimentTag,
       discoveredRef: options.harnessRef,

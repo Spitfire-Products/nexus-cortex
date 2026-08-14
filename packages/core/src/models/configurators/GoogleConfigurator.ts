@@ -23,9 +23,21 @@ export interface GeminiModelOptions {
     extractionMethod?: 'content_block' | 'separate_field';
     pattern?: 'upfront' | 'interleaved';
   };
+  /**
+   * Gemini tunable thinking (Gemini 3.6+/3.7 thinking_level). Lands in
+   * reasoning.defaultEffort; the gateway translates it to the API's
+   * generationConfig.thinkingConfig.thinkingLevel on every generateContent
+   * request (mirrors reasoningEffort on xai cards). OMIT to send no
+   * thinkingConfig and ride the API default (gemini-3.6/3.7-flash: medium).
+   * Not for Gemini 2.5 (which uses thinkingBudget, not thinking_level).
+   */
+  thinkingLevel?: 'low' | 'medium' | 'high';
 }
 
 export function createGeminiModelConfig(options: GeminiModelOptions): ModelConfig {
+  const reasoning = options.thinkingLevel
+    ? { supported: true, ...options.reasoning, defaultEffort: options.thinkingLevel }
+    : options.reasoning;
   return {
     id: options.id,
     provider: 'google',
@@ -93,7 +105,7 @@ export function createGeminiModelConfig(options: GeminiModelOptions): ModelConfi
       format: 'json_stream'
     },
 
-    reasoning: options.reasoning,
+    reasoning,
 
     compaction: {
       strategy: 'auto',

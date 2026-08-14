@@ -2,7 +2,10 @@
  * Gemini 3.6 Flash (gemini-3.6-flash)
  * Google's agentic-efficiency flash — cuts long-horizon agent token cost
  * substantially vs 3.5; tunable thinking (thinking_level low|medium|high,
- * API default medium — we ride the default; explicit plumb is a follow-up).
+ * API default medium). The plumb exists: set `thinkingLevel` on this card
+ * (createGeminiModelConfig option → reasoning.defaultEffort → the gateway
+ * sends generationConfig.thinkingConfig.thinkingLevel). Left UNSET here so
+ * we keep riding the API default.
  *
  * Pricing = INTRO rate through 2026-12-31 ($0.75/$3.75), standard from
  * 2027-01-01 = $1.50/$7.50 (ai.google.dev/gemini-api/docs/latest-model,

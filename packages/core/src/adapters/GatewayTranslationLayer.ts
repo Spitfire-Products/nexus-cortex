@@ -689,6 +689,20 @@ export class GatewayTranslationLayer {
       params.reasoningEffort = options.reasoningEffort;
     }
 
+    // Gemini tunable thinking (thinking_level, Gemini 3.6+/3.7): translate the
+    // card's reasoning.defaultEffort ('low'|'medium'|'high', set via
+    // createGeminiModelConfig({ thinkingLevel })) to the API's
+    // generationConfig.thinkingConfig.thinkingLevel. Card-level opt-in ONLY —
+    // cards without defaultEffort send no thinkingConfig and ride the API
+    // default (gemini-3.6/3.7-flash: medium), so shipped behavior is unchanged.
+    // Gated on the generateContent pattern so xai/openai cards (which also use
+    // defaultEffort, consumed by the Responses path) are untouched.
+    if (modelConfig.api.pattern === 'generateContent'
+        && modelConfig.reasoning?.supported
+        && modelConfig.reasoning.defaultEffort) {
+      this.setNestedParam(params, 'generationConfig.thinkingConfig.thinkingLevel', modelConfig.reasoning.defaultEffort);
+    }
+
     // Enable parallel tool calls for ChatCompletions API models that support tools
     // This allows models to output multiple tool_use blocks in a single response
     // OpenAI docs: https://platform.openai.com/docs/guides/function-calling/parallel-function-calling

@@ -235,6 +235,17 @@ export interface RunBenchOptions {
    */
   temperature?: number;
   strategy?: string;
+  /**
+   * Tool-surface arm stamped onto every record (BenchmarkRecord.toolProfile).
+   * The bench CLI resolves this from its own CORTEX_TOOL_PROFILE or the target
+   * server's /config — the CLI process writes the records and does NOT inherit
+   * the server's env, so without an explicit stamp a lean/bash-only server run
+   * would be recorded as full. Server-side convention preserved: 'full' is
+   * stored as OMITTED (absent = full), so downstream "absent = full" filters
+   * (scripts/bench-tool-profile-ab*.sh) keep working. Omit entirely to fall
+   * back to ModelRouterMatrix.record()'s own env stamp (legacy behavior).
+   */
+  toolProfile?: string;
 }
 
 export interface BenchTaskSummary {
@@ -307,6 +318,7 @@ export async function runBench(
         ...(opts.harnessRef ? { harnessRef: opts.harnessRef } : {}),
         ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
         ...(opts.strategy ? { strategy: opts.strategy } : {}),
+        ...(opts.toolProfile && opts.toolProfile !== 'full' ? { toolProfile: opts.toolProfile } : {}),
       });
 
       opts.onRun?.({ taskId: task.id, run: i + 1, pass: grade.pass, qualitativeScore: grade.qualitativeScore });

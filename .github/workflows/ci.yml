@@ -4,6 +4,12 @@ on:
     branches: [main]
   pull_request:
 
+# Pure test job — a superseded run's coverage is contained in the newer
+# push, so cancelling is safe and saves ~2 min per burst push.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-test:
     runs-on: ubuntu-latest

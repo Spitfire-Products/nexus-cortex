@@ -2,8 +2,11 @@
  * Gemini 3.7 Flash (gemini-3.7-flash)
  * Released 2026-08-13 — large gains in coding, agent execution, document
  * work and computer use over 3.6 Flash at the SAME intro price; tunable
- * thinking (thinking_level low|medium|high, API default medium — we ride
- * the default; explicit plumb is a follow-up).
+ * thinking (thinking_level low|medium|high, API default medium). The plumb
+ * exists: set `thinkingLevel` on this card (createGeminiModelConfig option →
+ * reasoning.defaultEffort → the gateway sends
+ * generationConfig.thinkingConfig.thinkingLevel). Left UNSET here so we keep
+ * riding the API default.
  *
  * Pricing = INTRO rate through 2026-12-31 ($0.75/$3.75), standard from
  * 2027-01-01 = $1.50/$7.50 (ai.google.dev/gemini-api/docs/latest-model,

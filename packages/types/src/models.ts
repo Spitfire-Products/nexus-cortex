@@ -255,7 +255,10 @@ export interface ModelConfig {
     toggleable?: boolean;
 
     /** Default reasoning effort sent when no per-request override is provided.
-     *  Used by Responses API path; models without this field get no reasoning block. */
+     *  Used by the Responses API path (models without this field get no
+     *  reasoning block) and, for Google generateContent cards, translated to
+     *  generationConfig.thinkingConfig.thinkingLevel (Gemini 3.6+/3.7
+     *  thinking_level — set via createGeminiModelConfig({ thinkingLevel })). */
     defaultEffort?: 'low' | 'medium' | 'high';
   };
 

@@ -138,6 +138,43 @@ describe('runBench — execute, grade, record REAL scores', () => {
     expect(matrix.getRecords({ split: 'holdout' })).toHaveLength(1);
     expect(matrix.getRecords({ split: 'train' })).toHaveLength(0);
   });
+
+  it('toolProfile opt stamps each record; full normalizes to OMITTED (absent = full)', async () => {
+    // The bench CLI resolves the tool-surface arm (its own env or the server's
+    // /config) and passes it here so records are stamped even though the CLI
+    // process never exported CORTEX_TOOL_PROFILE itself.
+    const origProfile = process.env.CORTEX_TOOL_PROFILE;
+    delete process.env.CORTEX_TOOL_PROFILE;
+    try {
+      await runBench([task], mockRunner(['STOP']), matrix, { experimentTag: 'tp', runs: 2, harnessRef: 'tp-lean', toolProfile: 'lean' });
+      await runBench([task], mockRunner(['STOP']), matrix, { experimentTag: 'tp', runs: 1, harnessRef: 'tp-full', toolProfile: 'full' });
+      const lean = matrix.getRecords({ harnessRef: 'tp-lean' });
+      const full = matrix.getRecords({ harnessRef: 'tp-full' });
+      expect(lean).toHaveLength(2);
+      expect(lean.every(r => r.toolProfile === 'lean')).toBe(true);
+      // server-side convention: 'full' is stored as an ABSENT field, so
+      // downstream "absent = full" filters keep working.
+      expect(full).toHaveLength(1);
+      expect(full[0]!.toolProfile).toBeUndefined();
+    } finally {
+      if (origProfile === undefined) delete process.env.CORTEX_TOOL_PROFILE;
+      else process.env.CORTEX_TOOL_PROFILE = origProfile;
+    }
+  });
+
+  it('toolProfile omitted → falls back to the CORTEX_TOOL_PROFILE env stamp (legacy)', async () => {
+    const origProfile = process.env.CORTEX_TOOL_PROFILE;
+    process.env.CORTEX_TOOL_PROFILE = 'bash-only';
+    try {
+      await runBench([task], mockRunner(['STOP']), matrix, { experimentTag: 'tp2', runs: 1, harnessRef: 'tp-env' });
+      const recs = matrix.getRecords({ harnessRef: 'tp-env' });
+      expect(recs).toHaveLength(1);
+      expect(recs[0]!.toolProfile).toBe('bash-only');
+    } finally {
+      if (origProfile === undefined) delete process.env.CORTEX_TOOL_PROFILE;
+      else process.env.CORTEX_TOOL_PROFILE = origProfile;
+    }
+  });
 });
 
 // A capturing mock backlog sink (implements DeficiencySink's add()).

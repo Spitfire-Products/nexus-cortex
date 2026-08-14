@@ -129,6 +129,8 @@ export class ModularModelRegistry implements ModelRegistry {
       openaiModels.gpt4oMini,
       openaiModels.gpt55,
       openaiModels.gpt56,
+      openaiModels.gpt56Terra,
+      openaiModels.gpt56Luna,
       openaiModels.gpt54,
       openaiModels.gpt54Mini,
       openaiModels.gpt5,
