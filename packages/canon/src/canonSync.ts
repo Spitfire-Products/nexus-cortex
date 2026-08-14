@@ -173,7 +173,30 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
   }
 
   const skipped: string[] = [];
-  let copied = 0, unchanged = 0, scrubbedHits = 0, chunked = 0;
+  let copied = 0, unchanged = 0, scrubbedHits = 0, chunked = 0, tornTrimmed = 0;
+
+  /** Sync-time parse probe (2026-08-14 — "torn snapshot" fix). A live writer can
+   *  be mid-line when sync reads a session file; copying that tear poisons the
+   *  store (36 torn snapshots broke the translate leg on every cron until a
+   *  hand-repair sweep). Probe every line of a .jsonl source: on the FIRST
+   *  unparseable line, keep only the valid prefix (store stays parseable) and
+   *  signal the caller to NOT advance the manifest — the next cycle re-copies
+   *  the completed file. A mid-file tear (source corruption) behaves the same:
+   *  valid prefix now, retry forever until the source heals or is trimmed. */
+  function probeJsonl(content: string, destRel: string): { content: string; torn: boolean } {
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i]!;
+      if (!l.trim()) continue;
+      try { JSON.parse(l); } catch {
+        const prefix = lines.slice(0, i).join('\n');
+        console.log(`[canon-sync] torn line ${i + 1} in ${destRel} — kept ${i}-line valid prefix, will retry next cycle`);
+        tornTrimmed++;
+        return { content: prefix.length ? prefix + '\n' : '', torn: true };
+      }
+    }
+    return { content, torn: false };
+  }
 
   /** Lossless line-boundary chunking: <dest>.part-NNNN files; reassembly = cat in
    *  order. Streams line-by-line (a 200MB read into one string is fine on this box,
@@ -183,8 +206,9 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
     let content: string;
     try { content = fs.readFileSync(src, 'utf8'); }
     catch (e) { skipped.push(`${destRel} — read failed: ${e}`); return; }
-    const out = scrub(content);
-    if (out.length !== content.length) scrubbedHits++;
+    const probe = probeJsonl(content, destRel);
+    const out = scrub(probe.content);
+    if (out.length !== probe.content.length) scrubbedHits++;
     const destBase = path.join(STORE, 'native', destRel);
     fs.mkdirSync(path.dirname(destBase), { recursive: true });
     // Remove any prior single-file copy (upgraded to parts).
@@ -204,7 +228,8 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
       if (!same) fs.writeFileSync(partPath, slice);
       offset = end; part++;
     }
-    manifest[destRel] = { mtimeMs: st.mtimeMs, size: st.size };
+    // Torn tail → manifest NOT advanced, so the completed file re-copies next cycle.
+    if (!probe.torn) manifest[destRel] = { mtimeMs: st.mtimeMs, size: st.size };
     chunked++; copied++;
   }
 
@@ -230,9 +255,12 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
       let content: string;
       try { content = fs.readFileSync(src, 'utf8'); }
       catch (e) { skipped.push(`${destRel} — read failed: ${e}`); return; }
-      const out = scrub(content);
-      if (out.length !== content.length) scrubbedHits++;
+      const probe = src.endsWith('.jsonl') ? probeJsonl(content, destRel) : { content, torn: false };
+      const out = scrub(probe.content);
+      if (out.length !== probe.content.length) scrubbedHits++;
       fs.writeFileSync(dest, out);
+      // Torn tail → manifest NOT advanced (recopy next cycle picks up the completed file).
+      if (probe.torn) { copied++; return; }
     }
     manifest[key] = { mtimeMs: st.mtimeMs, size: st.size };
     copied++;
