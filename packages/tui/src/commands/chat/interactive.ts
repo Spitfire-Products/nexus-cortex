@@ -266,6 +266,10 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
     if (currentAbortController) {
       currentAbortController.abort();
     }
+    // Unconditionally clear the busy spinner so ESC visibly returns the UI to
+    // idle even if the stream already errored out (P0-1: leaked spinner timer).
+    // Safe: persistentInput is created before any prompt/stream can fire this.
+    persistentInput.clearThinking();
   };
 
   const onToggleDocuments = () => {
@@ -1882,6 +1886,14 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
             }
             const thinkingText = chunk.delta || '';
             if (thinkingText) {
+              // P1-1: label the reasoning block so it never reads as part of
+              // the answer (neoncortex renders thinking as a separate labeled
+              // block — mirror that separation here)
+              if (!hasStartedThinking) {
+                persistentInput.printLine();
+                persistentInput.printLine(chalk.dim('[Thinking]'));
+                hasStartedThinking = true;
+              }
               persistentInput.writeOutput(chalk.dim(chalk.italic(thinkingText)));
             }
             continue;
@@ -2164,6 +2176,9 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
 
       // Check if user aborted with ESC key
       if (escPressed || streamingAborted) {
+        // Clear the busy spinner BEFORE printing, so the feedback lines don't
+        // re-render a duplicate spinner row (P0-1)
+        persistentInput.clearThinking();
         persistentInput.printLine();
         persistentInput.printLine(theme.colors.warning('Operation was halted. Please provide feedback:'));
         persistentInput.printLine(theme.dimmed(' • Why did you halt the operation?'));
@@ -2193,6 +2208,11 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
       }
 
     } catch (error: any) {
+      // P0-1: the stream failed — transition the turn state machine to idle.
+      // Clear the spinner FIRST so the error prints cleanly instead of leaving
+      // a frozen duplicate spinner row + a forever-counting timer.
+      persistentInput.clearThinking();
+
       // Show error (but be aware it might be abort-related)
       persistentInput.printLine();
 
@@ -2212,12 +2232,17 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
         } else if (error.message?.includes('Streaming not yet supported')) {
           persistentInput.printLine(theme.infoMessage('Hint: Use direct mode (default) for streaming'));
           persistentInput.printLine(theme.dimmed(` Remove --server flag to use direct mode`));
+        } else if (error.message?.includes('API key')) {
+          persistentInput.printLine(theme.infoMessage('Hint: Set the missing API key in your environment/.env, or switch models with /model'));
         }
       }
     } finally {
       // Clean up abort state
       currentAbortController = null;
       isAborting = false;
+      // Always stop the busy spinner — no code path may leave the timer
+      // running once the turn is over (P0-1)
+      persistentInput.clearThinking();
       // Stop capturing and restore normal terminal
       persistentInput.stopCapture();
     }

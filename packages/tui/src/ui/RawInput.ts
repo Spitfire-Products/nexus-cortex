@@ -432,15 +432,18 @@ export function rawQuestion(options: RawInputOptions): Promise<string> {
 
       // Handle special keys
       if (str === '\r' || str === '\n') {
-        // Enter - if autocomplete is visible with selection, accept it; otherwise submit
+        // Enter - RUN the selected palette command (P0-2). Matches neoncortex
+        // (CortexApp.tsx useInput: key.return with suggestions visible submits
+        // selected.fullPath immediately) and this palette's own footer hint
+        // ("Tab complete • Enter run"). Tab remains the complete-only key.
+        // Previously Enter only accepted the completion, so /help and /exit
+        // appeared dead — the input was refilled and never submitted.
         if (slashCommandAutocomplete.isVisible()) {
           const newInput = slashCommandAutocomplete.accept();
           if (newInput !== null) {
-            input = newInput + ' '; // Add space after command for arguments
+            input = newInput;
             cursorPos = input.length;
-            updateAutocomplete();
-            drawInputFrame(input, cursorPos, options);
-            return;
+            // fall through to submit below
           }
         }
 

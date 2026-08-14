@@ -60,6 +60,13 @@ program
   .option('--max-tokens <number>', 'Maximum tokens', parseInt)
   .option('--temperature <number>', 'Temperature (0-2)', parseFloat)
   .action(async (options) => {
+    // Interactive REPL needs a real terminal — piped stdin would just draw
+    // frames and exit silently (docs/TUI_UX_FINDINGS.md P0-3 family)
+    if (!process.stdin.isTTY) {
+      console.error('chat is interactive and requires a terminal (TTY) — stdin is not a TTY.');
+      console.error('For non-interactive use, run: fuzzycortex-cli message "your prompt"');
+      process.exit(1);
+    }
     const g = program.opts();
     await interactiveChat({
       serverUrl: g.server,
