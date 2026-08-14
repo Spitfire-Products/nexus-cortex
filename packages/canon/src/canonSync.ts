@@ -309,6 +309,38 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
           console.warn(`[canon-sync] browser branch ${m[1]} integration failed: ${(e as Error)?.message ?? e}`);
         }
       }
+      // Torn-tail probe over the FOLDED tree: the checkout path above bypasses
+      // syncFile's probe entirely, so a torn line pushed by a browser SPA would
+      // enter main unprobed. Trim to the valid prefix BEFORE the add/commit; the
+      // browser branch keeps its own full copy, so the next fold-in re-checkouts
+      // the file and the completed line lands then (same retry semantics as the
+      // manifest skip on the harness path).
+      const bcRoot = path.join(STORE, 'native', 'browser-cortex');
+      const walkBc = (dir: string): void => {
+        let entries: fs.Dirent[] = [];
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const e of entries) {
+          const p = path.join(dir, e.name);
+          if (e.isDirectory()) { walkBc(p); continue; }
+          const partMatch = e.name.match(/^(.*\.jsonl)\.part-(\d{4})$/);
+          if (!e.name.endsWith('.jsonl') && !partMatch) continue;
+          const rel = path.relative(STORE, p);
+          const probe = probeJsonl(fs.readFileSync(p, 'utf8'), rel);
+          if (!probe.torn) continue;
+          // A tear is only trimmable at the END of a logical file: single-form
+          // .jsonl, or the LAST part of a chunk group. Trimming a MIDDLE part
+          // would corrupt reassembly — leave it (visible in translate errors,
+          // heals when the browser re-pushes).
+          const isMiddlePart = !!partMatch && fs.existsSync(
+            path.join(dir, `${partMatch[1]}.part-${String(Number(partMatch[2]) + 1).padStart(4, '0')}`));
+          if (isMiddlePart) {
+            console.warn(`[canon-sync] torn MIDDLE part left untrimmed (reassembly safety): ${rel}`);
+            continue;
+          }
+          fs.writeFileSync(p, probe.content);
+        }
+      };
+      walkBc(bcRoot);
     } catch { /* no browser branches yet / offline — nothing to integrate */ }
     git(['add', '-A']);
     const status = git(['status', '--porcelain']);

@@ -60,3 +60,23 @@ describe('canonSync torn-tail probe', () => {
     expect(fs.readFileSync(dest, 'utf8')).toBe(`${GOOD1}\n${GOOD2}\n${GOOD3}\n`);
   });
 });
+
+describe('browser fold-in torn probe', () => {
+  it('trims a torn line arriving via a browser-cortex-* branch checkout', async () => {
+    // Push a browser branch (unrelated history) carrying a torn session file.
+    const bwork = path.join(tmp, 'browser-work');
+    execFileSync('git', ['init', '-q', '-b', 'browser-cortex-t1', bwork]);
+    const bdir = path.join(bwork, 'native', 'browser-cortex');
+    fs.mkdirSync(bdir, { recursive: true });
+    fs.writeFileSync(path.join(bdir, 'bc-torn.jsonl'), `${GOOD1}\n${TORN}`);
+    git(bwork, ['add', '-A']);
+    git(bwork, ['commit', '-q', '-m', 'browser push']);
+    git(bwork, ['push', '-q', BARE, 'browser-cortex-t1']);
+
+    await canonSync({ store: STORE, home: HOME });
+    const dest = path.join(STORE, 'native', 'browser-cortex', 'bc-torn.jsonl');
+    const copied = fs.readFileSync(dest, 'utf8');
+    expect(copied).toBe(`${GOOD1}\n`);                       // torn tail trimmed pre-commit
+    for (const l of copied.split('\n')) if (l.trim()) JSON.parse(l);
+  });
+});
