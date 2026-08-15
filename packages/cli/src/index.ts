@@ -906,9 +906,12 @@ canon
   .option('--force', 'overwrite an existing local session file')
   .option('--target <harness>', 'harness for the tool-compatibility report (default nexus-cortex)')
   .option('--strip-signatures', 'G1: strip provider thinking signatures from the materialized copy (foreign-account replay safety); thinking → <prior_reasoning> text')
+  .option('--native', 'reverse materialization: byte-exact ORIGINAL-harness files from /native (claude-code default dest: ~/.claude/projects/<slug>/ — claude --resume ready)')
+  .option('--project <cwd>', 'with --native: re-home under the project slug derived from this cwd (so claude --resume run there sees it)')
+  .option('--harness <h>', 'with --native: restrict the uuid match to one harness')
   .action(async (session, opts) => {
     const globalOpts = program.opts();
-    await canonPullCmd({ session, to: opts.to, force: opts.force, store: opts.store, target: opts.target, stripSignatures: opts.stripSignatures, json: globalOpts.json });
+    await canonPullCmd({ session, to: opts.to, force: opts.force, store: opts.store, target: opts.target, stripSignatures: opts.stripSignatures, native: opts.native, project: opts.project, harness: opts.harness, json: globalOpts.json });
   });
 
 canon

@@ -6,7 +6,7 @@
 import { canonArtifacts } from './canonArtifacts.js';
 import { canonGraph } from './canonGraph.js';
 import { canonInit } from './canonInit.js';
-import { canonList, canonPull } from './canonPull.js';
+import { canonList, canonPull, canonPullNative } from './canonPull.js';
 import { canonSync } from './canonSync.js';
 import { deriveToolInventory, TOOL_CONCEPTS } from './canonTools.js';
 import { canonTranslate } from './canonTranslate.js';
@@ -21,7 +21,7 @@ Verbs:
   sync [--dry-run] [--store <dir>]    native harness sessions -> store (scrubbed)
   translate [--dry-run] [--store <dir>]  native -> canonical line + projections
   list [--all] [--project N/A] [--store <dir>]  list canon sessions
-  pull <uuid> [--to <dir>] [--force] [--store <dir>]  materialize a session
+  pull <uuid> [--native] [--to <dir>] [--project <cwd>] [--harness <h>] [--force] [--store <dir>]  materialize a session (--native = byte-exact original-harness files, e.g. into ~/.claude/projects for claude --resume)
   artifacts [--dry-run] [--store <dir>]  capture capability artifacts
   tools [--store <dir>] [--json]      observed tool inventory + cross-harness concept map
   graph [--project <id>] [--merge-graph <path>] [--cognition] [--include-thought-text] [--dry-run] [--store <dir>]
@@ -62,7 +62,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       await canonList({ store: opt('--store'), all: flag('--all') });
       return 0;
     case 'pull': {
-      if (!positional) { console.error('usage: nexus-canon pull <sessionUuid> [--to <dir>] [--force] [--strip-signatures]'); return 2; }
+      if (!positional) { console.error('usage: nexus-canon pull <sessionUuid> [--native] [--to <dir>] [--project <cwd>] [--harness <h>] [--force] [--strip-signatures]'); return 2; }
+      if (flag('--native')) {
+        const rn = await canonPullNative({ session: positional, to: opt('--to'), project: opt('--project'), harness: opt('--harness'), force: flag('--force'), store: opt('--store') });
+        return rn.code;
+      }
       const r = await canonPull({ session: positional, to: opt('--to'), force: flag('--force'), store: opt('--store'), stripSignatures: flag('--strip-signatures') });
       return r.code;
     }

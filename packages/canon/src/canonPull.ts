@@ -170,6 +170,149 @@ export function stripThinkingSignatures(file: string): { stripped: number; dropp
   return { stripped, dropped };
 }
 
+// ── Native pull (reverse materialization) ────────────────────────────────────
+
+export interface CanonPullNativeOptions extends CanonStoreOptions {
+  /** Session uuid (or unique prefix) to materialize from /native. */
+  session: string;
+  /** Restrict the uuid match to one harness (native tree top-level dir). */
+  harness?: string;
+  /**
+   * Destination PROJECT DIRECTORY — the dir that holds `<uuid>.jsonl` (+ the
+   * `<uuid>/` sidecar tree). Default for claude-code sessions:
+   * `~/.claude/projects/<original-project-slug>/` — where `claude --resume`
+   * already looks. Other harnesses have no safe default yet and require --to.
+   */
+  to?: string;
+  /**
+   * Re-home the session under a DIFFERENT project cwd: the destination slug is
+   * derived from this path (Claude Code derives its per-project dir from the
+   * cwd with every non-alphanumeric char replaced by '-'), so the session shows
+   * up in `claude --resume`'s picker when run from THAT directory. Ignored when
+   * --to is given.
+   */
+  project?: string;
+  /** Overwrite existing destination files (default false — pull is a branch). */
+  force?: boolean;
+  home?: string;
+}
+
+export interface CanonPullNativeResult {
+  code: 0 | 1;
+  /** Directory the session landed in. */
+  destDir?: string;
+  /** Materialized logical files (dest paths). */
+  files?: string[];
+  harness?: string;
+}
+
+/** Claude Code's project-dir slug: cwd with each non-alphanumeric char → '-'. */
+export function claudeProjectSlug(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+/**
+ * Materialize a session's NATIVE files (byte-exact, part-reassembled) from the
+ * store's /native tree into the target harness's own session location — the
+ * reverse leg of canon capture. For claude-code the store layout mirrors
+ * `~/.claude/projects/<slug>/…`, so a native pull IS a `claude --resume`-able
+ * session: no translation, just placement. The canonical line is untouched —
+ * like canonPull, this is a branch, never a clobber.
+ */
+export async function canonPullNative(o: CanonPullNativeOptions): Promise<CanonPullNativeResult> {
+  const store = o.store ?? '/tmp/canon-store';
+  const home = o.home ?? process.env.HOME ?? '/home/runner/workspace';
+  ensureFreshStore(store, o.repoUrl, 'canon-pull-native');
+  const nativeRoot = path.join(store, 'native');
+
+  // Discover logical native files (part-aware) whose path references the uuid.
+  const groups = new Map<string, string[]>();
+  const walk = (dir: string) => {
+    let entries: fs.Dirent[] = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { walk(p); continue; }
+      if (!e.isFile()) continue;
+      const m = e.name.match(/^(.*)\.part-\d{4}$/);
+      const logical = m ? path.join(dir, m[1]!) : p;
+      const g = groups.get(logical) ?? [];
+      g.push(p);
+      groups.set(logical, g);
+    }
+  };
+  walk(nativeRoot);
+
+  // A session = the `<uuid>.jsonl` main file + everything under `<uuid>/`.
+  // Match by uuid (or prefix) on the main-file basename, like canonPull.
+  const mains = [...groups.keys()].filter((logical) => {
+    const rel = path.relative(nativeRoot, logical);
+    if (o.harness && rel.split(path.sep)[0] !== o.harness) return false;
+    const base = path.basename(rel);
+    return base === `${o.session}.jsonl`
+      || (base.endsWith('.jsonl') && !base.endsWith('.events.jsonl')
+          && path.basename(base, '.jsonl').startsWith(o.session)
+          && path.dirname(rel).split(path.sep).length <= 2);
+  });
+  if (mains.length === 0) {
+    console.error(`[canon-pull-native] no native session matches '${o.session}'${o.harness ? ` in ${o.harness}` : ''}`);
+    return { code: 1 };
+  }
+  if (mains.length > 1) {
+    console.error(`[canon-pull-native] ambiguous — ${mains.length} matches:`);
+    for (const m of mains) console.error(`  ${path.relative(nativeRoot, m)}`);
+    return { code: 1 };
+  }
+  const main = mains[0]!;
+  const mainRel = path.relative(nativeRoot, main);
+  const harness = mainRel.split(path.sep)[0]!;
+  const uuid = path.basename(mainRel, '.jsonl');
+  const sessionDirPrefix = main.slice(0, -'.jsonl'.length) + path.sep; // <…>/<uuid>/
+
+  // Destination project dir.
+  let destDir = o.to;
+  if (!destDir) {
+    if (harness !== 'claude-code') {
+      console.error(`[canon-pull-native] no default destination for harness '${harness}' — pass --to <dir>`);
+      return { code: 1 };
+    }
+    const slug = o.project
+      ? claudeProjectSlug(path.resolve(o.project))
+      : path.basename(path.dirname(mainRel)); // original project slug from the store layout
+    destDir = path.join(home, '.claude', 'projects', slug);
+  }
+
+  // Collect the session's logical files: main + sidecars (events) + <uuid>/ tree.
+  const eventsLogical = main.replace(/\.jsonl$/, '.events.jsonl');
+  const logicals = [...groups.keys()].filter((l) =>
+    l === main || l === eventsLogical || l.startsWith(sessionDirPrefix));
+
+  const written: string[] = [];
+  for (const logical of logicals) {
+    const relInSession = logical === main || logical === eventsLogical
+      ? path.basename(logical)
+      : path.join(uuid, path.relative(sessionDirPrefix, logical));
+    const dest = path.join(destDir, relInSession);
+    if (fs.existsSync(dest) && !o.force) {
+      console.error(`[canon-pull-native] ${dest} already exists — resuming elsewhere is a BRANCH; use --force to overwrite`);
+      return { code: 1, destDir };
+    }
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    const parts = groups.get(logical)!.slice().sort();
+    fs.writeFileSync(dest, '');
+    for (const p of parts) fs.appendFileSync(dest, fs.readFileSync(p));
+    written.push(dest);
+  }
+
+  const bytes = written.reduce((n, f) => n + fs.statSync(f).size, 0);
+  console.log(`[canon-pull-native] materialized ${uuid} (${harness}) — ${written.length} file(s), ${(bytes / 1024).toFixed(0)}KB → ${destDir}`);
+  if (harness === 'claude-code') {
+    console.log(`[canon-pull-native]   resume with: claude --resume ${uuid}`);
+    console.log(`[canon-pull-native]   (run claude from the project whose path slugifies to '${path.basename(destDir)}' so the session is in scope)`);
+  }
+  return { code: 0, destDir, files: written, harness };
+}
+
 /** Materialize one canon session into a native session directory. */
 export async function canonPull(o: CanonPullOptions): Promise<CanonPullResult> {
   const store = o.store ?? '/tmp/canon-store';
