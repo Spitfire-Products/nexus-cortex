@@ -352,4 +352,229 @@ describe('ShellTool Integration', () => {
     expect(results[1].llmContent).toContain('cmd2');
     expect(results[2].llmContent).toContain('cmd3');
   });
+
+  // ── Tool-redirect guard: flag-aware + profile-aware (canon defect 2026-08-13) ──
+  //
+  // Production record (hosted container, deepseek-v4-pro): `cat -A probe.txt`
+  // (legitimate — visible line endings) was blocked with the CORRUPT suggestion
+  // `Read({ file_path: "-A probe.txt" })`. Three defects: flag-blind suggestion
+  // parser, over-broad matching (no Read equivalent for cat -A / head -c), and
+  // no profile gate (bash-only models were redirected to tools that don't exist).
+
+  describe('tool-redirect guard (flag/profile awareness)', () => {
+    let probeFile: string;
+
+    beforeEach(() => {
+      probeFile = path.join(testDir, 'probe.txt');
+      fs.writeFileSync(probeFile, 'hello guard\nline two\n');
+    });
+
+    it('allows `cat -A file` through (no Read equivalent for flagged cat)', async () => {
+      const result = await tool.execute(
+        { command: 'cat -A probe.txt' },
+        new AbortController().signal,
+      );
+      expect(result.success).toBe(true);
+      expect(result.llmContent).toContain('hello guard');
+    });
+
+    it('allows `head -c N file` through (byte-precise read has no Read equivalent)', async () => {
+      const result = await tool.execute(
+        { command: 'head -c 5 probe.txt' },
+        new AbortController().signal,
+      );
+      expect(result.success).toBe(true);
+      expect(result.llmContent).toContain('hello');
+    });
+
+    it('allows multi-file `cat a b` through (concatenation has no Read equivalent)', async () => {
+      fs.writeFileSync(path.join(testDir, 'second.txt'), 'second file\n');
+      const result = await tool.execute(
+        { command: 'cat probe.txt second.txt' },
+        new AbortController().signal,
+      );
+      expect(result.success).toBe(true);
+      expect(result.llmContent).toContain('second file');
+    });
+
+    it('still redirects bare `cat file` with a CLEAN suggestion (no flags glued into file_path)', async () => {
+      const result = await tool.execute(
+        { command: 'cat probe.txt' },
+        new AbortController().signal,
+      );
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Read tool');
+      expect(result.error).toContain('Read({ file_path: "probe.txt" })');
+    });
+
+    it('never produces a flags-in-file_path suggestion', async () => {
+      // Direct probe of the guard: flagged invocations must return null (allowed),
+      // never a suggestion like Read({ file_path: "-A probe.txt" }).
+      const msg = (tool as any).checkToolRedirect('cat -A probe.txt');
+      expect(msg).toBeNull();
+    });
+
+    it('allows flagged grep through (grep -c has no Grep-tool output equivalent)', async () => {
+      const result = await tool.execute(
+        { command: 'grep -c hello probe.txt' },
+        new AbortController().signal,
+      );
+      expect(result.success).toBe(true);
+      expect(result.llmContent.trim()).toContain('1');
+    });
+
+    it('still redirects bare `grep pattern file` to the Grep tool', async () => {
+      const result = await tool.execute(
+        { command: 'grep hello probe.txt' },
+        new AbortController().signal,
+      );
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Grep tool');
+    });
+
+    it('allows `echo $VAR > file` through (shell-state capture Write cannot do)', async () => {
+      const result = await tool.execute(
+        { command: 'echo $HOME > envcap.txt' },
+        new AbortController().signal,
+      );
+      expect(result.success).toBe(true);
+      expect(fs.existsSync(path.join(testDir, 'envcap.txt'))).toBe(true);
+    });
+
+    it('allows append `>>` through (Write cannot append)', async () => {
+      const result = await tool.execute(
+        { command: 'echo "appended" >> probe.txt' },
+        new AbortController().signal,
+      );
+      expect(result.success).toBe(true);
+      expect(fs.readFileSync(probeFile, 'utf8')).toContain('appended');
+    });
+
+    it('allows `find` with -exec through (no Glob equivalent)', async () => {
+      const result = await tool.execute(
+        { command: 'find . -name "*.txt" -exec ls {} +' },
+        new AbortController().signal,
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it('still redirects plain `find -name` to the Glob tool', async () => {
+      const result = await tool.execute(
+        { command: 'find . -name "*.txt"' },
+        new AbortController().signal,
+      );
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Glob tool');
+    });
+
+    describe('bash-only tool profile (redirect targets do not exist)', () => {
+      const PROFILE_KEY = 'CORTEX_TOOL_PROFILE';
+      let saved: string | undefined;
+
+      beforeEach(() => {
+        saved = process.env[PROFILE_KEY];
+        process.env[PROFILE_KEY] = 'bash-only';
+      });
+
+      afterEach(() => {
+        if (saved === undefined) delete process.env[PROFILE_KEY];
+        else process.env[PROFILE_KEY] = saved;
+      });
+
+      it('executes bare `cat file` (never redirect to a tool the profile hides)', async () => {
+        const result = await tool.execute(
+          { command: 'cat probe.txt' },
+          new AbortController().signal,
+        );
+        expect(result.success).toBe(true);
+        expect(result.llmContent).toContain('hello guard');
+      });
+
+      it('executes `sed -i` in-place edits (Edit tool does not exist under bash-only)', async () => {
+        const result = await tool.execute(
+          { command: "sed -i 's/hello/goodbye/' probe.txt" },
+          new AbortController().signal,
+        );
+        expect(result.success).toBe(true);
+        expect(fs.readFileSync(probeFile, 'utf8')).toContain('goodbye');
+      });
+
+      it('executes `echo literal > file` (Write tool does not exist under bash-only)', async () => {
+        const result = await tool.execute(
+          { command: 'echo "made by bash" > bashonly.txt' },
+          new AbortController().signal,
+        );
+        expect(result.success).toBe(true);
+        expect(fs.readFileSync(path.join(testDir, 'bashonly.txt'), 'utf8')).toContain('made by bash');
+      });
+    });
+  });
+
+  // ── Output fidelity + timeout modernization ─────────────────────────────────
+
+  describe('output fidelity', () => {
+    it('includes stdout on FAILED commands (test runners print failures to stdout)', async () => {
+      const result = await tool.execute(
+        { command: 'sh -c \'echo "partial progress"; exit 3\'' },
+        new AbortController().signal,
+      );
+      expect(result.success).toBe(true);
+      expect(result.metadata?.exitCode).toBe(3);
+      expect(result.llmContent).toContain('partial progress');
+    });
+
+    it('includes stderr on SUCCESSFUL commands (warnings matter)', async () => {
+      const result = await tool.execute(
+        { command: 'sh -c \'echo "deprecation warning" >&2; echo ok\'' },
+        new AbortController().signal,
+      );
+      expect(result.success).toBe(true);
+      expect(result.metadata?.exitCode).toBe(0);
+      expect(result.llmContent).toContain('ok');
+      expect(result.llmContent).toContain('deprecation warning');
+    });
+
+    it('reports timeout explicitly (timedOut metadata + clear message)', async () => {
+      const result = await tool.execute(
+        { command: 'sleep 10', timeout: 500 },
+        new AbortController().signal,
+      );
+      expect(result.success).toBe(true);
+      expect(result.metadata?.timedOut).toBe(true);
+      expect(result.llmContent.toLowerCase()).toContain('timed out');
+    }, 15000);
+
+    it('clamps timeout to the configured maximum', () => {
+      const resolved = (tool as any).resolveTimeoutMs({ command: 'true', timeout: 99999999 });
+      expect(resolved).toBe((ShellTool as any).MAX_TIMEOUT_MS);
+    });
+  });
+
+  // ── Persistent-session sentinel parsing (pure helpers; tmux not required) ──
+
+  describe('persistent session sentinel helpers', () => {
+    const sentinel = '__CORTEX_DONE_abcd';
+
+    it('detects completion and extracts the exit code from pane output', () => {
+      const pane = `$ ls\nfile.txt\n$ false; printf '${sentinel}_%d\\n' $?\n${sentinel}_1\n$`;
+      const parsed = (ShellTool as any).parseSentinel(pane, sentinel);
+      expect(parsed.done).toBe(true);
+      expect(parsed.exitCode).toBe(1);
+    });
+
+    it('does not treat the echoed command line (%d placeholder) as completion', () => {
+      const pane = `$ long_build; printf '${sentinel}_%d\\n' $?\nbuilding...`;
+      const parsed = (ShellTool as any).parseSentinel(pane, sentinel);
+      expect(parsed.done).toBe(false);
+      expect(parsed.exitCode).toBeNull();
+    });
+
+    it('strips sentinel lines from the captured output', () => {
+      const pane = `real output\n${sentinel}_0\nmore output`;
+      const cleaned = (ShellTool as any).stripSentinelLines(pane, sentinel);
+      expect(cleaned).toContain('real output');
+      expect(cleaned).toContain('more output');
+      expect(cleaned).not.toContain(sentinel);
+    });
+  });
 });

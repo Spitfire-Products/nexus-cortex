@@ -166,7 +166,7 @@ Use replace_all for replacing and renaming strings across the file.`,
   // =====================================
   {
     name: 'Bash',
-    description: `Execute bash/shell commands. Working directory persists between calls. Default timeout: 120 seconds (configurable).
+    description: `Execute bash/shell commands. Each call runs in a fresh shell started from the project working directory — cd inside a call does not carry over to the next call (use persistentSession for a stateful shell where cwd and env persist). Default timeout: 120 seconds (configurable via timeout, max 600 seconds).
 
 Avoid using bash to run cat, head, tail, sed, awk, or echo — use read, edit, or write instead. Reserve bash for actual shell operations that require execution (builds, tests, git, process management).
 

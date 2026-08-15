@@ -11,6 +11,7 @@
  * we DON'T reroute — only an explicit, known, missing key triggers the fallback.
  */
 import { ModularModelRegistry } from './ModularModelRegistry.js';
+import { anthropicCredentialService } from '../../config/AnthropicCredentialService.js';
 import { logger } from '../../utils/logger.js';
 
 let _registry: ModularModelRegistry | undefined;
@@ -19,14 +20,47 @@ function registry(): ModularModelRegistry {
   return _registry;
 }
 
+/**
+ * Anthropic-aware availability (P0 fix): an install can be authorized for
+ * Claude without ANTHROPIC_API_KEY — via a gateway bearer (ANTHROPIC_AUTH_TOKEN)
+ * or a valid, non-gated OAuth credential (~/.claude/.credentials.json /
+ * CLAUDE_CODE_OAUTH_TOKEN). Counting only the env var silently rerouted
+ * Claude-pinned sub-agents on OAuth-only installs.
+ *
+ * `oauthAvailable` is injectable for tests; the default asks the credential
+ * service, whose subscription-token compliance gate makes a blocked
+ * `sk-ant-oat01` token read as UNavailable (correct — we won't send it).
+ */
+export function hasAnthropicAuth(
+  env: NodeJS.ProcessEnv = process.env,
+  oauthAvailable: () => boolean = () =>
+    anthropicCredentialService.hasValidCredentials('oauth')
+): boolean {
+  if (env.ANTHROPIC_API_KEY && env.ANTHROPIC_API_KEY.trim()) return true;
+  if (env.ANTHROPIC_AUTH_TOKEN && env.ANTHROPIC_AUTH_TOKEN.trim()) return true;
+  try {
+    return oauthAvailable();
+  } catch {
+    return false;
+  }
+}
+
 /** True if the model's provider API key is present in the environment, or can't be determined. */
 export function hasApiKeyForModel(modelId: string): boolean {
   try {
-    const cfg = registry().getModel(modelId) as { api?: { apiKeyEnvVar?: string } } | undefined;
+    const cfg = registry().getModel(modelId) as
+      | { provider?: string; api?: { apiKeyEnvVar?: string } }
+      | undefined;
     const envVar = cfg?.api?.apiKeyEnvVar;
     if (!envVar) return true; // no declared key requirement → assume usable
     const v = process.env[envVar];
-    return !!(v && v.trim());
+    if (v && v.trim()) return true;
+    // Anthropic cards accept OAuth / gateway-bearer credentials too — the env
+    // var being empty doesn't mean the install can't run Claude.
+    if (cfg?.provider === 'anthropic' || envVar === 'ANTHROPIC_API_KEY') {
+      return hasAnthropicAuth();
+    }
+    return false;
   } catch {
     return true; // unknown model → let the downstream API call decide, don't silently reroute
   }

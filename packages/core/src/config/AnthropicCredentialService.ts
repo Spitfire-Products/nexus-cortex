@@ -10,6 +10,16 @@
  * 1. ~/.claude/.credentials.json (OAuth)
  * 2. CLAUDE_CODE_OAUTH_TOKEN environment variable (OAuth)
  * 3. ANTHROPIC_API_KEY environment variable (API Key fallback)
+ * 4. ANTHROPIC_AUTH_TOKEN environment variable (gateway bearer fallback)
+ *
+ * COMPLIANCE GATE (P0, see docs/AGENT_SDK_TRANSPORT_STRATEGY.md §0):
+ * Anthropic SUBSCRIPTION OAuth tokens (`sk-ant-oat01-…`, minted by Claude Code
+ * `/login` / `claude setup-token`) are ToS-restricted to Claude Code and
+ * claude.ai — they may NOT be sent to /v1/messages by this harness. The loader
+ * hard-blocks them by prefix unless the Anthropic-approval flag
+ * `CORTEX_SUBSCRIPTION_AUTH_APPROVED=1` is set. Platform-OAuth bearers
+ * (`ant auth login` profiles) and gateway bearers are NOT oat01-prefixed and
+ * remain allowed — they are API-legal.
  */
 
 import * as fs from 'fs';
@@ -37,11 +47,15 @@ interface CredentialsFile {
 
 /**
  * Unified credential result
+ *
+ * type 'bearer' = a gateway bearer token (ANTHROPIC_AUTH_TOKEN) — sent as
+ * `Authorization: Bearer` exactly like 'oauth', but it is not a Claude.ai
+ * OAuth credential and carries no expiry.
  */
 export interface AnthropicCredential {
-  type: 'oauth' | 'api-key';
+  type: 'oauth' | 'api-key' | 'bearer';
   token: string;
-  source: 'claude-credentials-file' | 'env-oauth' | 'env-api-key';
+  source: 'claude-credentials-file' | 'env-oauth' | 'env-api-key' | 'env-auth-token';
   expiresAt?: number;
 }
 
@@ -61,9 +75,56 @@ export class CredentialError extends Error {
       | 'EXPIRED_TOKEN'
       | 'INVALID_FILE'
       | 'FILE_NOT_FOUND'
+      | 'SUBSCRIPTION_TOKEN_BLOCKED'
   ) {
     super(message);
     this.name = 'CredentialError';
+  }
+}
+
+/**
+ * Prefix identifying Anthropic SUBSCRIPTION OAuth access tokens (Claude Code
+ * `/login` / `claude setup-token`). ToS-restricted to Claude Code / claude.ai.
+ */
+export const SUBSCRIPTION_TOKEN_PREFIX = 'sk-ant-oat01';
+
+/** True iff the token is a Claude subscription OAuth token (`sk-ant-oat01-…`). */
+export function isSubscriptionToken(token: string | undefined | null): boolean {
+  return typeof token === 'string' && token.startsWith(SUBSCRIPTION_TOKEN_PREFIX);
+}
+
+/**
+ * True iff the operator has set the Anthropic-approval flag
+ * `CORTEX_SUBSCRIPTION_AUTH_APPROVED` to `1` or `true` (case-insensitive).
+ * This flag must ONLY be set once Anthropic's third-party subscription-auth
+ * approval has been granted (June-2026 program).
+ */
+export function isSubscriptionAuthApproved(
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  const v = (env.CORTEX_SUBSCRIPTION_AUTH_APPROVED || '').trim().toLowerCase();
+  return v === '1' || v === 'true';
+}
+
+/**
+ * Compliance gate: throw if `token` is a subscription OAuth token and the
+ * approval flag is not set. Non-subscription tokens (API keys, platform-OAuth
+ * bearers, gateway bearers) always pass.
+ */
+export function assertSubscriptionTokenAllowed(
+  token: string | undefined | null,
+  env: NodeJS.ProcessEnv = process.env
+): void {
+  if (isSubscriptionToken(token) && !isSubscriptionAuthApproved(env)) {
+    throw new CredentialError(
+      'Anthropic subscription OAuth tokens (sk-ant-oat01-…) are restricted by ' +
+        'Anthropic\'s terms to Claude Code and claude.ai — this harness will not ' +
+        'send one to the Messages API. Use an sk-ant API key (ANTHROPIC_API_KEY) ' +
+        'or a gateway bearer (ANTHROPIC_AUTH_TOKEN) instead. Once Anthropic ' +
+        'approval is granted, the Agent SDK transport can be enabled with ' +
+        'CORTEX_SUBSCRIPTION_AUTH_APPROVED=1.',
+      'SUBSCRIPTION_TOKEN_BLOCKED'
+    );
   }
 }
 
@@ -181,8 +242,22 @@ export class AnthropicCredentialService {
         // Re-throw expired token errors - user needs to fix this
         throw error;
       }
-      // Fall back to API key
-      return this.loadApiKey();
+      // Fall back to API key / gateway bearer. If that also fails and the OAuth
+      // failure was the subscription-token compliance gate, surface the gate
+      // error — it is the actionable one (a plain NO_CREDENTIALS would
+      // misleadingly suggest `claude login`, which mints the very token class
+      // the gate blocks).
+      try {
+        return this.loadApiKey();
+      } catch (apiKeyError) {
+        if (
+          error instanceof CredentialError &&
+          error.code === 'SUBSCRIPTION_TOKEN_BLOCKED'
+        ) {
+          throw error;
+        }
+        throw apiKeyError;
+      }
     }
   }
 
@@ -193,6 +268,10 @@ export class AnthropicCredentialService {
     // Source 1: ~/.claude/.credentials.json
     const fileCredentials = this.loadOAuthFromFile();
     if (fileCredentials) {
+      // Compliance gate: subscription tokens (sk-ant-oat01-…) may not go to
+      // the raw Messages path without Anthropic approval.
+      assertSubscriptionTokenAllowed(fileCredentials.accessToken);
+
       const credential: AnthropicCredential = {
         type: 'oauth',
         token: fileCredentials.accessToken,
@@ -208,6 +287,10 @@ export class AnthropicCredentialService {
     // Source 2: CLAUDE_CODE_OAUTH_TOKEN environment variable
     const envOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
     if (envOAuthToken) {
+      // Same compliance gate as the file source. Platform-OAuth bearers
+      // (ant-auth profiles, non-oat01) pass through — they are API-legal.
+      assertSubscriptionTokenAllowed(envOAuthToken);
+
       return {
         type: 'oauth',
         token: envOAuthToken,
@@ -224,7 +307,7 @@ export class AnthropicCredentialService {
   }
 
   /**
-   * Load API key from environment
+   * Load API key (or gateway bearer) from environment
    */
   private loadApiKey(): AnthropicCredential {
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -236,9 +319,20 @@ export class AnthropicCredentialService {
       };
     }
 
+    // Gateway bearer fallback: ANTHROPIC_AUTH_TOKEN is the SDK-standard bearer
+    // env var (proxies/gateways). Sent as `Authorization: Bearer`.
+    const authToken = process.env.ANTHROPIC_AUTH_TOKEN;
+    if (authToken) {
+      return {
+        type: 'bearer',
+        token: authToken,
+        source: 'env-auth-token',
+      };
+    }
+
     throw new CredentialError(
-      'No Anthropic credentials found. Set ANTHROPIC_API_KEY environment variable, ' +
-        'or run `claude login` to use your Claude.ai Max subscription.',
+      'No Anthropic credentials found. Set ANTHROPIC_API_KEY (or a gateway ' +
+        'ANTHROPIC_AUTH_TOKEN) environment variable.',
       'NO_CREDENTIALS'
     );
   }

@@ -22,6 +22,7 @@ import {
 import type { ModelConfig } from '../../../models/ModelConfig.interface.js';
 import {
   anthropicCredentialService,
+  assertSubscriptionTokenAllowed,
   type AuthMethod,
   CredentialError
 } from '../../../config/AnthropicCredentialService.js';
@@ -323,8 +324,12 @@ export class MessagesAPIHelperAdapter extends BaseHelperAdapter {
       const authMethod = (process.env.ANTHROPIC_AUTH_METHOD || 'auto') as AuthMethod;
       try {
         const credential = anthropicCredentialService.loadCredential(authMethod);
+        // Compliance gate (defense in depth — the credential service already
+        // prefix-gates, but this is an independent Bearer injection site):
+        // never put a subscription token (sk-ant-oat01-…) on a raw fetch.
+        assertSubscriptionTokenAllowed(credential.token);
         apiKey = credential.token;
-        isOAuth = credential.type === 'oauth';
+        isOAuth = credential.type === 'oauth' || credential.type === 'bearer';
 
         if (process.env.DEBUG === 'true') {
           console.log(`[MessagesAPIHelper] Using Anthropic credential: ${anthropicCredentialService.getCredentialSummary(credential)}`);

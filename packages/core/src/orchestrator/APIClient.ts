@@ -512,9 +512,11 @@ export class APIClient {
         console.warn(`[APIClient] OAuth token expires in ${daysUntilExpiry} days. Run \`claude login\` to refresh.`);
       }
 
-      // For OAuth tokens, use authToken parameter (Bearer auth)
+      // For OAuth/gateway-bearer tokens, use authToken parameter (Bearer auth)
       // For API keys, use apiKey parameter (x-api-key header)
-      if (credential.type === 'oauth') {
+      // NOTE: subscription tokens (sk-ant-oat01-…) never reach here — the
+      // credential service prefix-gates them (SUBSCRIPTION_TOKEN_BLOCKED).
+      if (credential.type === 'oauth' || credential.type === 'bearer') {
         return new Anthropic({
           authToken: credential.token, // Uses Authorization: Bearer header
           fetch: cortexProxyFetch,

@@ -80,8 +80,10 @@ export interface ShellToolParams {
  */
 export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
   private static readonly DEFAULT_TIMEOUT_MS = 120000; // 2 minutes
+  private static readonly MAX_TIMEOUT_MS = 600000; // 10 minutes — hard ceiling, requested timeouts are clamped
   private static readonly OUTPUT_UPDATE_INTERVAL_MS = 1000; // 1 second
   private static readonly MAX_OUTPUT_LENGTH = 30000; // ~30KB max to prevent context overflow
+  private static readonly PERSISTENT_POLL_INTERVAL_MS = 400; // sentinel poll cadence for tmux sessions
 
   private tmux: TmuxManager;
   private persistence: SessionPersistence;
@@ -107,7 +109,31 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
           timeout: {
             type: 'number',
             description:
-              'Optional: Timeout in milliseconds (default: 120000ms = 2 minutes).',
+              'Optional: Timeout in milliseconds (default: 120000ms = 2 minutes, max: 600000ms = 10 minutes).',
+          },
+          description: {
+            type: 'string',
+            description: 'Optional: Clear description of what this command does.',
+          },
+          run_in_background: {
+            type: 'boolean',
+            description:
+              'Optional: Run command in background and return immediately with a bash_id. Use BashOutput to poll output, KillShell to stop.',
+          },
+          persistentSession: {
+            type: 'boolean',
+            description:
+              'Optional: Run command in a persistent tmux session (state, cwd, and env persist across calls). Requires tmux.',
+          },
+          sessionId: {
+            type: 'string',
+            description:
+              'Optional: ID of the persistent session to use or create (auto-generated if not provided). Only used when persistentSession=true.',
+          },
+          captureHistory: {
+            type: 'boolean',
+            description:
+              'Optional: Capture entire scrollback history for persistent sessions (default: false).',
           },
         },
         required: ['command'],
@@ -236,6 +262,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
         backgroundPIDs: result.backgroundPIDs,
         processGroupPGID: result.pgid,
         truncated: result.truncated,
+        timedOut: result.timedOut,
       });
     } catch (error: any) {
       if (error.name === 'AbortError' || signal.aborted) {
@@ -260,9 +287,10 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
     backgroundPIDs: number[];
     pgid: number | null;
     truncated: boolean;
+    timedOut: boolean;
   }> {
     const isWindows = os.platform() === 'win32';
-    const timeout = params.timeout || ShellTool.DEFAULT_TIMEOUT_MS;
+    const timeout = this.resolveTimeoutMs(params);
 
     // Create temp file for background PID detection (Unix only)
     const tempFileName = `shell_pgrep_${crypto.randomBytes(6).toString('hex')}.tmp`;
@@ -355,8 +383,10 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
     signal.addEventListener('abort', abortHandler);
 
     // Timeout handler
+    let timedOut = false;
     const timeoutId = setTimeout(async () => {
       if (!exited && shell.pid) {
+        timedOut = true;
         await this.killProcess(shell.pid, isWindows);
       }
     }, timeout);
@@ -416,23 +446,42 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
       } else {
         llmContent += ' No output was produced before cancellation.';
       }
+    } else if (timedOut) {
+      // Timeout: explicit, actionable message (was: opaque "exit code null")
+      llmContent = `Command timed out after ${timeout}ms and was killed.`;
+      if (output.trim()) {
+        llmContent += `\n\nOutput before timeout:\n${truncateIfNeeded(output)}`;
+      } else {
+        llmContent += ' No output was produced before the timeout.';
+      }
+      llmContent += `\n\nFor long-running commands, set run_in_background: true and poll with BashOutput, or raise timeout (max ${ShellTool.MAX_TIMEOUT_MS}ms).`;
     } else {
       // Concise output format
       if (exitCode === 0) {
-        // Success: Just show stdout if present, otherwise confirmation
+        // Success: stdout, plus labeled stderr when present (warnings matter —
+        // deprecations, npm/compiler warnings surface on stderr with exit 0)
         llmContent = truncateIfNeeded(stdout) || '(command completed successfully)';
+        if (stderr.trim()) {
+          llmContent += `\nStderr: ${truncateIfNeeded(stderr)}`;
+        }
       } else {
-        // Failure: Show error and stderr
+        // Failure: show stdout too (test runners and build tools print the
+        // failure detail to stdout), then error/stderr, then the exit code
         const parts: string[] = [];
+        if (stdout.trim()) {
+          parts.push(truncateIfNeeded(stdout));
+        }
         if (errorMessage) {
           parts.push(`Error: ${errorMessage}`);
         }
-        if (stderr) {
+        if (stderr.trim()) {
           parts.push(`Stderr: ${truncateIfNeeded(stderr)}`);
         }
-        if (parts.length === 0) {
-          parts.push(`Command failed with exit code ${exitCode}`);
-        }
+        parts.push(
+          processSignal
+            ? `Command failed with exit code ${exitCode} (signal: ${processSignal})`
+            : `Command failed with exit code ${exitCode}`,
+        );
         llmContent = parts.join('\n');
       }
     }
@@ -444,6 +493,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
       backgroundPIDs,
       pgid: shell.pid ?? null,
       truncated,
+      timedOut,
     };
   }
 
@@ -531,21 +581,43 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
         await this.persistence.touchSession(sessionId);
       }
 
-      // Send command to session
+      // Send command to session with a completion sentinel appended so we can
+      // detect ACTUAL completion + exit code instead of the old fixed 5s sleep
+      // (which silently returned mid-run for any command longer than 5s).
+      // The `\$?` keeps the host shell (execAsync in sendKeys wraps the keys in
+      // double quotes) from expanding $? — the session shell must expand it.
       updateOutput?.(`Sending command: ${params.command}\n`);
-      await this.tmux.sendKeys(sessionId, params.command);
+      const sentinel = `__CORTEX_DONE_${crypto.randomBytes(4).toString('hex')}`;
+      await this.tmux.sendKeys(sessionId, `${params.command}; printf '${sentinel}_%d\\n' \\$?`);
 
-      // Wait for command to complete (simple delay-based approach)
-      const timeout = params.timeout || ShellTool.DEFAULT_TIMEOUT_MS;
-      await new Promise((resolve) => setTimeout(resolve, Math.min(timeout, 5000)));
-
-      // Capture output
-      updateOutput?.(`Capturing output...\n`);
+      // Poll pane until the sentinel appears or the timeout elapses
+      const timeout = this.resolveTimeoutMs(params);
+      const deadline = Date.now() + timeout;
       const startLine = params.captureHistory ? -3000 : undefined;
-      const output = await this.tmux.capturePane(sessionId, startLine);
+      let output = '';
+      let completed = false;
+      let sessionExitCode: number | null = null;
+      while (Date.now() < deadline && !signal.aborted) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, ShellTool.PERSISTENT_POLL_INTERVAL_MS),
+        );
+        output = await this.tmux.capturePane(sessionId, startLine);
+        const parsed = ShellTool.parseSentinel(output, sentinel);
+        if (parsed.done) {
+          completed = true;
+          sessionExitCode = parsed.exitCode;
+          break;
+        }
+      }
+      const cleanedOutput = ShellTool.stripSentinelLines(output, sentinel);
 
-      const result = `Command executed in persistent tmux session '${sessionId}'.\n\n` +
-        `Output:\n${'='.repeat(60)}\n${output}\n${'='.repeat(60)}\n\n` +
+      const statusLine = completed
+        ? `Command completed with exit code ${sessionExitCode}.`
+        : `Command did NOT complete within ${timeout}ms — it may still be running in the session. ` +
+          `Re-check with persistentSession=true, sessionId='${sessionId}' (e.g. run \`true\` to recapture the pane).`;
+
+      const result = `Command executed in persistent tmux session '${sessionId}'. ${statusLine}\n\n` +
+        `Output:\n${'='.repeat(60)}\n${cleanedOutput}\n${'='.repeat(60)}\n\n` +
         `Session persists after this command completes. You can:\n` +
         `- Send more commands: persistentSession=true, sessionId='${sessionId}'\n` +
         `- Inspect session: TmuxSession tool with action='capture', sessionId='${sessionId}'\n` +
@@ -555,7 +627,9 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
         executionTime: Date.now() - startTime,
         sessionId,
         persistent: true,
-        sessionCwd: cwd
+        sessionCwd: cwd,
+        exitCode: sessionExitCode,
+        completed
       });
     } catch (error: any) {
       if (signal.aborted) {
@@ -566,41 +640,155 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
   }
 
   /**
+   * Mirror of core ToolProfile.resolveToolProfile (env tier, resolved FRESH per
+   * call so it stays hot-toggleable like the core resolver). Deliberately NOT
+   * imported from @nexus-cortex/core: this file compiles in the executors
+   * Pass-1 build stage before core's dist exists, and the profile contract is
+   * tiny and stable (CORTEX_TOOL_PROFILE=full|lean|bash-only, unknown → full).
+   * @private
+   */
+  private resolveActiveToolProfile(): 'full' | 'lean' | 'bash-only' {
+    const raw = (process.env.CORTEX_TOOL_PROFILE ?? 'full').trim().toLowerCase();
+    if (raw === 'lean' || raw === 'bash-only') return raw;
+    return 'full';
+  }
+
+  /**
+   * Are the redirect target tools (Read/Edit/Write/Grep/Glob) present on the
+   * active tool surface? Under bash-only they do NOT exist — redirecting to
+   * them wedges the model (canon defect 2026-08-13: bash-only graduates were
+   * told to use tools their profile hides). Under lean/full all five targets
+   * are essential-tier and therefore present.
+   * @private
+   */
+  private redirectTargetsAvailable(): boolean {
+    return this.resolveActiveToolProfile() !== 'bash-only';
+  }
+
+  /**
+   * Resolve the effective timeout: requested (or default), clamped to the max.
+   * @private
+   */
+  private resolveTimeoutMs(params: ShellToolParams): number {
+    return Math.min(params.timeout || ShellTool.DEFAULT_TIMEOUT_MS, ShellTool.MAX_TIMEOUT_MS);
+  }
+
+  /**
    * Checks if a command should be routed to a dedicated tool instead of Bash.
    * Returns an error message with guidance if redirected, or null if allowed.
+   *
+   * Redirects fire ONLY where the dedicated tool is genuinely equivalent — the
+   * bare, flag-free forms (`cat FILE`, `grep pattern file`, literal
+   * `echo "text" > file`, plain `find -name`). Flagged, piped, redirected,
+   * multi-file, or variable-expanding invocations have no dedicated-tool
+   * equivalent (`cat -A`, `head -c 5`, `grep -c`, `echo $VAR > f`, `>>`
+   * append) and pass through. Canon defect 2026-08-13: the old flag-blind
+   * matcher blocked `cat -A probe.txt` and suggested the corrupt
+   * `Read({ file_path: "-A probe.txt" })`.
    * @private
    */
   private checkToolRedirect(command: string): string | null {
+    // Profile gate: never redirect to tools the active profile hides.
+    if (!this.redirectTargetsAvailable()) {
+      return null;
+    }
+
     const trimmed = command.trim();
+    // Any shell operator means composition Bash exists for — let it through.
+    const hasOperators = /[|;&<>`]/.test(trimmed);
+    const tokens = trimmed.split(/\s+/);
+    const cmd = tokens[0] ?? '';
+    const args = tokens.slice(1);
+    const flags = args.filter((a) => a.startsWith('-'));
+    const positional = args.filter((a) => !a.startsWith('-'));
+    const stripQuotes = (s: string) => s.replace(/^["']|["']$/g, '');
 
-    // File reading: cat, head, tail → Read tool
-    if (/^(cat|head|tail)\s+/.test(trimmed) && !trimmed.includes('|') && !trimmed.includes('>')) {
-      return `Use the Read tool instead of \`${trimmed.split(/\s+/)[0]}\` for reading files. ` +
-        `Example: Read({ file_path: "${trimmed.split(/\s+/).slice(1).join(' ').replace(/["']/g, '')}" })`;
+    // File reading: bare single-file cat/head/tail → Read tool.
+    if (
+      (cmd === 'cat' || cmd === 'head' || cmd === 'tail') &&
+      !hasOperators &&
+      flags.length === 0 &&
+      positional.length === 1
+    ) {
+      return (
+        `Use the Read tool instead of \`${cmd}\` for reading files. ` +
+        `Example: Read({ file_path: ${JSON.stringify(stripQuotes(positional[0] ?? ''))} })`
+      );
     }
 
-    // File editing: sed -i, awk -i → Edit tool
+    // File editing: sed -i / perl -i in-place edits → Edit tool.
     if (/^sed\s+(-i|--in-place)\b/.test(trimmed) || /^perl\s+-[pn]?i\b/.test(trimmed)) {
-      return `Use the Edit tool instead of \`${trimmed.split(/\s+/)[0]}\` for editing files. ` +
-        `Read the file first, then use Edit({ file_path, old_string, new_string }).`;
+      return (
+        `Use the Edit tool instead of \`${cmd}\` for editing files. ` +
+        `Read the file first, then use Edit({ file_path, old_string, new_string }).`
+      );
     }
 
-    // File writing: echo > file, cat > file, tee file → Write tool
-    if (/^(echo|printf|cat)\s+.*\s+>\s+\S/.test(trimmed) || /^tee\s+\S/.test(trimmed)) {
-      return `Use the Write tool instead of shell redirection for creating/writing files. ` +
-        `Example: Write({ file_path: "path", content: "content" })`;
+    // File writing: LITERAL echo/printf > file → Write tool. Variable
+    // expansion ($VAR — shell-state capture), append (>>), and command
+    // composition have no Write equivalent and pass through.
+    const writeMatch = trimmed.match(/^(?:echo|printf)\s+([^>]*)>\s*(\S+)\s*$/);
+    const writeContent = writeMatch?.[1] ?? '';
+    const writeTarget = writeMatch?.[2] ?? '';
+    if (
+      writeMatch &&
+      !trimmed.includes('>>') &&
+      !writeContent.includes('$') &&
+      !/[|;&`]/.test(writeContent)
+    ) {
+      return (
+        `Use the Write tool instead of shell redirection for creating/writing files. ` +
+        `Example: Write({ file_path: ${JSON.stringify(stripQuotes(writeTarget))}, content: "..." })`
+      );
     }
 
-    // File searching: grep, rg, ag → Grep tool
-    if (/^(grep|rg|ag|ack)\s+/.test(trimmed) && !trimmed.includes('|')) {
-      return `Use the Grep tool instead of \`${trimmed.split(/\s+/)[0]}\` for searching file contents. ` +
-        `Example: Grep({ pattern: "search term", path: "directory" })`;
+    // File searching: bare flag-free grep/rg/ag/ack → Grep tool.
+    if (
+      (cmd === 'grep' || cmd === 'rg' || cmd === 'ag' || cmd === 'ack') &&
+      !hasOperators &&
+      flags.length === 0 &&
+      positional.length >= 1 &&
+      positional.length <= 2
+    ) {
+      const grepPath = positional[1];
+      const pathArg = grepPath
+        ? `, path: ${JSON.stringify(stripQuotes(grepPath))}`
+        : '';
+      return (
+        `Use the Grep tool instead of \`${cmd}\` for searching file contents. ` +
+        `Example: Grep({ pattern: ${JSON.stringify(stripQuotes(positional[0] ?? ''))}${pathArg} })`
+      );
     }
 
-    // File finding: find → Glob tool
-    if (/^find\s+/.test(trimmed) && /-name\b/.test(trimmed)) {
-      return `Use the Glob tool instead of \`find\` for finding files. ` +
-        `Example: Glob({ pattern: "**/*.ts", path: "directory" })`;
+    // File finding: PLAIN find -name (optional path + -type) → Glob tool.
+    // Any other predicate/action (-exec, -delete, -mtime, …) passes through.
+    if (cmd === 'find' && !hasOperators && args.includes('-name')) {
+      const allowedPredicates = new Set(['-name', '-iname', '-type']);
+      let simple = true;
+      let pattern: string | undefined;
+      for (let i = 0; i < args.length; i++) {
+        const a = args[i] ?? '';
+        if (a.startsWith('-')) {
+          if (!allowedPredicates.has(a)) {
+            simple = false;
+            break;
+          }
+          const value = args[++i];
+          if ((a === '-name' || a === '-iname') && value !== undefined) {
+            pattern = stripQuotes(value);
+          }
+        } else if (i !== 0) {
+          // Only a single leading path operand keeps it Glob-equivalent.
+          simple = false;
+          break;
+        }
+      }
+      if (simple && pattern) {
+        return (
+          `Use the Glob tool instead of \`find\` for finding files. ` +
+          `Example: Glob({ pattern: ${JSON.stringify(pattern)} })`
+        );
+      }
     }
 
     return null;
@@ -668,6 +856,34 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
     } catch (error: any) {
       return this.createErrorResult(`Failed to start background process: ${error.message}`);
     }
+  }
+
+  /**
+   * Parse a tmux pane capture for the completion sentinel.
+   * The echoed command line contains `<sentinel>_%d` (literal printf format —
+   * no digits), so only the actual printf OUTPUT (`<sentinel>_<code>`) matches.
+   * Static + pure so it is unit-testable without tmux.
+   */
+  static parseSentinel(
+    paneOutput: string,
+    sentinel: string,
+  ): { done: boolean; exitCode: number | null } {
+    const match = paneOutput.match(new RegExp(`${sentinel}_(\\d+)`));
+    if (!match) {
+      return { done: false, exitCode: null };
+    }
+    return { done: true, exitCode: Number(match[1]) };
+  }
+
+  /**
+   * Remove sentinel artifacts (both the echoed command line and the printed
+   * completion marker) from captured pane output. Static + pure for tests.
+   */
+  static stripSentinelLines(paneOutput: string, sentinel: string): string {
+    return paneOutput
+      .split('\n')
+      .filter((line) => !line.includes(sentinel))
+      .join('\n');
   }
 
   /**
