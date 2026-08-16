@@ -52,7 +52,11 @@ export interface HarnessSource { exts: string[]; roots: (string | { label: strin
 
 function defaultHarnessSources(H: string): Record<string, HarnessSource> {
   return {
-    'claude-code': { exts: ['.jsonl'], roots: [path.join(H, '.claude', 'projects')] },
+    // .md rides too: the per-project auto-memory (memory/MEMORY.md + topic
+    // files) is the continuity layer a handoff needs — sessions without the
+    // memories that interpret them are half a handoff. Secret-scrubbed like
+    // everything else; canonTranslate ignores non-.jsonl natives.
+    'claude-code': { exts: ['.jsonl', '.md'], roots: [path.join(H, '.claude', 'projects')] },
     'nexus-cortex': {
       exts: ['.jsonl', '.json'],
       roots: [

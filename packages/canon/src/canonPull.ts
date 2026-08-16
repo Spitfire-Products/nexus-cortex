@@ -331,6 +331,64 @@ export interface CanonPullNativeAllResult {
   skippedLarge: { uuid: string; mb: number }[];
   skippedExisting: string[];
   failed: string[];
+  /** Memory files materialized (continuity layer — see hydrateProjectMemory). */
+  memoryFiles: number;
+}
+
+/**
+ * Materialize the captured per-project auto-memory (memory/MEMORY.md + topic
+ * files) alongside the sessions — the continuity half of a handoff: same
+ * memories and working context, not just transcripts. Donor policy: the origin
+ * project with the LARGEST total memory bytes provides MEMORY.md (the loaded
+ * index must be one coherent file, not a merge); topic files from EVERY origin
+ * project are copied skip-existing (index links resolve; collisions keep the
+ * donor's copy). Nothing is overwritten unless force.
+ */
+function hydrateProjectMemory(nativeRoot: string, harness: string, destDir: string, force?: boolean): number {
+  const harnessRoot = path.join(nativeRoot, harness);
+  let projects: string[] = [];
+  try {
+    projects = fs.readdirSync(harnessRoot, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && fs.existsSync(path.join(harnessRoot, e.name, 'memory')))
+      .map((e) => e.name);
+  } catch { return 0; }
+  if (projects.length === 0) return 0;
+  const sizeOf = (p: string): number => {
+    let n = 0;
+    const walk = (d: string) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const q = path.join(d, e.name);
+        if (e.isDirectory()) walk(q);
+        else n += fs.statSync(q).size;
+      }
+    };
+    try { walk(p); } catch { /* partial */ }
+    return n;
+  };
+  projects.sort((a, b) => sizeOf(path.join(harnessRoot, b, 'memory')) - sizeOf(path.join(harnessRoot, a, 'memory')));
+  const destMem = path.join(destDir, 'memory');
+  fs.mkdirSync(destMem, { recursive: true });
+  let copied = 0;
+  for (const [i, proj] of projects.entries()) {
+    const src = path.join(harnessRoot, proj, 'memory');
+    const copyTree = (from: string, to: string) => {
+      for (const e of fs.readdirSync(from, { withFileTypes: true })) {
+        const s = path.join(from, e.name);
+        const d = path.join(to, e.name);
+        if (e.isDirectory()) { fs.mkdirSync(d, { recursive: true }); copyTree(s, d); continue; }
+        // MEMORY.md comes ONLY from the donor (largest) project.
+        if (e.name === 'MEMORY.md' && i > 0) continue;
+        if (fs.existsSync(d) && !force) continue;
+        fs.copyFileSync(s, d);
+        copied++;
+      }
+    };
+    try { copyTree(src, destMem); } catch { /* partial memory beats none */ }
+  }
+  if (copied > 0) {
+    console.log(`[canon-pull-native] memory: ${copied} file(s) from ${projects.length} project(s) → ${destMem} (index donor: ${projects[0]})`);
+  }
+  return copied;
 }
 
 /**
@@ -349,7 +407,7 @@ export async function canonPullNativeAll(o: CanonPullNativeAllOptions = {}): Pro
   const sessions = discoverCanonSessions(store).filter((s) => s.harness === harness);
   // discoverCanonSessions walks /canon; sizes there track the native tree
   // closely enough for the cap. The per-session pull itself reads /native.
-  const out: CanonPullNativeAllResult = { pulled: [], skippedLarge: [], skippedExisting: [], failed: [] };
+  const out: CanonPullNativeAllResult = { pulled: [], skippedLarge: [], skippedExisting: [], failed: [], memoryFiles: 0 };
   const seen = new Set<string>();
   for (const s of sessions) {
     if (seen.has(s.uuid)) continue; // subagent rows resolve to the parent uuid
@@ -367,7 +425,17 @@ export async function canonPullNativeAll(o: CanonPullNativeAllOptions = {}): Pro
     else if (r.destDir) out.skippedExisting.push(s.uuid); // exists-without-force
     else out.failed.push(s.uuid);
   }
-  console.log(`[canon-pull-native] hydrated ${out.pulled.length} session(s); ${out.skippedExisting.length} already present, ${out.skippedLarge.length} oversized, ${out.failed.length} failed`);
+  // Continuity layer: the origin projects' auto-memory follows the sessions
+  // into the destination project, so the receiving Claude Code starts with the
+  // same memories — not just the transcripts.
+  const firstDest = (() => {
+    if (o.to) return o.to;
+    const home2 = o.home ?? process.env.HOME ?? '/home/runner/workspace';
+    const slug = claudeProjectSlug(path.resolve(o.project ?? process.cwd()));
+    return path.join(home2, '.claude', 'projects', slug);
+  })();
+  try { out.memoryFiles = hydrateProjectMemory(path.join(store, 'native'), harness, firstDest, o.force); } catch { /* memory is best-effort */ }
+  console.log(`[canon-pull-native] hydrated ${out.pulled.length} session(s) + ${out.memoryFiles} memory file(s); ${out.skippedExisting.length} already present, ${out.skippedLarge.length} oversized, ${out.failed.length} failed`);
   return out;
 }
 
