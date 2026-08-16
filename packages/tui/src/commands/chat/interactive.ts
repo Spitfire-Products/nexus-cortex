@@ -24,7 +24,6 @@ import { MentorshipConfigService } from '@nexus-cortex/core';
 import { loadPersistedModelForPlatform, type Platform } from '@nexus-cortex/cli/dist/themes/colors.js';
 import { showInteractiveMenu } from '../../ui/InkMenuPicker.js';
 import { showCommandPalette } from '../../ui/InkCommandPalette.js';
-import { showHelp } from '../../ui/InkHelp.js';
 import { showApprovalDialog } from '../../ui/InkApprovalDialog.js';
 import * as readline from 'readline';
 
@@ -593,8 +592,14 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
           console.log();
           prompt();
         } else {
-          // Show full interactive help using shared Ink component
-          await showHelp();
+          // Full help printed INLINE to scrollback (TUI_UX_BACKLOG_2026-08-16
+          // L-01): the old showHelp() mounted a SECOND Ink render() root over
+          // the live readline session — closing it tore down stdin raw mode
+          // and ended the session ("/help was a trapdoor"). Inline output also
+          // scrolls natively in the terminal (L-06) and can't swallow keys (L-07).
+          console.log();
+          console.log(commandPalette.renderFullHelp());
+          console.log();
           prompt();
         }
         return;

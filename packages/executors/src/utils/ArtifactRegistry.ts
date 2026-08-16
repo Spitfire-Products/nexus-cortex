@@ -131,7 +131,13 @@ export class ArtifactRegistry {
           // auto-research Fixer parsing `cortex autoresearch fix --json`), and
           // no emojis in production output.
           await this.save();
-          console.error(`[INIT] Created new artifact registry at ${this.registryPath}`);
+          // Debug-gated: in the TUIs stderr lands inside the conversation frame
+          // as the user's first content (TUI_UX_BACKLOG_2026-08-16 L-10) — a
+          // routine first-run init is not worth that. Stdout stays clean for
+          // --json consumers either way.
+          if (process.env.DEBUG || process.env.CORTEX_DEBUG) {
+            console.error(`[INIT] Created new artifact registry at ${this.registryPath}`);
+          }
         } else {
           throw error;
         }
