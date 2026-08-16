@@ -177,6 +177,9 @@ export interface CanonPullNativeOptions extends CanonStoreOptions {
   session: string;
   /** Restrict the uuid match to one harness (native tree top-level dir). */
   harness?: string;
+  /** Pin the match to one exact store-relative main file (disambiguates
+   *  duplicate uuids across project dirs — the bulk loop always passes it). */
+  rel?: string;
   /**
    * Destination PROJECT DIRECTORY — the dir that holds `<uuid>.jsonl` (+ the
    * `<uuid>/` sidecar tree). Default for claude-code sessions:
@@ -247,6 +250,7 @@ export async function canonPullNative(o: CanonPullNativeOptions): Promise<CanonP
   // Match by uuid (or prefix) on the main-file basename, like canonPull.
   const mains = [...groups.keys()].filter((logical) => {
     const rel = path.relative(nativeRoot, logical);
+    if (o.rel) return rel === o.rel; // exact pin from the bulk loop
     if (o.harness && rel.split(path.sep)[0] !== o.harness) return false;
     const base = path.basename(rel);
     return base === `${o.session}.jsonl`
@@ -362,6 +366,12 @@ export interface CanonPullNativeAllOptions extends CanonStoreOptions {
    *  container startup routines — bulk-everything does not scale). Unset/0 =
    *  every session (the explicit escape hatch). */
   recent?: number;
+  /** Size cap for sessions INSIDE the recency window (default 200 MB). The
+   *  user's most recent sessions are precisely the ones worth paying for —
+   *  a mega-session skipped by the bulk cap is exactly what they came to
+   *  resume ("not seeing recent sessions", 2026-08-16). maxMb still governs
+   *  outside the window. */
+  recentMaxMb?: number;
   /** Re-home every session under this cwd's project slug (claude-code default: required for the resume picker to list them). */
   project?: string;
   /** Explicit destination dir (overrides project-slug derivation). */
@@ -454,31 +464,35 @@ export async function canonPullNativeAll(o: CanonPullNativeAllOptions = {}): Pro
   // discoverCanonSessions walks /canon; sizes there track the native tree
   // closely enough for the cap. The per-session pull itself reads /native.
   const out: CanonPullNativeAllResult = { pulled: [], skippedLarge: [], skippedExisting: [], failed: [], memoryFiles: 0 };
-  const seen = new Set<string>();
-  let list = sessions.filter((s) => {
-    if (seen.has(s.uuid)) return false; // subagent rows resolve to the parent uuid
-    seen.add(s.uuid);
-    // Subagent transcripts are NOT top-level sessions: in the real layout they
-    // live under <session>/subagents/ and the parent's pull carries them.
-    // Materializing them individually promoted background-worker transcripts
-    // (often full of another machine's paths) into the resume picker — the
-    // "resumed a session and it was some worker's context" report (2026-08-16).
-    return !s.rel.split(path.sep).includes('subagents');
-  });
+  // Subagent transcripts are NOT top-level sessions (their parent's pull
+  // carries them); and duplicate uuids across project dirs (a session pulled
+  // into another slug, then re-captured) resolve to the LARGEST copy — the
+  // most complete line, and pulls are pinned to that exact rel below.
+  const byUuid = new Map<string, CanonSession>();
+  for (const s of sessions) {
+    if (s.rel.split(path.sep).includes('subagents')) continue;
+    const prev = byUuid.get(s.uuid);
+    if (!prev || s.bytes > prev.bytes) byUuid.set(s.uuid, s);
+  }
+  let list = [...byUuid.values()];
+  const inWindow = new Set<string>();
   if (o.recent && o.recent > 0 && list.length > o.recent) {
     const dated = list.map((s) => ({ s, t: sessionLastActivity(s.parts)?.getTime() ?? 0 }));
     dated.sort((a, b) => b.t - a.t);
     list = dated.slice(0, o.recent).map((x) => x.s);
     console.log(`[canon-pull-native] recency window: ${list.length}/${dated.length} most-recent sessions (--recent ${o.recent}; omit it to hydrate everything)`);
+    for (const s of list) inWindow.add(s.uuid);
   }
+  const recentMaxBytes = (o.recentMaxMb ?? 200) * 1024 * 1024;
   for (const s of list) {
-    if (s.bytes > maxBytes) {
+    const cap = inWindow.has(s.uuid) ? Math.max(maxBytes, recentMaxBytes) : maxBytes;
+    if (s.bytes > cap) {
       out.skippedLarge.push({ uuid: s.uuid, mb: Math.round(s.bytes / 1048576) });
-      console.log(`[canon-pull-native] SKIP ${s.uuid} — ${Math.round(s.bytes / 1048576)}MB > --max-mb ${o.maxMb ?? 25}`);
+      console.log(`[canon-pull-native] SKIP ${s.uuid} — ${Math.round(s.bytes / 1048576)}MB > cap ${Math.round(cap / 1048576)}MB`);
       continue;
     }
     const r = await canonPullNative({
-      session: s.uuid, harness, to: o.to, project: o.project,
+      session: s.uuid, harness, rel: s.rel, to: o.to, project: o.project,
       force: o.force, store, home: o.home,
     });
     if (r.code === 0) out.pulled.push(s.uuid);

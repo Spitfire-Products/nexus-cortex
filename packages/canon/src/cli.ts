@@ -65,10 +65,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       if (flag('--native') && flag('--all')) {
         const maxMb = opt('--max-mb');
         const recent = opt('--recent');
+        const recentMaxMb = opt('--recent-max-mb');
         const ra = await canonPullNativeAll({
           harness: opt('--harness'), to: opt('--to'), project: opt('--project') ?? process.cwd(),
           maxMb: maxMb ? parseInt(maxMb, 10) : undefined,
           recent: recent ? parseInt(recent, 10) : undefined,
+          recentMaxMb: recentMaxMb ? parseInt(recentMaxMb, 10) : undefined,
           force: flag('--force'), store: opt('--store'),
         });
         return ra.failed.length ? 1 : 0;
