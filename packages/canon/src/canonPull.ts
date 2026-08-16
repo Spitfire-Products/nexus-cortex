@@ -313,6 +313,64 @@ export async function canonPullNative(o: CanonPullNativeOptions): Promise<CanonP
   return { code: 0, destDir, files: written, harness };
 }
 
+export interface CanonPullNativeAllOptions extends CanonStoreOptions {
+  /** Harness whose native sessions to materialize (default claude-code). */
+  harness?: string;
+  /** Re-home every session under this cwd's project slug (claude-code default: required for the resume picker to list them). */
+  project?: string;
+  /** Explicit destination dir (overrides project-slug derivation). */
+  to?: string;
+  /** Skip sessions whose total native bytes exceed this (default 25 MB — mega-sessions hydrate slowly and drown the picker). */
+  maxMb?: number;
+  force?: boolean;
+  home?: string;
+}
+
+export interface CanonPullNativeAllResult {
+  pulled: string[];
+  skippedLarge: { uuid: string; mb: number }[];
+  skippedExisting: string[];
+  failed: string[];
+}
+
+/**
+ * Bulk native materialization — hydrate EVERY stored native session of a
+ * harness (default claude-code) for the local resume picker. The container
+ * `claude-hydrate` entry point: sessions are re-homed under the CURRENT
+ * project's slug so `claude --resume` run there lists them all. Existing
+ * files are skipped (pull is a branch, never a clobber); oversized sessions
+ * are skipped loudly with their size.
+ */
+export async function canonPullNativeAll(o: CanonPullNativeAllOptions = {}): Promise<CanonPullNativeAllResult> {
+  const store = o.store ?? '/tmp/canon-store';
+  const harness = o.harness ?? 'claude-code';
+  const maxBytes = (o.maxMb ?? 25) * 1024 * 1024;
+  ensureFreshStore(store, o.repoUrl, 'canon-pull-native');
+  const sessions = discoverCanonSessions(store).filter((s) => s.harness === harness);
+  // discoverCanonSessions walks /canon; sizes there track the native tree
+  // closely enough for the cap. The per-session pull itself reads /native.
+  const out: CanonPullNativeAllResult = { pulled: [], skippedLarge: [], skippedExisting: [], failed: [] };
+  const seen = new Set<string>();
+  for (const s of sessions) {
+    if (seen.has(s.uuid)) continue; // subagent rows resolve to the parent uuid
+    seen.add(s.uuid);
+    if (s.bytes > maxBytes) {
+      out.skippedLarge.push({ uuid: s.uuid, mb: Math.round(s.bytes / 1048576) });
+      console.log(`[canon-pull-native] SKIP ${s.uuid} — ${Math.round(s.bytes / 1048576)}MB > --max-mb ${o.maxMb ?? 25}`);
+      continue;
+    }
+    const r = await canonPullNative({
+      session: s.uuid, harness, to: o.to, project: o.project,
+      force: o.force, store, home: o.home,
+    });
+    if (r.code === 0) out.pulled.push(s.uuid);
+    else if (r.destDir) out.skippedExisting.push(s.uuid); // exists-without-force
+    else out.failed.push(s.uuid);
+  }
+  console.log(`[canon-pull-native] hydrated ${out.pulled.length} session(s); ${out.skippedExisting.length} already present, ${out.skippedLarge.length} oversized, ${out.failed.length} failed`);
+  return out;
+}
+
 /** Materialize one canon session into a native session directory. */
 export async function canonPull(o: CanonPullOptions): Promise<CanonPullResult> {
   const store = o.store ?? '/tmp/canon-store';

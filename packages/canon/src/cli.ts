@@ -6,7 +6,7 @@
 import { canonArtifacts } from './canonArtifacts.js';
 import { canonGraph } from './canonGraph.js';
 import { canonInit } from './canonInit.js';
-import { canonList, canonPull, canonPullNative } from './canonPull.js';
+import { canonList, canonPull, canonPullNative, canonPullNativeAll } from './canonPull.js';
 import { canonSync } from './canonSync.js';
 import { deriveToolInventory, TOOL_CONCEPTS } from './canonTools.js';
 import { canonTranslate } from './canonTranslate.js';
@@ -62,7 +62,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       await canonList({ store: opt('--store'), all: flag('--all') });
       return 0;
     case 'pull': {
-      if (!positional) { console.error('usage: nexus-canon pull <sessionUuid> [--native] [--to <dir>] [--project <cwd>] [--harness <h>] [--force] [--strip-signatures]'); return 2; }
+      if (flag('--native') && flag('--all')) {
+        const maxMb = opt('--max-mb');
+        const ra = await canonPullNativeAll({
+          harness: opt('--harness'), to: opt('--to'), project: opt('--project') ?? process.cwd(),
+          maxMb: maxMb ? parseInt(maxMb, 10) : undefined, force: flag('--force'), store: opt('--store'),
+        });
+        return ra.failed.length ? 1 : 0;
+      }
+      if (!positional) { console.error('usage: nexus-canon pull <sessionUuid> [--native [--all]] [--to <dir>] [--project <cwd>] [--harness <h>] [--max-mb <n>] [--force] [--strip-signatures]'); return 2; }
       if (flag('--native')) {
         const rn = await canonPullNative({ session: positional, to: opt('--to'), project: opt('--project'), harness: opt('--harness'), force: flag('--force'), store: opt('--store') });
         return rn.code;
