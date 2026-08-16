@@ -304,6 +304,30 @@ export async function canonPullNative(o: CanonPullNativeOptions): Promise<CanonP
     written.push(dest);
   }
 
+  // Stamp every materialized file with the session's LAST-ACTIVITY time (the
+  // final record timestamp in the main transcript). Resume pickers sort by
+  // file mtime — freshly-written files would all carry "now" in write order,
+  // shuffling the list (live report 2026-08-16). With true mtimes the picker
+  // shows newest-worked-on first, across every origin project/device.
+  const mainDest = written.find((f) => f.endsWith(`${uuid}.jsonl`)) ?? written[0];
+  if (mainDest) {
+    try {
+      const fd = fs.openSync(mainDest, 'r');
+      const size = fs.fstatSync(fd).size;
+      const span = Math.min(size, 64 * 1024);
+      const buf = Buffer.alloc(span);
+      fs.readSync(fd, buf, 0, span, size - span);
+      fs.closeSync(fd);
+      const tail = buf.toString('utf8');
+      const matches = tail.match(/"timestamp":"([^"]+)"/g);
+      const last = matches?.length ? matches[matches.length - 1]!.slice(13, -1) : null;
+      const ts = last ? new Date(last) : null;
+      if (ts && !Number.isNaN(ts.getTime())) {
+        for (const f of written) { try { fs.utimesSync(f, ts, ts); } catch { /* per-file best-effort */ } }
+      }
+    } catch { /* stamping is cosmetic ordering — never block a pull */ }
+  }
+
   const bytes = written.reduce((n, f) => n + fs.statSync(f).size, 0);
   console.log(`[canon-pull-native] materialized ${uuid} (${harness}) — ${written.length} file(s), ${(bytes / 1024).toFixed(0)}KB → ${destDir}`);
   if (harness === 'claude-code') {
