@@ -337,9 +337,31 @@ export async function canonPullNative(o: CanonPullNativeOptions): Promise<CanonP
   return { code: 0, destDir, files: written, harness };
 }
 
+/** Last-activity time from the tail of a session's FINAL part (cheap 64KB read). */
+export function sessionLastActivity(parts: string[]): Date | null {
+  const last = parts[parts.length - 1];
+  if (!last) return null;
+  try {
+    const fd = fs.openSync(last, 'r');
+    const size = fs.fstatSync(fd).size;
+    const span = Math.min(size, 64 * 1024);
+    const buf = Buffer.alloc(span);
+    fs.readSync(fd, buf, 0, span, size - span);
+    fs.closeSync(fd);
+    const m = buf.toString('utf8').match(/"timestamp":"([^"]+)"/g);
+    if (!m?.length) return null;
+    const d = new Date(m[m.length - 1]!.slice(13, -1));
+    return Number.isNaN(d.getTime()) ? null : d;
+  } catch { return null; }
+}
+
 export interface CanonPullNativeAllOptions extends CanonStoreOptions {
   /** Harness whose native sessions to materialize (default claude-code). */
   harness?: string;
+  /** Hydrate only the N most-recently-active sessions (lazy default for the
+   *  container startup routines — bulk-everything does not scale). Unset/0 =
+   *  every session (the explicit escape hatch). */
+  recent?: number;
   /** Re-home every session under this cwd's project slug (claude-code default: required for the resume picker to list them). */
   project?: string;
   /** Explicit destination dir (overrides project-slug derivation). */
@@ -433,15 +455,23 @@ export async function canonPullNativeAll(o: CanonPullNativeAllOptions = {}): Pro
   // closely enough for the cap. The per-session pull itself reads /native.
   const out: CanonPullNativeAllResult = { pulled: [], skippedLarge: [], skippedExisting: [], failed: [], memoryFiles: 0 };
   const seen = new Set<string>();
-  for (const s of sessions) {
-    if (seen.has(s.uuid)) continue; // subagent rows resolve to the parent uuid
+  let list = sessions.filter((s) => {
+    if (seen.has(s.uuid)) return false; // subagent rows resolve to the parent uuid
     seen.add(s.uuid);
     // Subagent transcripts are NOT top-level sessions: in the real layout they
     // live under <session>/subagents/ and the parent's pull carries them.
     // Materializing them individually promoted background-worker transcripts
     // (often full of another machine's paths) into the resume picker — the
     // "resumed a session and it was some worker's context" report (2026-08-16).
-    if (s.rel.split(path.sep).includes('subagents')) continue;
+    return !s.rel.split(path.sep).includes('subagents');
+  });
+  if (o.recent && o.recent > 0 && list.length > o.recent) {
+    const dated = list.map((s) => ({ s, t: sessionLastActivity(s.parts)?.getTime() ?? 0 }));
+    dated.sort((a, b) => b.t - a.t);
+    list = dated.slice(0, o.recent).map((x) => x.s);
+    console.log(`[canon-pull-native] recency window: ${list.length}/${dated.length} most-recent sessions (--recent ${o.recent}; omit it to hydrate everything)`);
+  }
+  for (const s of list) {
     if (s.bytes > maxBytes) {
       out.skippedLarge.push({ uuid: s.uuid, mb: Math.round(s.bytes / 1048576) });
       console.log(`[canon-pull-native] SKIP ${s.uuid} — ${Math.round(s.bytes / 1048576)}MB > --max-mb ${o.maxMb ?? 25}`);
