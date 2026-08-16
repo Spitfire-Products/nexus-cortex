@@ -436,6 +436,12 @@ export async function canonPullNativeAll(o: CanonPullNativeAllOptions = {}): Pro
   for (const s of sessions) {
     if (seen.has(s.uuid)) continue; // subagent rows resolve to the parent uuid
     seen.add(s.uuid);
+    // Subagent transcripts are NOT top-level sessions: in the real layout they
+    // live under <session>/subagents/ and the parent's pull carries them.
+    // Materializing them individually promoted background-worker transcripts
+    // (often full of another machine's paths) into the resume picker — the
+    // "resumed a session and it was some worker's context" report (2026-08-16).
+    if (s.rel.split(path.sep).includes('subagents')) continue;
     if (s.bytes > maxBytes) {
       out.skippedLarge.push({ uuid: s.uuid, mb: Math.round(s.bytes / 1048576) });
       console.log(`[canon-pull-native] SKIP ${s.uuid} — ${Math.round(s.bytes / 1048576)}MB > --max-mb ${o.maxMb ?? 25}`);
