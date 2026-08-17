@@ -14,6 +14,9 @@ export const deepseekV4Flash: ModelConfig = createDeepSeekModelConfig({
   id: 'deepseek-v4-flash',
   displayName: 'DeepSeek V4 Flash',
   family: 'deepseek-v4',
+
+  // Home-door anchor (P4 sweep 2026-08-17: bash-edit anchor = 14/14, -47% output tokens vs control; cue line REFUTED (hurts in our dialect)).
+  anchorProfile: 'bash-edit',
   contextWindow: 1000000,
   outputTokens: 65536,
   inputCost: 0.14,

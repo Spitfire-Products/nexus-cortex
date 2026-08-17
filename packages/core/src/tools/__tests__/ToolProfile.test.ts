@@ -9,6 +9,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
   resolveToolProfile,
+  resolveToolAnchor,
+  isNarrowProfile,
   applyToolProfile,
   isToolAllowedByProfile,
 } from '../ToolProfile.js';
@@ -55,6 +57,62 @@ describe('applyToolProfile', () => {
     const names = applyToolProfile(SAMPLE, 'bash-only').map((t) => t.name);
     expect(names).toEqual(['Bash', 'EndTurn', 'AskUserQuestion']);
   });
+  it('bash-plus keeps the minimal-harness surface (Bash+Read+Edit+Write) + always-keep', () => {
+    const S = [...SAMPLE, T('Edit', 'essential'), T('Write', 'essential'), T('WebSearch', 'essential')];
+    const names = applyToolProfile(S, 'bash-plus').map((t) => t.name);
+    expect(names).toEqual(['Read', 'Bash', 'EndTurn', 'AskUserQuestion', 'Edit', 'Write']);
+    expect(names).not.toContain('WebSearch');
+    expect(names).not.toContain('Grep');
+  });
+});
+
+describe('resolveToolAnchor + isNarrowProfile (BASH_PLUS_SPEC P0)', () => {
+  const OA = process.env.CORTEX_TOOL_ANCHOR;
+  afterEach(() => {
+    if (OA === undefined) delete process.env.CORTEX_TOOL_ANCHOR;
+    else process.env.CORTEX_TOOL_ANCHOR = OA;
+  });
+  it('unset / full / unknown → no anchor', () => {
+    delete process.env.CORTEX_TOOL_ANCHOR;
+    expect(resolveToolAnchor()).toBeNull();
+    process.env.CORTEX_TOOL_ANCHOR = 'full';
+    expect(resolveToolAnchor()).toBeNull();
+    process.env.CORTEX_TOOL_ANCHOR = 'nonsense';
+    expect(resolveToolAnchor()).toBeNull();
+  });
+  it('resolves the three narrow profiles', () => {
+    process.env.CORTEX_TOOL_ANCHOR = 'bash-plus';
+    expect(resolveToolAnchor()).toBe('bash-plus');
+    process.env.CORTEX_TOOL_ANCHOR = ' BASH-ONLY ';
+    expect(resolveToolAnchor()).toBe('bash-only');
+    process.env.CORTEX_TOOL_ANCHOR = 'lean';
+    expect(resolveToolAnchor()).toBe('lean');
+  });
+  it('isNarrowProfile: bash-only/bash-plus/bash-edit suppress MCP ride-alongs; full/lean do not', () => {
+    expect(isNarrowProfile('bash-only')).toBe(true);
+    expect(isNarrowProfile('bash-plus')).toBe(true);
+    expect(isNarrowProfile('bash-edit')).toBe(true);
+    expect(isNarrowProfile('lean')).toBe(false);
+    expect(isNarrowProfile('full')).toBe(false);
+  });
+  it('bash-edit is the dsh-Minimal shape: Bash+Edit+always-keep only', () => {
+    const S = [...SAMPLE, T('Edit', 'essential'), T('Write', 'essential')];
+    const names = applyToolProfile(S, 'bash-edit').map((t) => t.name);
+    expect(names).toEqual(['Bash', 'EndTurn', 'AskUserQuestion', 'Edit']);
+    expect(isToolAllowedByProfile('Edit', () => 'essential', 'bash-edit')).toBe(true);
+    expect(isToolAllowedByProfile('Read', () => 'essential', 'bash-edit')).toBe(false);
+    expect(isToolAllowedByProfile('Write', () => 'essential', 'bash-edit')).toBe(false);
+  });
+  it('card anchor: used when env unset; env value overrides; env off disables card', () => {
+    delete process.env.CORTEX_TOOL_ANCHOR;
+    expect(resolveToolAnchor(process.env, 'bash-edit')).toBe('bash-edit');
+    process.env.CORTEX_TOOL_ANCHOR = 'bash-plus';
+    expect(resolveToolAnchor(process.env, 'bash-edit')).toBe('bash-plus');
+    process.env.CORTEX_TOOL_ANCHOR = 'none';
+    expect(resolveToolAnchor(process.env, 'bash-edit')).toBeNull();
+    process.env.CORTEX_TOOL_ANCHOR = '';
+    expect(resolveToolAnchor(process.env, 'garbage')).toBeNull();
+  });
 });
 
 describe('ToolFactory choke point', () => {
@@ -94,5 +152,14 @@ describe('isToolAllowedByProfile (dispatch-guard face)', () => {
   it('lean blocks standard-tier, allows essential', () => {
     expect(isToolAllowedByProfile('ListSessions', tier, 'lean')).toBe(false);
     expect(isToolAllowedByProfile('Grep', tier, 'lean')).toBe(true);
+  });
+  it('bash-plus allows the file quartet + always-keep, blocks the rest', () => {
+    expect(isToolAllowedByProfile('Bash', tier, 'bash-plus')).toBe(true);
+    expect(isToolAllowedByProfile('Read', tier, 'bash-plus')).toBe(true);
+    expect(isToolAllowedByProfile('Edit', tier, 'bash-plus')).toBe(true);
+    expect(isToolAllowedByProfile('Write', tier, 'bash-plus')).toBe(true);
+    expect(isToolAllowedByProfile('AskUserQuestion', tier, 'bash-plus')).toBe(true);
+    expect(isToolAllowedByProfile('Grep', tier, 'bash-plus')).toBe(false);
+    expect(isToolAllowedByProfile('WebSearch', tier, 'bash-plus')).toBe(false);
   });
 });

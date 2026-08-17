@@ -1,0 +1,14 @@
+[
+  {
+    "id": "p3h-impl-intervals",
+    "taskType": "T2",
+    "prompt": "In /home/runner/workspace/omniclaude-v4/.cortex/bench/fixtures/p3-anchor, create src/intervals.js exporting mergeIntervals(list) for [start,end] integer pairs: sort by start and merge OVERLAPPING intervals only — intervals that merely TOUCH (end === next start) must NOT be merged. Throw a TypeError if any pair has end < start. Create src/intervals.test.js (plain Node) printing 'PASS <label>'/'FAIL <label>' per check, covering: [[1,5],[4,8]] -> [[1,8]]; [[1,5],[5,8]] -> [[1,5],[5,8]] (touching stays split); [[3,4],[1,2],[2,3]] -> [[1,2],[2,3],[3,4]]; [[1,0]] throws TypeError. Run it and reply with the full test output.",
+    "verifier": { "type": "regex", "pattern": "PASS[\\s\\S]*PASS[\\s\\S]*PASS[\\s\\S]*PASS" }
+  },
+  {
+    "id": "p3h-trace-canontools",
+    "taskType": "T3",
+    "prompt": "In this repository (omniclaude-v4), for the canon cross-harness tool-mapping layer: (1) which exported constant maps canonical tool concepts to per-harness tool names, (2) which exported type enumerates the harness names, and (3) what is the EXACT grok-build tool name mapped to the edit_file concept? Cite exact identifiers.",
+    "verifier": { "type": "contains", "all": ["TOOL_CONCEPTS", "HarnessName", "search_replace"], "caseInsensitive": false }
+  }
+]

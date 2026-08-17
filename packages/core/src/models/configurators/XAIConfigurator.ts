@@ -12,6 +12,8 @@ import type { ModelConfig } from "../ModelConfig.interface.js";
 import { DEFAULT_SETTINGS } from "../../config/SettingsSchema.js";
 
 export interface XAIModelOptions {
+  /** Home-door first-turn anchor profile (BASH_PLUS_SPEC per-family evidence). */
+  anchorProfile?: 'lean' | 'bash-only' | 'bash-plus' | 'bash-edit';
   id: string;
   displayName: string;
   family: string;
@@ -67,6 +69,7 @@ export function createXAIModelConfig(options: XAIModelOptions): ModelConfig {
   const temperatureDefault = options.temperatureDefault;
 
   return {
+    ...(options.anchorProfile ? { anchorProfile: options.anchorProfile } : {}),
     id: options.id,
     ...(options.modelId && { modelId: options.modelId }),
     provider: "xai",

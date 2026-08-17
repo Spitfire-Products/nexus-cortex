@@ -10,6 +10,8 @@
 import type { ModelConfig } from '../ModelConfig.interface.js';
 
 export interface DeepSeekModelOptions {
+  /** Home-door first-turn anchor profile (BASH_PLUS_SPEC per-family evidence). */
+  anchorProfile?: 'lean' | 'bash-only' | 'bash-plus' | 'bash-edit';
   id: string;
   displayName: string;
   family: string;
@@ -27,6 +29,7 @@ export interface DeepSeekModelOptions {
 
 export function createDeepSeekModelConfig(options: DeepSeekModelOptions): ModelConfig {
   return {
+    ...(options.anchorProfile ? { anchorProfile: options.anchorProfile } : {}),
     id: options.id,
     provider: 'deepseek',
     displayName: options.displayName,

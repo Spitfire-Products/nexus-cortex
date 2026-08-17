@@ -275,3 +275,43 @@ per-harness projections), with real-time database backends as an alternative tie
 for live multi-agent workloads. The design keeps one rule fixed: the gateway and
 adapters live in this library and execute wherever canon lives — the format never
 forks.
+
+## Future adapters — Pi / Codex / OpenCode / DSH (operator-ratified roadmap, 2026-08-17)
+
+Goal: canon compatible with most major harnesses, not just the five current dialects
+(`HARNESSES` in canonTools.ts: claude-code, nexus-cortex, grok-build, gemini-cli,
+browser-cortex). Each new adapter is the same five-part checklist the existing ones
+followed:
+1. **Discovery roots** — where the harness writes native sessions (canonSync roots).
+2. **Translate leg** — native ↔ canon JSONL (lossless; keep the native copy under
+   `native/<harness>/…` so same-harness resume needs placement, not translation).
+3. **Rung 1** — a `TOOL_CONCEPTS` column (tool names → canonical concepts).
+4. **Rung 2** — `ARG_MORPHISMS` entries, evidence-graded (observed > spec > unverified)
+   from a real captured corpus, never guessed.
+5. **Native pull default** — a safe `--to` target so the harness's own resume picker
+   sees materialized sessions (only claude-code has this today; others require --to).
+
+Per-harness notes (all UNVERIFIED until a real session corpus is captured — the
+standing rule is empirical seeding, so step one for each is: run it, capture, scan):
+- **Codex (OpenAI CLI)**: native rollouts are JSONL under `~/.codex/sessions/` —
+  closest analog to claude-code; likely the easiest add. Subscription-auth compliance
+  posture per AGENT_SDK_TRANSPORT_STRATEGY.md applies to any transport work, but
+  canon capture of local files has no such constraint.
+- **Pi (Zechner)**: minimal 4-tool surface (read/write/edit/bash) — rung 1 is
+  trivially small; doubles as ground truth for the bash-plus program (see below).
+- **OpenCode**: storage layout unverified; capture-first.
+- **DSH (deepseek-harness)**: Cordis plugin kernel, "everything is a plugin",
+  developer preview (breaking changes expected — pin a version before seeding
+  morphisms). Two integration shapes: (a) classic file adapter over its session
+  store; (b) **a `dsh-plugin` that emits canon JSONL from inside the harness** —
+  the plugin architecture makes canon-as-plugin the natural fit and would be our
+  first push-model adapter (no watcher/scrape). Rung 1 seed from its Minimal preset:
+  `bash` + `str_replace_editor` → shell / edit_file.
+
+**Synergy with the bash-plus program (training/BASH_PLUS_SPEC.md)**: Pi and DSH
+adapters are not just compatibility — captured trajectories from real minimal
+harnesses are exactly the corpus distribution the S5 executor trains toward, and
+canon's morphism layer is how those trajectories re-dialect into our pinned
+interface-v1 for training. Adapter order when commissioned: Codex (easiest,
+biggest user base) → DSH (plugin-model pilot + bash-plus synergy) → Pi → OpenCode.
+Not yet commissioned — roadmap only.

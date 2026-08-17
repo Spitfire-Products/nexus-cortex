@@ -20,7 +20,7 @@
  * Unknown values resolve to 'full' (fail-open: never brick the tool surface).
  */
 
-export type ToolProfileName = 'full' | 'lean' | 'bash-only';
+export type ToolProfileName = 'full' | 'lean' | 'bash-only' | 'bash-plus' | 'bash-edit';
 
 /** Tools always retained regardless of profile: EndTurn stays subordinate to
  *  its OWN gate (CORTEX_ENDTURN_GATE) — the profile must not silently disable
@@ -31,10 +31,46 @@ const ALWAYS_KEEP = new Set(['EndTurn', 'AskUserQuestion']);
 /** bash-only: the mini-SWE-agent arm — one general-purpose action. */
 const BASH_ONLY = new Set(['Bash', ...ALWAYS_KEEP]);
 
+/** bash-plus: the minimal-harness arm (BASH_PLUS_SPEC.md, R61) — the Pi/dsh
+ *  surface class: shell + structural file ops, nothing else. The shell-native
+ *  small-model graduation target and P1 anchoring-A/B arm. */
+const BASH_PLUS = new Set(['Bash', 'Read', 'Edit', 'Write', ...ALWAYS_KEEP]);
+
+/** bash-edit: the dsh-Minimal shape — shell + structural editor ONLY (their
+ *  bash + str_replace_editor). The deepseek home-door candidate. */
+const BASH_EDIT = new Set(['Bash', 'Edit', ...ALWAYS_KEEP]);
+
 export function resolveToolProfile(env: NodeJS.ProcessEnv = process.env): ToolProfileName {
   const raw = (env.CORTEX_TOOL_PROFILE ?? 'full').trim().toLowerCase();
-  if (raw === 'lean' || raw === 'bash-only') return raw;
+  if (raw === 'lean' || raw === 'bash-only' || raw === 'bash-plus' || raw === 'bash-edit') return raw;
   return 'full';
+}
+
+/**
+ * CORTEX_TOOL_ANCHOR — first-turn policy anchoring (BASH_PLUS_SPEC.md P0).
+ * When set to a narrow profile, the FIRST model request of a session presents
+ * only that profile's tool schemas; after the first executed tool call the
+ * session's own profile applies (injection at the first tool_result boundary
+ * — the dsh anchored-standard point). 'full' or unknown → no anchor.
+ */
+export function resolveToolAnchor(
+  env: NodeJS.ProcessEnv = process.env,
+  cardAnchor?: string | null,
+): ToolProfileName | null {
+  const valid = (v: string) =>
+    v === 'lean' || v === 'bash-only' || v === 'bash-plus' || v === 'bash-edit';
+  const raw = (env.CORTEX_TOOL_ANCHOR ?? '').trim().toLowerCase();
+  if (valid(raw)) return raw as ToolProfileName;
+  if (raw === 'full' || raw === 'none' || raw === 'off') return null; // explicit env off overrides card
+  const card = (cardAnchor ?? '').trim().toLowerCase();
+  if (valid(card)) return card as ToolProfileName;
+  return null;
+}
+
+/** Do MCP / management / context tools ride along? Narrow arms suppress them
+ *  (surface leak otherwise); full and lean keep them. */
+export function isNarrowProfile(profile: ToolProfileName = resolveToolProfile()): boolean {
+  return profile === 'bash-only' || profile === 'bash-plus' || profile === 'bash-edit';
 }
 
 /**
@@ -52,6 +88,8 @@ export function applyToolProfile<T extends { name: string; discoveryTier?: strin
 ): T[] {
   if (profile === 'full') return tools;
   if (profile === 'bash-only') return tools.filter((t) => BASH_ONLY.has(t.name));
+  if (profile === 'bash-plus') return tools.filter((t) => BASH_PLUS.has(t.name));
+  if (profile === 'bash-edit') return tools.filter((t) => BASH_EDIT.has(t.name));
   return tools.filter((t) => t.discoveryTier === 'essential' || ALWAYS_KEEP.has(t.name));
 }
 
@@ -65,5 +103,7 @@ export function isToolAllowedByProfile(
   if (profile === 'full') return true;
   if (ALWAYS_KEEP.has(name)) return true;
   if (profile === 'bash-only') return BASH_ONLY.has(name);
+  if (profile === 'bash-plus') return BASH_PLUS.has(name);
+  if (profile === 'bash-edit') return BASH_EDIT.has(name);
   return lookupTier(name) === 'essential';
 }

@@ -26,6 +26,9 @@ export const grok46: ModelConfig = createXAIModelConfig({
   id: 'grok-4.6',
   displayName: 'Grok 4.6',
   family: 'grok-4',
+
+  // Home-door anchor (P4 sweep 2026-08-17: anchored -20% latency at equal accuracy).
+  anchorProfile: 'bash-plus',
   contextWindow: 500000,
   outputTokens: 131072,
   inputCost: 2.00,

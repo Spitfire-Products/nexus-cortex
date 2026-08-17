@@ -20,6 +20,9 @@ export const grokBuild01: ModelConfig = createXAIModelConfig({
   id: 'grok-build-0.1',
   displayName: 'Grok Build 0.1',
   family: 'grok-code',
+
+  // Home-door anchor (P4b 2026-08-17: anchor rescued accuracy 12/14 -> 14/14 (thrash persists ~17 calls but LANDS)).
+  anchorProfile: 'bash-plus',
   contextWindow: 256000,
   outputTokens: 131072,
   inputCost: 1.00,

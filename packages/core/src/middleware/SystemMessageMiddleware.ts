@@ -324,9 +324,18 @@ export class SystemMessageMiddleware implements ISystemMessageInjector {
       ...staticMsgs.filter(m => m.position === 'prepend').sort(byPriority),
       ...staticMsgs.filter(m => m.position === 'append').sort(byPriority),
     ];
-    const systemPrompt = staticBlocks.length > 0
+    // Anchor cue (BASH_PLUS_SPEC P1 arm B): an RL-entry cue line prepended as
+    // the FIRST system line — e.g. deepseek's "You are a helpful software
+    // engineer assistant." Env CORTEX_ANCHOR_CUE overrides the model card's
+    // anchorCue; stable across the session (cache-prefix friendly).
+    const anchorCue = (process.env.CORTEX_ANCHOR_CUE
+      ?? (model as { anchorCue?: string }).anchorCue ?? '').trim();
+    const assembled = staticBlocks.length > 0
       ? staticBlocks.map(wrap).join('\n')
       : undefined;
+    const systemPrompt = anchorCue
+      ? (assembled ? `${anchorCue}\n${assembled}` : anchorCue)
+      : assembled;
 
     if (varyingMsgs.length > 0) {
       const varyingText = varyingMsgs

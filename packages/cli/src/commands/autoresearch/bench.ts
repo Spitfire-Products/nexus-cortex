@@ -59,16 +59,16 @@ export interface AutoResearchBenchOptions {
 /** Normalize a raw CORTEX_TOOL_PROFILE value the way the server's ToolProfile
  *  resolver does (unknown → 'full', fail-open) so the stamp reflects what
  *  actually ran. Returns undefined for empty/unset (distinct from 'full'). */
-function normalizeToolProfile(raw: string | undefined): 'full' | 'lean' | 'bash-only' | undefined {
+function normalizeToolProfile(raw: string | undefined): 'full' | 'lean' | 'bash-only' | 'bash-plus' | undefined {
   const v = raw?.trim().toLowerCase();
   if (!v) return undefined;
-  return v === 'lean' || v === 'bash-only' ? v : 'full';
+  return v === 'lean' || v === 'bash-only' || v === 'bash-plus' ? v : 'full';
 }
 
 /** Ask the target server for its effective CORTEX_TOOL_PROFILE via the /config
  *  route. Returns undefined when the server is unreachable or the route is
  *  missing (older builds) — the caller must warn, not guess. */
-async function fetchServerToolProfile(serverUrl: string): Promise<'full' | 'lean' | 'bash-only' | undefined> {
+async function fetchServerToolProfile(serverUrl: string): Promise<'full' | 'lean' | 'bash-only' | 'bash-plus' | undefined> {
   try {
     const resp = await fetch(`${serverUrl}/config/CORTEX_TOOL_PROFILE`, { signal: AbortSignal.timeout(5000) });
     if (!resp.ok) return undefined;
@@ -122,7 +122,7 @@ export async function autoResearchBench(options: AutoResearchBenchOptions): Prom
     // server (/config route) with the CLI's own env as fallback. Command-target
     // benches (--run-cmd) run in the CLI's env, so the legacy env stamp inside
     // ModelRouterMatrix.record() is already correct there.
-    let toolProfile: 'full' | 'lean' | 'bash-only' | undefined;
+    let toolProfile: 'full' | 'lean' | 'bash-only' | 'bash-plus' | undefined;
     const warn = (m: string) => console.error(theme.colors.warning(`[WARN] ${m}`));
     if (options.runCmd) {
       // Non-cortex command target: optionally build once, then grade a shell command per task.

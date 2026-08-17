@@ -647,9 +647,9 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
    * tiny and stable (CORTEX_TOOL_PROFILE=full|lean|bash-only, unknown → full).
    * @private
    */
-  private resolveActiveToolProfile(): 'full' | 'lean' | 'bash-only' {
+  private resolveActiveToolProfile(): 'full' | 'lean' | 'bash-only' | 'bash-plus' | 'bash-edit' {
     const raw = (process.env.CORTEX_TOOL_PROFILE ?? 'full').trim().toLowerCase();
-    if (raw === 'lean' || raw === 'bash-only') return raw;
+    if (raw === 'lean' || raw === 'bash-only' || raw === 'bash-plus' || raw === 'bash-edit') return raw;
     return 'full';
   }
 
@@ -658,11 +658,32 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
    * active tool surface? Under bash-only they do NOT exist — redirecting to
    * them wedges the model (canon defect 2026-08-13: bash-only graduates were
    * told to use tools their profile hides). Under lean/full all five targets
-   * are essential-tier and therefore present.
+   * are essential-tier and therefore present. bash-plus is target-dependent —
+   * see searchRedirectTargetsAvailable.
    * @private
    */
   private redirectTargetsAvailable(): boolean {
     return this.resolveActiveToolProfile() !== 'bash-only';
+  }
+
+  /**
+   * bash-plus carries Read/Edit/Write but NOT Grep/Glob — the search/find
+   * redirects must stay silent there or they suggest hidden tools (same
+   * wedge class as the bash-only defect above).
+   * @private
+   */
+  private searchRedirectTargetsAvailable(): boolean {
+    const p = this.resolveActiveToolProfile();
+    return p !== 'bash-plus' && p !== 'bash-edit' && this.redirectTargetsAvailable();
+  }
+
+  /**
+   * bash-edit (dsh-Minimal shape) carries ONLY Bash+Edit: the Read and Write
+   * redirects must also stay silent there (Edit redirect stays active).
+   * @private
+   */
+  private fileRedirectTargetsAvailable(): boolean {
+    return this.resolveActiveToolProfile() !== 'bash-edit' && this.redirectTargetsAvailable();
   }
 
   /**
@@ -705,6 +726,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
 
     // File reading: bare single-file cat/head/tail → Read tool.
     if (
+      this.fileRedirectTargetsAvailable() &&
       (cmd === 'cat' || cmd === 'head' || cmd === 'tail') &&
       !hasOperators &&
       flags.length === 0 &&
@@ -731,6 +753,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
     const writeContent = writeMatch?.[1] ?? '';
     const writeTarget = writeMatch?.[2] ?? '';
     if (
+      this.fileRedirectTargetsAvailable() &&
       writeMatch &&
       !trimmed.includes('>>') &&
       !writeContent.includes('$') &&
@@ -744,6 +767,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
 
     // File searching: bare flag-free grep/rg/ag/ack → Grep tool.
     if (
+      this.searchRedirectTargetsAvailable() &&
       (cmd === 'grep' || cmd === 'rg' || cmd === 'ag' || cmd === 'ack') &&
       !hasOperators &&
       flags.length === 0 &&
@@ -762,7 +786,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
 
     // File finding: PLAIN find -name (optional path + -type) → Glob tool.
     // Any other predicate/action (-exec, -delete, -mtime, …) passes through.
-    if (cmd === 'find' && !hasOperators && args.includes('-name')) {
+    if (this.searchRedirectTargetsAvailable() && cmd === 'find' && !hasOperators && args.includes('-name')) {
       const allowedPredicates = new Set(['-name', '-iname', '-type']);
       let simple = true;
       let pattern: string | undefined;

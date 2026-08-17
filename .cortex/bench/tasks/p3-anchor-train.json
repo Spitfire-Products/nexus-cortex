@@ -1,0 +1,32 @@
+[
+  {
+    "id": "p3-fix-ledger",
+    "taskType": "T2",
+    "prompt": "The Node project at /home/runner/workspace/omniclaude-v4/.cortex/bench/fixtures/p3-anchor has MULTIPLE independent bugs. First run `git -C /home/runner/workspace/omniclaude-v4/.cortex/bench/fixtures/p3-anchor checkout -- .` to reset it. Read README.md for the business rules, then find and fix ALL bugs in src/ledger.js so `node src/run.js` prints the correct summary for the data in src/run.js. Do not modify src/run.js or the data. Actually edit the file, run it to verify, and reply with the exact final JSON line it prints.",
+    "verifier": { "type": "contains", "all": ["\"first\":\"bolts\"", "\"latest\":\"12\"", "\"page1Count\":3", "19.15"], "caseInsensitive": false }
+  },
+  {
+    "id": "p3-impl-duration",
+    "taskType": "T2",
+    "prompt": "In /home/runner/workspace/omniclaude-v4/.cortex/bench/fixtures/p3-anchor, create src/duration.js exporting parseDuration(str) -> total seconds. Rules: str is 1-3 components in strict h,m,s ORDER (e.g. '2h45m10s', '90m', '1h5s'); integers only — reject decimals like '1.5h'; reject unknown units, wrong order (e.g. '10s2h'), empty string, and repeated units, all by throwing a TypeError. Then create src/duration.test.js using plain Node asserts that prints one line per check, 'PASS <label>' or 'FAIL <label>', covering: parseDuration('2h45m10s')===9910, parseDuration('90m')===5400, parseDuration('1h5s')===3605, '1.5h' throws TypeError, '10s2h' throws TypeError. Run it and reply with the full test output.",
+    "verifier": { "type": "regex", "pattern": "PASS[\\s\\S]*PASS[\\s\\S]*PASS[\\s\\S]*PASS[\\s\\S]*PASS" }
+  },
+  {
+    "id": "p3-trace-gemini-thinking",
+    "taskType": "T3",
+    "prompt": "In this repository (omniclaude-v4), trace how tunable Gemini thinking is plumbed to the wire. Report: (1) the exact helper method used to write the nested request param, (2) the exact dotted param path written into the request, (3) the exact model-card field whose value rides that path. Cite exact identifiers from the code.",
+    "verifier": { "type": "contains", "all": ["setNestedParam", "generationConfig.thinkingConfig.thinkingLevel", "defaultEffort"], "caseInsensitive": false }
+  },
+  {
+    "id": "p3-trace-searchtools-widening",
+    "taskType": "T3",
+    "prompt": "In this repository (omniclaude-v4), for the CLI harness deferred-tool path: after the model calls SearchTools, (1) which ClientSideToolFilter method records the discovered tool names, (2) which filter method does the orchestrator re-run before the continuation request so the discovered schemas enter the tools array, and (3) if the model calls a standard-tier tool COLD (never discovered via SearchTools), is the call executed or refused at dispatch? Answer (3) with exactly one word: 'executed' or 'refused'. Cite exact identifiers for (1) and (2).",
+    "verifier": { "type": "contains", "all": ["recordDiscoveredTools", "getFilteredTools", "executed"], "caseInsensitive": true }
+  },
+  {
+    "id": "p3-count-essential",
+    "taskType": "T3",
+    "prompt": "In this repository, count EXACTLY how many tool registrations in packages/core/src/tools/registries/BaseToolRegistry.ts carry discoveryTier: 'essential'. Be exhaustive — do not estimate. Reply with a line of the form 'COUNT: <n>'.",
+    "verifier": { "type": "contains", "all": ["COUNT: 14"], "caseInsensitive": true }
+  }
+]

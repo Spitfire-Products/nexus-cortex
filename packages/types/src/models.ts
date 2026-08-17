@@ -342,6 +342,22 @@ export interface ModelConfig {
   };
 
   // ============================================
+  // FIRST-TURN ANCHORING (BASH_PLUS_SPEC.md — per-model home door)
+  // ============================================
+
+  /** Tool-anchor profile for this model's FIRST request of a session: the
+   *  model's "home door" — the tool-surface shape closest to its agentic-RL
+   *  entry point (dsh evidence: in-distribution entry selects the stronger
+   *  policy branch). After the first executed tool call the session's full
+   *  profile applies. Env CORTEX_TOOL_ANCHOR overrides; absent = no anchor. */
+  anchorProfile?: 'lean' | 'bash-only' | 'bash-plus' | 'bash-edit';
+
+  /** Optional anchor cue line prepended to the system prompt (e.g. deepseek's
+   *  RL cue "You are a helpful software engineer assistant."). Env
+   *  CORTEX_ANCHOR_CUE overrides. */
+  anchorCue?: string;
+
+  // ============================================
   // METADATA
   // ============================================
 

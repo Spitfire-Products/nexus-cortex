@@ -61,7 +61,7 @@ import type { AgentDefinition, SubAgentResult, ISubAgentEventEmitter } from './S
 
 // Phase 1: Tool Architecture Refactor - Unified Tool Registry
 import { toolFactory } from '../tools/ToolFactory.js';
-import { resolveToolProfile, isToolAllowedByProfile } from '../tools/ToolProfile.js';
+import { resolveToolProfile, resolveToolAnchor, isNarrowProfile, isToolAllowedByProfile, applyToolProfile } from '../tools/ToolProfile.js';
 
 // Phase 2.9: MCP Integration
 import { McpClientManager } from '../mcp/index.js';
@@ -535,6 +535,35 @@ export class CortexOrchestrator {
   // PTC: Progressive tool filter for non-PTC deferred loading
   private toolFilter = new ClientSideToolFilter();
 
+  // CORTEX_TOOL_ANCHOR (BASH_PLUS_SPEC.md P0): first-turn policy anchoring.
+  // Until the first executed tool call, requests present only the anchor
+  // profile's schemas; the lift happens at the first tool_result boundary.
+  private anchorLifted = false;
+  /** The active model card's anchorProfile (captured at request assembly) —
+   *  env CORTEX_TOOL_ANCHOR still overrides inside resolveToolAnchor. */
+  private cardAnchorProfile: string | null = null;
+
+  /** Narrow `tools` to the anchor profile while the anchor is armed; no-op
+   *  once lifted or when CORTEX_TOOL_ANCHOR is unset. Applied AFTER the
+   *  deferred filter at both request-assembly sites. */
+  private applyAnchorIfArmed<T extends { name: string; discoveryTier?: string }>(tools: T[]): T[] {
+    if (this.anchorLifted) return tools;
+    const anchor = resolveToolAnchor(process.env, this.cardAnchorProfile);
+    if (!anchor) return tools;
+    return applyToolProfile(tools, anchor);
+  }
+
+  /** The profile the dispatch guard enforces RIGHT NOW: the anchor while
+   *  armed (pre-lift calls to hidden tools are refused like any hidden
+   *  tool), the session profile after. */
+  private effectiveGuardProfile(): ReturnType<typeof resolveToolProfile> {
+    if (!this.anchorLifted) {
+      const anchor = resolveToolAnchor(process.env, this.cardAnchorProfile);
+      if (anchor) return anchor;
+    }
+    return resolveToolProfile();
+  }
+
   // ============================================
   // DEPENDENCIES (Injected via Constructor)
   // ============================================
@@ -809,7 +838,7 @@ export class CortexOrchestrator {
     // Tool-profile: MCP/management/context tools bypass ToolFactory, so the
     // bash-only arm must suppress them here or the surface leaks (lean keeps
     // them — they are part of the "guided" surface under test).
-    const bashOnlyProfile = resolveToolProfile() === 'bash-only';
+    const bashOnlyProfile = isNarrowProfile();
     const mcpTools = this.mcpAutoInject && !bashOnlyProfile ? this.getMcpToolsAsCanonical() : [];
     const mcpManagementTools = bashOnlyProfile ? [] : this.getMcpManagementTools();
     const contextManagementTools = bashOnlyProfile ? [] : this.getContextManagementTools();
@@ -1084,6 +1113,13 @@ export class CortexOrchestrator {
     // Deferred loading: filter tools for non-PTC paths (essential + recently-used only)
     if (!isPTCEnabled && this.config.enableDeferredToolLoading && toolsToUse && toolsToUse.length > 0) {
       toolsToUse = this.toolFilter.getFilteredTools(toolsToUse);
+    }
+    // First-turn anchoring narrows further while armed (no-op once lifted).
+    // Card-level home door: capture the active card's anchorProfile (env
+    // CORTEX_TOOL_ANCHOR overrides inside the resolver; env 'none' disables).
+    this.cardAnchorProfile = (effectiveModel as { anchorProfile?: string }).anchorProfile ?? null;
+    if (toolsToUse && toolsToUse.length > 0) {
+      toolsToUse = this.applyAnchorIfArmed(toolsToUse);
     }
 
     // StructuredOutput (grok-build port): when the caller requested
@@ -2298,6 +2334,22 @@ export class CortexOrchestrator {
       // Proactive context management - ensure history fits before continuation
       await this.ensureHistoryFitsModel(effectiveModel);
 
+      // Anchor lift (BASH_PLUS_SPEC.md P0): the first tool call has executed —
+      // this continuation is the first tool_result boundary, so the session's
+      // full profile applies from here. Rebuild from allTools because the
+      // armed anchor narrowed toolsToUse at assembly. (When deferred loading
+      // is on, the re-filter block below performs the rebuild.)
+      if (!this.anchorLifted && resolveToolAnchor(process.env, this.cardAnchorProfile)) {
+        this.anchorLifted = true;
+        if (!(this.config.enableDeferredToolLoading && !isPTCEnabled)) {
+          toolsToUse = allTools;
+          if (structuredOutputState) {
+            toolsToUse = ensureStructuredOutputTool(toolsToUse, structuredOutputState);
+          }
+        }
+        if (this.config.debug) console.log('[Anchor] lifted at first tool_result boundary — session profile applies');
+      }
+
       // Re-filter tools after SearchTools discovery so newly discovered tools
       // are included in the continuation request's tools array
       if (this.config.enableDeferredToolLoading && !isPTCEnabled) {
@@ -2964,7 +3016,7 @@ export class CortexOrchestrator {
         : toolFactory.getAllTools().filter(t => t.name !== 'EndTurn'),
     );
     // Tool-profile: streaming mirror of the non-streaming suppression above.
-    const bashOnlyProfile2 = resolveToolProfile() === 'bash-only';
+    const bashOnlyProfile2 = isNarrowProfile();
     const mcpTools = this.mcpAutoInject && !bashOnlyProfile2 ? this.getMcpToolsAsCanonical() : [];
     const mcpManagementTools = bashOnlyProfile2 ? [] : this.getMcpManagementTools();
     const contextManagementTools = bashOnlyProfile2 ? [] : this.getContextManagementTools();
@@ -3173,6 +3225,13 @@ export class CortexOrchestrator {
     // Deferred loading: filter tools for non-PTC paths (essential + recently-used only)
     if (!isPTCEnabled && this.config.enableDeferredToolLoading && toolsToUse && toolsToUse.length > 0) {
       toolsToUse = this.toolFilter.getFilteredTools(toolsToUse);
+    }
+    // First-turn anchoring narrows further while armed (no-op once lifted).
+    // Card-level home door: capture the active card's anchorProfile (env
+    // CORTEX_TOOL_ANCHOR overrides inside the resolver; env 'none' disables).
+    this.cardAnchorProfile = (effectiveModel as { anchorProfile?: string }).anchorProfile ?? null;
+    if (toolsToUse && toolsToUse.length > 0) {
+      toolsToUse = this.applyAnchorIfArmed(toolsToUse);
     }
 
     // StructuredOutput (grok-build port) — streaming mirror of the sendMessage
@@ -3865,6 +3924,18 @@ export class CortexOrchestrator {
         // Send continuation request with tool results
         // Proactive context management - ensure history fits before streaming continuation
         await this.ensureHistoryFitsModel(effectiveModel);
+
+        // Anchor lift — streaming mirror of the sendMessage continuation path.
+        if (!this.anchorLifted && resolveToolAnchor(process.env, this.cardAnchorProfile)) {
+          this.anchorLifted = true;
+          if (!(this.config.enableDeferredToolLoading && !isPTCEnabled)) {
+            toolsToUse = allTools;
+            if (structuredOutputState) {
+              toolsToUse = ensureStructuredOutputTool(toolsToUse, structuredOutputState);
+            }
+          }
+          if (this.config.debug) console.log('[Anchor] lifted at first tool_result boundary — session profile applies');
+        }
 
         // Re-filter tools after SearchTools discovery (same as sendMessage path)
         if (this.config.enableDeferredToolLoading && !isPTCEnabled) {
@@ -5788,11 +5859,11 @@ export class CortexOrchestrator {
         // hallucinating a hidden tool name would otherwise run it and leak the
         // A/B). MCP/context tools are already suppressed at assembly.
         if (!isContextManagementTool && !isMcpManagementTool && !isMcpTool
-            && !isToolAllowedByProfile(toolUse.name, (n) => toolFactory.getTool(n)?.discoveryTier)) {
+            && !isToolAllowedByProfile(toolUse.name, (n) => toolFactory.getTool(n)?.discoveryTier, this.effectiveGuardProfile())) {
           results.push({
             tool_use_id: toolUse.id,
             tool_name: toolUse.name,
-            content: `Tool '${toolUse.name}' is not available under the active tool profile (${resolveToolProfile()}). Use the tools offered in this session.`,
+            content: `Tool '${toolUse.name}' is not available under the active tool profile (${this.effectiveGuardProfile()}). Use the tools offered in this session.`,
             is_error: true,
           });
           continue;
@@ -6309,11 +6380,11 @@ export class CortexOrchestrator {
       // Tool-profile dispatch gate (streaming-path mirror — see the batch-path
       // comment): hidden-by-profile tools must not execute.
       if (!isContextManagementTool && !isMcpManagementTool && !isMcpTool
-          && !isToolAllowedByProfile(toolUse.name, (n) => toolFactory.getTool(n)?.discoveryTier)) {
+          && !isToolAllowedByProfile(toolUse.name, (n) => toolFactory.getTool(n)?.discoveryTier, this.effectiveGuardProfile())) {
         return {
           tool_use_id: toolUse.id,
           tool_name: toolUse.name,
-          content: `Tool '${toolUse.name}' is not available under the active tool profile (${resolveToolProfile()}). Use the tools offered in this session.`,
+          content: `Tool '${toolUse.name}' is not available under the active tool profile (${this.effectiveGuardProfile()}). Use the tools offered in this session.`,
           is_error: true,
         };
       }
