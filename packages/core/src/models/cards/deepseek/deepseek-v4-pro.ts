@@ -15,8 +15,10 @@ export const deepseekV4Pro: ModelConfig = createDeepSeekModelConfig({
   displayName: 'DeepSeek V4 Pro',
   family: 'deepseek-v4',
 
-  // Home-door anchor (P1pro 2026-08-17: anchored -35% latency at ceiling; bash-edit untested on pro — conservative bash-plus).
-  anchorProfile: 'bash-plus',
+  // Home-door anchor (P4pro sweep 2026-08-17: bash-edit 366 tok vs control 616
+  // (-41%) vs bash-plus 612 (no effect) — the dsh 2-tool shape is the DeepSeek
+  // family door; the bash-plus hedge was measured worthless on pro).
+  anchorProfile: 'bash-edit',
   contextWindow: 1000000,
   outputTokens: 65536,
   inputCost: 0.50,
