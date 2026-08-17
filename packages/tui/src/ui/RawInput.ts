@@ -15,6 +15,7 @@ const CSI = `${ESC}[`;
 const ANSI = {
   clearLine: `${CSI}2K`,
   clearToEnd: `${CSI}0K`,
+  clearScreenDown: `${CSI}0J`,
   cursorUp: (n: number) => `${CSI}${n}A`,
   cursorDown: (n: number) => `${CSI}${n}B`,
   cursorForward: (n: number) => `${CSI}${n}C`,
@@ -412,6 +413,35 @@ export function rawQuestion(options: RawInputOptions): Promise<string> {
     // Initial draw
     drawInputFrame(input, cursorPos, options);
 
+    // SIGWINCH: the chalk stack had NO resize handling at all — narrowing the
+    // terminal re-wrapped the frame into orphaned border rules that never
+    // repainted (TUI_UX_BACKLOG_2026-08-16 L-02). On resize: climb to the top
+    // of the stale frame using the pre-resize row tracking (best effort — the
+    // terminal may have re-wrapped rows), wipe everything below, forget the old
+    // frame metrics, and draw fresh at the current width. Debounced: drag-
+    // resizing fires a burst of events.
+    let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
+    const handleResize = () => {
+      if (resizeTimeout) clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        resizeTimeout = null;
+        if (lastCursorRowInFrame > 0) {
+          process.stdout.write('\r' + ANSI.cursorUp(lastCursorRowInFrame));
+        } else {
+          process.stdout.write('\r');
+        }
+        process.stdout.write(ANSI.clearScreenDown);
+        lastFrameTotalLines = 0;
+        lastCursorRowInFrame = 0;
+        drawInputFrame(input, cursorPos, options);
+      }, 50);
+    };
+    process.stdout.on('resize', handleResize);
+    const removeResizeListener = () => {
+      if (resizeTimeout) { clearTimeout(resizeTimeout); resizeTimeout = null; }
+      try { process.stdout.removeListener('resize', handleResize); } catch { /* already gone */ }
+    };
+
     // Enable raw mode - use try-catch to prevent crashes if stdin is in unexpected state
     if (process.stdin.isTTY) {
       try {
@@ -427,9 +457,39 @@ export function rawQuestion(options: RawInputOptions): Promise<string> {
       await slashCommandAutocomplete.update(input);
     };
 
+    // Escape-sequence reassembly (TUI_UX_BACKLOG_2026-08-16 L-03): stdin can
+    // split an arrow key across reads — ESC arrives alone, then '[B'. The old
+    // whole-chunk matching hit the bare-ESC branch (closing the palette) and
+    // then typed the literal '[B' into the input. Buffer any chunk that is an
+    // incomplete escape prefix and briefly wait for the rest; a bare ESC that
+    // stays bare for 30ms is delivered as the real ESC key.
+    let pendingEsc = '';
+    let escTimeout: ReturnType<typeof setTimeout> | null = null;
+    const isIncompleteEscape = (s: string): boolean => {
+      if (s === '\x1b') return true;
+      if (!s.startsWith('\x1b[') && !s.startsWith('\x1bO')) return false;
+      // A CSI sequence ends at the first final byte (0x40-0x7E) after the introducer
+      return !/[\x40-\x7e]/.test(s.slice(2));
+    };
     const handleData = (data: Buffer) => {
-      const str = data.toString();
+      if (escTimeout) { clearTimeout(escTimeout); escTimeout = null; }
+      const str = pendingEsc + data.toString();
+      pendingEsc = '';
+      if (isIncompleteEscape(str)) {
+        pendingEsc = str;
+        escTimeout = setTimeout(() => {
+          const flush = pendingEsc;
+          pendingEsc = '';
+          escTimeout = null;
+          // Only a genuinely bare ESC is a keypress; drop truncated garbage.
+          if (flush === '\x1b') processInput('\x1b');
+        }, 30);
+        return;
+      }
+      processInput(str);
+    };
 
+    const processInput = (str: string) => {
       // Handle special keys
       if (str === '\r' || str === '\n') {
         // Enter - RUN the selected palette command (P0-2). Matches neoncortex
@@ -455,6 +515,8 @@ export function rawQuestion(options: RawInputOptions): Promise<string> {
         } catch {
           // Ignore errors during listener removal
         }
+        removeResizeListener();
+        if (escTimeout) { clearTimeout(escTimeout); escTimeout = null; }
         if (process.stdin.isTTY) {
           try {
             process.stdin.setRawMode(false);
