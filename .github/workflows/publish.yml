@@ -39,6 +39,7 @@ jobs:
           npm ci --no-audit --no-fund --ignore-scripts \
             || { echo "retry"; rm -rf node_modules packages/*/node_modules; npm ci --no-audit --no-fund --ignore-scripts; }
           test -x node_modules/.bin/tsc || { echo "::error::tsc not linked after install"; exit 1; }
+      - run: node scripts/check-env-docs.mjs
       - run: npm run build
       - name: Tests (fresh-clone mode, no API keys)
         run: |
