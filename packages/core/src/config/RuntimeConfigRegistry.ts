@@ -47,6 +47,7 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   USE_EMOJI:                      { tier: 'env' },
   WEB_TOOLS_MODEL:                { tier: 'env' },
   TOOL_BUDGET_SOFT:               { tier: 'env' },
+  CORTEX_DELIVER_SYSTEM_PROMPT:   { tier: 'env' },
   AGENT_TMUX_MONITOR:             { tier: 'env' },
   SYSTEM_MESSAGE_DOC_MAX_BYTES:   { tier: 'env' },
   MEMORY_ARCHIVE_MAX_BYTES:       { tier: 'env' },

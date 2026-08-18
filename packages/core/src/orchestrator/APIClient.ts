@@ -122,6 +122,19 @@ export interface StreamingResponse {
  *
  * Supports: Anthropic, OpenAI, Google (Gemini + Gemma)
  */
+/**
+ * R63 opt-in gate (operator 2026-08-18): `CORTEX_DELIVER_SYSTEM_PROMPT=true`
+ * turns ON static-system-prompt delivery for the chat/completions and
+ * Responses paths (the transports that historically dropped it — R63).
+ * Default OFF preserves the published promptless behavior on those providers
+ * (3 months in production, measured ~3.6x cheaper per deepseek task at equal
+ * bench accuracy) until the deepseek-v4-pro prompt-composition sweep settles
+ * the cross-model picture. Resolved per call so tests/benches can flip it.
+ */
+function isR63SystemDeliveryEnabled(): boolean {
+  return (process.env.CORTEX_DELIVER_SYSTEM_PROMPT ?? '').trim().toLowerCase() === 'true';
+}
+
 export class APIClient {
   private anthropicClient?: Anthropic;
   private openaiClient?: OpenAI;
@@ -810,10 +823,28 @@ export class APIClient {
     const reasoningEffort = (transformedParams as any).reasoningEffort || 'medium';
     delete (transformedParams as any).reasoningEffort;
 
+    // R63: deliver the static system prompt. The gateway extracts system
+    // content into PreparedRequest.systemMessage (R28 split) and every other
+    // API pattern consumes it (Messages → `system`, Gemini → systemInstruction,
+    // Responses → `instructions`) — but this builder read only
+    // request.messages, so every chat/completions provider (DeepSeek, OpenAI
+    // chat cards, Groq, OpenAI-compat) received NO system prompt at all.
+    // Prepend it as messages[0] {role:'system'}; system-first keeps the
+    // provider's automatic prefix cache byte-stable across turns.
+    // ⚠️ OPT-IN (operator 2026-08-18): CORTEX_DELIVER_SYSTEM_PROMPT=true
+    // enables delivery. Default preserves the long-standing (accidental but
+    // measured-cheaper) promptless behavior on these providers until the
+    // deepseek-v4-pro prompt-composition sweep completes; flips to
+    // default-ON in a later release. Messages/Gemini paths are unaffected
+    // (they always delivered).
+    const outboundMessages = request.systemMessage && isR63SystemDeliveryEnabled()
+      ? [{ role: 'system', content: request.systemMessage }, ...request.messages as any[]]
+      : request.messages;
+
     // Build the request body
     const chatRequest: any = {
       model: request.modelId,
-      messages: request.messages,
+      messages: outboundMessages,
       ...transformedParams,
       ...(opts.stream ? { stream: true } : {}),
     };
@@ -1164,10 +1195,29 @@ export class APIClient {
       // ResponsesAPIAdapter.ts (adapters/).
     }
 
-    // Set extracted system context as instructions (enables provider-side caching)
-    // XAI does NOT support the `instructions` parameter — skip for XAI provider.
-    if (instructions && !isXAI) {
-      responsesRequest.instructions = instructions;
+    // Set system context as instructions (enables provider-side caching).
+    // R63: request.systemMessage (the R28 static system prompt) was previously
+    // dropped on this path — only <system-reminder> text mined from user
+    // messages reached `instructions`, and since R28f routed static content
+    // into systemMessage, that mining came up empty. Merge the static prompt
+    // FIRST (stable prefix), then any extracted reminders.
+    // XAI does NOT support the `instructions` parameter — for XAI, deliver the
+    // static prompt as a system-role input item, but ONLY at the start of a
+    // chain: with previous_response_id + input slicing the server already
+    // holds the first request's context, and re-injecting it into every
+    // sliced continuation would duplicate and destabilize the cached prefix.
+    const deliverSystem = isR63SystemDeliveryEnabled(); // R63 opt-in gate
+    const mergedInstructions = [deliverSystem ? request.systemMessage : undefined, instructions]
+      .filter((s): s is string => !!s && s.length > 0)
+      .join('\n\n');
+    if (mergedInstructions && !isXAI) {
+      responsesRequest.instructions = mergedInstructions;
+    }
+    if (deliverSystem && isXAI && request.systemMessage && !request.previousResponseId) {
+      responsesRequest.input = [
+        { role: 'system', content: request.systemMessage },
+        ...(Array.isArray(inputItems) ? inputItems : []),
+      ];
     }
 
     // Add reasoning if supported and not disabled.
@@ -2404,10 +2454,24 @@ export class APIClient {
         }
       }
 
-      // Set extracted system context as instructions (enables provider-side caching)
-      // XAI does NOT support the `instructions` parameter — skip for XAI provider.
-      if (instructions && !isXAI) {
-        responsesRequest.instructions = instructions;
+      // Set system context as instructions (enables provider-side caching).
+      // R63: merge the R28 static system prompt (previously dropped on this
+      // path) ahead of reminders mined from user messages; XAI gets it as a
+      // system-role input item at chain start only (no `instructions` support;
+      // sliced continuations already have it server-side). Mirrors
+      // sendResponsesAPI.
+      const deliverSystem = isR63SystemDeliveryEnabled(); // R63 opt-in gate
+      const mergedInstructions = [deliverSystem ? request.systemMessage : undefined, instructions]
+        .filter((s): s is string => !!s && s.length > 0)
+        .join('\n\n');
+      if (mergedInstructions && !isXAI) {
+        responsesRequest.instructions = mergedInstructions;
+      }
+      if (deliverSystem && isXAI && request.systemMessage && !request.previousResponseId) {
+        responsesRequest.input = [
+          { role: 'system', content: request.systemMessage },
+          ...(Array.isArray(inputItems) ? inputItems : []),
+        ];
       }
 
       // Add reasoning if supported and not disabled

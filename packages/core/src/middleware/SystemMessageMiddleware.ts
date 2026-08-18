@@ -305,10 +305,24 @@ export class SystemMessageMiddleware implements ISystemMessageInjector {
     //   `system`; Anthropic: after the cache_control breakpoint; OpenAI/xAI/
     //   DeepSeek automatic-prefix: at the tail), so it varies freely without
     //   busting the cache.
-    const staticMsgs = systemMessages.filter(
+    // P6 prompt-mass lever (BASH_PLUS_SPEC): CORTEX_PROMPT_MASS=minimal keeps
+    // ONLY the core system_prompt (which CORTEX_SYSTEM_PROMPT_FILE may replace
+    // with a minimal text) — every other static instruction doc (tool guide,
+    // work-quality, examples, project files) is dropped for the session.
+    // CORTEX_PROMPT_MASS=defer starts identically minimal, but the orchestrator
+    // delivers the dropped corpus ONCE at the anchor-lift boundary (first
+    // tool_result) via buildDeferredStaticCorpus() — the P6 deferral design:
+    // narrow entry frame, full knowledge after act 1, append-only for caches.
+    // Experiment lever, resolved fresh per call; unknown values = full.
+    const promptMass = (process.env.CORTEX_PROMPT_MASS ?? '').trim().toLowerCase();
+    const massFiltered = (promptMass === 'minimal' || promptMass === 'defer')
+      ? systemMessages.filter(m => m.definition?.id === 'system_prompt'
+          || isTurnVaryingSystemMessage(m.definition?.conditions))
+      : systemMessages;
+    const staticMsgs = massFiltered.filter(
       m => !isTurnVaryingSystemMessage(m.definition?.conditions)
     );
-    const varyingMsgs = systemMessages.filter(
+    const varyingMsgs = massFiltered.filter(
       m => isTurnVaryingSystemMessage(m.definition?.conditions)
     );
 
@@ -346,6 +360,41 @@ export class SystemMessageMiddleware implements ISystemMessageInjector {
     }
 
     return { systemPrompt, userContent: contentArray };
+  }
+
+  /**
+   * P6 deferral (CORTEX_PROMPT_MASS=defer): the static corpus that the turn-1
+   * 'defer' filter dropped — every static doc EXCEPT the core system_prompt
+   * (and excluding turn-varying messages, which flow normally). The
+   * orchestrator appends this ONCE at the anchor-lift boundary as a text
+   * block on the first tool_result message, so the corpus arrives as
+   * appended conversation content (cache-append-only) after the narrow
+   * first-turn frame has done its work. Returns undefined when empty.
+   */
+  async buildDeferredStaticCorpus(
+    model: ModelConfig,
+    hasTools: boolean,
+    context: MiddlewareContext
+  ): Promise<string | undefined> {
+    const injectionContext = this.buildInjectionContext(model, hasTools, context);
+    const templateVars = this.buildTemplateVariables(injectionContext.toolCount, context);
+    const systemMessages = await this.systemMessageLoader.getMessagesForInjection(
+      injectionContext,
+      templateVars
+    );
+    const deferred = systemMessages.filter(m =>
+      m.definition?.id !== 'system_prompt'
+      && !isTurnVaryingSystemMessage(m.definition?.conditions));
+    if (deferred.length === 0) return undefined;
+    const byPriority = (a: typeof systemMessages[number], b: typeof systemMessages[number]) =>
+      a.priority - b.priority;
+    const blocks = [
+      ...deferred.filter(m => m.position === 'prepend').sort(byPriority),
+      ...deferred.filter(m => m.position === 'append').sort(byPriority),
+    ].map(m => m.wrapInSystemReminder
+      ? `<system-reminder>\n${m.content}\n</system-reminder>`
+      : m.content);
+    return blocks.join('\n');
   }
 
   async injectSystemMessages(

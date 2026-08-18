@@ -542,6 +542,52 @@ export class CortexOrchestrator {
   /** The active model card's anchorProfile (captured at request assembly) —
    *  env CORTEX_TOOL_ANCHOR still overrides inside resolveToolAnchor. */
   private cardAnchorProfile: string | null = null;
+  /** P6 deferral (CORTEX_PROMPT_MASS=defer): the static corpus is delivered
+   *  exactly once, at the anchor-lift boundary. One-shot per orchestrator. */
+  private deferredCorpusDelivered = false;
+
+  /**
+   * P6 deferral: at the anchor-lift boundary, append the deferred static
+   * corpus (every static doc except the core system_prompt) as an extra
+   * TEXT BLOCK on the just-recorded first tool_result message — the corpus
+   * arrives as appended conversation content exactly where the full tool
+   * catalog appears (act -> observe -> lift). Rides the budget-signal
+   * precedent (mutate the last history message's content array); adapters
+   * render mixed [tool_result, text] user messages correctly per dialect.
+   * No-op unless CORTEX_PROMPT_MASS=defer; fires at most once.
+   */
+  private async deliverDeferredCorpusAtLift(model: ModelConfig): Promise<void> {
+    if (this.deferredCorpusDelivered) return;
+    if ((process.env.CORTEX_PROMPT_MASS ?? '').trim().toLowerCase() !== 'defer') return;
+    this.deferredCorpusDelivered = true; // one-shot even if assembly fails
+    if (!this.systemMessageMiddleware) return;
+    try {
+      const corpus = await this.systemMessageMiddleware.buildDeferredStaticCorpus(
+        model,
+        true,
+        {
+          sessionId: this.currentSessionId,
+          conversationId: this.currentConversationId,
+          turnNumber: this.turnNumber,
+          modelId: model.id,
+          config: this.config
+        }
+      );
+      if (!corpus) return;
+      const lastMsg = this.messageHistory[this.messageHistory.length - 1] as any;
+      if (lastMsg?.message?.content?.[0]?.type === 'tool_result') {
+        lastMsg.message.content.push({
+          type: 'text',
+          text: `<system-reminder>\nFull session context follows (deferred until your first action; applies from here on).\n</system-reminder>\n${corpus}`
+        });
+        if (this.config.debug) {
+          console.log(`[Anchor] deferred static corpus delivered at lift (${corpus.length} chars)`);
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[Anchor] deferred corpus delivery failed (continuing without): ${e?.message ?? e}`);
+    }
+  }
 
   /** Narrow `tools` to the anchor profile while the anchor is armed; no-op
    *  once lifted or when CORTEX_TOOL_ANCHOR is unset. Applied AFTER the
@@ -1444,7 +1490,10 @@ export class CortexOrchestrator {
     const MAX_CONSECUTIVE_ERRORS = loopDefaults.maxConsecutiveErrors;
     const MAX_LOOP_REPETITIONS = loopDefaults.maxLoopRepetitions;
     const TOOL_BUDGET_SOFT = loopDefaults.toolBudgetSoft; // R29b brake
-    const TOOL_BUDGET_HARD = TOOL_BUDGET_SOFT * 2; // force-synthesis cap
+    // R64: TOOL_BUDGET_SOFT <= 0 disables the budget-pressure system entirely
+    // (no reminders, no force-synthesis cap). Runaway protection then rests on
+    // loop detection, the consecutive-error breaker, and MAX_TOOL_ITERATIONS.
+    const TOOL_BUDGET_HARD = TOOL_BUDGET_SOFT > 0 ? TOOL_BUDGET_SOFT * 2 : Infinity; // force-synthesis cap
 
     let totalToolErrors = 0;
 
@@ -2347,6 +2396,9 @@ export class CortexOrchestrator {
             toolsToUse = ensureStructuredOutputTool(toolsToUse, structuredOutputState);
           }
         }
+        // P6 deferral: the static corpus arrives at the same boundary as the
+        // full tool catalog (no-op unless CORTEX_PROMPT_MASS=defer).
+        await this.deliverDeferredCorpusAtLift(effectiveModel);
         if (this.config.debug) console.log('[Anchor] lifted at first tool_result boundary — session profile applies');
       }
 
@@ -3497,7 +3549,10 @@ export class CortexOrchestrator {
     const MAX_LOOP_REPETITIONS = loopDefaults.maxLoopRepetitions;
     const TOOL_TIMEOUT_MS = loopDefaults.toolTimeoutMs;
     const TOOL_BUDGET_SOFT = loopDefaults.toolBudgetSoft; // R29b brake
-    const TOOL_BUDGET_HARD = TOOL_BUDGET_SOFT * 2; // force-synthesis cap
+    // R64: TOOL_BUDGET_SOFT <= 0 disables the budget-pressure system entirely
+    // (no reminders, no force-synthesis cap). Runaway protection then rests on
+    // loop detection, the consecutive-error breaker, and MAX_TOOL_ITERATIONS.
+    const TOOL_BUDGET_HARD = TOOL_BUDGET_SOFT > 0 ? TOOL_BUDGET_SOFT * 2 : Infinity; // force-synthesis cap
 
     while (hasToolUse && toolCallIteration < MAX_TOOL_ITERATIONS) {
       toolCallIteration++;
@@ -3934,6 +3989,8 @@ export class CortexOrchestrator {
               toolsToUse = ensureStructuredOutputTool(toolsToUse, structuredOutputState);
             }
           }
+          // P6 deferral: same one-shot corpus delivery as the sendMessage path.
+          await this.deliverDeferredCorpusAtLift(effectiveModel);
           if (this.config.debug) console.log('[Anchor] lifted at first tool_result boundary — session profile applies');
         }
 

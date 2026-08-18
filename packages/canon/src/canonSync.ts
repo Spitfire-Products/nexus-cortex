@@ -358,6 +358,38 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
       };
       walkBc(bcRoot);
     } catch { /* no browser branches yet / offline — nothing to integrate */ }
+    // CHUNK-GATE HOLE (2026-08-17 incident): canonTranslate stages output as
+    // `<dest>.jsonl.tmp` INSIDE the store; a mid-write kill orphans it, and the
+    // blanket `git add -A` below then commits the oversized artifact (147MB tmp
+    // → GitHub 100MB push rejection; required collapsing 30 store commits).
+    // The syncFile chunk gate never sees it — it isn't a harness source file.
+    // Guard both ways: (a) keep `*.tmp` out of the index via the store
+    // .gitignore; (b) purge stale staging files (>10 min old — a live translate
+    // in the same pipeline pass is younger) so the tree stays clean.
+    try {
+      const giPath = path.join(STORE, '.gitignore');
+      const gi = fs.existsSync(giPath) ? fs.readFileSync(giPath, 'utf8') : '';
+      if (!gi.split('\n').some((l) => l.trim() === '*.tmp')) {
+        fs.writeFileSync(giPath, (gi && !gi.endsWith('\n') ? gi + '\n' : gi) + '*.tmp\n');
+      }
+      const purgeStaleTmp = (dir: string): void => {
+        let entries: fs.Dirent[] = [];
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const e of entries) {
+          if (e.name === '.git') continue;
+          const p = path.join(dir, e.name);
+          if (e.isDirectory()) { purgeStaleTmp(p); continue; }
+          if (!e.name.endsWith('.tmp')) continue;
+          try {
+            if (Date.now() - fs.statSync(p).mtimeMs > 10 * 60 * 1000) {
+              fs.unlinkSync(p);
+              console.warn(`[canon-sync] purged stale staging file: ${path.relative(STORE, p)}`);
+            }
+          } catch { /* raced away — fine */ }
+        }
+      };
+      purgeStaleTmp(STORE);
+    } catch { /* guard must never block the sync */ }
     git(['add', '-A']);
     const status = git(['status', '--porcelain']);
     if (status.trim()) {

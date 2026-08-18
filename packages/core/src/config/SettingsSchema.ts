@@ -408,9 +408,9 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   MEMORY_ARCHIVE_MAX_BYTES: '10000',
 
   // Loop Control
-  MAX_TOOL_ITERATIONS: '50',
+  MAX_TOOL_ITERATIONS: '1000',
   MAX_CONSECUTIVE_ERRORS: '3',
-  TOOL_BUDGET_SOFT: '15',
+  TOOL_BUDGET_SOFT: '400',
   TOOL_TIMEOUT_MS: '120000',
   MAX_LOOP_REPETITIONS: '5',
 
@@ -897,10 +897,10 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
   {
     key: 'MAX_TOOL_ITERATIONS',
     displayName: 'Max Tool Iterations',
-    description: 'Maximum tool execution iterations per turn',
+    description: 'Absolute per-turn tool-iteration ceiling. A runaway/cost failsafe, NOT a work limit — real long tasks must never hit it (R64: the old 50 severed legitimate deep-repo work). Pathology is handled by loop detection + the progress-gated budget stop.',
     type: 'number',
     category: 'loop_control',
-    default: '50'
+    default: '1000'
   },
   {
     key: 'MAX_CONSECUTIVE_ERRORS',
@@ -913,10 +913,10 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
   {
     key: 'TOOL_BUDGET_SOFT',
     displayName: 'Soft Tool Budget',
-    description: 'Tool calls per turn before escalating firm "synthesize now" reminders (1x and 1.5x); a hard force-synthesis cap fires at 2x. Brakes runaway exploration by weaker models on vague prompts.',
+    description: 'Tool calls per turn before escalating "synthesize now" reminders (1x and 1.5x); a PROGRESS-GATED force-synthesis cap fires at 2x (only when cycling). 0 disables budget pressure entirely. R64: sized so real work never feels it (old 15 induced fabricated completions on deep tasks).',
     type: 'number',
     category: 'loop_control',
-    default: '15'
+    default: '400'
   },
   {
     key: 'TOOL_TIMEOUT_MS',
