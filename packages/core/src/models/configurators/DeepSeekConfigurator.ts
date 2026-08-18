@@ -12,6 +12,8 @@ import type { ModelConfig } from '../ModelConfig.interface.js';
 export interface DeepSeekModelOptions {
   /** Home-door first-turn anchor profile (BASH_PLUS_SPEC per-family evidence). */
   anchorProfile?: 'lean' | 'bash-only' | 'bash-plus' | 'bash-edit';
+  /** Card-level prompt-composition preset (P6c/P6e/P6f evidence); env levers override. */
+  promptPreset?: 'boot-minimal';
   id: string;
   displayName: string;
   family: string;
@@ -30,6 +32,7 @@ export interface DeepSeekModelOptions {
 export function createDeepSeekModelConfig(options: DeepSeekModelOptions): ModelConfig {
   return {
     ...(options.anchorProfile ? { anchorProfile: options.anchorProfile } : {}),
+    ...(options.promptPreset ? { promptPreset: options.promptPreset } : {}),
     id: options.id,
     provider: 'deepseek',
     displayName: options.displayName,

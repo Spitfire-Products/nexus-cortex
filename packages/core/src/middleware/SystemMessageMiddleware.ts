@@ -32,6 +32,7 @@ import type {
 } from './contracts/MiddlewareContracts.js';
 import { toolFactory } from '../tools/ToolFactory.js';
 import { isTurnVaryingSystemMessage } from '../system-messages/turnVaryingClassifier.js';
+import { presetMassMode, presetSystemPrompt, type PromptPreset } from '../system-messages/promptPresets.js';
 
 /**
  * System Message Injection Middleware
@@ -314,7 +315,21 @@ export class SystemMessageMiddleware implements ISystemMessageInjector {
     // tool_result) via buildDeferredStaticCorpus() — the P6 deferral design:
     // narrow entry frame, full knowledge after act 1, append-only for caches.
     // Experiment lever, resolved fresh per call; unknown values = full.
-    const promptMass = (process.env.CORTEX_PROMPT_MASS ?? '').trim().toLowerCase();
+    // CARD-LEVEL PRESET (P6f productization): when the env levers are unset,
+    // the model card's `promptPreset` supplies both the mass mode and a
+    // replacement core prompt (packaged, portable). Env always wins so
+    // experiments/operators can override per session.
+    const envMass = (process.env.CORTEX_PROMPT_MASS ?? '').trim().toLowerCase();
+    const cardPreset = (model as { promptPreset?: PromptPreset }).promptPreset;
+    const promptMass = envMass || presetMassMode(cardPreset);
+    const presetPrompt = (!envMass && !process.env.CORTEX_SYSTEM_PROMPT_FILE)
+      ? presetSystemPrompt(cardPreset)
+      : undefined;
+    if (presetPrompt) {
+      for (const m of systemMessages) {
+        if (m.definition?.id === 'system_prompt') m.content = presetPrompt;
+      }
+    }
     const massFiltered = (promptMass === 'minimal' || promptMass === 'defer')
       ? systemMessages.filter(m => m.definition?.id === 'system_prompt'
           || isTurnVaryingSystemMessage(m.definition?.conditions))

@@ -18,6 +18,7 @@ import { spawn } from 'child_process';
 import { BaseTool, type ToolResult } from '../../base/index.js';
 import { SchemaValidator } from '../../utils/SchemaValidator.js';
 import { TmuxManager, SessionPersistence } from '../../utils/index.js';
+import { stripAnsi } from '../../utils/TextUtils.js';
 import { BackgroundProcessRegistry } from './BackgroundProcessRegistry.js';
 import type { ExecutorConfig } from '../../base/ToolRegistry.js';
 
@@ -329,8 +330,28 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
     let output = '';
     let lastUpdateTime = Date.now();
 
+    // R66: cap ACCUMULATION, not just final rendering. truncateIfNeeded caps
+    // what reaches the model, but a runaway command (e.g. cat of a huge
+    // artifact) previously grew these strings unbounded until V8's max string
+    // length threw `RangeError: Invalid string length` INSIDE the data
+    // handler, crashing the whole server process (observed live: P6g D-r2,
+    // ShellTool.js:244). Keep head + bounded tail per stream; the final
+    // truncation marker still applies downstream.
+    const ACC_CAP = ShellTool.MAX_OUTPUT_LENGTH * 4; // generous head room
+    const capAppend = (base: string, str: string): string => {
+      if (base.length >= ACC_CAP) {
+        // keep a sliding tail so the end of output (exit summaries, errors)
+        // survives; head is already preserved in `base`'s first half.
+        const tailKeep = ShellTool.MAX_OUTPUT_LENGTH;
+        return base.slice(0, ACC_CAP - tailKeep)
+          + base.slice(-Math.floor(tailKeep / 2))
+          + str.slice(-Math.floor(tailKeep / 2));
+      }
+      return base + str;
+    };
+
     const appendOutput = (str: string) => {
-      output += str;
+      output = capAppend(output, str); // R66: bounded (same crash class)
       if (
         updateOutput &&
         Date.now() - lastUpdateTime > ShellTool.OUTPUT_UPDATE_INTERVAL_MS
@@ -343,8 +364,8 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
     // Capture stdout
     shell.stdout?.on('data', (data: Buffer) => {
       if (!exited) {
-        const str = this.stripAnsi(data.toString());
-        stdout += str;
+        const str = stripAnsi(data.toString());
+        stdout = capAppend(stdout, str);
         appendOutput(str);
       }
     });
@@ -352,8 +373,8 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
     // Capture stderr
     shell.stderr?.on('data', (data: Buffer) => {
       if (!exited) {
-        const str = this.stripAnsi(data.toString());
-        stderr += str;
+        const str = stripAnsi(data.toString());
+        stderr = capAppend(stderr, str);
         appendOutput(str);
       }
     });
@@ -908,17 +929,5 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
       .split('\n')
       .filter((line) => !line.includes(sentinel))
       .join('\n');
-  }
-
-  /**
-   * Removes ANSI escape codes from string
-   * @private
-   */
-  private stripAnsi(str: string): string {
-    // eslint-disable-next-line no-control-regex
-    return str.replace(
-      /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g,
-      '',
-    );
   }
 }

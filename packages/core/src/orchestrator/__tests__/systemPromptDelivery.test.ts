@@ -91,8 +91,8 @@ describe('chat/completions delivers the static system prompt (R63, opt-in)', () 
     else process.env.CORTEX_DELIVER_SYSTEM_PROMPT = prevFlag;
   });
 
-  it('OPT-IN GATE: without the flag, delivery is OFF (published legacy behavior preserved)', () => {
-    delete process.env.CORTEX_DELIVER_SYSTEM_PROMPT;
+  it('EXPLICIT OPT-OUT: CORTEX_DELIVER_SYSTEM_PROMPT=false disables delivery (default is ON as of 4.66.0)', () => {
+    process.env.CORTEX_DELIVER_SYSTEM_PROMPT = 'false';
     const client = new APIClient() as any;
     const { chatRequest } = client.buildChatCompletionsRequest(
       baseRequest({ systemMessage: 'SHOULD NOT APPEAR' }),
@@ -101,6 +101,17 @@ describe('chat/completions delivers the static system prompt (R63, opt-in)', () 
     );
     expect(chatRequest.messages).toHaveLength(1);
     expect(chatRequest.messages[0].role).toBe('user');
+  });
+
+  it('DEFAULT ON: with the env var unset, delivery happens', () => {
+    delete process.env.CORTEX_DELIVER_SYSTEM_PROMPT;
+    const client = new APIClient() as any;
+    const { chatRequest } = client.buildChatCompletionsRequest(
+      baseRequest({ systemMessage: 'DEFAULT-ON' }),
+      deepseekModel,
+      { stream: false },
+    );
+    expect(chatRequest.messages[0]).toEqual({ role: 'system', content: 'DEFAULT-ON' });
   });
 
   it('prepends systemMessage as messages[0] role:system', () => {

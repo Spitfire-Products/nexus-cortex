@@ -17,6 +17,10 @@ export const deepseekV4Flash: ModelConfig = createDeepSeekModelConfig({
 
   // Home-door anchor (P4 sweep 2026-08-17: bash-edit anchor = 14/14, -47% output tokens vs control; cue line REFUTED (hurts in our dialect)).
   anchorProfile: 'bash-edit',
+  // P6c/P6e/P6f/P6g family verdict (2026-08-18): boot-observation minimal beats
+  // the full corpus at equal accuracy on short AND long tasks, both members
+  // (BASH_PLUS_SPEC P6 series). Env levers override per session.
+  promptPreset: 'boot-minimal',
   contextWindow: 1000000,
   outputTokens: 65536,
   inputCost: 0.14,

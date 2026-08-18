@@ -132,7 +132,10 @@ export interface StreamingResponse {
  * the cross-model picture. Resolved per call so tests/benches can flip it.
  */
 function isR63SystemDeliveryEnabled(): boolean {
-  return (process.env.CORTEX_DELIVER_SYSTEM_PROMPT ?? '').trim().toLowerCase() === 'true';
+  // Default ON as of 4.66.0 (P6e/P6f/P6g testing complete): correct delivery
+  // everywhere; the deepseek cards' boot-minimal promptPreset keeps the family
+  // cheaper than the pre-R63 promptless era. Explicit 'false' opts out.
+  return (process.env.CORTEX_DELIVER_SYSTEM_PROMPT ?? '').trim().toLowerCase() !== 'false';
 }
 
 export class APIClient {

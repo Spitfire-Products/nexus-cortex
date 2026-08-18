@@ -19,6 +19,10 @@ export const deepseekV4Pro: ModelConfig = createDeepSeekModelConfig({
   // (-41%) vs bash-plus 612 (no effect) — the dsh 2-tool shape is the DeepSeek
   // family door; the bash-plus hedge was measured worthless on pro).
   anchorProfile: 'bash-edit',
+  // P6c/P6e/P6f/P6g family verdict (2026-08-18): boot-observation minimal beats
+  // the full corpus at equal accuracy on short AND long tasks, both members
+  // (BASH_PLUS_SPEC P6 series). Env levers override per session.
+  promptPreset: 'boot-minimal',
   contextWindow: 1000000,
   outputTokens: 65536,
   inputCost: 0.50,

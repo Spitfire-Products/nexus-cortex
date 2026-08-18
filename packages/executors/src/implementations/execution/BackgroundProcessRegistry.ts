@@ -7,6 +7,7 @@
 
 import { spawn, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
+import { stripAnsi } from '../../utils/TextUtils.js';
 
 export interface BackgroundProcess {
   shellId: string;
@@ -56,7 +57,7 @@ export class BackgroundProcessRegistry {
     // Monitor process output if available
     if (process && process.stdout) {
       process.stdout.on('data', (data: Buffer) => {
-        const lines = data.toString().split('\n').filter((l) => l.trim());
+        const lines = stripAnsi(data.toString()).split('\n').filter((l) => l.trim());
         bgProcess.output.push(...lines);
         this.emitter.emit('output', shellId, lines);
       });
@@ -64,7 +65,7 @@ export class BackgroundProcessRegistry {
 
     if (process && process.stderr) {
       process.stderr.on('data', (data: Buffer) => {
-        const lines = data.toString().split('\n').filter((l) => l.trim());
+        const lines = stripAnsi(data.toString()).split('\n').filter((l) => l.trim());
         bgProcess.output.push(...lines);
         this.emitter.emit('output', shellId, lines);
       });
