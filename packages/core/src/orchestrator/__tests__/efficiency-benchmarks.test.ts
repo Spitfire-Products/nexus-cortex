@@ -63,8 +63,10 @@ describe('Efficiency Benchmarks', () => {
   // TEST SUITE 1: Loop Control Wiring
   // =========================================================================
   describe('Suite 1: Loop Control Wiring', () => {
-    it('should have CORTEX-parity default of 50 in SettingsSchema', () => {
-      expect(DEFAULT_SETTINGS.MAX_TOOL_ITERATIONS).toBe('50');
+    it('should have the R64 failsafe default of 1000 in SettingsSchema', () => {
+      // R64 (2026-08-18): the ceiling is a runaway/cost FAILSAFE, not a work
+      // limit — 50 severed legitimate long-horizon work (P6d t1, 4/4 runs).
+      expect(DEFAULT_SETTINGS.MAX_TOOL_ITERATIONS).toBe('1000');
     });
 
     it('should wire env var MAX_TOOL_ITERATIONS to config.loopControl', async () => {
@@ -109,7 +111,7 @@ describe('Efficiency Benchmarks', () => {
       const o = track(await makeOrchestrator(dir), dir);
 
       const loopConfig = o.getLoopControlConfig();
-      expect(loopConfig.maxToolIterations).toBe(50);
+      expect(loopConfig.maxToolIterations).toBe(1000);
       expect(loopConfig.maxConsecutiveErrors).toBe(3);
       expect(loopConfig.toolTimeoutMs).toBe(120000);
       expect(loopConfig.maxLoopRepetitions).toBe(5);
@@ -121,7 +123,7 @@ describe('Efficiency Benchmarks', () => {
       const o = track(await makeOrchestrator(dir), dir);
 
       const loopConfig = o.getLoopControlConfig();
-      expect(loopConfig.maxToolIterations).toBe(50);
+      expect(loopConfig.maxToolIterations).toBe(1000);
       expect(Number.isNaN(loopConfig.maxToolIterations)).toBe(false);
     });
 
@@ -130,7 +132,7 @@ describe('Efficiency Benchmarks', () => {
       const o = track(await makeOrchestrator(dir), dir);
 
       const loopConfig = o.getLoopControlConfig();
-      expect(loopConfig.maxToolIterations).toBe(50);
+      expect(loopConfig.maxToolIterations).toBe(1000);
       expect(typeof loopConfig.maxToolIterations).toBe('number');
     });
   });

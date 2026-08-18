@@ -1,7 +1,7 @@
 {
   "name": "@nexus-cortex/tui",
-  "version": "4.65.0",
-  "description": "Nexus Cortex interactive terminal UI (React/Ink) — the polished cockpit + launchers over @nexus-cortex/cli",
+  "version": "4.65.1",
+  "description": "Nexus Cortex interactive terminal UI (React/Ink) \u2014 the polished cockpit + launchers over @nexus-cortex/cli",
   "main": "dist/index.js",
   "type": "module",
   "bin": {
@@ -18,8 +18,8 @@
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
-    "@nexus-cortex/cli": "4.65.0",
-    "@nexus-cortex/core": "4.65.0",
+    "@nexus-cortex/cli": "4.65.1",
+    "@nexus-cortex/core": "4.65.1",
     "chalk": "^4.1.2",
     "cli-spinners": "^2.9.0",
     "commander": "^11.0.0",

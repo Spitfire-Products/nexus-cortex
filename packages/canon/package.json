@@ -19,7 +19,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@nexus-cortex/types": "^4.65.0"
+    "@nexus-cortex/types": "^4.65.1"
   },
   "files": [
     "dist",

@@ -4691,9 +4691,15 @@ export class CortexOrchestrator {
   } {
     const softRaw = this.config.loopControl?.toolBudgetSoft;
     return {
-      maxToolIterations: this.config.loopControl?.maxToolIterations ?? 50,
+      // R64: failsafe ceiling, not a work limit — keep in lockstep with
+      // SettingsSchema DEFAULT_SETTINGS (this fallback covers orchestrators
+      // constructed without a SettingsLoader-derived config).
+      maxToolIterations: this.config.loopControl?.maxToolIterations ?? 1000,
       maxConsecutiveErrors: this.config.loopControl?.maxConsecutiveErrors ?? 3,
-      toolBudgetSoft: Number.isFinite(softRaw) && (softRaw as number) > 0 ? (softRaw as number) : 15,
+      // R64: 0 is a VALID value (disables budget pressure entirely) — only
+      // undefined/negative/NaN fall back to the default. The old `> 0 : 15`
+      // coercion silently replaced an explicit 0 with 15.
+      toolBudgetSoft: Number.isFinite(softRaw) && (softRaw as number) >= 0 ? (softRaw as number) : 400,
       toolTimeoutMs: this.config.loopControl?.toolTimeoutMs ?? 120000,
       maxLoopRepetitions: this.config.loopControl?.maxLoopRepetitions ?? 5,
     };
