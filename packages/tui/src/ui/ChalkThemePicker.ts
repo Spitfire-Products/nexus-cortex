@@ -318,10 +318,26 @@ export async function showThemePicker(): Promise<ThemePickerResult> {
     let selectedIndex = themes.indexOf(currentTheme as AvailableTheme);
     if (selectedIndex === -1) selectedIndex = 0;
 
-    const terminalWidth = process.stdout.columns || 80;
+    let terminalWidth = process.stdout.columns || 80;
 
     // Initial draw
     drawThemePicker(themes, selectedIndex, currentTheme, terminalWidth);
+
+    // S-01 (TUI_UX_BACKLOG_2026-08-16): the picker froze at launch width — columns
+    // was read once, so tmux pane resizes re-wrapped the box into garbage until
+    // exit. Every draw here is a full clearScreen+repaint, so resize handling is
+    // just: re-read width, redraw. Debounced like RawInput's L-02 handler (drag-
+    // resizing fires a burst of events).
+    let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
+    const handleResize = () => {
+      if (resizeTimeout) clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        resizeTimeout = null;
+        terminalWidth = process.stdout.columns || 80;
+        drawThemePicker(themes, selectedIndex, currentTheme, terminalWidth);
+      }, 50);
+    };
+    process.stdout.on('resize', handleResize);
 
     // Enable raw mode
     if (process.stdin.isTTY) {
@@ -330,6 +346,8 @@ export async function showThemePicker(): Promise<ThemePickerResult> {
     process.stdin.resume();
 
     const cleanup = () => {
+      if (resizeTimeout) { clearTimeout(resizeTimeout); resizeTimeout = null; }
+      try { process.stdout.removeListener('resize', handleResize); } catch { /* already gone */ }
       process.stdin.removeListener('data', handleData);
       if (process.stdin.isTTY) {
         try {

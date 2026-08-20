@@ -16,7 +16,8 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync, realpathSync } from 'fs';
 import http from 'http';
-import { bootstrapEnv } from '@nexus-cortex/core';
+// L-11: @nexus-cortex/core's barrel costs ~1s to load — imported DYNAMICALLY
+// below so the first-paint banner beats it (static imports hoist).
 
 const __filename = fileURLToPath(import.meta.url);
 // Resolve symlinks to get actual path (important for npm link)
@@ -32,9 +33,17 @@ const PKG_ROOT = join(CLI_DIR, '..', '..');
 // Spawned children inherit this via process.env.
 process.env.CORTEX_ROOT = process.env.CORTEX_ROOT || PKG_ROOT;
 
+// FIRST PAINT (L-11): the fuzzycortex blank was launcher import cost + the
+// spawned child's own import graph (~3s of empty screen). Put chrome up
+// before the heavy core import; the child's console.clear() replaces it.
+if (process.stdout.isTTY) {
+  process.stdout.write('\x1b[2m CORTEX \u2014 starting\u2026\x1b[0m\n');
+}
+
 // Canonical .env bootstrap (ONE implementation in @nexus-cortex/core) — loads
 // cwd/.env > packageRoot/.env > global ~/.cortex/.env (+ .local overrides), never
 // clobbering real injected env. A change to the loader lives in core, not here.
+const { bootstrapEnv } = await import('@nexus-cortex/core');
 const { loadedFrom: envLoadedFrom } = bootstrapEnv(PKG_ROOT);
 
 // Parse arguments

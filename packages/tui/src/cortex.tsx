@@ -11,6 +11,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { render, Box, Text, Static, useApp, useInput } from 'ink';
+import { onboardingLines, shouldShowOnboarding, markOnboardingShown } from '@nexus-cortex/core';
 import { OrchestratorClient } from '@nexus-cortex/cli/dist/orchestrator/OrchestratorClient.js';
 import { ChatInput } from './ui/components/ChatInput.js';
 import { ThemeManager } from '@nexus-cortex/cli/dist/themes/ThemeManager.js';
@@ -429,6 +430,17 @@ Shortcuts:
     </Box>
   );
 };
+
+// L-05 first-run onboarding: one-time orientation block, printed above the
+// Ink root (content + key hints are core-owned — TUI_KEYMAP truth table).
+if (shouldShowOnboarding()) {
+  console.log('');
+  for (const line of onboardingLines('ink-chat')) {
+    console.log(line ? `  \x1b[2m${line}\x1b[0m` : '');
+  }
+  console.log('');
+  markOnboardingShown();
+}
 
 // Render the app
 render(<CortexApp />);

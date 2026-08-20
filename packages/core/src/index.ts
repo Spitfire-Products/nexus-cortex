@@ -148,3 +148,4 @@ export { NodeConfigProvider, NodeHistoryStoreAdapter, NodeToolExecutorAdapter, N
 export type { GitHistoryStoreConfig } from './adapters/node/index.js';
 
 export { TUI_KEYMAP, keymapFooterHint, keymapHelpRows, keymapKey, type TuiSurface, type KeyBinding } from './config/tuiKeymap.js';
+export { onboardingLines, shouldShowOnboarding, markOnboardingShown } from './config/tuiOnboarding.js';

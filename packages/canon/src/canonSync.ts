@@ -392,7 +392,24 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
     } catch { /* guard must never block the sync */ }
     git(['add', '-A']);
     const status = git(['status', '--porcelain']);
-    if (status.trim()) {
+    // MASS-DELETION GUARD (2026-08-20 incident 3ee5fa95): after a /tmp wipe the
+    // auto-reclone can leave a PARTIAL working tree; `git add -A` then stages
+    // every missing file as a deletion and the commit message still says
+    // "N file(s) updated" — 16,374 files (the whole store) were silently
+    // deleted this way on 2026-08-18 and only recovered from git history two
+    // days later. A sync's job is append/update; it has no legitimate reason
+    // to delete more than a handful of paths in one pass. Threshold: >10
+    // staged deletions aborts the commit loudly (the working tree is left for
+    // inspection; a genuine large cleanup can be committed by hand).
+    const stagedDeletes = status.split('\n').filter((l) => /^D /.test(l)).length;
+    if (stagedDeletes > 10) {
+      console.error(
+        `[canon-sync] ABORT: ${stagedDeletes} staged deletions — a sync never mass-deletes. ` +
+        `Working tree is likely a partial clone/checkout. Nothing committed; inspect ${STORE}.`,
+      );
+      git(['reset', '-q']);
+      skipped.push(`COMMIT ABORTED — ${stagedDeletes} staged deletions (mass-deletion guard)`);
+    } else if (status.trim()) {
       git(['commit', '-q', '-m', `canon-sync: ${copied} file(s) updated, ${skipped.length} skipped`]);
       git(['push', '-q', 'origin', 'main']);
       console.log(`[canon-sync] pushed: ${copied} copied, ${unchanged} unchanged, ${skipped.length} skipped, ${chunked} chunked, ${scrubbedHits} files had secrets scrubbed`);

@@ -20,7 +20,7 @@ import { createPersistentInput } from '../../ui/PersistentInput.js';
 import { runThemePicker } from '../../ui/ChalkThemePicker.js';
 import { showModelPicker } from '../../ui/InkModelPicker.js';
 import type { ModelDisplayInfo } from '@nexus-cortex/core';
-import { MentorshipConfigService } from '@nexus-cortex/core';
+import { MentorshipConfigService, onboardingLines, shouldShowOnboarding, markOnboardingShown } from '@nexus-cortex/core';
 import { loadPersistedModelForPlatform, type Platform } from '@nexus-cortex/cli/dist/themes/colors.js';
 import { showInteractiveMenu } from '../../ui/InkMenuPicker.js';
 import { showCommandPalette } from '../../ui/InkCommandPalette.js';
@@ -202,6 +202,18 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
     model: options.model || process.env.DEFAULT_MODEL_ID || 'default',
     cwd: process.cwd(),
   }));
+
+  // L-05 first-run onboarding: one-time orientation block (core-owned content,
+  // key hints from TUI_KEYMAP — L-08 rule). Shown once per machine; the full
+  // splash stays reachable via /about.
+  if (shouldShowOnboarding()) {
+    console.log('');
+    for (const line of onboardingLines('chalk')) {
+      console.log(theme.dimmed(line ? `  ${line}` : ''));
+    }
+    console.log('');
+    markOnboardingShown();
+  }
 
   // Show debug status inline if enabled
   if (showDebug) {
