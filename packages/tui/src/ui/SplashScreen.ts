@@ -6,6 +6,7 @@
  */
 
 import chalk from 'chalk';
+import { keymapFooterHint } from '@nexus-cortex/core';
 import { ThemeDefinition, themeDefinitions } from '@nexus-cortex/cli/dist/themes/themeDefinitions.js';
 import { loadPersistedTheme } from '@nexus-cortex/cli/dist/themes/colors.js';
 
@@ -352,7 +353,7 @@ export function printInputPromptArea(statusState?: StatusLineState): void {
   console.log(chalk.hex(theme.dimmed)('─'.repeat(width)));
   console.log(chalk.hex(theme.dimmed)(' Type your message...'));
   console.log(chalk.hex(theme.dimmed)('─'.repeat(width)));
-  console.log(chalk.hex(theme.dimmed)(' / commands • ↑↓ history • Ctrl+J new line • ←→ cursor'));
+  console.log(chalk.hex(theme.dimmed)(' ' + keymapFooterHint('chalk')));
 
   // Print status line if state provided
   if (statusState) {
@@ -389,5 +390,5 @@ export function renderInputBox(placeholder?: string): string[] {
  */
 export function renderKeyboardShortcuts(): string {
   const theme = getCurrentThemeDefinition();
-  return chalk.hex(theme.dimmed)(' / commands • ↑↓ history • Ctrl+J new line • ←→ cursor');
+  return chalk.hex(theme.dimmed)(' ' + keymapFooterHint('chalk'));
 }

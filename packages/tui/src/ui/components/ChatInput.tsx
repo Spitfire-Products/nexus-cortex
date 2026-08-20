@@ -6,6 +6,7 @@
  */
 
 import React from 'react';
+import { keymapKey } from '@nexus-cortex/core';
 import { Box, Text } from 'ink';
 import chalk from 'chalk';
 import { MultiLineInput } from './MultiLineInput.js';
@@ -67,7 +68,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         onSubmit={onSubmit}
         focus={focus}
         prompt="> "
-        placeholder="Type your message... (Shift+Enter for new line)"
+        placeholder={`Type your message... (${keymapKey('ink-chat', 'newline') ?? 'Shift+Enter'} for new line)`}
         promptColor={info}
         textColor={chalk.white}
         placeholderColor={dimmed}

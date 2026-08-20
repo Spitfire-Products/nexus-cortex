@@ -146,3 +146,5 @@ export * as RuntimeInterfaces from './interfaces/index.js';
 // Node.js runtime adapters (wraps existing services behind runtime-agnostic interfaces)
 export { NodeConfigProvider, NodeHistoryStoreAdapter, NodeToolExecutorAdapter, NodePermissionAdapter, GitHistoryStore } from './adapters/node/index.js';
 export type { GitHistoryStoreConfig } from './adapters/node/index.js';
+
+export { TUI_KEYMAP, keymapFooterHint, keymapHelpRows, keymapKey, type TuiSurface, type KeyBinding } from './config/tuiKeymap.js';

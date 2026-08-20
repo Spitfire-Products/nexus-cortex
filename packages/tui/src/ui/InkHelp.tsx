@@ -8,6 +8,7 @@
  */
 
 import React from 'react';
+import { keymapKey } from '@nexus-cortex/core';
 import { render, Box, Text, useInput } from 'ink';
 import { slashCommandRegistry } from '@nexus-cortex/core';
 import { Colors } from '@nexus-cortex/cli/dist/themes/colors.js';
@@ -100,7 +101,7 @@ const HelpDisplay: React.FC<HelpDisplayProps> = ({ onClose }) => {
 
       <Text bold color={Colors.AccentYellow}>Input Features:</Text>
       <Text>  <Text color={Colors.AccentCyan}>↑/↓</Text>         Navigate history / autocomplete</Text>
-      <Text>  <Text color={Colors.AccentCyan}>Shift+Enter</Text> Multi-line input</Text>
+      <Text>  <Text color={Colors.AccentCyan}>{keymapKey('ink-chat', 'newline') ?? 'Shift+Enter'}</Text> Multi-line input (terminal-dependent; plain terminals send Enter)</Text>
       <Text>  <Text color={Colors.AccentCyan}>/</Text>           Open command palette</Text>
       <Text></Text>
 

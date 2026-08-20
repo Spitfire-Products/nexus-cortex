@@ -50,7 +50,7 @@ import { getSuggestions, type FlatCommand } from './commands/slashCommands.js';
 import { InteractiveMenu } from '../commands/system-message/InteractiveMenu.js';
 import { SystemMessageStore } from '@nexus-cortex/core/system-messages/SystemMessageStore.js';
 import type { ModelDisplayInfo, InteractiveMenuDefinition, MenuResult } from '@nexus-cortex/core';
-import { MentorshipConfigService, slashCommandRegistry } from '@nexus-cortex/core';
+import { MentorshipConfigService, slashCommandRegistry, keymapFooterHint, keymapKey } from '@nexus-cortex/core';
 import { ModelPickerDialog } from './components/ModelPickerDialog.js';
 import { MenuRenderer } from './components/MenuRenderer.js';
 import { SubAgentPanel, createSubAgentStateManager, type SubAgentState } from './components/SubAgentPanel.js';
@@ -1074,7 +1074,7 @@ const EnhancedInput: React.FC<{
         )}
         {!showSuggestions && !isMultiLine && historyIndex === -1 && !ghostText && (
           <Text dimColor>
-            / commands • ↑↓ history • Ctrl+J new line • ←→ cursor
+            {keymapFooterHint('ink-app')}
           </Text>
         )}
         {ghostText && !showSuggestions && historyIndex === -1 && (
@@ -2936,7 +2936,7 @@ export const CortexApp: React.FC<CortexAppProps> = ({
         <Text></Text>
         <Text bold color={Colors.AccentYellow}>Input Features:</Text>
         <Text>  ↑/↓             Navigate message history</Text>
-        <Text>  Shift+Enter     Multi-line input (new line)</Text>
+        <Text>  {(keymapKey('ink-app', 'newline') ?? 'Ctrl+J').padEnd(15)} Multi-line input (new line)</Text>
         <Text>  Enter           Submit message</Text>
         <Text>  ESC             Clear input / Cancel history</Text>
         <Text></Text>
