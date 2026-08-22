@@ -1164,6 +1164,10 @@ export class CortexOrchestrator {
     // Card-level home door: capture the active card's anchorProfile (env
     // CORTEX_TOOL_ANCHOR overrides inside the resolver; env 'none' disables).
     this.cardAnchorProfile = (effectiveModel as { anchorProfile?: string }).anchorProfile ?? null;
+    // Thread the CARD's anchor to the executors (per-orchestrator config, by
+    // reference) so framing-aware executor behavior (ShellTool steering
+    // default) is model-card/registry-scoped, not process-global env.
+    this.executorRegistry.updateConfig({ activeAnchorProfile: this.cardAnchorProfile });
     if (toolsToUse && toolsToUse.length > 0) {
       toolsToUse = this.applyAnchorIfArmed(toolsToUse);
     }
@@ -3282,6 +3286,10 @@ export class CortexOrchestrator {
     // Card-level home door: capture the active card's anchorProfile (env
     // CORTEX_TOOL_ANCHOR overrides inside the resolver; env 'none' disables).
     this.cardAnchorProfile = (effectiveModel as { anchorProfile?: string }).anchorProfile ?? null;
+    // Thread the CARD's anchor to the executors (per-orchestrator config, by
+    // reference) so framing-aware executor behavior (ShellTool steering
+    // default) is model-card/registry-scoped, not process-global env.
+    this.executorRegistry.updateConfig({ activeAnchorProfile: this.cardAnchorProfile });
     if (toolsToUse && toolsToUse.length > 0) {
       toolsToUse = this.applyAnchorIfArmed(toolsToUse);
     }

@@ -746,9 +746,19 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
     const redirectsEnv = (process.env.CORTEX_TOOL_REDIRECTS ?? '').trim().toLowerCase();
     if (redirectsEnv === 'off') return null;
     if (redirectsEnv !== 'on') {
-      const anchor = (process.env.CORTEX_TOOL_ANCHOR ?? '').trim().toLowerCase();
-      const bashFramed = this.resolveActiveToolProfile().startsWith('bash-') ||
-        anchor === 'bash-only' || anchor === 'bash-plus' || anchor === 'bash-edit';
+      // CARD/REGISTRY-scoped (per-orchestrator, threaded via
+      // ExecutorRegistry.updateConfig at request assembly): the active model
+      // card's anchorProfile — the PRODUCTION framing signal (deepseek cards
+      // = bash-edit). Env anchor/profile are the bench/override levers.
+      const cardAnchor = ((this.config as { activeAnchorProfile?: string | null }).activeAnchorProfile ?? '')
+        .trim().toLowerCase();
+      const envAnchor = (process.env.CORTEX_TOOL_ANCHOR ?? '').trim().toLowerCase();
+      const isBashDoor = (v: string) => v === 'bash-only' || v === 'bash-plus' || v === 'bash-edit';
+      // Env 'none'/'full'/'off' explicitly disables anchoring — it must also
+      // cancel the card's framing signal here (mirrors resolveToolAnchor).
+      const envAnchorOff = envAnchor === 'none' || envAnchor === 'full' || envAnchor === 'off';
+      const anchorFramed = envAnchorOff ? false : (isBashDoor(envAnchor) || isBashDoor(cardAnchor));
+      const bashFramed = this.resolveActiveToolProfile().startsWith('bash-') || anchorFramed;
       if (bashFramed) return null;
     }
     // Profile gate: never redirect to tools the active profile hides.

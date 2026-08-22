@@ -286,6 +286,18 @@ export interface ExecutorConfig {
   workingDirectory: string;
 
   /**
+   * The active MODEL CARD's anchorProfile for the current session (e.g.
+   * 'bash-edit' on the deepseek cards), threaded by the orchestrator at
+   * request assembly via ExecutorRegistry.updateConfig. This is the
+   * CARD/REGISTRY-scoped signal executors use for framing-aware behavior
+   * (e.g. ShellTool's dedicated-tool steering defaults OFF under a bash-*
+   * framing) — per-orchestrator, NOT process-global env. Env levers
+   * (CORTEX_TOOL_REDIRECTS / CORTEX_TOOL_ANCHOR / CORTEX_TOOL_PROFILE)
+   * remain explicit overrides on top.
+   */
+  activeAnchorProfile?: string | null;
+
+  /**
    * Additional directories the user has explicitly granted tool access to,
    * OUTSIDE the working directory (the `--add-dir` / CORTEX_ADD_DIRS mechanism,
    * same model as `claude --add-dir`). Absolute paths. File tools treat a path
