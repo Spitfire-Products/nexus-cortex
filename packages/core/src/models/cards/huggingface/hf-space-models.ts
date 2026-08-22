@@ -50,6 +50,11 @@ const SPECS: SpaceModelSpec[] = [
   { envSlug: 'LFM2_5_350M',  id: 'lfm2.5-350m-space',  displayName: 'LFM2.5 350M (HF Space)',     family: 'lfm2.5',  repo: 'LiquidAI/LFM2.5-350M',           contextWindow: 32768, reasoning: false, defaultTemperature: 0.3 },
   { envSlug: 'LFM2_5_1_2B',  id: 'lfm2.5-1.2b-space',  displayName: 'LFM2.5 1.2B (HF Space)',     family: 'lfm2.5',  repo: 'LiquidAI/LFM2.5-1.2B-Instruct',  contextWindow: 32768, reasoning: false, defaultTemperature: 0.3 },
   { envSlug: 'LFM2_5_1_2B_THINKING', id: 'lfm2.5-1.2b-thinking-space', displayName: 'LFM2.5 1.2B Thinking (HF Space)', family: 'lfm2.5', repo: 'LiquidAI/LFM2.5-1.2B-Thinking', contextWindow: 32768, reasoning: true, defaultTemperature: 0.3 },
+  // New-generation LFM2.5 (128K vocab lineage; both always-think). Vendor temps
+  // (2.6B gen_config 0.1 / 8B 0.2); rep-penalty is NOT expressible via the card
+  // — confound-check degenerate recursion before believing any 0/N.
+  { envSlug: 'LFM2_5_2_6B',  id: 'lfm2.5-2.6b-space',  displayName: 'LFM2.5 2.6B (HF Space)',     family: 'lfm2.5',  repo: 'LiquidAI/LFM2.5-2.6B',           contextWindow: 32768, reasoning: true, defaultTemperature: 0.1 },
+  { envSlug: 'LFM2_5_8B_A1B', id: 'lfm2.5-8b-a1b-space', displayName: 'LFM2.5 8B-A1B MoE (HF Space)', family: 'lfm2.5', repo: 'LiquidAI/LFM2.5-8B-A1B',       contextWindow: 32768, reasoning: true, defaultTemperature: 0.2 },
   // MiniCPM5 1.08B (dense Llama arch, apache-2.0; hybrid <think>; own XML tool
   // family — see normalize.ts). Temp 0.3 = tool-stability override (vendor chat
   // default is 0.9/0.95, but router-bench r8/r8b: 100/300 @0.9 vs 250/300 @0.3 —

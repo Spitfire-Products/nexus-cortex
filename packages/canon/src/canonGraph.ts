@@ -27,7 +27,7 @@
  *
  * @module canon/canonGraph
  */
-import { requireCanonRepo, redactRepoUrl, canonGit } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { discoverCanonSessions, type CanonSession } from './canonPull.js';
@@ -187,7 +187,7 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
   if (!fs.existsSync(path.join(STORE, '.git'))) {
     const repo = requireCanonRepo(undefined, STORE, 'canon-graph');
     console.log(`[canon-graph] no store at ${STORE} — cloning ${redactRepoUrl(repo)}`);
-    canonGit(null, 'canon-graph')(['clone', '-q', repo, STORE]);
+    atomicClone(repo, STORE, 'canon-graph');
   }
   const projects = deriveProjectSessionMap(STORE);
   const sessions = discoverCanonSessions(STORE);
@@ -464,8 +464,7 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
   const summary = `${built.length} project graph(s), ${totalNodes} nodes, ${totalLinks} links` + (unchangedGraphs ? `, ${unchangedGraphs} unchanged (stamp kept)` : '');
   if (!o.dryRun) {
     const git = canonGit(STORE, 'canon-graph');
-    git(['add', '-A']);
-    if (git(['status', '--porcelain']).trim()) {
+    if (guardedAddAll(git, 'canon-graph')) {
       git(['commit', '-q', '-m', `canon-graph: ${summary}`]);
       git(['push', '-q', 'origin', 'main']);
       console.log(`[canon-graph] pushed: ${summary}`);

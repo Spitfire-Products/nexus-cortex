@@ -11,6 +11,7 @@
  */
 
 import type { PermissionPolicy } from '../contracts/MiddlewareContracts.js';
+import { analyzeBashCommand } from './bashCommandView.js';
 
 /**
  * Whitelist Policy: Safe research/read operations that never need approval
@@ -129,32 +130,41 @@ export const whitelistPolicy: PermissionPolicy = {
         'cd' // Change directory (safe)
       ];
 
+      // Heredoc/redirect-aware structural analysis (2026-08-22). The old rule
+      // here was `cmd.match(/[<>]/)` — ANY angle bracket (every heredoc, every
+      // `2>/dev/null`, a `<` in a quoted string) ejected the command from the
+      // whitelist. Built when models were unreliable with heredocs; the
+      // narrow-door program showed they no longer are. Now: only a REAL file
+      // write (`>`/`>>` to a non-sink target) leaves the whitelist — as a
+      // graylist WRITE (parity with the Write tool), not a hard ejection.
+      // Stdin feeds (`<`), heredocs (`<<`), and null sinks stay whitelistable;
+      // matching runs on the heredoc-body-free view (bodies are data).
+      const structure = analyzeBashCommand(cmd);
+      if (structure.hasFileWriteRedirect) {
+        return { allowed: true }; // A write — pass-through to graylist
+      }
+      const matchText = structure.view.trim();
+
       // Check if command matches any safe command (with or without args)
       const isSafeCommand = safeReadCommands.some((safe) => {
         // Exact match (e.g., "ls" === "ls")
-        if (cmd === safe) return true;
+        if (matchText === safe) return true;
 
         // Command with arguments (e.g., "ls -la" starts with "ls ")
         // Works for both single-word ("ls") and multi-word ("git status") commands
-        if (cmd.startsWith(safe + ' ')) return true;
+        if (matchText.startsWith(safe + ' ')) return true;
 
         return false;
       });
 
-      // For compound commands (with &&, ||, |, ;), check if ALL parts are safe
-      // Safe operators: && (and), || (or), | (pipe), ; (sequence)
-      // Unsafe operators: >, >>, <, << (redirects)
-      const hasUnsafeOperators = cmd.match(/[<>]/);
-
-      if (hasUnsafeOperators) {
-        // Has redirects - not safe even if commands are safe
-        return { allowed: true }; // Pass-through to graylist
-      }
-
-      // Split by safe operators and check if all parts are safe commands
-      const commandParts = cmd.split(/\s*(?:&&|\|\||[|;])\s*/).filter(Boolean);
+      // Split by safe operators (&&, ||, |, ;) and check if all parts are safe.
+      // Redirect operators inside parts were handled structurally above.
+      const commandParts = matchText.split(/\s*(?:&&|\|\||[|;])\s*/).filter(Boolean);
       const allPartsAreSafe = commandParts.every((part: string) => {
-        const trimmed = part.trim();
+        // Strip stdin/heredoc operator tails so `sort < file` / `cat <<'EOF'`
+        // match on their command head.
+        const trimmed = part.trim().replace(/\s*<<?-?\s*.*$/, '').trim();
+        if (!trimmed) return true; // pure operator remnant
         return safeReadCommands.some((safe) => {
           // Check if this part matches a safe command
           return trimmed === safe || trimmed.startsWith(safe + ' ');
@@ -266,7 +276,13 @@ export const blacklistPolicy: PermissionPolicy = {
         'killall',
       ];
 
-      const isDangerous = dangerousPatterns.some((pattern) => cmd.includes(pattern));
+      // Heredoc bodies are DATA unless fed to an interpreter that executes
+      // stdin (2026-08-22): `cat > deploy.sh <<EOF` containing `rm -rf ./dist`
+      // is a WRITE of text, not an execution — scan the body-free view.
+      // `bash <<EOF` DOES execute its body — scan the full command.
+      const bl = analyzeBashCommand(cmd);
+      const scanText = bl.interpreterFed ? cmd : bl.view;
+      const isDangerous = dangerousPatterns.some((pattern) => scanText.includes(pattern));
 
       if (isDangerous) {
         const previewCmd = cmd.substring(0, 50) + (cmd.length > 50 ? '...' : '');

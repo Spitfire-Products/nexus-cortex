@@ -11,6 +11,7 @@
  * @module canon/canonRepo
  */
 import { execFileSync } from 'node:child_process';
+import * as fs from 'node:fs';
 
 /** The remote URL if configured (explicit option wins over CANON_REPO env), else null. */
 export function resolveCanonRepo(explicit?: string): string | null {
@@ -97,4 +98,63 @@ export function canonGit(cwd: string | null, label: string): (args: string[]) =>
       throw e;
     }
   };
+}
+
+/**
+ * Guarded stage-everything: `git add -A` + refuse to proceed when the staged
+ * set contains a MASS DELETION. Canon verbs append and update; none has a
+ * legitimate reason to delete more than a handful of paths in one pass — a
+ * large staged-deletion set means the working tree is a partial clone/checkout
+ * (the 2026-08-18 + 2026-08-20 incidents: a /tmp-reaped store was re-cloned /
+ * operated on mid-checkout, `git add -A` staged every missing file as deleted,
+ * and the commit message still read "N file(s) updated"). Every canon commit
+ * path (sync/translate/graph/artifacts) MUST stage through this helper.
+ * Returns true when it is safe to commit; false = staged set was reset,
+ * nothing may be committed this pass.
+ */
+export function guardedAddAll(git: (args: string[]) => string, label: string, maxDeletes = 10): boolean {
+  git(['add', '-A']);
+  const status = git(['status', '--porcelain']);
+  const stagedDeletes = status.split('\n').filter((l) => /^D /.test(l)).length;
+  if (stagedDeletes > maxDeletes) {
+    console.error(
+      `[${label}] ABORT: ${stagedDeletes} staged deletions — a canon verb never mass-deletes. ` +
+      'Working tree is likely a partial clone/checkout; nothing committed.',
+    );
+    git(['reset', '-q']);
+    return false;
+  }
+  return status.trim().length > 0;
+}
+
+/**
+ * Atomic clone: clone into a sibling temp dir, then rename into place. The
+ * store path NEVER contains a `.git` over a partially-checked-out tree, so a
+ * concurrent canon verb either sees no store (and clones/waits itself) or a
+ * COMPLETE one — the mid-checkout race that fed both mass-deletion incidents
+ * is structurally closed. Cleans up the temp dir on failure.
+ */
+export function atomicClone(repoUrl: string, storePath: string, label: string): void {
+  const tmp = `${storePath}.cloning-${process.pid}`;
+  fs.rmSync(tmp, { recursive: true, force: true });
+  try {
+    execFileSync('git', [...gitAuthArgs(), 'clone', '-q', repoUrl, tmp], {
+      encoding: 'utf8',
+      maxBuffer: 256 * 1024 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    // A racing process may have completed its own clone while ours ran — keep
+    // theirs (it is complete by the same invariant) and discard ours.
+    if (fs.existsSync(`${storePath}/.git`)) {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      return;
+    }
+    fs.renameSync(tmp, storePath);
+  } catch (e) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    const stderr = redactRepoUrl(String((e as { stderr?: string }).stderr ?? (e as Error).message ?? e));
+    console.error(`[${label}] clone FAILED: ${stderr.trim().split('\n').pop()}`);
+    throw e;
+  }
 }

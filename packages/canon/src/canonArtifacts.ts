@@ -18,7 +18,7 @@
  *
  * @module canon/canonArtifacts
  */
-import { requireCanonRepo, redactRepoUrl, canonGit } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone } from './canonRepo.js';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -83,7 +83,7 @@ export async function canonArtifacts(o: CanonArtifactsOptions = {}): Promise<Can
   if (!fs.existsSync(path.join(STORE, '.git'))) {
     const CANON_REPO = requireCanonRepo(o.repoUrl, STORE, 'canon-artifacts');
     console.log(`[canon-artifacts] no store at ${STORE} — cloning ${redactRepoUrl(CANON_REPO)}`);
-    canonGit(null, 'canon-artifacts')(['clone', '-q', CANON_REPO, STORE]);
+    atomicClone(CANON_REPO, STORE, 'canon-artifacts');
   }
   const incr: Record<string, string> = fs.existsSync(MANIFEST_PATH)
     ? JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8')) : {};
@@ -242,8 +242,7 @@ export async function canonArtifacts(o: CanonArtifactsOptions = {}): Promise<Can
     fs.mkdirSync(path.dirname(MANIFEST_PATH), { recursive: true });
     fs.writeFileSync(MANIFEST_PATH, JSON.stringify(incr));
     const git = canonGit(STORE, 'canon-artifacts');
-    git(['add', '-A']);
-    if (git(['status', '--porcelain']).trim()) {
+    if (guardedAddAll(git, 'canon-artifacts')) {
       git(['commit', '-q', '-m', `canon-artifacts: ${summary}`]);
       git(['push', '-q', 'origin', 'main']);
       console.log(`[canon-artifacts] pushed: ${summary}`);

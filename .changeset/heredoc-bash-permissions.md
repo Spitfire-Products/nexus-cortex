@@ -1,0 +1,7 @@
+---
+"@nexus-cortex/core": minor
+"@nexus-cortex/executors": patch
+---
+
+Heredoc-aware bash permissions + tool-redirect kill switch (operator-commissioned). The early-development rule treated every `<`/`>` as unsafe — all heredocs (including pure stdin feeds that write nothing) fell out of the safe whitelist, and dangerous-pattern scans read heredoc BODIES (writing a script containing `rm -rf ./dist` tripped DANGEROUS). The narrow-door program showed modern and bash-trained models are heredoc-proficient, so the analysis is now structural (`bashCommandView.ts`): stdin-only heredocs of safe commands are whitelisted; `>`/`>>` to a real file passes to graylist as a WRITE (parity with the Write tool — auto-approvable, not ejected); null sinks (`2>/dev/null`, `2>&1`) stay safe; danger scans exclude non-interpreter heredoc bodies but keep full scan when the body is fed to an interpreter (`bash <<EOF` executes it). Separately, `CORTEX_TOOL_REDIRECTS=off` disables ShellTool's dedicated-tool steering (the "Use the Read tool instead of `cat`" class) for bash-focused deployments; default stays `on` — flipping the published default is a measured decision.
+ FOLLOW-UP measured same-day (P4pro2/P4pro2on re-cell): the steering default is now BASH-FRAMING-AWARE — a bash-* session profile or bash-* first-turn anchor defaults the redirects OFF (explicit CORTEX_TOOL_REDIRECTS=on|off always wins); measured same-build cost of redirects-ON for the bash-edit-framed arm was +26% tool calls / +30% latency at zero accuracy delta.

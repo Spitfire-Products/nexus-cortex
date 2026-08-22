@@ -17,7 +17,7 @@
  *
  * @module canon/canonTranslate
  */
-import { requireCanonRepo, redactRepoUrl, canonGit } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
@@ -881,8 +881,10 @@ Until then their absence is stated here rather than implied.
   fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest));
 
   let pushed = false;
-  git(['add', '-A']);
-  if (git(['status', '--porcelain']).trim()) {
+  // Mass-deletion guard (incident 3949c39d 2026-08-20: THIS path committed a
+  // 16,445-file deletion from a partial working tree while only sync was
+  // guarded). All canon commit paths stage through guardedAddAll.
+  if (guardedAddAll(git, 'canon-translate')) {
     git(['commit', '-q', '-m', `canon-translate: ${summary}`]);
     git(['push', '-q', 'origin', 'main']);
     console.log(`[canon-translate] pushed: ${summary}`);

@@ -730,6 +730,27 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
    * @private
    */
   private checkToolRedirect(command: string): string | null {
+    // CORTEX_TOOL_REDIRECTS=off disables the dedicated-tool steering entirely
+    // (2026-08-22, operator-commissioned): the redirects date from when models
+    // were unreliable with shell idioms; the narrow-door program showed
+    // bash-focused models (incl. our trained small executors) work best when
+    // bash is not second-guessed.
+    //
+    // DEFAULT is bash-framing-aware (P4pro2/P4pro2on measured, 2026-08-22):
+    // when the session is bash-framed — a bash-* session PROFILE or a bash-*
+    // first-turn ANCHOR (the anchor lifts to the full profile after turn 1,
+    // which is exactly how D61's tax leaked into every door bench) — the
+    // steering defaults OFF: on the same build, redirects-ON cost the
+    // bash-edit arm +26% tool calls / +30% latency (retry bounces) at zero
+    // accuracy difference. Explicit CORTEX_TOOL_REDIRECTS=on|off always wins.
+    const redirectsEnv = (process.env.CORTEX_TOOL_REDIRECTS ?? '').trim().toLowerCase();
+    if (redirectsEnv === 'off') return null;
+    if (redirectsEnv !== 'on') {
+      const anchor = (process.env.CORTEX_TOOL_ANCHOR ?? '').trim().toLowerCase();
+      const bashFramed = this.resolveActiveToolProfile().startsWith('bash-') ||
+        anchor === 'bash-only' || anchor === 'bash-plus' || anchor === 'bash-edit';
+      if (bashFramed) return null;
+    }
     // Profile gate: never redirect to tools the active profile hides.
     if (!this.redirectTargetsAvailable()) {
       return null;

@@ -15,10 +15,9 @@
  *
  * @module canon/canonSync
  */
-import { requireCanonRepo, redactRepoUrl, gitAuthArgs, canonGit } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { execFileSync } from 'node:child_process';
 
 export interface CanonSyncOptions {
   /** Canon store working clone (default /tmp/canon-store — off-quota; auto-cloned). */
@@ -143,26 +142,13 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
     // workspace quota — pass --store /tmp/canon-store); remote is the truth.
     const CANON_REPO = requireCanonRepo(o.repoUrl, STORE, 'canon-sync');
     console.log(`[canon-sync] no store at ${STORE} — cloning ${redactRepoUrl(CANON_REPO)}`);
-    try {
-      // stdio piped: git's stderr must NEVER bleed into the host terminal (an
-      // interactive PTY renders it as corruption); captured on the error instead.
-      execFileSync('git', [...gitAuthArgs(), 'clone', '-q', CANON_REPO, STORE], {
-        encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-    } catch (e) {
-      // Surface an ACTIONABLE, redacted failure line (console → CANON_LOG_FILE in
-      // hosted mode) instead of the previous silent forever-retry. The classic
-      // signature `could not read Username` / 401 = missing OR REVOKED token —
-      // in the hosted flow that means the vault credential is stale: re-save the
-      // canon store in CORTEX -> Connections ("Save for hosted sessions").
-      const stderr = redactRepoUrl(String((e as { stderr?: string }).stderr ?? (e as Error).message ?? e));
-      const hint = /could not read Username|Authentication failed|401|403/.test(stderr)
-        ? ' — token missing/invalid (GH_TOKEN). Hosted: re-save the canon store in CORTEX -> Connections (Save for hosted sessions) and reconnect.'
-        : '';
-      console.error(`[canon-sync] clone FAILED: ${stderr.trim().split('\n').pop()}${hint}`);
-      throw e;
-    }
+    // Atomic clone (temp dir + rename): the store path never holds a .git over
+    // a partial checkout, so a concurrent canon verb can't operate on (and
+    // commit!) a half tree — the 08-18/08-20 mass-deletion race. Auth-failure
+    // hint (`could not read Username`/401 = missing/REVOKED GH_TOKEN; hosted:
+    // re-save the canon store in CORTEX -> Connections) surfaces from the
+    // helper's redacted error line.
+    atomicClone(CANON_REPO, STORE, 'canon-sync');
   }
 
   type Manifest = Record<string, { mtimeMs: number; size: number }>;
@@ -390,26 +376,14 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
       };
       purgeStaleTmp(STORE);
     } catch { /* guard must never block the sync */ }
-    git(['add', '-A']);
-    const status = git(['status', '--porcelain']);
-    // MASS-DELETION GUARD (2026-08-20 incident 3ee5fa95): after a /tmp wipe the
-    // auto-reclone can leave a PARTIAL working tree; `git add -A` then stages
-    // every missing file as a deletion and the commit message still says
-    // "N file(s) updated" — 16,374 files (the whole store) were silently
-    // deleted this way on 2026-08-18 and only recovered from git history two
-    // days later. A sync's job is append/update; it has no legitimate reason
-    // to delete more than a handful of paths in one pass. Threshold: >10
-    // staged deletions aborts the commit loudly (the working tree is left for
-    // inspection; a genuine large cleanup can be committed by hand).
-    const stagedDeletes = status.split('\n').filter((l) => /^D /.test(l)).length;
-    if (stagedDeletes > 10) {
-      console.error(
-        `[canon-sync] ABORT: ${stagedDeletes} staged deletions — a sync never mass-deletes. ` +
-        `Working tree is likely a partial clone/checkout. Nothing committed; inspect ${STORE}.`,
-      );
-      git(['reset', '-q']);
-      skipped.push(`COMMIT ABORTED — ${stagedDeletes} staged deletions (mass-deletion guard)`);
-    } else if (status.trim()) {
+    // MASS-DELETION GUARD (incidents 3ee5fa95 + 3949c39d — the second one came
+    // through the TRANSLATE commit path while only sync was guarded): shared
+    // guardedAddAll refuses to commit a staged set with >10 deletions (partial
+    // clone/checkout tree). ALL canon commit paths stage through it now.
+    const stageOk = guardedAddAll(git, 'canon-sync');
+    if (!stageOk && git(['status', '--porcelain']).trim()) {
+      skipped.push('COMMIT ABORTED — mass-deletion guard (staged deletions reset)');
+    } else if (stageOk) {
       git(['commit', '-q', '-m', `canon-sync: ${copied} file(s) updated, ${skipped.length} skipped`]);
       git(['push', '-q', 'origin', 'main']);
       console.log(`[canon-sync] pushed: ${copied} copied, ${unchanged} unchanged, ${skipped.length} skipped, ${chunked} chunked, ${scrubbedHits} files had secrets scrubbed`);
