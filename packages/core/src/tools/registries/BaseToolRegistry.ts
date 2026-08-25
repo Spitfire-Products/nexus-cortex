@@ -972,6 +972,7 @@ Use plan mode for tasks with genuine ambiguity — multiple reasonable architect
 
 - citations: list EACH specific reference in your draft with the exact verbatim source you copied it from this turn. If you cannot produce the verbatim source, the reference is unverified — delete it from your answer and do not list it (quote the code instead of asserting a coordinate). Inventing one is a failed answer, exactly like a non-matching edit old_string.
 - verification: list each build/test/lint command you actually ran with the real result line you saw. Do not list a command you did not run.
+- requirements: re-read the ORIGINAL task statement and list each requirement it states, with what in your artifact satisfies it and the command/observation that proves it (or the literal "UNVERIFIED"). Finishing without checking the artifact against the stated task is the most common failed answer.
 - self_review: re-read your draft as a skeptical reviewer — what you did NOT check, what is assumed/possibly wrong, what one more tool call would verify. This pass exists to catch your own mistakes before they ship.
 - summary / open_items: what you delivered and any gaps — do not hide them.
 
@@ -1001,6 +1002,19 @@ After EndTurn returns, act on your own self_review, then produce your final plai
               observed_result: { type: 'string', description: "The actual result line you saw in this turn's tool output." }
             },
             required: ['command', 'observed_result']
+          }
+        },
+        requirements: {
+          type: 'array',
+          description: 'Each requirement STATED in the original task, checked against your artifact. Empty array = the turn had no stated task. verified_how is the command/observation proving the requirement is met, or the literal string "UNVERIFIED".',
+          items: {
+            type: 'object',
+            properties: {
+              requirement: { type: 'string', description: 'A requirement as stated in the task.' },
+              satisfied_by: { type: 'string', description: 'What in your artifact satisfies it.' },
+              verified_how: { type: 'string', description: 'The command/observation that proves it — or "UNVERIFIED".' }
+            },
+            required: ['requirement', 'satisfied_by', 'verified_how']
           }
         },
         summary: {

@@ -13,6 +13,7 @@ import {
   isNarrowProfile,
   applyToolProfile,
   isToolAllowedByProfile,
+  resolveFrameProfile,
 } from '../ToolProfile.js';
 import { toolFactory } from '../ToolFactory.js';
 
@@ -161,5 +162,34 @@ describe('isToolAllowedByProfile (dispatch-guard face)', () => {
     expect(isToolAllowedByProfile('AskUserQuestion', tier, 'bash-plus')).toBe(true);
     expect(isToolAllowedByProfile('Grep', tier, 'bash-plus')).toBe(false);
     expect(isToolAllowedByProfile('WebSearch', tier, 'bash-plus')).toBe(false);
+  });
+});
+
+describe('resolveFrameProfile (backlog item 5 — per-model frame defaults)', () => {
+
+  it('defaults to lifted (no env, no card)', () => {
+    expect(resolveFrameProfile({} as NodeJS.ProcessEnv, null)).toBe('lifted');
+  });
+  it('card frameProfile persist is honored', () => {
+    expect(resolveFrameProfile({} as NodeJS.ProcessEnv, 'persist')).toBe('persist');
+  });
+  it('env true overrides card lifted', () => {
+    expect(resolveFrameProfile({ CORTEX_TOOL_ANCHOR_PERSIST: 'true' } as NodeJS.ProcessEnv, 'lifted')).toBe('persist');
+  });
+  it('env false overrides card persist (experiment kill-switch)', () => {
+    expect(resolveFrameProfile({ CORTEX_TOOL_ANCHOR_PERSIST: 'false' } as NodeJS.ProcessEnv, 'persist')).toBe('lifted');
+  });
+  it('env accepts 1/0/persist/lifted/off spellings', () => {
+    expect(resolveFrameProfile({ CORTEX_TOOL_ANCHOR_PERSIST: '1' } as NodeJS.ProcessEnv, null)).toBe('persist');
+    expect(resolveFrameProfile({ CORTEX_TOOL_ANCHOR_PERSIST: 'persist' } as NodeJS.ProcessEnv, null)).toBe('persist');
+    expect(resolveFrameProfile({ CORTEX_TOOL_ANCHOR_PERSIST: '0' } as NodeJS.ProcessEnv, 'persist')).toBe('lifted');
+    expect(resolveFrameProfile({ CORTEX_TOOL_ANCHOR_PERSIST: 'off' } as NodeJS.ProcessEnv, 'persist')).toBe('lifted');
+  });
+  it('garbage env falls through to card', () => {
+    expect(resolveFrameProfile({ CORTEX_TOOL_ANCHOR_PERSIST: 'banana' } as NodeJS.ProcessEnv, 'persist')).toBe('persist');
+    expect(resolveFrameProfile({ CORTEX_TOOL_ANCHOR_PERSIST: 'banana' } as NodeJS.ProcessEnv, null)).toBe('lifted');
+  });
+  it('garbage card falls back to lifted', () => {
+    expect(resolveFrameProfile({} as NodeJS.ProcessEnv, 'sideways')).toBe('lifted');
   });
 });

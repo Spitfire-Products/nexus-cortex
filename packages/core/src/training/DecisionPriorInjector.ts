@@ -43,3 +43,34 @@ export function formatPriorReminder(
     `<system-reminder>PRIOR DECISIONS for tool "${toolName}" with this exact input: ${ratio}.${errorPart}${recentBlock} Consider checking inputs or trying an alternate approach before retrying the same call.</system-reminder>\n\n`
   );
 }
+
+
+/**
+ * Family-level reminder (AHE borrow): fires when the SAME error family has
+ * failed on >=2 DIFFERENT inputs — the agent is retrying variations of one
+ * failing approach. Identical-input retries stay the exact-input reminder's
+ * job (require distinctInputs >= 2 so the two never stack for one cause).
+ */
+export function formatFamilyReminder(
+  toolName: string,
+  family: string,
+  count: number,
+  distinctInputs: number,
+  recent: Decision[],
+): string | null {
+  if (count < 2 || distinctInputs < 2) return null;
+  let recentBlock = '';
+  if (recent.length > 0) {
+    const lines = recent.slice(0, RECENT_LIMIT).map((d, i) => {
+      const err = d.errorSnippet ? `: ${d.errorSnippet}` : '';
+      return ` ${i + 1}. failed${err}`;
+    });
+    recentBlock = ` Recent similar failures (newest first):\n${lines.join('\n')}`;
+  }
+  return (
+    `<system-reminder>REPEATED FAILURE PATTERN for tool "${toolName}": ${count} similar failures ` +
+    `across ${distinctInputs} different inputs (error family: "${family}").` +
+    `${recentBlock} Stop retrying variations of the same approach — inspect the contract/path/` +
+    `signature once, then switch to a different strategy.</system-reminder>\n\n`
+  );
+}

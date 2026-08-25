@@ -14,6 +14,9 @@ import { DEFAULT_SETTINGS } from "../../config/SettingsSchema.js";
 export interface XAIModelOptions {
   /** Home-door first-turn anchor profile (BASH_PLUS_SPEC per-family evidence). */
   anchorProfile?: 'lean' | 'bash-only' | 'bash-plus' | 'bash-edit';
+  /** Anchor frame: 'lifted' (default) lifts at first tool_result; 'persist'
+   *  keeps the anchored surface all session (backlog item 5). */
+  frameProfile?: 'lifted' | 'persist';
   id: string;
   displayName: string;
   family: string;
@@ -70,6 +73,7 @@ export function createXAIModelConfig(options: XAIModelOptions): ModelConfig {
 
   return {
     ...(options.anchorProfile ? { anchorProfile: options.anchorProfile } : {}),
+    ...(options.frameProfile ? { frameProfile: options.frameProfile } : {}),
     id: options.id,
     ...(options.modelId && { modelId: options.modelId }),
     provider: "xai",

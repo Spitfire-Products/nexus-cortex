@@ -17,7 +17,7 @@
  *
  * @module canon/canonTranslate
  */
-import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, guardedPush } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
@@ -886,9 +886,9 @@ Until then their absence is stated here rather than implied.
   // guarded). All canon commit paths stage through guardedAddAll.
   if (guardedAddAll(git, 'canon-translate')) {
     git(['commit', '-q', '-m', `canon-translate: ${summary}`]);
-    git(['push', '-q', 'origin', 'main']);
-    console.log(`[canon-translate] pushed: ${summary}`);
-    pushed = true;
+    pushed = guardedPush(git, 'canon-translate');
+    if (pushed) console.log(`[canon-translate] pushed: ${summary}`);
+    else console.log(`[canon-translate] committed locally, push deferred to next cycle: ${summary}`);
   } else {
     console.log(`[canon-translate] no changes (${summary})`);
   }

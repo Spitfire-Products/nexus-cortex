@@ -27,7 +27,7 @@
  *
  * @module canon/canonGraph
  */
-import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { discoverCanonSessions, type CanonSession } from './canonPull.js';
@@ -466,9 +466,9 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
     const git = canonGit(STORE, 'canon-graph');
     if (guardedAddAll(git, 'canon-graph')) {
       git(['commit', '-q', '-m', `canon-graph: ${summary}`]);
-      git(['push', '-q', 'origin', 'main']);
-      console.log(`[canon-graph] pushed: ${summary}`);
-      pushed = true;
+      pushed = guardedPush(git, 'canon-graph');
+      if (pushed) console.log(`[canon-graph] pushed: ${summary}`);
+      else console.log(`[canon-graph] committed locally, push deferred to next cycle: ${summary}`);
     } else console.log(`[canon-graph] no changes (${summary})`);
   } else console.log(`[canon-graph DRY] ${summary}`);
   return { projects: built, nodes: totalNodes, links: totalLinks, pushed };

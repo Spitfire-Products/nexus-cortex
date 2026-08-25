@@ -15,7 +15,7 @@
  *
  * @module canon/canonSync
  */
-import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -385,9 +385,9 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
       skipped.push('COMMIT ABORTED — mass-deletion guard (staged deletions reset)');
     } else if (stageOk) {
       git(['commit', '-q', '-m', `canon-sync: ${copied} file(s) updated, ${skipped.length} skipped`]);
-      git(['push', '-q', 'origin', 'main']);
-      console.log(`[canon-sync] pushed: ${copied} copied, ${unchanged} unchanged, ${skipped.length} skipped, ${chunked} chunked, ${scrubbedHits} files had secrets scrubbed`);
-      pushed = true;
+      pushed = guardedPush(git, 'canon-sync');
+      if (pushed) console.log(`[canon-sync] pushed: ${copied} copied, ${unchanged} unchanged, ${skipped.length} skipped, ${chunked} chunked, ${scrubbedHits} files had secrets scrubbed`);
+      else console.log(`[canon-sync] committed locally, push deferred to next cycle: ${copied} copied, ${unchanged} unchanged, ${skipped.length} skipped, ${chunked} chunked, ${scrubbedHits} files had secrets scrubbed`);
     } else {
       console.log(`[canon-sync] no changes (${unchanged} unchanged, ${skipped.length} previously-skipped)`);
     }

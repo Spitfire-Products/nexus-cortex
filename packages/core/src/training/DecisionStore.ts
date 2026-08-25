@@ -14,6 +14,7 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { classifyErrorFamily } from './errorFamily.js';
 import { createHash } from 'crypto';
 
 export interface DecisionInput {
@@ -37,6 +38,31 @@ export interface Decision {
   /** Active tool-surface arm (CORTEX_TOOL_PROFILE) — stamped when not 'full',
    *  so the tool-profile A/B can slice selection/success per arm. */
   toolProfile?: string;
+  /** Present ONLY on event rows (recordEvent) — steering/guard observability
+   *  records riding the same JSONL. Rows with `kind` set are EXCLUDED from
+   *  every prior-lookup path (lookup/recent/familyFailures/stats) so events
+   *  can never pollute priors. TB2 finding: injected steering (budget/
+   *  diversity/ladder signals) mutates tool_results AFTER session persist, so
+   *  the durable session lacks what the model saw — these records are the
+   *  distiller's only view of it. */
+  kind?: SteeringEventKind;
+  /** Free-shape event payload (small — truncated summaries only). */
+  detail?: Record<string, unknown>;
+}
+
+/** Observability event kinds (docs/HARNESS_IMPROVEMENT_BACKLOG.md item 3). */
+export type SteeringEventKind =
+  | 'steering_injected'
+  | 'loop_escalation'
+  | 'endturn_gate_fallback'
+  | 'inaction_nudge';
+
+export interface SteeringEventInput {
+  sessionId: string;
+  kind: SteeringEventKind;
+  /** Tool the event concerns, when there is one (ladder escalations). */
+  toolName?: string;
+  detail?: Record<string, unknown>;
 }
 
 export interface DecisionStats {
@@ -140,6 +166,45 @@ export class DecisionStore {
     await fs.appendFile(this.storePath, JSON.stringify(decision) + '\n', 'utf-8');
   }
 
+  /** Append a steering/guard observability EVENT row. Event rows carry `kind`
+   *  and are invisible to every prior-lookup path — they exist for the
+   *  distiller/harvest side (the steering the model saw but the session
+   *  record does not show). Best-effort by design at call sites. */
+  async recordEvent(input: SteeringEventInput): Promise<void> {
+    const row: Decision = {
+      ts: Date.now(),
+      sessionId: input.sessionId,
+      toolName: input.toolName ?? '',
+      inputHash: '',
+      inputSummary: '',
+      success: true,
+      kind: input.kind,
+      ...(input.detail ? { detail: input.detail } : {}),
+    };
+    await fs.mkdir(path.dirname(this.storePath), { recursive: true });
+    await this.rotateIfNeeded();
+    await fs.appendFile(this.storePath, JSON.stringify(row) + '\n', 'utf-8');
+  }
+
+  /** All event rows, oldest→newest (optionally one kind). Harvest-side read. */
+  async readEvents(kind?: SteeringEventKind): Promise<Decision[]> {
+    const readMaybe = async (p: string): Promise<string> => {
+      try { return await fs.readFile(p, 'utf-8'); }
+      catch (err: any) { if (err.code === 'ENOENT') return ''; throw err; }
+    };
+    const rotated = await readMaybe(this.storePath + '.1');
+    const main = await readMaybe(this.storePath);
+    const out: Decision[] = [];
+    for (const line of (rotated + main).split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const d = JSON.parse(line) as Decision;
+        if (d.kind && (!kind || d.kind === kind)) out.push(d);
+      } catch { /* torn line — skip */ }
+    }
+    return out;
+  }
+
   /**
    * Read all decisions matching the given (toolName, inputHash). Lines that
    * fail to parse are skipped — the store is resilient to partial writes
@@ -169,6 +234,7 @@ export class DecisionStore {
       } catch {
         continue;
       }
+      if (parsed.kind) continue; // event rows never feed priors
       if (parsed.toolName === toolName && parsed.inputHash === inputHash) {
         out.push(parsed);
       }
@@ -186,6 +252,50 @@ export class DecisionStore {
     const all = await this.lookup(toolName, inputHash);
     // `lookup` returns in file order (oldest first). Reverse and slice.
     return all.slice().reverse().slice(0, limit);
+  }
+
+
+  /**
+   * Failures for (toolName, error FAMILY) across ALL inputs — the
+   * repeated-approach lens (see errorFamily.ts). `distinctInputs` lets the
+   * caller require the family to span >=2 different inputs before hinting
+   * (identical retries are the exact-input reminder's job).
+   */
+  async familyFailures(
+    toolName: string,
+    family: string,
+    recentLimit = 3,
+  ): Promise<{ count: number; distinctInputs: number; recent: Decision[] }> {
+    if (!family) return { count: 0, distinctInputs: 0, recent: [] };
+    const all = await this.readAllForTool(toolName);
+    const matches = all.filter(
+      (d) => !d.success && classifyErrorFamily(d.errorSnippet ?? '') === family,
+    );
+    const distinct = new Set(matches.map((d) => d.inputHash));
+    return {
+      count: matches.length,
+      distinctInputs: distinct.size,
+      recent: matches.slice(-recentLimit).reverse(),
+    };
+  }
+
+  /** All decisions for a tool, oldest->newest (rotated gen first). */
+  private async readAllForTool(toolName: string): Promise<Decision[]> {
+    const readMaybe = async (p: string): Promise<string> => {
+      try { return await fs.readFile(p, 'utf-8'); }
+      catch (err: any) { if (err.code === 'ENOENT') return ''; throw err; }
+    };
+    const rotated = await readMaybe(this.storePath + '.1');
+    const main = await readMaybe(this.storePath);
+    const out: Decision[] = [];
+    for (const line of (rotated + main).split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const d = JSON.parse(line) as Decision;
+        if (!d.kind && d.toolName === toolName) out.push(d);
+      } catch { /* torn line — skip */ }
+    }
+    return out;
   }
 
   async stats(toolName: string, inputHash: string): Promise<DecisionStats> {

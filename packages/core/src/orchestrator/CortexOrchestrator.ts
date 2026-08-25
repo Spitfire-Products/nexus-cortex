@@ -61,7 +61,7 @@ import type { AgentDefinition, SubAgentResult, ISubAgentEventEmitter } from './S
 
 // Phase 1: Tool Architecture Refactor - Unified Tool Registry
 import { toolFactory } from '../tools/ToolFactory.js';
-import { resolveToolProfile, resolveToolAnchor, isNarrowProfile, isToolAllowedByProfile, applyToolProfile } from '../tools/ToolProfile.js';
+import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, isNarrowProfile, isToolAllowedByProfile, applyToolProfile } from '../tools/ToolProfile.js';
 
 // Phase 2.9: MCP Integration
 import { McpClientManager } from '../mcp/index.js';
@@ -70,8 +70,13 @@ import { McpConfigManager } from '../mcp/McpConfigManager.js';
 import { McpServerRegistry, type McpServerDefinition } from '../mcp/McpServerRegistry.js';
 import type { McpServerConfig, McpTransportType } from '../mcp/McpClient.js';
 import { prefixMcpToolName, parseMcpToolName } from '../mcp/mcpToolNamespacing.js';
-import { DecisionStore, stableInputHash } from '../training/DecisionStore.js';
-import { formatPriorReminder } from '../training/DecisionPriorInjector.js';
+import { DecisionStore } from '../training/DecisionStore.js';
+import { formatPriorReminder, formatFamilyReminder } from '../training/DecisionPriorInjector.js';
+import { classifyErrorFamily } from '../training/errorFamily.js';
+import { classifyToolOutcome } from '../training/toolOutcome.js';
+import { LoopLadder, formatLadderSignal } from '../training/loopLadder.js';
+import { shouldNudgeInaction, formatInactionNudge } from './inactionGuard.js';
+import { verifyRequirements, resolveEndTurnRequirementsMode } from './requirementsVerification.js';
 import { ModelRouterMatrix } from '../training/ModelRouterMatrix.js';
 import { classifyTask } from '../training/TaskClassifier.js';
 import { closestToolMatches } from './toolNameMatcher.js';
@@ -542,6 +547,10 @@ export class CortexOrchestrator {
   /** The active model card's anchorProfile (captured at request assembly) —
    *  env CORTEX_TOOL_ANCHOR still overrides inside resolveToolAnchor. */
   private cardAnchorProfile: string | null = null;
+  /** Card frameProfile ('lifted'|'persist') captured with the anchor — under
+   *  'persist' the anchor never lifts (backlog item 5; env
+   *  CORTEX_TOOL_ANCHOR_PERSIST overrides in resolveFrameProfile). */
+  private cardFrameProfile: string | null = null;
   /** P6 deferral (CORTEX_PROMPT_MASS=defer): the static corpus is delivered
    *  exactly once, at the anchor-lift boundary. One-shot per orchestrator. */
   private deferredCorpusDelivered = false;
@@ -1164,6 +1173,7 @@ export class CortexOrchestrator {
     // Card-level home door: capture the active card's anchorProfile (env
     // CORTEX_TOOL_ANCHOR overrides inside the resolver; env 'none' disables).
     this.cardAnchorProfile = (effectiveModel as { anchorProfile?: string }).anchorProfile ?? null;
+    this.cardFrameProfile = (effectiveModel as { frameProfile?: string }).frameProfile ?? null;
     // Thread the CARD's anchor to the executors (per-orchestrator config, by
     // reference) so framing-aware executor behavior (ShellTool steering
     // default) is model-card/registry-scoped, not process-global env.
@@ -1504,6 +1514,9 @@ export class CortexOrchestrator {
     // Round 18b: track whether we've already retried on empty response so
     // we don't loop forever. See empty-detection block below.
     let emptyResponseRetryUsed = false;
+    // Inaction guard (backlog item 2 — the ladder's inverse): single-nudge
+    // bound for the actless-verbose retry. Default OFF via env.
+    let inactionNudgeUsed = false;
 
     // EndTurn gate (Stage 1): the turn must not complete until the model
     // calls the EndTurn attestation tool. Steering is ignored by some
@@ -1549,6 +1562,13 @@ export class CortexOrchestrator {
 
     // Loop detection: Track recent tool calls to detect repetitive loops
     const recentToolCalls: Array<{ name: string; inputHash: string }> = [];
+    // Unified Outcome Ladder (docs/UNIFIED_OUTCOME_LADDER.md): per-approach
+    // FAILURE escalation — remind(2)→diversify(4)→break(6) over normalized
+    // near-duplicate approaches. Complements isToolProgressStalled (which is
+    // outcome-blind exact-hash cycling) by firing earlier on failing thrash.
+    const loopLadder = new LoopLadder();
+    let ladderBreak: string | null = null;
+    let ladderSignal: string | null = null;
 
     // Track all tool uses across iterations for response
     const allExecutedToolUses: Array<{ id: string; name: string; input: any }> = [];
@@ -1756,6 +1776,151 @@ export class CortexOrchestrator {
             }
           }
 
+          // Inaction guard (backlog item 2 — the loop ladder's inverse).
+          // TB2 2×2: persist-frame arms produced never-acted failures (5
+          // pro-persist) — a huge reason-to-the-wall text dump with ZERO tool
+          // calls, invisible to every call-counting guard. One bounded
+          // steering retry, R18b-style; default OFF (CORTEX_INACTION_NUDGE).
+          {
+            const responseChars = Array.isArray(currentAssistantCanonicalMessage.content)
+              ? (currentAssistantCanonicalMessage.content as any[])
+                  .map((b: any) =>
+                    b?.type === 'text' ? (b.text || '') : b?.type === 'thinking' ? (b.thinking || '') : '',
+                  )
+                  .join('').length
+              : String(currentAssistantCanonicalMessage.content ?? '').length;
+            if (
+              hasVisibleText &&
+              !structuredOutputState?.result &&
+              shouldNudgeInaction({
+                responseChars,
+                toolUseBlocksThisResponse: 0,
+                executedToolCallsThisTurn: allExecutedToolUses.length,
+                toolsOffered: toolsToUse.length,
+                turnNumber: this.turnNumber,
+                alreadyNudged: inactionNudgeUsed,
+              })
+            ) {
+              inactionNudgeUsed = true;
+              console.warn(
+                `[Orchestrator] Inaction guard: actless-verbose response (${responseChars} chars, 0 tool calls). ` +
+                `Injecting act-first nudge (single retry).`,
+              );
+              // Observability (backlog item 3): bank the event either way it
+              // resolves — the distiller counts nudge→acted conversions.
+              {
+                const store = this.getDecisionStore();
+                if (store) {
+                  void store
+                    .recordEvent({
+                      sessionId: this.currentSessionId ?? 'unknown',
+                      kind: 'inaction_nudge',
+                      detail: { responseChars, turnNumber: this.turnNumber },
+                    })
+                    .catch(() => {});
+                }
+              }
+              const inactionUserMessage: Message = {
+                uuid: uuidv4(),
+                timestamp: new Date().toISOString(),
+                type: 'user',
+                message: {
+                  role: 'user',
+                  content: [{
+                    type: 'text',
+                    text: `<system-reminder>${formatInactionNudge()}</system-reminder>`,
+                  }],
+                },
+                timeline: {
+                  sessionId: this.currentSessionId,
+                  conversationId: this.currentConversationId,
+                  turnNumber: this.turnNumber + 1,
+                },
+                model: {
+                  id: effectiveModel.id,
+                  provider: effectiveModel.provider,
+                  apiPattern: effectiveModel.api.pattern,
+                },
+              } as any;
+              this.messageHistory.push(inactionUserMessage);
+              await this.historyStore.appendMessage(this.currentSessionId, inactionUserMessage);
+
+              await this.ensureHistoryFitsModel(effectiveModel);
+              const inactionCanonicalHistory = this.convertToCanonicalMessages([...this.messageHistory]);
+              const inactionRequest = this.gatewayTranslation.prepareRequest(
+                inactionCanonicalHistory,
+                toolsToUse,
+                effectiveModel,
+                {
+                  temperature: options.parameters?.temperature,
+                  maxTokens: options.parameters?.maxTokens,
+                  topP: options.parameters?.topP,
+                  reasoningEffort: options.parameters?.reasoningEffort,
+                  stream: options.streaming,
+                  staticSystemPrompt: this.currentStaticSystemPrompt, // R28
+                  conversationId: this.currentConversationId, // R28b
+                },
+              );
+              if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
+                inactionRequest.previousResponseId = this.lastResponseId;
+              }
+              inactionRequest.conversationId = this.currentSessionId;
+
+              let inactionApiResponse;
+              if (this.retryMiddleware) {
+                const r = await this.retryMiddleware.executeWithRetry(
+                  () => this.apiClient.sendRequest(inactionRequest, effectiveModel),
+                  'inaction_nudge_retry',
+                );
+                inactionApiResponse = r.result;
+              } else {
+                inactionApiResponse = await this.apiClient.sendRequest(inactionRequest, effectiveModel);
+              }
+
+              const inactionConverted = this.gatewayTranslation.convertResponse(
+                inactionApiResponse.data,
+                effectiveModel,
+                {
+                  sessionId: this.currentSessionId,
+                  conversationId: this.currentConversationId,
+                  turnNumber: this.turnNumber + 1,
+                },
+              );
+              if (effectiveModel.api.pattern === 'responses' && inactionApiResponse.data?.id) {
+                this.lastResponseId = inactionApiResponse.data.id;
+                this.lastResponseIdProvider = effectiveModel.provider; // R20a
+              }
+              if (inactionConverted.messages && inactionConverted.messages.length > 0) {
+                const inactionAssistantCanonical = inactionConverted.messages[0]!;
+                const inactionAssistantMessage: Message = {
+                  uuid: inactionAssistantCanonical.uuid,
+                  timestamp: inactionAssistantCanonical.timestamp,
+                  type: 'assistant',
+                  message: {
+                    role: 'assistant',
+                    content: inactionAssistantCanonical.content as any,
+                  },
+                  timeline: {
+                    sessionId: this.currentSessionId,
+                    conversationId: this.currentConversationId,
+                    turnNumber: this.turnNumber + 1,
+                  },
+                  model: {
+                    id: effectiveModel.id,
+                    provider: effectiveModel.provider,
+                    apiPattern: effectiveModel.api.pattern,
+                  },
+                  ...(inactionConverted.usage && { usage: inactionConverted.usage }),
+                } as any;
+                this.messageHistory.push(inactionAssistantMessage);
+                await this.historyStore.appendMessage(this.currentSessionId, inactionAssistantMessage);
+                currentAssistantMessage = inactionAssistantMessage as any;
+                currentAssistantCanonicalMessage = inactionAssistantCanonical;
+                continue;
+              }
+            }
+          }
+
           // EndTurn gate (Stage 1): refuse to finalize until the model has
           // called the EndTurn attestation tool. Only arms when the turn
           // actually used a (non-EndTurn) tool — pure-language turns bypass.
@@ -1779,10 +1944,31 @@ export class CortexOrchestrator {
             if (!cv.ok) stage3Violations = cv.violations;
           }
 
-          if (
-            endTurnGateEnabled && turnUsedTools && endTurnNudges < END_TURN_MAX_NUDGES &&
-            (!endTurnCalled || stage3Violations.length > 0)
-          ) {
+          // Fallback observability (backlog item 1.4): when the nudge bound
+          // is exhausted and the gate is STILL unsatisfied, the turn ships
+          // anyway (liveness beats purity) — but that fallback-accept was
+          // previously silent. Bank an event so the distiller can see
+          // un-attested passes.
+          const endTurnGateUnsatisfied =
+            endTurnGateEnabled && turnUsedTools && (!endTurnCalled || stage3Violations.length > 0);
+          if (endTurnGateUnsatisfied && endTurnNudges >= END_TURN_MAX_NUDGES) {
+            const fallbackReason = !endTurnCalled ? 'missing-EndTurn' : 'coordinate-violation';
+            console.warn(
+              `[Orchestrator] EndTurn gate FALLBACK-ACCEPT: ${fallbackReason} after ${endTurnNudges} nudges — turn ships un-attested.`,
+            );
+            const store = this.getDecisionStore();
+            if (store) {
+              void store
+                .recordEvent({
+                  sessionId: this.currentSessionId ?? 'unknown',
+                  kind: 'endturn_gate_fallback',
+                  detail: { reason: fallbackReason, nudges: endTurnNudges, iteration: toolCallIteration },
+                })
+                .catch(() => {});
+            }
+          }
+
+          if (endTurnGateUnsatisfied && endTurnNudges < END_TURN_MAX_NUDGES) {
             endTurnNudges++;
             const gateReason = !endTurnCalled ? 'missing-EndTurn' : 'coordinate-violation';
             console.warn(
@@ -2088,6 +2274,46 @@ export class CortexOrchestrator {
           const toolResults = await this.handleToolCalls(toolUseBlocks, abortController.signal, structuredOutputState);
           clearTimeout(timeoutId);
 
+          // Unified Outcome Ladder: observe each result's TRUE outcome (exit
+          // codes, not wire is_error) and escalate on repeated failing
+          // approaches. The strongest signal this batch is injected at the
+          // signals block below; a 'break' rung ends the loop R29b-style.
+          ladderSignal = null;
+          {
+            const inputById = new Map(toolUseBlocks.map((b) => [b.id, b.input]));
+            for (const tr of toolResults) {
+              if (tr.tool_name === 'EndTurn') continue;
+              const input = inputById.get(tr.tool_use_id);
+              if (input === undefined) continue;
+              const outcome = classifyToolOutcome(tr.tool_name, input, tr);
+              const ladder = loopLadder.observe(tr.tool_name, outcome);
+              const sig = formatLadderSignal(tr.tool_name, ladder);
+              if (sig) ladderSignal = sig;
+              if (ladder.action === 'break') ladderBreak = sig;
+              // Observability (backlog item 3): escalations are invisible in
+              // the session record (signals inject post-persist) — bank each
+              // rung as a decision-store event for the distiller.
+              if (ladder.action !== 'none') {
+                const store = this.getDecisionStore();
+                if (store) {
+                  void store
+                    .recordEvent({
+                      sessionId: this.currentSessionId ?? 'unknown',
+                      kind: 'loop_escalation',
+                      toolName: tr.tool_name,
+                      detail: {
+                        rung: ladder.action,
+                        count: ladder.count,
+                        approachHash: outcome.approachHash,
+                        ...(outcome.family ? { family: outcome.family } : {}),
+                      },
+                    })
+                    .catch(() => {});
+                }
+              }
+            }
+          }
+
           // File-history snapshots (Claude Code parity — previously built but
           // UNWIRED: FileCheckpointManager existed with zero markModified
           // callers and its snapshot message was discarded). Mark files
@@ -2165,7 +2391,29 @@ export class CortexOrchestrator {
             lastEndTurnCitations = Array.isArray(cits) ? cits : undefined; // Stage 3 baseline
             const verdict = verifyCitationsGrounded(cits, thisTurnToolOutputs.join('\n'));
             if (verdict.grounded) {
-              endTurnCalled = true;
+              // Stage 4 (backlog item 1, CORTEX_ENDTURN_REQUIREMENTS): verify
+              // the requirements attestation — the wrong-artifact weapon.
+              // Stage 2 verifies citations; nothing before this forced
+              // re-reading the TASK. Rides the same nudge budget: a Stage-4
+              // reject leaves the gate unsatisfied so the bounded
+              // fallback-accept still guarantees liveness.
+              if (resolveEndTurnRequirementsMode()) {
+                const s4 = verifyRequirements({
+                  requirements: (etUse?.input as any)?.requirements,
+                  verification: (etUse?.input as any)?.verification,
+                  userTaskText: this.lastRealUserText(),
+                  turnUsedMutatingTool,
+                });
+                if (s4.ok) {
+                  endTurnCalled = true;
+                } else {
+                  tr.is_error = true;
+                  tr.content = s4.nudge!;
+                  console.warn('[Orchestrator] Stage4: EndTurn rejected — requirements attestation unsatisfied.');
+                }
+              } else {
+                endTurnCalled = true;
+              }
             } else {
               const bad = verdict.ungrounded
                 .map(u => ` - "${u.reference}" — not found in this turn's tool output: ${String(u.verbatim_source).slice(0, 120)}`)
@@ -2330,14 +2578,44 @@ export class CortexOrchestrator {
       const progressStalled = isToolProgressStalled(recentToolCalls);
       const budgetSignal = computeToolBudgetSignal(effectiveToolBudgetCount, TOOL_BUDGET_SOFT, progressStalled);
       const diversityWarning = this.getDiversityWarning(toolCallCounts);
-      if (budgetSignal || diversityWarning) {
-        const signals = [budgetSignal, diversityWarning].filter(Boolean).join('\n');
+      if (budgetSignal || diversityWarning || ladderSignal) {
+        const signals = [budgetSignal, diversityWarning, ladderSignal].filter(Boolean).join('\n');
         const lastMsg = this.messageHistory[this.messageHistory.length - 1] as any;
         if (lastMsg?.message?.content?.[0]?.type === 'tool_result') {
           const block = lastMsg.message.content[0];
           const existing = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
           block.content = existing + '\n\n' + signals;
+          // Observability (backlog item 3, micro-suite defect #4): this
+          // mutation happens AFTER the tool_result was persisted — the
+          // durable session lacks the steering the model saw. Bank a
+          // steering_injected event so harvest/distill sees it. Session rows
+          // stay append-only (never rewritten).
+          const store = this.getDecisionStore();
+          if (store) {
+            const kinds = [
+              budgetSignal ? 'budget' : null,
+              diversityWarning ? 'diversity' : null,
+              ladderSignal ? 'ladder' : null,
+            ].filter(Boolean);
+            void store
+              .recordEvent({
+                sessionId: this.currentSessionId ?? 'unknown',
+                kind: 'steering_injected',
+                detail: { kinds, iteration: toolCallIteration, chars: signals.length },
+              })
+              .catch(() => {});
+          }
         }
+        ladderSignal = null; // consumed — never re-inject on later iterations
+      }
+
+      // Ladder break (teach-then-break): the break instruction is already in
+      // the tool result above; exit the loop R29b-style so the post-loop
+      // synthesis net produces an honest final answer — never the blunt
+      // toolCallIteration=MAX turn-kill of the exact-match detector.
+      if (ladderBreak) {
+        console.warn('[Orchestrator] LoopLadder break: repeated failing approach — forcing synthesis.');
+        break;
       }
 
       // R29b hard cap: a weaker model may ignore the firm budget reminders
@@ -2392,7 +2670,13 @@ export class CortexOrchestrator {
       // full profile applies from here. Rebuild from allTools because the
       // armed anchor narrowed toolsToUse at assembly. (When deferred loading
       // is on, the re-filter block below performs the rebuild.)
-      if (!this.anchorLifted && resolveToolAnchor(process.env, this.cardAnchorProfile)) {
+      if (
+        !this.anchorLifted &&
+        resolveToolAnchor(process.env, this.cardAnchorProfile) &&
+        // Persist frame (backlog item 5): the anchored surface IS the session
+        // surface — never lift, never deliver the deferred corpus.
+        resolveFrameProfile(process.env, this.cardFrameProfile) !== 'persist'
+      ) {
         this.anchorLifted = true;
         if (!(this.config.enableDeferredToolLoading && !isPTCEnabled)) {
           toolsToUse = allTools;
@@ -3286,6 +3570,7 @@ export class CortexOrchestrator {
     // Card-level home door: capture the active card's anchorProfile (env
     // CORTEX_TOOL_ANCHOR overrides inside the resolver; env 'none' disables).
     this.cardAnchorProfile = (effectiveModel as { anchorProfile?: string }).anchorProfile ?? null;
+    this.cardFrameProfile = (effectiveModel as { frameProfile?: string }).frameProfile ?? null;
     // Thread the CARD's anchor to the executors (per-orchestrator config, by
     // reference) so framing-aware executor behavior (ShellTool steering
     // default) is model-card/registry-scoped, not process-global env.
@@ -3520,7 +3805,12 @@ export class CortexOrchestrator {
     let toolCallIteration = 0;
     let totalToolErrors = 0;
     let emptyResponseRetryUsed = false; // R32: parity with sendMessage R18b guard
+    let inactionNudgeUsed = false; // Inaction guard (backlog item 2) — streaming parity
     const allToolCalls: Array<{ name: string; inputHash: string }> = [];
+    // Unified Outcome Ladder (streaming parity — see sendMessage).
+    const loopLadder = new LoopLadder();
+    let ladderBreak: string | null = null;
+    let ladderSignal: string | null = null;
     const allExecutedToolUses: any[] = [];
     const toolCallCounts = new Map<string, number>();
 
@@ -3718,6 +4008,159 @@ export class CortexOrchestrator {
           }
         }
 
+        // Inaction guard (backlog item 2 — streaming parity with sendMessage).
+        // Actless-verbose first-turn response in a tool-capable request: one
+        // bounded act-first steering retry. Default OFF (CORTEX_INACTION_NUDGE).
+        {
+          const responseChars = Array.isArray(currentAssistantCanonicalMessage.content)
+            ? (currentAssistantCanonicalMessage.content as any[])
+                .map((b: any) =>
+                  b?.type === 'text' ? (b.text || '') : b?.type === 'thinking' ? (b.thinking || '') : '',
+                )
+                .join('').length
+            : String(currentAssistantCanonicalMessage.content ?? '').length;
+          if (
+            hasVisibleText &&
+            shouldNudgeInaction({
+              responseChars,
+              toolUseBlocksThisResponse: 0,
+              executedToolCallsThisTurn: allExecutedToolUses.length,
+              toolsOffered: toolsToUse.length,
+              turnNumber: this.turnNumber,
+              alreadyNudged: inactionNudgeUsed,
+            })
+          ) {
+            inactionNudgeUsed = true;
+            console.warn(
+              `[Orchestrator Streaming] Inaction guard: actless-verbose response (${responseChars} chars, 0 tool calls). ` +
+              `Injecting act-first nudge (single retry).`,
+            );
+            {
+              const store = this.getDecisionStore();
+              if (store) {
+                void store
+                  .recordEvent({
+                    sessionId: this.currentSessionId ?? 'unknown',
+                    kind: 'inaction_nudge',
+                    detail: { responseChars, turnNumber: this.turnNumber, streaming: true },
+                  })
+                  .catch(() => {});
+              }
+            }
+            const inactionUserMessage: Message = {
+              uuid: uuidv4(),
+              timestamp: new Date().toISOString(),
+              type: 'user',
+              message: {
+                role: 'user',
+                content: [{
+                  type: 'text',
+                  text: `<system-reminder>${formatInactionNudge()}</system-reminder>`,
+                }],
+              },
+              timeline: {
+                sessionId: this.currentSessionId,
+                conversationId: this.currentConversationId,
+                turnNumber: this.turnNumber + 1,
+              },
+              model: {
+                id: effectiveModel.id,
+                provider: effectiveModel.provider,
+                apiPattern: effectiveModel.api.pattern,
+              },
+            } as any;
+            this.messageHistory.push(inactionUserMessage);
+            await this.historyStore.appendMessage(this.currentSessionId, inactionUserMessage);
+
+            try {
+              await this.ensureHistoryFitsModel(effectiveModel);
+              const retryCanonicalHistory = this.convertToCanonicalMessages([...this.messageHistory]);
+              const retryRequest = this.gatewayTranslation.prepareRequest(
+                retryCanonicalHistory,
+                toolsToUse,
+                effectiveModel,
+                {
+                  temperature: options.parameters?.temperature,
+                  maxTokens: options.parameters?.maxTokens,
+                  topP: options.parameters?.topP,
+                  reasoningEffort: options.parameters?.reasoningEffort,
+                  stream: false,
+                  staticSystemPrompt: this.currentStaticSystemPrompt,
+                  conversationId: this.currentConversationId,
+                },
+              );
+              if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
+                retryRequest.previousResponseId = this.lastResponseId;
+              }
+              retryRequest.conversationId = this.currentSessionId;
+
+              let retryApiResponse;
+              if (this.retryMiddleware) {
+                const retryResult = await this.retryMiddleware.executeWithRetry(
+                  () => this.apiClient.sendRequest(retryRequest, effectiveModel),
+                  'inaction_nudge_retry',
+                );
+                retryApiResponse = retryResult.result;
+              } else {
+                retryApiResponse = await this.apiClient.sendRequest(retryRequest, effectiveModel);
+              }
+
+              const retryConverted = this.gatewayTranslation.convertResponse(
+                retryApiResponse.data,
+                effectiveModel,
+                {
+                  sessionId: this.currentSessionId,
+                  conversationId: this.currentConversationId,
+                  turnNumber: this.turnNumber + 1,
+                },
+              );
+              if (effectiveModel.api.pattern === 'responses' && retryApiResponse.data?.id) {
+                this.lastResponseId = retryApiResponse.data.id;
+                this.lastResponseIdProvider = effectiveModel.provider;
+              }
+              if (retryConverted.messages && retryConverted.messages.length > 0) {
+                const retryAssistantCanonical = retryConverted.messages[0]!;
+                const retryAssistantMessage: Message = {
+                  uuid: retryAssistantCanonical.uuid,
+                  timestamp: retryAssistantCanonical.timestamp,
+                  type: 'assistant',
+                  message: {
+                    role: 'assistant',
+                    content: retryAssistantCanonical.content as any,
+                  },
+                  timeline: {
+                    sessionId: this.currentSessionId,
+                    conversationId: this.currentConversationId,
+                    turnNumber: this.turnNumber + 1,
+                  },
+                  model: {
+                    id: effectiveModel.id,
+                    provider: effectiveModel.provider,
+                    apiPattern: effectiveModel.api.pattern,
+                  },
+                  ...(retryConverted.usage && { usage: retryConverted.usage }),
+                } as any;
+                this.messageHistory.push(retryAssistantMessage);
+                await this.historyStore.appendMessage(this.currentSessionId, retryAssistantMessage);
+
+                currentAssistantCanonicalMessage = retryAssistantCanonical;
+
+                const retryText = (retryAssistantCanonical.content as any[])
+                  .filter((b: any) => b && b.type === 'text' && typeof b.text === 'string')
+                  .map((b: any) => b.text)
+                  .join('');
+                if (retryText.trim().length > 0) {
+                  yield { type: 'text_delta' as const, delta: retryText } as StreamChunk;
+                }
+
+                continue; // re-enter loop — retry may have produced tool_use
+              }
+            } catch (retryErr) {
+              console.warn(`[Orchestrator Streaming] Inaction-nudge retry failed:`, retryErr);
+            }
+          }
+        }
+
         hasToolUse = false;
         break;
       }
@@ -3769,6 +4212,42 @@ export class CortexOrchestrator {
         // Execute tools (reuse existing method)
         const toolResults = await this.handleToolCalls(toolUseBlocks, abortController.signal, structuredOutputState);
         clearTimeout(timeoutId);
+
+        // Unified Outcome Ladder (streaming parity with sendMessage).
+        ladderSignal = null;
+        {
+          const inputById = new Map(toolUseBlocks.map((b) => [b.id, b.input]));
+          for (const tr of toolResults) {
+            if (tr.tool_name === 'EndTurn') continue;
+            const input = inputById.get(tr.tool_use_id);
+            if (input === undefined) continue;
+            const outcome = classifyToolOutcome(tr.tool_name, input, tr);
+            const ladder = loopLadder.observe(tr.tool_name, outcome);
+            const sig = formatLadderSignal(tr.tool_name, ladder);
+            if (sig) ladderSignal = sig;
+            if (ladder.action === 'break') ladderBreak = sig;
+            // Observability (backlog item 3): streaming parity — bank each
+            // escalation rung as a decision-store event.
+            if (ladder.action !== 'none') {
+              const store = this.getDecisionStore();
+              if (store) {
+                void store
+                  .recordEvent({
+                    sessionId: this.currentSessionId ?? 'unknown',
+                    kind: 'loop_escalation',
+                    toolName: tr.tool_name,
+                    detail: {
+                      rung: ladder.action,
+                      count: ladder.count,
+                      approachHash: outcome.approachHash,
+                      ...(outcome.family ? { family: outcome.family } : {}),
+                    },
+                  })
+                  .catch(() => {});
+              }
+            }
+          }
+        }
 
         // R21 (2026-05-15): same fix as non-streaming path — count consecutive
         // ITERATIONS WITH ZERO SUCCESSFUL TOOLS, not cumulative individual
@@ -3936,14 +4415,39 @@ export class CortexOrchestrator {
         const progressStalled = isToolProgressStalled(allToolCalls);
         const budgetSignal = computeToolBudgetSignal(effectiveToolBudgetCount, TOOL_BUDGET_SOFT, progressStalled);
         const diversityWarning = this.getDiversityWarning(toolCallCounts);
-        if (budgetSignal || diversityWarning) {
-          const signals = [budgetSignal, diversityWarning].filter(Boolean).join('\n');
+        if (budgetSignal || diversityWarning || ladderSignal) {
+          const signals = [budgetSignal, diversityWarning, ladderSignal].filter(Boolean).join('\n');
           const lastMsg = this.messageHistory[this.messageHistory.length - 1] as any;
           if (lastMsg?.message?.content?.[0]?.type === 'tool_result') {
             const block = lastMsg.message.content[0];
             const existing = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
             block.content = existing + '\n\n' + signals;
+            // Observability (backlog item 3): post-persist mutation — bank a
+            // steering_injected event (streaming parity).
+            const store = this.getDecisionStore();
+            if (store) {
+              const kinds = [
+                budgetSignal ? 'budget' : null,
+                diversityWarning ? 'diversity' : null,
+                ladderSignal ? 'ladder' : null,
+              ].filter(Boolean);
+              void store
+                .recordEvent({
+                  sessionId: this.currentSessionId ?? 'unknown',
+                  kind: 'steering_injected',
+                  detail: { kinds, iteration: toolCallIteration, chars: signals.length, streaming: true },
+                })
+                .catch(() => {});
+            }
           }
+          ladderSignal = null; // consumed
+        }
+
+        // Ladder break (streaming parity): instruction already injected above;
+        // exit R29b-style so the streaming synthesis net closes the turn.
+        if (ladderBreak) {
+          console.warn('[Orchestrator Streaming] LoopLadder break: repeated failing approach — forcing synthesis.');
+          break;
         }
 
         // R29b hard cap (streaming parity): force-stop at 2x soft budget;
@@ -3989,7 +4493,13 @@ export class CortexOrchestrator {
         await this.ensureHistoryFitsModel(effectiveModel);
 
         // Anchor lift — streaming mirror of the sendMessage continuation path.
-        if (!this.anchorLifted && resolveToolAnchor(process.env, this.cardAnchorProfile)) {
+        if (
+        !this.anchorLifted &&
+        resolveToolAnchor(process.env, this.cardAnchorProfile) &&
+        // Persist frame (backlog item 5): the anchored surface IS the session
+        // surface — never lift, never deliver the deferred corpus.
+        resolveFrameProfile(process.env, this.cardFrameProfile) !== 'persist'
+      ) {
           this.anchorLifted = true;
           if (!(this.config.enableDeferredToolLoading && !isPTCEnabled)) {
             toolsToUse = allTools;
@@ -7212,6 +7722,26 @@ export class CortexOrchestrator {
     return this.routerMatrix;
   }
 
+  /** The turn's real user prompt text — the most recent user message that is
+   *  neither a tool_result carrier nor an injected <system-reminder> steering
+   *  message. Used by EndTurn Stage 4 to judge task shape. Empty string when
+   *  none found (Stage 4 then never fires its task-shape branch). */
+  private lastRealUserText(): string {
+    for (let i = this.messageHistory.length - 1; i >= 0; i--) {
+      const m: any = this.messageHistory[i];
+      const isUser = m?.type === 'user' || m?.message?.role === 'user';
+      if (!isUser) continue;
+      const content = m?.message?.content;
+      if (Array.isArray(content) && content.some((b: any) => b?.type === 'tool_result')) continue;
+      const text = Array.isArray(content)
+        ? content.filter((b: any) => b?.type === 'text').map((b: any) => b.text || '').join('\n')
+        : typeof content === 'string' ? content : '';
+      if (!text.trim() || text.trimStart().startsWith('<system-reminder>')) continue;
+      return text;
+    }
+    return '';
+  }
+
   private getDecisionStore(): DecisionStore | undefined {
     if (this.isRecordingEnabled() === false && this.isLookupEnabled() === false) {
       return undefined;
@@ -7247,7 +7777,14 @@ export class CortexOrchestrator {
     const store = this.getDecisionStore();
     if (!store) return result;
 
-    const inputHash = stableInputHash(toolUse.input);
+    // Unified outcome layer (docs/UNIFIED_OUTCOME_LADDER.md): ONE failure
+    // semantics for recording + reminders. Critically, a bash command that
+    // ran and exited nonzero is a FAILURE here even though its tool result
+    // is not is_error on the wire (ShellTool returns success results for
+    // exit!=0) — previously those loops were recorded as successes, so the
+    // prior/family reminders never fired on the dominant thrash mode.
+    const outcome = classifyToolOutcome(toolUse.name, toolUse.input, result);
+    const inputHash = outcome.exactHash;
     let augmented = result;
 
     // 1. Lookup priors (read side) — only emits reminder when failures exist.
@@ -7262,6 +7799,21 @@ export class CortexOrchestrator {
         const reminder = formatPriorReminder(toolUse.name, stats, recent);
         if (reminder && result.content) {
           augmented = { ...result, content: reminder + result.content };
+        } else if (outcome.status !== 'ok' && result.content) {
+          // Family lens (AHE borrow): no exact-input prior fired, but the
+          // CURRENT failure may be the latest of a repeated-approach family
+          // across different inputs — hint once the family has >=2 prior
+          // failures spanning >=2 distinct inputs. Gated on the UNIFIED
+          // outcome (not is_error) so failing-command loops are covered.
+          const family = outcome.family ?? classifyErrorFamily(String(result.content).slice(0, 200));
+          if (family) {
+            const ff = await store.familyFailures(toolUse.name, family);
+            const famReminder = formatFamilyReminder(
+              toolUse.name, family, ff.count, ff.distinctInputs, ff.recent);
+            if (famReminder) {
+              augmented = { ...result, content: famReminder + result.content };
+            }
+          }
         }
       } catch (err) {
         if (this.config.debug) {
@@ -7278,8 +7830,10 @@ export class CortexOrchestrator {
           sessionId: this.currentSessionId ?? 'unknown',
           toolName: toolUse.name,
           input: toolUse.input,
-          success: !result.is_error,
-          ...(result.is_error
+          // Unified outcome: exit!=0 commands are FAILURES for the store even
+          // though their wire result is not is_error (see outcome above).
+          success: outcome.status === 'ok',
+          ...(outcome.status !== 'ok'
             ? { errorSnippet: String(result.content).slice(0, 200) }
             : {}),
         });

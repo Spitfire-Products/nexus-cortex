@@ -128,6 +128,37 @@ export function guardedAddAll(git: (args: string[]) => string, label: string, ma
 }
 
 /**
+ * Multi-writer-safe push: push main; on rejection (a concurrent writer —
+ * another machine, a bench-worker fleet, watcher+cron overlap — landed
+ * first) `pull --rebase` and retry. Canon writers are append-only over
+ * mostly-disjoint files, so rebase is the correct recovery; a REAL
+ * conflict aborts the rebase and returns false — never force, never leave
+ * the clone mid-rebase (the next cycle must find a clean, usable tree;
+ * the local commit is preserved and re-tried then). Every canon push path
+ * (sync/translate/graph/artifacts) routes through this.
+ */
+export function guardedPush(git: (args: string[]) => string, label: string, maxAttempts = 3): boolean {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      git(['push', '-q', 'origin', 'main']);
+      return true;
+    } catch {
+      // rejected — try to land on top of the concurrent writer's commit
+    }
+    try {
+      git(['pull', '--rebase', '-q', 'origin', 'main']);
+      console.log(`[${label}] push rejected by a concurrent writer — rebased, retrying (${attempt}/${maxAttempts})`);
+    } catch {
+      try { git(['rebase', '--abort']); } catch { /* no rebase in progress */ }
+      console.error(`[${label}] push retry ${attempt}/${maxAttempts}: rebase CONFLICT — aborted, local commit kept for next cycle`);
+      return false;
+    }
+  }
+  console.error(`[${label}] push FAILED after ${maxAttempts} rebase-retry attempts (remote advancing faster than retries)`);
+  return false;
+}
+
+/**
  * Atomic clone: clone into a sibling temp dir, then rename into place. The
  * store path NEVER contains a `.git` over a partially-checked-out tree, so a
  * concurrent canon verb either sees no store (and clones/waits itself) or a

@@ -18,7 +18,7 @@
  *
  * @module canon/canonArtifacts
  */
-import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush } from './canonRepo.js';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -244,9 +244,9 @@ export async function canonArtifacts(o: CanonArtifactsOptions = {}): Promise<Can
     const git = canonGit(STORE, 'canon-artifacts');
     if (guardedAddAll(git, 'canon-artifacts')) {
       git(['commit', '-q', '-m', `canon-artifacts: ${summary}`]);
-      git(['push', '-q', 'origin', 'main']);
-      console.log(`[canon-artifacts] pushed: ${summary}`);
-      pushed = true;
+      pushed = guardedPush(git, 'canon-artifacts');
+      if (pushed) console.log(`[canon-artifacts] pushed: ${summary}`);
+      else console.log(`[canon-artifacts] committed locally, push deferred to next cycle: ${summary}`);
     } else {
       console.log(`[canon-artifacts] no changes (${summary})`);
     }

@@ -21,6 +21,8 @@ import { TmuxManager, SessionPersistence } from '../../utils/index.js';
 import { stripAnsi } from '../../utils/TextUtils.js';
 import { BackgroundProcessRegistry } from './BackgroundProcessRegistry.js';
 import type { ExecutorConfig } from '../../base/ToolRegistry.js';
+import { parseBashFileAccess } from './bashFileAccess.js';
+import { FileReadTracker } from '../file/EditTool.js';
 
 /**
  * Parameters for the Bash tool
@@ -256,6 +258,29 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
         return this.createErrorResult('Command was cancelled by user.');
       }
 
+      // Frame-coherence (backlog item 6a/6c): register bash file READS into
+      // FileReadTracker (cat/head/tail/sed -n satisfy the read-first guard —
+      // the only read channel under Read-less doors) and invalidate read
+      // state on bash in-place WRITES (sed -i etc. give no content-knowledge
+      // proof, so later Edits demand a fresh read). Best-effort, exit-0 only.
+      if (result.exitCode === 0) {
+        try {
+          const access = parseBashFileAccess(params.command);
+          if (access.reads.length > 0 || access.writes.length > 0) {
+            const base = params.directory
+              ? path.resolve(this.config.workingDirectory, params.directory)
+              : this.config.workingDirectory;
+            for (const r of access.reads) {
+              const abs = path.resolve(base, r);
+              if (fs.existsSync(abs)) FileReadTracker.markAsRead(abs);
+            }
+            for (const w of access.writes) {
+              FileReadTracker.markBashWrite(path.resolve(base, w));
+            }
+          }
+        } catch { /* registration must never break execution */ }
+      }
+
       return this.createSuccessResult(result.llmContent, {
         executionTime: Date.now() - startTime,
         exitCode: result.exitCode,
@@ -303,7 +328,17 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
       : (() => {
           let cmd = params.command.trim();
           if (!cmd.endsWith('&')) cmd += ';';
-          return `{ ${cmd} }; __code=$?; pgrep -g 0 >${tempFilePath} 2>&1; exit $__code;`;
+          // CORTEX_BASH_PIPEFAIL (backlog item 4, bench/server profiles):
+          // `cmd | tail` returns the TAIL's exit code, so failing commands
+          // classify `ok` and starve the outcome ladder + decision store
+          // (micro-suite probe-3). pipefail propagates the failure. NEVER
+          // default-on — it changes user command semantics. The `; echo $?`
+          // masking class remains an accepted, documented residual.
+          const pipefail =
+            (process.env.CORTEX_BASH_PIPEFAIL ?? '').trim().toLowerCase() === 'true'
+              ? 'set -o pipefail; '
+              : '';
+          return `{ ${pipefail}${cmd} }; __code=$?; pgrep -g 0 >${tempFilePath} 2>&1; exit $__code;`;
         })();
 
     // Determine working directory

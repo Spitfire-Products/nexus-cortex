@@ -7,6 +7,179 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.70.0] - 2026-08-25
+
+The "three-guard architecture" release — evidence-driven from a full Terminal-Bench 2.0
+benchmark of the published harness (4 arms x 89 tasks, trajectory-distilled failure analysis).
+
+### Added
+- **Unified outcome layer + loop escalation ladder.** Every tool result is classified once
+  (`ok`/`failed`/`error`) from real exit codes — a bash command that fails no longer records as a
+  success — and near-duplicate retry attempts collide on a normalized "approach hash". Repeated
+  failing approaches now escalate remind(2) → diversify(4) → graceful break(6) instead of burning
+  up to 1000 iterations: the model is steered, then pointed at alternative strategies, then asked
+  to summarize honestly — never silently killed. Thresholds env-tunable
+  (`LOOP_REMIND_AT`/`LOOP_DIVERSIFY_AT`/`LOOP_BREAK_AT`). Decision-store priors and the
+  error-family lens now consume the same truth, so "this exact call failed before" and "this
+  FAMILY of errors keeps recurring across different inputs" reminders both fire on real failures.
+- **EndTurn `requirements` attestation (Stage 4, opt-in `CORTEX_ENDTURN_REQUIREMENTS=true`).**
+  The EndTurn gate can now demand a re-read of the original task statement: one row per stated
+  requirement with what satisfies it and the command/observation that proves it (or an explicit
+  "UNVERIFIED"). Mutating turns with an empty `verification` list are challenged. Targets the
+  wrong-artifact failure class (finished early, verifier rejected). Gate fallback-accepts after
+  the bounded nudges are exhausted — and that fallback is now recorded (see observability below).
+- **Inaction guard (opt-in `CORTEX_INACTION_NUDGE=true`).** Detects the inverse pathology of
+  looping: a long analysis with ZERO tool calls in a tool-capable request. One bounded "act
+  first" steering retry, first-turn-only, threshold `CORTEX_INACTION_MIN_CHARS` (default 4000).
+- **Steering observability.** Injected steering (budget pressure, diversity warnings, ladder
+  escalations), EndTurn gate fallbacks, and inaction nudges are recorded as kind-tagged event
+  rows in the decision store — visible to analysis tooling, provably invisible to priors.
+- **`CORTEX_BASH_PIPEFAIL=true` (opt-in).** Wraps commands with `set -o pipefail` so
+  `failing-cmd | tail` propagates the failure instead of masking it behind the pipe's exit 0.
+- **Per-model frame profile.** `frameProfile: 'lifted' | 'persist'` on model cards +
+  `CORTEX_TOOL_ANCHOR_PERSIST` env: 'persist' keeps the first-turn tool anchor for the whole
+  session (previously experiment-only). Default remains 'lifted' (unchanged behavior); no card
+  ships a value yet — tier defaults await post-release measurement.
+
+### Changed
+- **Frame-coherent read/write permissions.** Bash reads (`cat`/`head`/`tail`/`nl`/`sed -n`) now
+  register with the read-before-edit guard, so reading a file through bash legitimately unlocks
+  `Edit` — essential under narrow tool surfaces that have no Read tool. Denial messages are
+  frame-aware (they advise `cat -n`/`sed -n` when the Read tool is not on the surface). Bash
+  in-place writes (`sed -i`/`perl -i`/`>`/`>>`/`tee`) invalidate read state so later edits demand
+  a fresh look. A `Write`-created file is immediately editable (the model authored its content).
+- **Canon store multi-writer safety.** Canon pushes rebase-retry on conflict and abort clean on
+  real conflicts across all commit paths (guardedPush).
+
+## [4.69.1] - 2026-08-22
+
+### Changed
+- Dedicated-tool steering (the "use the Read tool instead of `cat`" class) is resolved from the
+  active MODEL CARD's anchor profile, threaded per-orchestrator into the executors — bash-door
+  models get redirects-off per session with no env needed. `CORTEX_TOOL_REDIRECTS=on|off` remains
+  the absolute override; `CORTEX_TOOL_ANCHOR=none|full|off` cancels the card signal.
+
+## [4.69.0] - 2026-08-22
+
+### Changed
+- **Heredoc-aware bash permissions.** Structural command analysis replaces the old
+  every-`<`/`>`-is-unsafe rule: stdin-only heredocs of safe commands are whitelisted, `>`/`>>` to
+  a file classifies as a WRITE (auto-approvable parity with the Write tool), null sinks stay
+  safe, and danger scans no longer read non-interpreter heredoc BODIES (writing a script that
+  merely contains `rm -rf` no longer trips DANGEROUS) while `bash <<EOF` bodies keep full scan.
+- Redirect steering defaults OFF for bash-framed sessions (measured +26% tool calls / +30%
+  latency at zero accuracy gain when left on); `CORTEX_TOOL_REDIRECTS` still wins.
+- nexus-canon 1.9.5: mass-deletion guard moved to the shared choke point (covers ALL verbs) +
+  atomic clone.
+
+## [4.68.0] - 2026-08-20
+
+### Added
+- First-run onboarding block (shown once) across all TUI surfaces.
+
+### Changed
+- TUI first paint 1047ms → 37ms (heavy imports made dynamic; a starting banner beats them);
+  launch-width picker freeze fixed via debounced resize redraw.
+- nexus-canon 1.9.4: canon-sync mass-deletion guard (>10 staged deletions aborts loudly).
+
+## [4.67.0] - 2026-08-20
+
+### Changed
+- Keybinding hints are keymap-as-data (`TUI_KEYMAP`): all hint sites render from one per-surface
+  truth table, fixing hints that advertised bindings the handlers never implemented.
+
+## [4.66.0] - 2026-08-19 (first published with 4.67.0)
+
+### Changed
+- **System-prompt delivery (R63) is DEFAULT ON** (`CORTEX_DELIVER_SYSTEM_PROMPT=false` opts out)
+  — chat/completions and Responses providers now receive the system corpus correctly.
+- DeepSeek family cards carry `promptPreset: 'boot-minimal'` — the measured winner (equal
+  accuracy at −68% input / −37..85% output vs the full corpus), so correct delivery costs LESS
+  than the promptless era. nexus-canon 1.9.3: orphaned staging files can no longer be committed.
+
+## [4.65.0] - 2026-08-19 (first published with 4.67.0)
+
+### Added
+- `CORTEX_PROMPT_MASS=defer` — minimal turn 1, full static corpus delivered once at the first
+  tool-result boundary (for corpora that cannot be pulled from the workspace).
+- R63 system-prompt delivery lands opt-in (see 4.66.0 for the default flip).
+
+### Changed
+- **Tool budgets are failsafes, not work limits (R64).** `MAX_TOOL_ITERATIONS` 50 → 1000,
+  `TOOL_BUDGET_SOFT` 15 → 400 (0 disables budget pressure cleanly) — the old caps severed
+  legitimate deep-repo work and induced fabricated completions under wrap-up pressure.
+
+## [4.63.10] - 2026-08-17
+
+### Changed
+- deepseek-v4-pro home-door anchor corrected to `bash-edit` (−41% output tokens vs control);
+  DeepSeek family unified on the 2-tool door shape.
+
+## [4.63.9] - 2026-08-17
+
+### Added
+- Per-family home-door anchors on model cards (210-run evidence): deepseek-v4-flash `bash-edit`,
+  pro/grok family `bash-plus`. `CORTEX_TOOL_ANCHOR` env still overrides; 'none' disables.
+
+## [4.63.x] - 2026-08-15 → 2026-08-17 (the canon-store line, patch train)
+
+### Added
+- nexus-canon 1.7.0 (`canon pull --native`: byte-exact reverse materialization of
+  original-harness sessions), 1.8.0 (per-project memory rides the canon handoff), 1.9.0/1.9.1
+  (`--recent N` recency-windowed bulk hydration + size caps).
+
+### Fixed
+- nexus-canon 1.8.1/1.8.2 (true timestamps on native pulls; subagent transcripts no longer
+  promoted to top-level), 1.9.2 (TUI /help inline), plus torn-line sync probes.
+- TUI: SIGWINCH resize handling, stream-error recovery, slash-palette submit fixes
+  (4.61.1/4.63.8).
+
+## [4.62.0] - 2026-08-15
+
+### Changed
+- **Bash tool modernization (R61):** redirect steering is flag- and profile-aware, PTY completion
+  uses a sentinel instead of prompt heuristics, timeout clamped to 600s, tool description no
+  longer overclaims working-directory persistence.
+
+### Added
+- Anthropic subscription-token compliance gate: `sk-ant-oat01` tokens are blocked off the raw
+  Messages path unless explicitly approved; `ANTHROPIC_AUTH_TOKEN` is a first-class bearer
+  credential.
+
+## [4.61.0] - 2026-08-14
+
+### Added
+- GPT-5.6 Terra + Luna tier cards; bench-CLI tool-profile auto-stamp; gemini thinkingLevel
+  plumbing.
+
+## [4.60.0 – 4.60.3] - 2026-08-13 → 2026-08-14
+
+### Added
+- Model cards: gemini-3.6-flash, gemini-3.7-flash, gpt-5.6 (Sol) — all smoke-verified live.
+
+### Fixed
+- nexus-canon 1.6.4-1.6.6: torn-tail sync probes (harness + browser legs) and a scrub-pattern
+  fix that was tearing long floats.
+
+## [4.59.0] - 2026-08-13
+
+### Added
+- `CORTEX_TOOL_PROFILE=full|lean|bash-only` — env-selected tool-surface restriction applied at
+  the single tool-catalog choke point, with a dispatch-time gate so hidden tools cannot execute;
+  active profile auto-stamped into decision records.
+
+## [4.58.0] - 2026-08-13
+
+### Added
+- First-class canon tools: `CanonListSessions` + `CanonPullSession` — agent-callable faces of the
+  cross-harness portable memory rail, plus a Cross-Session Memory section in the system prompt.
+
+## [4.57.3] - 2026-08-13
+
+### Fixed
+- nexus-canon 1.6.3: centralized git exec (auth + commit identity + piped stderr on every canon
+  verb) — fixes hosted-container "Author identity unknown".
+
 ## [4.57.2] - 2026-08-13
 
 ### Fixed

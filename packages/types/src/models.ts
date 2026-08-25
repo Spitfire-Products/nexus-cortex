@@ -357,6 +357,19 @@ export interface ModelConfig {
    *  CORTEX_ANCHOR_CUE overrides. */
   anchorCue?: string;
 
+  /** Whether the anchor LIFTS at the first tool_result boundary ('lifted',
+   *  the default = the legacy behavior) or PERSISTS for the whole session
+   *  ('persist' — the anchored surface stays the only surface). TB2 2×2
+   *  (2026-08-25): frame effects are model-strength-dependent — persist
+   *  halves flash-class loops but multiplies wrong-artifact finishes, and
+   *  induces paralysis on pro-class. NOTE: that measurement predates the
+   *  three-guard + frame-coherence fixes, which target exactly persist's
+   *  loss classes — per-model values are DEFERRED until the post-fix rerun
+   *  cells (persist+EndTurn, inaction-armed persist) decide them. Env
+   *  CORTEX_TOOL_ANCHOR_PERSIST=true|false overrides for experiments.
+   *  Meaningless without an anchorProfile. */
+  frameProfile?: 'lifted' | 'persist';
+
   // ============================================
   // METADATA
   // ============================================

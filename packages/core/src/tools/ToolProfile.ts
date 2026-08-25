@@ -67,6 +67,26 @@ export function resolveToolAnchor(
   return null;
 }
 
+/**
+ * CORTEX_TOOL_ANCHOR_PERSIST — frame selection for an armed anchor (backlog
+ * item 5). 'lifted' (default): the anchor lifts at the first tool_result
+ * boundary and the session's full profile applies. 'persist': the anchored
+ * surface stays the ONLY surface for the whole session (the TB2 persist
+ * frame, previously an installed-copy patch). Precedence: env override >
+ * card frameProfile > 'lifted'. Irrelevant when no anchor is armed.
+ */
+export function resolveFrameProfile(
+  env: NodeJS.ProcessEnv = process.env,
+  cardFrame?: string | null,
+): 'lifted' | 'persist' {
+  const raw = (env.CORTEX_TOOL_ANCHOR_PERSIST ?? '').trim().toLowerCase();
+  if (raw === 'true' || raw === '1' || raw === 'persist') return 'persist';
+  if (raw === 'false' || raw === '0' || raw === 'off' || raw === 'lifted') return 'lifted';
+  const card = (cardFrame ?? '').trim().toLowerCase();
+  if (card === 'persist') return 'persist';
+  return 'lifted';
+}
+
 /** Do MCP / management / context tools ride along? Narrow arms suppress them
  *  (surface leak otherwise); full and lean keep them. */
 export function isNarrowProfile(profile: ToolProfileName = resolveToolProfile()): boolean {

@@ -247,6 +247,24 @@ export class FileReadTracker {
   }
 
   /**
+   * Mark a file as mutated by a BASH write (sed -i / perl -i / > / >> / tee)
+   * — frame-coherence, backlog item 6c. Unlike markAsEdited (where the
+   * old_string match PROVED content knowledge), a bash in-place write gives
+   * no such proof — TB2 mined 67-83% of sed -i calls as blind (no prior read
+   * of the target). So this CLEARS read state: the next Edit demands a fresh
+   * read through either channel (Read tool, or a bash read registered via
+   * markAsRead).
+   */
+  static markBashWrite(filePath: string): void {
+    this.fileReadTimestamps.delete(filePath);
+    this.editedSections.delete(filePath);
+    this.sectionFingerprints.delete(filePath);
+    this.consecutiveEditCount.delete(filePath);
+    this.lastEditRegion.delete(filePath);
+    this.fileEditTimestamps.set(filePath, Date.now());
+  }
+
+  /**
    * Check if an edit should be allowed under brief read mode
    * Returns true if:
    * 1. We're under MAX_CONSECUTIVE_EDITS
@@ -608,6 +626,31 @@ IMPORTANT: Include sufficient context (3+ lines before/after) in old_string to e
     );
   }
 
+  /**
+   * Is the Read tool present on the active tool surface? (Frame-aware denial
+   * advice, backlog item 6b.) Mirrors ShellTool's resolution — a deliberate
+   * copy: executors compile in Pass-1 before core's dist exists, so core's
+   * ToolProfile resolver cannot be imported here. Read is ABSENT under the
+   * bash-only and bash-edit session profiles and under those doors when
+   * card/env-anchored (pre-lift). Bias: when EITHER channel says Read-less,
+   * give bash advice — advising `cat -n` to a model that also has Read is
+   * harmless (bash reads register), while advising Read to a model without
+   * it is the TB2 dead-end-denial bug.
+   */
+  private readToolOnSurface(): boolean {
+    const readless = (v: string) => v === 'bash-only' || v === 'bash-edit';
+    const profile = (process.env.CORTEX_TOOL_PROFILE ?? 'full').trim().toLowerCase();
+    if (readless(profile)) return false;
+    const envAnchor = (process.env.CORTEX_TOOL_ANCHOR ?? '').trim().toLowerCase();
+    const envAnchorOff = envAnchor === 'none' || envAnchor === 'full' || envAnchor === 'off';
+    if (envAnchorOff) return true; // explicit env off cancels the card anchor
+    if (readless(envAnchor)) return false;
+    const cardAnchor = ((this.config as { activeAnchorProfile?: string | null }).activeAnchorProfile ?? '')
+      .trim()
+      .toLowerCase();
+    return !readless(cardAnchor);
+  }
+
   validateToolParams(params: EditToolParams): string | null {
     // Schema validation
     const schemaError = SchemaValidator.validate(this.parameterSchema, params);
@@ -636,6 +679,12 @@ IMPORTANT: Include sufficient context (3+ lines before/after) in old_string to e
     // Phase 2: Brief read mode allows up to MAX_CONSECUTIVE_EDITS in same region if content unchanged
     if (params.old_string !== '' && !FileReadTracker.hasBeenRead(filePath)) {
       const relativePath = makeRelative(filePath, this.config.workingDirectory);
+      // Frame-aware advice (backlog item 6b): under a Read-less tool surface
+      // (bash-edit / bash-only door) the classic "Use the Read tool" advice
+      // is unfollowable — TB2 mined 54/27 such dead-end denials per persist
+      // arm. Bash reads REGISTER (ShellTool → FileReadTracker), so point the
+      // model at the channel it actually has. The guard itself is unchanged.
+      const readless = !this.readToolOnSurface();
 
       // Check if file is stale (edited after last read)
       const isStale = FileReadTracker.isStale(filePath);
@@ -684,6 +733,16 @@ This covers lines ${stringLocation.offset + 1}-${stringLocation.offset + stringL
       // Never read before - search for where the old_string appears and suggest targeted read
       const stringLocation = FileReadTracker.findStringInFile(filePath, params.old_string);
       if (stringLocation) {
+        if (readless) {
+          const from = stringLocation.offset + 1;
+          const to = stringLocation.offset + stringLocation.limit;
+          return `You must read the file before editing it.
+
+Your edit target appears around line ${stringLocation.lineNumber}. Read it through bash (bash reads register as reads):
+  Bash: sed -n '${from},${to}p' "${relativePath}"
+
+Then call Edit again with the exact current text.`;
+        }
         return `You must read the file before editing it.
 
 Your edit target appears around line ${stringLocation.lineNumber}. Use:
@@ -693,6 +752,9 @@ This covers lines ${stringLocation.offset + 1}-${stringLocation.offset + stringL
       }
 
       // Fallback: couldn't find the string, suggest reading the whole file
+      if (readless) {
+        return `You must read the file before editing it. Read it through bash first (bash reads register as reads): Bash: cat -n "${relativePath}" — then call Edit with the exact text you want to replace. This ensures you have the current file state and prevents edits based on stale or assumed content.`;
+      }
       return `You must read the file before editing it. Use the Read tool first to see the current file content (file_path: "${relativePath}"), then call Edit with the exact text you want to replace. This ensures you have the current file state and prevents edits based on stale or assumed content.`;
     }
 

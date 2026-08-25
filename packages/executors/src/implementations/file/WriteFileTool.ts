@@ -18,6 +18,7 @@ import {
   resolveFilePath,
 } from '../../utils/FileUtils.js';
 import type { ExecutorConfig } from '../../base/ToolRegistry.js';
+import { FileReadTracker } from './EditTool.js';
 
 /**
  * Document file extensions that get collapsible preview (no full content in metadata)
@@ -198,6 +199,12 @@ export class WriteFileTool extends BaseTool<WriteFileToolParams, ToolResult> {
 
       // Write file
       await fs.promises.writeFile(params.file_path, params.content, 'utf-8');
+
+      // Frame-coherence (backlog item 6): a successful Write means the model
+      // authored the ENTIRE current content — register it as read so a
+      // follow-up Edit is legal. (Previously a Write-created file still hit
+      // the read-first denial: the tracker never heard about it.)
+      FileReadTracker.markAsRead(params.file_path);
 
       // Get file stats
       const stats = await fs.promises.stat(params.file_path);
