@@ -30,12 +30,38 @@ export const BOOT_MINIMAL_PROMPT =
   'warrants. If you did not finish the task, say so plainly — never claim work you have not ' +
   'done. When the task is complete, reply with the final answer only.';
 
+/**
+ * Item 9b (HARNESS_IMPROVEMENT_BACKLOG): when a REAL orient script path is
+ * resolved (project .cortex/orient, else the shipped scaffold's copy via
+ * CORTEX_ROOT), the clause points at it definitely instead of the conditional
+ * relative probe — TB2 fleet evidence: 101/251 sessions obeyed the clause
+ * verbatim against a nonexistent relative path (~40% single-clause obedience),
+ * while the scaffold sat unreached one directory over. The oriented variant
+ * also names the capability index the script prints (skills guides), closing
+ * the zero-discovery gap (0 Skill/SearchTools calls in ~11K bench tool calls).
+ */
+export function buildBootMinimalPrompt(orientPath?: string): string {
+  if (!orientPath) return BOOT_MINIMAL_PROMPT;
+  return (
+    'You are Cortex, a coding agent working in this workspace through the provided tools. ' +
+    'Complete the user\'s task by reading and running real code — never answer from memory ' +
+    'when a command can verify. Prefer acting over deliberating. For workspace tasks, orient ' +
+    `first: run \`sh ${orientPath}\` via Bash — its output maps the workspace and indexes ` +
+    'your skill guides; consult a guide when the task matches its domain. If you did not ' +
+    'finish the task, say so plainly — never claim work you have not done. When the task is ' +
+    'complete, reply with the final answer only.'
+  );
+}
+
 /** The static-corpus filter mode a preset implies for the mass partition. */
 export function presetMassMode(preset: PromptPreset | undefined): 'minimal' | 'full' {
   return preset === 'boot-minimal' ? 'minimal' : 'full';
 }
 
 /** The replacement core system prompt a preset implies (undefined = keep). */
-export function presetSystemPrompt(preset: PromptPreset | undefined): string | undefined {
-  return preset === 'boot-minimal' ? BOOT_MINIMAL_PROMPT : undefined;
+export function presetSystemPrompt(
+  preset: PromptPreset | undefined,
+  orientPath?: string
+): string | undefined {
+  return preset === 'boot-minimal' ? buildBootMinimalPrompt(orientPath) : undefined;
 }

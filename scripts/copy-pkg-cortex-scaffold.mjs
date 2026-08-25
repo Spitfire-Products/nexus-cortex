@@ -51,6 +51,17 @@ for (const f of SCAFFOLD_FILES) {
   copied++;
 }
 
+// Generic mechanical orient (backlog item 9b): shipped as <pkg>/.cortex/orient so the
+// boot-minimal clause always has a real target (SystemMessageMiddleware resolves
+// project .cortex/orient first, else CORTEX_ROOT's copy = this one). Source is the
+// GENERIC script in docs/prompts — NEVER the repo-root .cortex/orient, which is the
+// dev monorepo's project-specific orientation.
+const orientScaffold = resolve(pkgDir, '..', '..', 'docs', 'prompts', 'orient-scaffold.sh');
+if (existsSync(orientScaffold)) {
+  copyFileSync(orientScaffold, join(dest, 'orient'));
+  copied++;
+}
+
 // Fresh-install onboarding memory: ship the seed as MEMORY.md (never the dev MEMORY.md,
 // which is project-private). Injected on turn 1; tells the first agent how to /init,
 // discover skills/agents, and then replace it with real project memory.

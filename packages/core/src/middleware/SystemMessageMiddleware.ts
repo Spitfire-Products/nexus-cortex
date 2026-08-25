@@ -30,9 +30,29 @@ import type {
   TemplateVariables,
   MiddlewareContext
 } from './contracts/MiddlewareContracts.js';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { toolFactory } from '../tools/ToolFactory.js';
 import { isTurnVaryingSystemMessage } from '../system-messages/turnVaryingClassifier.js';
 import { presetMassMode, presetSystemPrompt, type PromptPreset } from '../system-messages/promptPresets.js';
+
+/**
+ * Item 9b: resolve a REAL orient script for the boot-minimal clause — project
+ * copy wins, else the shipped scaffold's (CORTEX_ROOT/.cortex/orient, vendored
+ * by prepack). Returns undefined when neither exists (clause stays the generic
+ * conditional probe). Two existsSync calls per turn — noise next to the fs
+ * work the loader already does.
+ */
+function resolveOrientPath(projectPath?: string): string | undefined {
+  const proj = join(projectPath || process.cwd(), '.cortex', 'orient');
+  if (existsSync(proj)) return proj;
+  const root = (process.env.CORTEX_ROOT ?? '').trim();
+  if (root) {
+    const shipped = join(root, '.cortex', 'orient');
+    if (existsSync(shipped)) return shipped;
+  }
+  return undefined;
+}
 
 /**
  * System Message Injection Middleware
@@ -322,8 +342,14 @@ export class SystemMessageMiddleware implements ISystemMessageInjector {
     const envMass = (process.env.CORTEX_PROMPT_MASS ?? '').trim().toLowerCase();
     const cardPreset = (model as { promptPreset?: PromptPreset }).promptPreset;
     const promptMass = envMass || presetMassMode(cardPreset);
-    const presetPrompt = (!envMass && !process.env.CORTEX_SYSTEM_PROMPT_FILE)
-      ? presetSystemPrompt(cardPreset)
+    // Item 9a (defer-gate fix): 'defer' COMPOSES with the card preset — the
+    // narrow replacement prompt holds turn 1 and the dropped corpus arrives at
+    // the anchor-lift boundary. Previously ANY env value (incl. defer)
+    // disabled the preset prompt, so defer shipped the full core prompt turn 1
+    // and could never deliver its minimal-entry intent (the defer trap,
+    // harbor-bench ledger). 'minimal'/'full' env semantics unchanged.
+    const presetPrompt = ((!envMass || envMass === 'defer') && !process.env.CORTEX_SYSTEM_PROMPT_FILE)
+      ? presetSystemPrompt(cardPreset, resolveOrientPath(context.config?.projectPath))
       : undefined;
     if (presetPrompt) {
       for (const m of systemMessages) {
@@ -391,8 +417,16 @@ export class SystemMessageMiddleware implements ISystemMessageInjector {
     hasTools: boolean,
     context: MiddlewareContext
   ): Promise<string | undefined> {
-    const injectionContext = this.buildInjectionContext(model, hasTools, context);
-    const templateVars = this.buildTemplateVariables(injectionContext.toolCount, context);
+    // Item 9c: the corpus is BY DEFINITION what the turn-0 filter dropped, so
+    // rebuild it under turn-0 conditions regardless of the orchestrator's
+    // counter at lift time — otherwise turn-gated docs (CORTEX.md/CLAUDE.md
+    // family, conditions.turnNumber=0) silently vanish from the delivery. The
+    // loader's mtime-keyed cache re-probes files per call, so a CORTEX.md
+    // written DURING turn 1 (the orient script's mechanical render) is picked
+    // up fresh here — lazy doc pickup at lift.
+    const turn0Context = { ...context, turnNumber: 0 };
+    const injectionContext = this.buildInjectionContext(model, hasTools, turn0Context);
+    const templateVars = this.buildTemplateVariables(injectionContext.toolCount, turn0Context);
     const systemMessages = await this.systemMessageLoader.getMessagesForInjection(
       injectionContext,
       templateVars

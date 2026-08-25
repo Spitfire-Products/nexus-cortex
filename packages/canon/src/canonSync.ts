@@ -67,6 +67,20 @@ function defaultHarnessSources(H: string): Record<string, HarnessSource> {
         { label: 'nexus-terminal', path: path.join(H, 'nexus-terminal', '.cortex', 'sessions') },
       ],
     },
+    // Decision stores ride canon BY DEFAULT (data-lake rule, 2026-08-25):
+    // sessions alone mislabel exit-masked failures as successes (wire is_error
+    // is false for failing bash) and strip post-persist steering causes
+    // (loop_escalation / gate-fallback / inaction event rows live ONLY here).
+    // File roots — the sync loop handles single-file roots directly.
+    'nexus-cortex-decisions': {
+      exts: ['.jsonl'],
+      roots: [
+        { label: 'workspace', path: path.join(H, '.cortex', 'decisions.jsonl') },
+        { label: 'omniclaude-v4', path: path.join(H, 'omniclaude-v4', '.cortex', 'decisions.jsonl') },
+        { label: 'server', path: path.join(H, 'omniclaude-v4', 'packages', 'server', '.cortex', 'decisions.jsonl') },
+        { label: 'nexus-terminal', path: path.join(H, 'nexus-terminal', '.cortex', 'decisions.jsonl') },
+      ],
+    },
     'grok-build': { exts: ['.jsonl', '.json'], roots: [path.join(H, '.grok', 'sessions')] },
     'gemini-cli': { exts: ['.jsonl', '.json'], roots: [path.join(H, '.gemini', 'tmp')] },
   };
@@ -274,6 +288,16 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
     for (const r of src.roots) {
       const rootPath = typeof r === 'string' ? r : r.path;
       const sub = typeof r === 'string' ? '' : r.label;
+      // A root may be a single FILE (e.g. .cortex/decisions.jsonl) — sync it
+      // directly; walk() only descends directories.
+      let rootIsFile = false;
+      try { rootIsFile = fs.statSync(rootPath).isFile(); } catch { /* absent */ }
+      if (rootIsFile) {
+        if (src.exts.some((x) => rootPath.endsWith(x))) {
+          syncFile(rootPath, path.join(label, sub, path.basename(rootPath)));
+        }
+        continue;
+      }
       for (const f of walk(rootPath)) {
         if (!src.exts.some((x) => f.endsWith(x))) continue;
         syncFile(f, path.join(label, sub, path.relative(rootPath, f)));

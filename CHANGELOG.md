@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.72.0] - 2026-08-25
+
+### Added
+- **Composable deferred doctrine.** `CORTEX_PROMPT_MASS=defer` now composes with a model card's
+  `promptPreset`: a boot-minimal card keeps its narrow ~400-byte prompt on turn 1 and the full
+  static corpus (tool guide, work-quality doctrine, project CORTEX.md/AGENTS.md) is appended once
+  at the first tool-result boundary — door economics on entry, full knowledge after first action.
+  Project docs are read lazily at delivery, so a CORTEX.md generated during turn 1 rides the
+  delivery. Previously, setting `defer` disabled the card's narrow prompt entirely.
+- **Shipped `orient` script.** The `.cortex` scaffold now includes a generic mechanical
+  orientation script: prints a workspace map (structure, package scripts, make targets, README
+  head), indexes the installed skill guides with one-line descriptions, notes SearchTools
+  discovery, and renders a mechanical `.cortex/CORTEX.md` (never overwriting). The boot-minimal
+  prompt now points at a **resolved, real** orient path — a project's own `.cortex/orient` wins,
+  else the shipped copy — instead of conditionally probing a relative path that may not exist.
+- **Decision stores captured by default** (nexus-canon): a fresh canon setup now captures
+  `.cortex/decisions.jsonl` (tool outcomes + steering events) with zero configuration, alongside
+  sessions — single-file store roots are now supported in sync config.
+
+### Changed
+- **deepseek-v4-pro card: `frameProfile: 'lifted'`** — codifies the measured frame verdict from
+  the full Terminal-Bench 2.0 rerun (80.9% lifted vs 74.2% persist on 89 tasks, lifted also
+  cheaper per pass). The flash card stays unset: persist wins for flash only as the
+  persist + EndTurn-gate combination, armed via environment in bench/serving profiles.
+
 ## [4.71.0] - 2026-08-25
 
 ### Added

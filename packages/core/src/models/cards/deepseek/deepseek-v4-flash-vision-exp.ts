@@ -16,12 +16,16 @@
  * existing convention so registry-relative routing stays consistent — a
  * family-wide card-pricing refresh is a separate change.
  *
- * ⚠ Harness status: the chat/completions request builder has NO image-block
- * ingestion yet (only ResponsesAPIAdapter handles image_url) and no tool emits
- * image blocks — so end-to-end agentic vision (e.g. "look at this screenshot
- * in the workspace") needs the image-path bridge first. The card ships so
- * direct API callers and the bridge work have a registry entry. EXPERIMENTAL
- * per DeepSeek — may change or be withdrawn.
+ * Harness status: the image-path bridge shipped WITH this card in 4.71.0
+ * (ReadImage tool, canonical image blocks, vision-gated image_url parts in
+ * ChatCompletions/Messages adapters, downscale-at-ingest, image TTL eviction)
+ * — end-to-end agentic vision verified in production (TB2 vision cell:
+ * code-from-image solved with 1 ReadImage call).
+ * ⚠ Cache caveat (probed 2026-08-25): image-bearing requests BYPASS DeepSeek
+ * cache reads entirely; the harness's CORTEX_IMAGE_TTL_TURNS eviction restores
+ * the discount for subsequent text turns. Not certified as a text-task drop-in
+ * for deepseek-v4-flash (no parity cell yet). EXPERIMENTAL per DeepSeek — may
+ * change or be withdrawn.
  */
 
 import { createDeepSeekModelConfig } from '../../configurators/DeepSeekConfigurator.js';

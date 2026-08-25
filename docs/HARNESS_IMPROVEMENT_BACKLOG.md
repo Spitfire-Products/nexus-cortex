@@ -360,3 +360,74 @@ downscale-at-ingest stays (wire); ADD an **image TTL/eviction** mechanic — aft
 "[image evicted: <path> — ReadImage again if needed]"; the one-time prefix bust this causes is
 massively net-positive because it RESTORES caching for the rest of the session. Likely a temporary
 "-exp" limitation — re-probe on model updates before tuning further.
+
+## Item 9 — Composable deferred doctrine: defer-gate fix + mechanical orient + lazy doc pickup (BUILT 2026-08-25)
+
+**STATUS: BUILT (local, green — release-gated).** 9a gate fix + orient-path interpolation in
+SystemMessageMiddleware (+ resolveOrientPath); 9b generic mechanical orient at
+docs/prompts/orient-scaffold.sh, vendored by prepack to <pkg>/.cortex/orient (repo-root
+.cortex/orient stays dev-project-specific, never shipped); 9c turn-0 semantics + lazy doc pickup
+in buildDeferredStaticCorpus. Tests: promptPreset.test.ts 10 (6 new: defer-composition ×3,
+orient interpolation ×3) + deferredCorpusLazyDocs.test.ts 1 + promptMassDefer.test.ts 3 adjacent
+green; tsc clean. Changeset deferred-doctrine-item9 (core minor).
+
+**Trigger (operator-designed, from the TB2 steering audit):** the narrow door should TELL the model
+to run the init routine via bash on turn 1, then deliver the full doctrine — including the
+freshly-generated CORTEX.md — at the anchor-lift boundary after that first call. Door economics on
+turn 1, full knowledge after act 1. This is the P6 defer design's original intent, currently
+unreachable, now with the steering evidence to justify finishing it.
+
+**Evidence (grounded 2026-08-25, TB2 fleet + code):**
+- **Steering works and was aimed at nothing:** 101/251 staged bench sessions executed the boot
+  prompt's orient clause VERBATIM (`sh .cortex/orient` → fallback echo) — ~40% single-clause
+  obedience — while the target file never existed in task cwds. Meanwhile the npm scaffold (with 10
+  vendored skills) sat in `~/.cortex` in every container, unreached: the clause probes the RELATIVE
+  path.
+- **Zero discovery ever:** 0 SearchTools + 0 Skill calls across ~11K tool calls, all four arms.
+  Presence-in-request is the only affordance that fired. SearchTools steering exists ONLY in
+  TOOL_USAGE_GUIDE.md:91 (stripped under boot-minimal); Skill/skills-dir steering exists NOWHERE in
+  the corpus at any mass level; init-generated CORTEX.md is workspace steering only (six-section
+  template — no capability content, correctly).
+- **The gate bug (defer-trap root cause, skill ledger):** `SystemMessageMiddleware.ts` applies the
+  card's preset prompt only when `!envMass` — so `CORTEX_PROMPT_MASS=defer` DISABLES boot-minimal
+  and ships the full prompt turn 1. Defer and the narrow door are mutually exclusive when they must
+  compose.
+- **The delivery mechanism already exists and is cache-safe:** `CortexOrchestrator.ts:571-595`
+  appends the deferred corpus ONCE onto the first tool_result (`<system-reminder>` wrapped) —
+  append-only on the moving turn, cached prefix untouched.
+
+**Design (three parts):**
+1. **9a — defer composes with the card preset.** Middleware gate becomes: preset replacement prompt
+   applies when envMass is unset OR `defer` (still overridden by CORTEX_SYSTEM_PROMPT_FILE).
+   `minimal`/`full` semantics unchanged. Result: defer = boot-minimal turn 1 → corpus at lift.
+2. **9b — mechanical orient (bash-runnable init).** Ship a real `orient` script in the scaffold:
+   runs `InitCortexContext.scan` mechanics deterministically (no model synthesis) → writes
+   `.cortex/CORTEX.md` if absent (Project/Key Commands/deps summary) → prints the workspace map +
+   CAPABILITY steering to stdout (skills dir listing with one-line domains, SearchTools pointer —
+   the bash-native affordance clause's natural home: harness-owned, frame-independent, works under
+   persist). Boot prompt clause interpolated by the server to a RESOLVED path (project `.cortex/
+   orient` if present, else the global scaffold copy) — never a relative probe at nothing.
+3. **9c — lazy project-doc pickup at lift.** `buildDeferredStaticCorpus` must (re)read project docs
+   (CORTEX.md/AGENTS.md family) at DELIVERY time, not boot — so a CORTEX.md written during the
+   turn-1 orient call is included in the corpus that lands on that same call's tool_result.
+
+**Touchpoints:** SystemMessageMiddleware (gate, ~line 326), promptPresets.ts (clause + server-side
+path interpolation), scaffold assets (orient script), InitCortexContext (expose mechanical render),
+CortexOrchestrator defer delivery (lazy doc read), .env.example + docs.
+
+**Tests:** composition unit (defer + preset card → turn-1 sysMsg == preset text; corpus delivered
+exactly once at lift; minimal/full unchanged); lazy-pickup unit (doc written after boot, before
+lift → present in corpus); orient golden test (writes CORTEX.md, idempotent, prints skills index);
+path interpolation (project beats global; absent → clause still valid via global). Probe recipe:
+DEBUG_PAYLOAD → turn-1 `sysMsg≈659B tools=3`, corpus block on first tool_result, CORTEX.md inside.
+
+**Verification rung:** local probe → **cell D** in the steering-arm family on the discriminating
+subset (A = boot-minimal control [existing data], B = full-mass alone [small bracket cell],
+C = full-mass + pre-generated CORTEX.md, D = defer-fixed steered door). Secondary metrics via
+distiller: orient-obedience rate, SearchTools/Skill first-ever invocations, input-mass per task.
+
+**Risks / non-goals:** corpus (~32KB) lands once in the moving turn = one-time cache-miss cost
+(~$0.007, acceptable); clause obedience <100% is fine (corpus delivers at lift regardless — orient
+only adds the workspace map); boot-prompt growth must not break turn-1 action (defer-trap lesson —
+DEBUG_PAYLOAD gate before any fleet fire); NOT a change to minimal/full behavior or to the
+model-synthesized /init flow (the mechanical render is additive).
