@@ -101,12 +101,21 @@ export interface ChatCompletionsAPIToolMessage {
  *
  * As defined in OpenAI Chat Completions API
  */
+/** Multimodal content part (OpenAI chat/completions dialect; DeepSeek vision
+ *  is wire-compatible — probe-verified 2026-08-25). Only USER messages may
+ *  carry image parts (DeepSeek rejects them elsewhere). */
+export type OpenAIChatContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string; detail?: 'auto' | 'low' | 'high' } };
+
 export interface OpenAIChatMessage {
   /** Message role */
   role: 'user' | 'assistant' | 'system' | 'tool';
 
-  /** Message content (can be null for assistant messages with tool_calls) */
-  content: string | null;
+  /** Message content (can be null for assistant messages with tool_calls;
+   *  a parts array ONLY for user messages carrying images — plain string
+   *  everywhere else so non-vision providers see the unchanged wire). */
+  content: string | null | OpenAIChatContentPart[];
 
   /** Tool calls (only for assistant role) */
   tool_calls?: ChatCompletionsAPIToolCall[];
@@ -182,7 +191,27 @@ export class ChatCompletionsAPIAdapter implements FormatAdapter {
             .join('\n')
         );
 
-        if (textContent.trim().length > 0) {
+        // Image-path bridge (backlog item 7): user-message image blocks render
+        // as OpenAI content PARTS — gated on the card's probe-verified vision
+        // flag so non-vision providers keep the unchanged plain-string wire.
+        // (DeepSeek: images in USER messages only; ~384 tokens/image.)
+        const imageBlocks = modelConfig.vision
+          ? msg.content.filter(b => b.type === 'image' && b.image)
+          : [];
+
+        if (imageBlocks.length > 0) {
+          const parts: OpenAIChatContentPart[] = [];
+          if (textContent.trim().length > 0) {
+            parts.push({ type: 'text', text: textContent });
+          }
+          for (const b of imageBlocks) {
+            parts.push({
+              type: 'image_url',
+              image_url: { url: `data:${b.image!.mediaType};base64,${b.image!.data}` },
+            });
+          }
+          openaiMessages.push({ role: 'user', content: parts });
+        } else if (textContent.trim().length > 0) {
           openaiMessages.push({
             role: 'user',
             content: textContent
@@ -685,12 +714,15 @@ export class ChatCompletionsAPIAdapter implements FormatAdapter {
 
     // Handle tool role messages as tool results (do this FIRST, before text)
     if (msg.role === 'tool' && msg.tool_call_id) {
+      // Tool messages are always plain strings on this wire (image parts are
+      // user-message-only); the string guard satisfies the widened union.
+      const toolText = typeof msg.content === 'string' ? msg.content : '';
       contentBlocks.push({
         type: 'tool_result',
         toolResult: {
           tool_use_id: msg.tool_call_id,
-          content: msg.content || '',
-          is_error: msg.content?.startsWith('ERROR:') || false
+          content: toolText,
+          is_error: toolText.startsWith('ERROR:')
         }
       });
     } else {

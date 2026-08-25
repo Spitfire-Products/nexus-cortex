@@ -482,6 +482,22 @@ export class MessagesAPIAdapter implements FormatAdapter {
           break;
         }
 
+        case 'image': {
+          // Image-path bridge (backlog item 7): canonical image block → the
+          // native Anthropic-dialect shape. Previously silently dropped.
+          if (block.image) {
+            content.push({
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: block.image.mediaType,
+                data: block.image.data,
+              },
+            } as any);
+          }
+          break;
+        }
+
         case 'tool_use':
           if (!block.toolUse) {
             throw new Error('tool_use content block missing toolUse data');

@@ -222,3 +222,141 @@ branch; cat→Edit now-succeeds integration; staleness-via-bash-write case.
 drops; no new failures from over-registration.
 **Risk:** parser false-positives marking unread files read (conservative patterns; only simple
 argument positions).
+
+---
+
+## Item 7 — Chat/completions image-path bridge (agentic vision; added 2026-08-25)
+
+**STATUS: BUILT + LIVE-VERIFIED E2E 2026-08-25** (local build; rides next release train).
+Canonical `image` block (types/tools.ts, own field — no `data?` collision); chat/completions
+renders user-message image parts GATED on `card.vision` (non-vision wire byte-identical, proven);
+Messages-dialect parity case; `ReadImage` executor (magic-byte sniff, 32MiB cap, payload in
+metadata, registers the read) + BASE_TOOLS def at discoveryTier ESSENTIAL (live-probe finding:
+'standard' hid it behind SearchTools discovery on turn 1) + BASH_EDIT/BASH_PLUS membership
+(vision gate strips it pre-profile for non-vision cards — existing frames unchanged, tested);
+vision-gate filters at BOTH assembly sites + the SearchTools catalog; orchestrator scrubs
+`imagePayload` from metadata pre-persist and injects the image as an R18b-shaped USER message
+(providers reject image parts on tool messages), non-vision hallucinated calls rewritten to an
+actionable error; convertSingleMessage image passthrough (live-probe finding: the unknown-type
+fallback JSON.stringified the block — model saw 'attached base64 blob'). Tests: 6 adapter +
+6 imageFile + 5 ReadImage integration + 1 converter regression; adjacent sweeps green.
+**E2E PROOF (local server + real API):** ReadImage on a generated PNG → ONE turn → exact answer
+"CODE: XR-4406 and a green circle" (95 out-tokens, no OCR grinding). Earlier failed probes are the
+two findings above — both fixed with regression coverage.
+**Remaining for the vision-cell arm:** publish (next train, minor), then the arm: {extract-moves-
+from-video, code-from-image, sam-cell-seg} × {flash OCR-baseline, vision-exp}.
+
+**Trigger:** DeepSeek released `deepseek-v4-flash-vision-exp` (2026-08-21) — flash-priced
+multimodal with TOOL CALLS, probe-verified (read a value from a PNG → correct function call).
+Card onboarded (registry + barrel). TB2 census: `extract-moves-from-video` failed ALL arms as a
+text-only capability-mismatch (the model correctly built an ffmpeg+tesseract pipeline and died in
+tool-timeout cascade); `code-from-image` passed via OCR only on flash-lifted. Native vision is the
+lever the harness cannot currently deliver.
+
+**Gap:** only ResponsesAPIAdapter handles `image_url`; the chat/completions request builder has NO
+image-block ingestion, and no tool emits image blocks — so a container/workspace image can never
+reach a vision model on the DeepSeek path.
+
+**Design sketch (own TDD pass; not rushed into 4.70.x):**
+1. Chat/completions builder: pass through `image_url` content blocks in user messages (wire format
+   already OpenAI-compatible; images user-role-only per DeepSeek).
+2. A `ReadImage` tool (or Read-on-image-extension branch) that emits an image content block from a
+   workspace file (base64 data URI; respect ≤32MiB, JPEG/PNG/GIF/WebP; note images ride USER
+   messages, so the result must inject as a follow-up user image block — a new mechanic, needs the
+   session-persist ordering lessons from item 3).
+3. Model-capability gate: only offer/emit for cards flagged vision (add `vision?: boolean` to
+   ModelConfig — the field does not exist today; grok/gemini cards would set it too).
+4. Verification: vision-cell arm — {extract-moves-from-video, code-from-image, sam-cell-seg} × 
+   {flash (OCR baseline), flash-vision-exp} once the bridge ships; plus a cortex-bench micro-probe
+   (screenshot → tool call).
+
+**Cost note:** images ≤384 tokens each, 600/request — cheap. Same peak/off-peak windows as flash.
+
+---
+
+## Item 8 — Doctrine mining layer (backpass-pattern proposer, bench-gated apply; SPEC 2026-08-25)
+
+**Trigger:** operator-sourced kunchenguid/backpass (MIT): evidence-mined prompt editing with strong
+hygiene — verbatim-quote provenance per claim, ≥2-independent-session corroboration per new rule,
+≤5 edits/run ("learning rate"), apply gate, rejection memory. Its gap is OUR moat (same verdict as
+AHE): zero outcome verification — no A/B, no holdout, no judge. Borrow the algorithm, not the
+codebase; gate it with our bench-cell machinery. This defines HOW the already-queued doctrine arm
+generates its content from evidence instead of hand-writing.
+
+**Why we start ahead of backpass:** (a) the trace distiller already is its collect+distill+loss
+skeleton (our "candidate deficiencies ×2+" = its two-session rule); (b) canon store = its collect
+stage done cross-harness (4,200+ sessions); (c) 4.70.0 steering/event records are PRE-LABELED loss
+events it doesn't have — loop_escalation, endturn_gate_fallback, inaction_nudge, edit-denial
+signatures — joinable to sessions by sessionId; (d) the deficiency ledger's evidence_refs are its
+verbatim-quote convention already in production.
+
+**Design (offline tool; no harness code changes):**
+1. **Stage A — digest (deterministic, no model):** reuse the distiller's trajectory walk; per
+   session emit user/assistant turns + one-line tool-call shapes + JOINED decision-store event rows
+   (the pre-labeled failures). Golden-file deterministic.
+2. **Stage B — loss labeling (one cheap call/session):** distilled digest + the TARGET FILE
+   (see targets) + rubric → strict JSON: {instruction helped | violated | gap}, each claim with a
+   VERBATIM quote. deepseek-v4-flash, off-peak, capped session sample.
+3. **Stage C — aggregation (deterministic, no model):** mechanical quote check first (a claim whose
+   quote is not an exact substring of its source session is DROPPED — the Stage-2-grounding trick
+   applied to the miner itself); cluster near-duplicate gaps via the approachHash-style normalizer;
+   corroboration counts; drop clusters seen in <2 sessions; rank violations > gaps > unhelpful.
+4. **Stage D — synthesis (one high-reasoning call):** ≤5 candidate edits (ADD / REMOVE / REWRITE /
+   EXTRACT→SKILL — the last maps onto our distiller→skill doctrine) against a STAGING copy, each
+   annotated with rationale + quotes + a post-edit token-budget check on the target file. Never
+   writes the live file; emits candidate + diff report.
+5. **Gate — a bench cell, not an eyeball:** the candidate file runs as an arm (discriminating
+   subset + 5 pass-controls; judge reads the DIFF; FWER-adjust if multiple candidates compete).
+   Apply only on gate-keep ∧ judge-approve; edits to published surfaces ride the release train
+   (operator gate) like any code change. Rejected candidates land in a rejection ledger and are
+   not re-proposed without materially new evidence.
+
+**Targets, in leverage order:** (1) `.cortex/orient` — tiny, boot-minimal-visible, most of what a
+narrow-door model ever sees; (2) tool descriptions (doctrine-at-tool-read-time; EndTurn precedent);
+(3) the browser SPA's VFS AGENTS.md (seeds the narrow frame's first bash call); (4) the full
+system-message corpus last (largest, least tractable).
+
+**Data sources:** TB2 arm Datasets (trajectories/ + result rows), canon store sessions,
+`.cortex/decisions.jsonl` (decision + kind-tagged event rows).
+
+**Touchpoints:** extend `scripts/tb2-distill.py` with a `--mine-rules <target-file>` mode (or a
+sibling `scripts/doctrine-mine.py` sharing its walker); bench-cell mechanics = existing arm
+machinery; zero orchestrator/executor changes.
+
+**Tests:** digest determinism (golden file); normalizer clustering table; corroboration-threshold
+unit; mechanical quote-verification (fabricated quote → dropped); ≤5-edit + token-budget caps;
+rejection-ledger suppression.
+
+**Verification rung:** first target = orient. Cell ≈ 15-20 tasks (skills-unreachable +
+doctrine-stripped failure classes + controls) × {current orient, mined orient}; success =
+(pass, cost, turns) improves, controls hold, judge approves the diff.
+
+**Risks:** rule overfitting to bench mechanics (the AHE trap — holdout tasks + judge mitigate);
+labeler quote fabrication (mechanical substring check kills it); prompt-mass creep on the target
+(hard token budget, backpass-style); mining spend (flash + off-peak + sample cap).
+
+### Item 7 addendum — image cache dynamics (operator question, 2026-08-25)
+Provider prefix-caching makes REPLAY tokens nearly free (≤384 tok/image at cache-hit ~$0.007/M —
+fractions of a cent per hundred turns) and context occupancy trivial; the un-cacheable cost is the
+request BODY — the full base64 re-uploads every turn (cache is server-side; the client still sends
+the bytes) and DeepSeek caps request bodies at 48 MiB, so one large image + a long session can hit
+a HARD wall. Verdict: **prune-and-bust is the wrong tool for images** (busting the prefix re-bills
+the whole suffix at miss price to save bytes that tokens never paid for). Right tool =
+**downscale-at-ingest to the provider's own ~800×800 resize target** — zero model-visible fidelity
+loss (the provider was going to do it anyway), ~100× wire reduction, keeps history byte-stable so
+the cache rides forever. Follow-up: ReadImage opportunistic PIL/ImageMagick shell-out downscale
+above a soft threshold (~2 MiB), else advise; age-tier pruning for images only for pathological
+many-image sessions (100+ images → token space matters again).
+
+**MEASURED 2026-08-25 (probe, decisive):** image-bearing requests on vision-exp currently BYPASS
+cache reads ENTIRELY — an identical repeat request reported cached=0 even though its own text
+prefix was demonstrably in cache (a pure-text request with the same prefix hit 896 cached tokens,
+populated BY the image-bearing call). So the real cost of an image in history is not its ≤384
+tokens: it disables the ~31× cache-hit discount ($0.007 vs $0.22/M off-peak) for EVERY subsequent
+request of the session. On long agentic sessions (TB2 tasks run 97%+ cache-hit, e.g. 37M input /
+35.8M cached) that is the difference between ~$0.40 and ~$8 per task. REVISED design:
+downscale-at-ingest stays (wire); ADD an **image TTL/eviction** mechanic — after N turns (env
+`CORTEX_IMAGE_TTL_TURNS`, default ~3), replace the image block with a text stub
+"[image evicted: <path> — ReadImage again if needed]"; the one-time prefix bust this causes is
+massively net-positive because it RESTORES caching for the rest of the session. Likely a temporary
+"-exp" limitation — re-probe on model updates before tuning further.

@@ -33,12 +33,16 @@ const BASH_ONLY = new Set(['Bash', ...ALWAYS_KEEP]);
 
 /** bash-plus: the minimal-harness arm (BASH_PLUS_SPEC.md, R61) — the Pi/dsh
  *  surface class: shell + structural file ops, nothing else. The shell-native
- *  small-model graduation target and P1 anchoring-A/B arm. */
-const BASH_PLUS = new Set(['Bash', 'Read', 'Edit', 'Write', ...ALWAYS_KEEP]);
+ *  small-model graduation target and P1 anchoring-A/B arm.
+ *  ReadImage rides the practical doors (item 7): the orchestrator's VISION
+ *  GATE strips it for non-vision cards BEFORE profile filtering, so set
+ *  membership changes nothing for existing text-only frames — a vision card
+ *  under a narrow door gets door+ReadImage (the vision-arm shape). */
+const BASH_PLUS = new Set(['Bash', 'Read', 'Edit', 'Write', 'ReadImage', ...ALWAYS_KEEP]);
 
 /** bash-edit: the dsh-Minimal shape — shell + structural editor ONLY (their
  *  bash + str_replace_editor). The deepseek home-door candidate. */
-const BASH_EDIT = new Set(['Bash', 'Edit', ...ALWAYS_KEEP]);
+const BASH_EDIT = new Set(['Bash', 'Edit', 'ReadImage', ...ALWAYS_KEEP]);
 
 export function resolveToolProfile(env: NodeJS.ProcessEnv = process.env): ToolProfileName {
   const raw = (env.CORTEX_TOOL_PROFILE ?? 'full').trim().toLowerCase();

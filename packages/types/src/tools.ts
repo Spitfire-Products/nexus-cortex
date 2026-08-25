@@ -183,13 +183,25 @@ export interface CanonicalToolResult {
  */
 export interface CanonicalContentBlock {
   /** Content type */
-  type: 'text' | 'tool_use' | 'tool_result' | 'thinking' | 'redacted_thinking' | 'server_tool_use' | 'code_execution_tool_result';
+  type: 'text' | 'tool_use' | 'tool_result' | 'thinking' | 'redacted_thinking' | 'server_tool_use' | 'code_execution_tool_result' | 'image';
 
   /** Text content (for type: text) */
   text?: string;
 
   /** Encrypted reasoning blob (for type: redacted_thinking) — XAI grok-4/4.1 opaque reasoning */
   data?: string;
+
+  /** Image payload (for type: image) — the image-path bridge (backlog item 7).
+   *  Own field, NOT the `data?` blob above (that belongs to redacted_thinking).
+   *  Provider dialects render from this one canonical shape:
+   *  chat/completions → {type:'image_url', image_url:{url:'data:<mediaType>;base64,<data>'}}
+   *  Anthropic Messages → {type:'image', source:{type:'base64', media_type, data}}.
+   *  DeepSeek restriction: images ride USER messages only. */
+  image?: {
+    mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+    /** Base64-encoded image bytes (no data: prefix). */
+    data: string;
+  };
 
   /** Tool use details (for type: tool_use) */
   toolUse?: CanonicalToolUse;

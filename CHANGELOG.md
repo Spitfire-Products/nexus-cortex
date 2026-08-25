@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.71.0] - 2026-08-25
+
+### Added
+- **Agentic vision — the image-path bridge** (live-verified end-to-end: the model read a generated
+  PNG and answered its exact contents in one turn). New `ReadImage` tool (magic-byte-sniffed
+  PNG/JPEG/GIF/WebP, 32 MiB cap, actionable errors), offered only to vision-capable model cards
+  and present on turn 1; canonical `image` content block rendered per provider dialect
+  (chat/completions user-message parts, Anthropic base64 source blocks); images hop from tool
+  results to a synthetic user message (providers reject image parts on tool messages).
+- **deepseek-v4-flash-vision-exp** model card — DeepSeek's first multimodal model (flash pricing,
+  1M context, tool-calls-with-images probe-verified) — plus a probe-gated `vision` capability
+  field on model cards.
+- **Downscale-at-ingest** (`CORTEX_IMAGE_DOWNSCALE_BYTES`, default 2 MiB): large originals shrink
+  to ~800px (the provider's own resize target — lossless to the model, ~100x less wire).
+- **Image TTL eviction** (`CORTEX_IMAGE_TTL_TURNS`, default 3): measured — an image anywhere in a
+  vision-exp request currently disables prompt-cache reads for the entire request; stale images
+  are stubbed out of outgoing requests (history never rewritten), restoring the ~31x cache
+  discount for the rest of the session.
+
+### Changed
+- The Read tool description no longer claims image/PDF support it never had; it points image work
+  at ReadImage.
+
 ## [4.70.0] - 2026-08-25
 
 The "three-guard architecture" release — evidence-driven from a full Terminal-Bench 2.0

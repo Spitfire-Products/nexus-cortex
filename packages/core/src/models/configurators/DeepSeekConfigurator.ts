@@ -15,6 +15,8 @@ export interface DeepSeekModelOptions {
   /** Anchor frame: 'lifted' (default) lifts at first tool_result; 'persist'
    *  keeps the anchored surface all session (backlog item 5). */
   frameProfile?: 'lifted' | 'persist';
+  /** Native image input (probe-verified only). */
+  vision?: boolean;
   /** Card-level prompt-composition preset (P6c/P6e/P6f evidence); env levers override. */
   promptPreset?: 'boot-minimal';
   id: string;
@@ -36,6 +38,7 @@ export function createDeepSeekModelConfig(options: DeepSeekModelOptions): ModelC
   return {
     ...(options.anchorProfile ? { anchorProfile: options.anchorProfile } : {}),
     ...(options.frameProfile ? { frameProfile: options.frameProfile } : {}),
+    ...(options.vision ? { vision: true } : {}),
     ...(options.promptPreset ? { promptPreset: options.promptPreset } : {}),
     id: options.id,
     provider: 'deepseek',

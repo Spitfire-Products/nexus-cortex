@@ -76,6 +76,7 @@ import { classifyErrorFamily } from '../training/errorFamily.js';
 import { classifyToolOutcome } from '../training/toolOutcome.js';
 import { LoopLadder, formatLadderSignal } from '../training/loopLadder.js';
 import { shouldNudgeInaction, formatInactionNudge } from './inactionGuard.js';
+import { applyImageTtlForRequest } from './imageTtl.js';
 import { verifyRequirements, resolveEndTurnRequirementsMode } from './requirementsVerification.js';
 import { ModelRouterMatrix } from '../training/ModelRouterMatrix.js';
 import { classifyTask } from '../training/TaskClassifier.js';
@@ -737,8 +738,10 @@ export class CortexOrchestrator {
           // deferred setup tools are actually findable.
           const extras = [...this.getMcpManagementTools(), ...this.getContextManagementTools()];
           const seen = new Set<string>();
+          const catalogVision = (this.getModel(this.currentModelId ?? '') as { vision?: boolean } | undefined)?.vision === true;
           return [...toolFactory.getAllTools(), ...extras]
             .filter((t) => endTurnGateOn || t.name !== 'EndTurn')
+            .filter((t) => catalogVision || t.name !== 'ReadImage')
             .filter((t) => (seen.has(t.name) ? false : (seen.add(t.name), true)))
             .map((t) => ({
               name: namingHandler.convertName(t.name, convention),
@@ -885,10 +888,13 @@ export class CortexOrchestrator {
 
     // Phase 1 & Phase 2: Get tools (used for both injection context and API request)
     const endTurnGateOn = (process.env.CORTEX_ENDTURN_GATE) === 'true';
+    // Vision gate (item 7): ReadImage is offered ONLY to probe-verified vision
+    // cards — a text-only model must never see or reach the image path.
+    const visionOn = (model as { vision?: boolean } | undefined)?.vision === true;
     const factoryTools = this.applyBaseToolAllowlist(
-      endTurnGateOn
-        ? toolFactory.getAllTools()
-        : toolFactory.getAllTools().filter(t => t.name !== 'EndTurn'),
+      toolFactory.getAllTools()
+        .filter(t => endTurnGateOn || t.name !== 'EndTurn')
+        .filter(t => visionOn || t.name !== 'ReadImage'),
     );
     // Tool-profile: MCP/management/context tools bypass ToolFactory, so the
     // bash-only arm must suppress them here or the surface leaks (lean keeps
@@ -2427,6 +2433,13 @@ export class CortexOrchestrator {
             }
           }
 
+          // Item 7: scrub ReadImage payloads from metadata BEFORE persist;
+          // the images inject as a user message after the results land.
+          const pendingImages = this.collectPendingImages(
+            toolResults,
+            (effectiveModel as { vision?: boolean }).vision === true,
+          );
+
           // Create tool_result messages and add to history
           for (const toolResult of toolResults) {
             const toolResultMessageId = uuidv4();
@@ -2660,6 +2673,11 @@ export class CortexOrchestrator {
           console.error(`[Orchestrator Mentorship] Interleaved continuation thinking failed:`, error.message);
         }
       }
+
+      // Item 7: attach any ReadImage images as a user message so the
+      // continuation request carries them (after the signals block — it
+      // targets the LAST message being a tool_result).
+      await this.injectImageUserMessage(pendingImages, effectiveModel);
 
       // Send tool results back to model and get continuation response
       // Proactive context management - ensure history fits before continuation
@@ -3350,10 +3368,12 @@ export class CortexOrchestrator {
 
     // Get tools (needed for middleware injection decision)
     const endTurnGateOn2 = (process.env.CORTEX_ENDTURN_GATE) === 'true';
+    // Vision gate (item 7): streaming mirror of the sendMessage filter.
+    const visionOn2 = (model as { vision?: boolean } | undefined)?.vision === true;
     const factoryTools = this.applyBaseToolAllowlist(
-      endTurnGateOn2
-        ? toolFactory.getAllTools()
-        : toolFactory.getAllTools().filter(t => t.name !== 'EndTurn'),
+      toolFactory.getAllTools()
+        .filter(t => endTurnGateOn2 || t.name !== 'EndTurn')
+        .filter(t => visionOn2 || t.name !== 'ReadImage'),
     );
     // Tool-profile: streaming mirror of the non-streaming suppression above.
     const bashOnlyProfile2 = isNarrowProfile();
@@ -4269,6 +4289,12 @@ export class CortexOrchestrator {
           totalToolErrors = 0; // Reset — model is making progress
         }
 
+        // Item 7: scrub ReadImage payloads before persist (streaming parity).
+        const pendingImages = this.collectPendingImages(
+          toolResults,
+          (effectiveModel as { vision?: boolean }).vision === true,
+        );
+
         // Create tool_result messages and save to history
         for (const toolResult of toolResults) {
           // Emit tool result as streaming chunk for CLI display
@@ -4449,6 +4475,11 @@ export class CortexOrchestrator {
           console.warn('[Orchestrator Streaming] LoopLadder break: repeated failing approach — forcing synthesis.');
           break;
         }
+
+        // Item 7: attach ReadImage images as a user message (streaming parity;
+        // after the signals block — it targets the LAST message being a
+        // tool_result).
+        await this.injectImageUserMessage(pendingImages, effectiveModel);
 
         // R29b hard cap (streaming parity): force-stop at 2x soft budget;
         // the post-loop R29a streaming net then synthesizes a deliverable.
@@ -7722,6 +7753,72 @@ export class CortexOrchestrator {
     return this.routerMatrix;
   }
 
+  /** Item 7 (image-path bridge): consume ReadImage payloads from this batch.
+   *  SCRUBS the base64 payload out of tool_result metadata BEFORE the result
+   *  is persisted (no double-stored image; the image rides the injected user
+   *  message instead). When the active model is not vision-capable (a
+   *  hallucinated/PTC call that slipped the surface gate), the result is
+   *  rewritten into an actionable error — a text-only model must never have
+   *  an image dangled at it. */
+  private collectPendingImages(
+    toolResults: Array<{ tool_name: string; content: any; is_error?: boolean; metadata?: any }>,
+    modelVision: boolean,
+  ): Array<{ mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string }> {
+    const out: Array<{ mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string }> = [];
+    for (const tr of toolResults) {
+      const payload = tr.metadata?.imagePayload;
+      if (!payload) continue;
+      delete tr.metadata.imagePayload;
+      if (tr.is_error) continue;
+      if (!modelVision) {
+        tr.is_error = true;
+        tr.content =
+          'ReadImage requires a vision-capable model — the active model cannot see images. ' +
+          'Extract what you need through bash instead (e.g. tesseract OCR, ffprobe, PIL).';
+        continue;
+      }
+      out.push({ mediaType: payload.mediaType, data: payload.base64 });
+    }
+    return out;
+  }
+
+  /** Item 7: attach collected images as a synthetic USER message (R18b shape).
+   *  Providers reject image parts on tool messages — DeepSeek accepts them on
+   *  user messages only — so the image hops from the tool_result to the next
+   *  user turn. Persisted BEFORE the continuation request is assembled, so the
+   *  session record shows exactly what the model saw (item-3 lesson). */
+  private async injectImageUserMessage(
+    images: Array<{ mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string }>,
+    effectiveModel: ModelConfig,
+  ): Promise<void> {
+    if (images.length === 0) return;
+    const content: any[] = [{
+      type: 'text',
+      text: `<system-reminder>Visual input from ReadImage (${images.length} image${images.length > 1 ? 's' : ''}) attached below — read the image content directly.</system-reminder>`,
+    }];
+    for (const img of images) {
+      content.push({ type: 'image', image: { mediaType: img.mediaType, data: img.data } });
+    }
+    const imageUserMessage: Message = {
+      uuid: uuidv4(),
+      timestamp: new Date().toISOString(),
+      type: 'user',
+      message: { role: 'user', content },
+      timeline: {
+        sessionId: this.currentSessionId,
+        conversationId: this.currentConversationId,
+        turnNumber: this.turnNumber + 1,
+      },
+      model: {
+        id: effectiveModel.id,
+        provider: effectiveModel.provider,
+        apiPattern: effectiveModel.api.pattern,
+      },
+    } as any;
+    this.messageHistory.push(imageUserMessage);
+    await this.historyStore.appendMessage(this.currentSessionId, imageUserMessage);
+  }
+
   /** The turn's real user prompt text — the most recent user message that is
    *  neither a tool_result carrier nor an injected <system-reminder> steering
    *  message. Used by EndTurn Stage 4 to judge task shape. Empty string when
@@ -8462,10 +8559,15 @@ export class CortexOrchestrator {
 
     // Validate and repair any orphaned tool_use blocks (crash recovery)
     const repaired = this.validateAndRepairMessages(converted);
+    // Image TTL eviction (item 7 addendum): stale images forfeit the whole
+    // request's cache reads on vision-exp — stub them out of the REQUEST copy
+    // after CORTEX_IMAGE_TTL_TURNS. Always-on (not utilization-gated); pure;
+    // swaps content arrays only (cache contract).
+    const imageAged = applyImageTtlForRequest(repaired);
     // Age-tiered tool-result pruning on the outgoing request copy (all
     // request-build call sites flow through here). No-op below the
     // utilization gate; never touches the cache (pruner clones).
-    return this.pruneAgedForRequest(repaired);
+    return this.pruneAgedForRequest(imageAged);
   }
 
   /**
@@ -8623,6 +8725,12 @@ export class CortexOrchestrator {
                   thinkingBlock.thinkingMetadata = (block as any).thinkingMetadata;
                 }
                 return thinkingBlock;
+              } else if (block.type === 'image') {
+                // Item 7 (image-path bridge): pass image blocks through
+                // untouched — the unknown-type fallback below stringifies,
+                // which delivered the base64 as TEXT to the model (live-probe
+                // finding 2026-08-25: "attached base64 blob").
+                return { type: 'image' as const, image: (block as any).image };
               } else if (block.type === 'redacted_thinking') {
                 // XAI grok-4/4.1 encrypted reasoning — preserve opaquely
                 return {

@@ -195,3 +195,33 @@ describe('convertToCanonicalMessages — prefix cache (Round 5)', () => {
     expect(toolResults).toHaveLength(1);
   });
 });
+
+describe('convertSingleMessage — image block passthrough (item 7)', () => {
+  it('image blocks survive conversion (the JSON.stringify fallback ate them — live-probe finding)', async () => {
+    const orchestrator = await createOrchestrator({
+      defaultModelId: 'deepseek-v4-flash',
+    } as any);
+    const convert = (orchestrator as any).convertToCanonicalMessages.bind(orchestrator);
+    const msg = {
+      uuid: 'img-1',
+      type: 'user',
+      timestamp: new Date().toISOString(),
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'look at this' },
+          { type: 'image', image: { mediaType: 'image/png', data: 'aGVsbG8=' } },
+        ],
+      },
+    } as any;
+    const [canonical] = convert([msg]);
+    const img = canonical.content.find((b: any) => b.type === 'image');
+    expect(img).toBeDefined();
+    expect(img.image).toEqual({ mediaType: 'image/png', data: 'aGVsbG8=' });
+    // And the failure mode stays dead: no text block carrying stringified base64
+    const leaked = canonical.content.find(
+      (b: any) => b.type === 'text' && String(b.text).includes('aGVsbG8='),
+    );
+    expect(leaked).toBeUndefined();
+  });
+});

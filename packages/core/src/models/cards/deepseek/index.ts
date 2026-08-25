@@ -3,8 +3,10 @@
  * Auto-exported for easy discovery
  *
  * Active models (api.deepseek.com):
- *   - deepseek-v4-pro    — flagship; supersedes deepseek-reasoner
- *   - deepseek-v4-flash  — fast; supersedes deepseek-chat
+ *   - deepseek-v4-pro              — flagship; supersedes deepseek-reasoner
+ *   - deepseek-v4-flash            — fast; supersedes deepseek-chat
+ *   - deepseek-v4-flash-vision-exp — EXPERIMENTAL multimodal (image input,
+ *     released 2026-08-21); flash pricing; tool-calls-with-images probe-verified
  *
  * Removed 2026-06-10: deepseek-chat and deepseek-reasoner — DeepSeek is deprecating
  * both on 2026-07-24. Their names are kept as back-compat aliases in ModelAliasResolver
@@ -20,3 +22,4 @@
 
 export { deepseekV4Pro } from './deepseek-v4-pro.js';
 export { deepseekV4Flash } from './deepseek-v4-flash.js';
+export { deepseekV4FlashVisionExp } from './deepseek-v4-flash-vision-exp.js';

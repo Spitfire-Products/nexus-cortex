@@ -357,6 +357,12 @@ export interface ModelConfig {
    *  CORTEX_ANCHOR_CUE overrides. */
   anchorCue?: string;
 
+  /** Native image-input capability (multimodal). Gates the ReadImage tool +
+   *  image-block delivery: only vision cards are offered/allowed the image
+   *  path. Set ONLY after a live probe verifies image input on the card's
+   *  transport (deepseek-v4-flash-vision-exp probe-verified 2026-08-25). */
+  vision?: boolean;
+
   /** Whether the anchor LIFTS at the first tool_result boundary ('lifted',
    *  the default = the legacy behavior) or PERSISTS for the whole session
    *  ('persist' — the anchored surface stays the only surface). TB2 2×2

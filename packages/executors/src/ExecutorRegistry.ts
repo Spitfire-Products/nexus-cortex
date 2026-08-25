@@ -17,6 +17,7 @@ import {
   ReadFileTool,
   WriteFileTool,
   WriteBinaryTool,
+  ReadImageTool,
   EditTool,
 } from './implementations/file/index.js';
 
@@ -134,6 +135,7 @@ export class ExecutorRegistry implements IExecutorRegistry {
     this.register(new ReadFileTool(this.config));
     this.register(new WriteFileTool(this.config));
     this.register(new WriteBinaryTool(this.config));
+    this.register(new ReadImageTool(this.config));
     this.register(new EditTool(this.config));
 
     // Search operations

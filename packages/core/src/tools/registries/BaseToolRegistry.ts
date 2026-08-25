@@ -23,7 +23,7 @@ const BASE_TOOLS: CanonicalToolDefinition[] = [
 By default, it reads up to 2000 lines starting from the beginning of the file.
 When you already know which part of the file you need, only read that part. This can be important for larger files.
 Results are returned using cat -n format, with line numbers starting at 1.
-This tool can read images (PNG, JPG, etc), PDFs (.pdf — for large PDFs provide the pages parameter, max 20 pages per request), and Jupyter notebooks (.ipynb — returns all cells with outputs).
+This tool reads TEXT files. For images (PNG/JPG/GIF/WebP) use the ReadImage tool when available — Read on a binary file returns unusable bytes.
 Do NOT re-read a file you just edited to verify — Edit would have errored if the change failed, and the harness tracks file state for you.`,
     schema: {
       type: 'object',
@@ -112,6 +112,33 @@ GUIDANCE:
     },
     category: 'base',
     discoveryTier: 'standard',
+    metadata: {
+      immutable: true,
+      executionEnvironment: 'client',
+      version: '1.0.0'
+    }
+  },
+  {
+    name: 'ReadImage',
+    description: `Load an image file (PNG, JPEG, GIF, or WebP) so you can SEE it — the image is attached to the conversation as visual input on the next message. Use this to inspect screenshots, diagrams, charts, rendered output, or video frames (extract frames first, e.g. via ffmpeg).
+
+GUIDANCE:
+- Only available when the active model supports image input.
+- Format is detected from file content (magic bytes), not the extension.
+- Large images: the provider downscales (~800x800) — no need to resize first unless over the 32 MiB limit.
+- Unsupported formats (BMP/TIFF/PDF): convert first (e.g. Bash + Python PIL), then ReadImage.`,
+    schema: {
+      type: 'object',
+      properties: {
+        file_path: {
+          type: 'string',
+          description: 'Path to the image file (absolute, or relative to the working directory).'
+        }
+      },
+      required: ['file_path']
+    },
+    category: 'base',
+    discoveryTier: 'essential', // vision-gated; must be on TURN 1 (deferred loading hid it behind SearchTools — live-probe finding 2026-08-25),
     metadata: {
       immutable: true,
       executionEnvironment: 'client',
