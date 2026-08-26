@@ -613,3 +613,49 @@ rendering golden (tool-heavy session → actions visible in helper input); decis
 **Verification rung:** unit + one compaction probe on a real tool-heavy session (before/after
 summary quality read via distiller categories); 11c removal = regression sweep on mentorship
 tests + one live session confirming no synthetic thinking blocks in the wire payload.
+
+## Item 12 — Task-integrity guard (anti-reward-hacking; BUILT 2026-08-26)
+
+**STATUS: BUILT (release-gated).** Layer 1 description clauses (WebSearch/WebFetch/Bash) +
+layer 2 CORTEX_TASK_INTEGRITY prefix-stable system line (survives boot-minimal; off =
+byte-identical) + run3 doctrine edits applied ARM-FILTERED (frame-neutral inspection wording —
+38/69 of the miner's evidence came from persist arms where Read doesn't exist; forensics
+carve-out kept per the miner's own counter-evidence cluster; edit-2 downgraded, 9/11 persist
+artifact) + busy-wait POLL GUARD in the loop ladder (CORTEX_POLL_GUARD, ok-streak detector,
+'poll'-family signal+event — the run3 class nothing failure-based could see). Layer 3 distiller
+integrity lens = adjudication-side, next distill pass. Tests: 14 ladder + 12 preset + adjacent
+green. Run4 hygiene note: miner's 96-cap on sorted glob sampled flash arms only — stratify.
+
+**Trigger:** Artificial Analysis's TB2.1 leaderboard (pass@1 ×3, Terminus 2, e2b, internet ON)
+tracks and penalizes reward-hacking trajectories — retrieving task solutions from the internet
+instead of solving; operator reports DeepSeek ranked highest-propensity in their 2026-08-26 post.
+Literature (Terminal Wrench, arXiv:2604.17596): ~16% of terminal-bench-class tasks hackable;
+observed vectors = web-searching task-specific reference solutions/speedruns, mining git history /
+public repos / archives / package registries, and training-knowledge substitution (emitting
+memorized outputs without executing work). Our harness must STEER AGAINST all three before any
+TB2.1 run — both for leaderboard integrity and because shortcut trajectories are corpus poison.
+
+**Design (three layers, all cheap):**
+1. **Doctrine at the tool surface** (always-on; tool descriptions are doctrine-at-read-time):
+   WebSearch/WebFetch descriptions gain an integrity clause — research documentation, APIs, and
+   error messages; NEVER search for a task's published solution, reference implementation, or
+   answer; deliverables must derive from work executed in this workspace. Bash description gains
+   the mirror for repo/registry mining.
+2. **`CORTEX_TASK_INTEGRITY=true` system clause** (env-gated, bench/serving profiles): one
+   compact static line appended to the system prompt (cache-safe, prefix-stable): outputs must be
+   produced by executing work here; retrieving or reciting a known solution is task failure;
+   verify by running, not by recall. Rides the same mass partition as other static docs
+   (included under minimal? NO — must survive boot-minimal: append to the preset prompt when the
+   env is set, ~25 tokens on the door — DEBUG_PAYLOAD-verify turn-1 action survives).
+3. **Observability, not policing** (adjudication-side): web-tool usage is already banked per row
+   (tool_calls_by_name) and v8 decisions carry inputs; the distiller gains an integrity lens —
+   flag rows where WebSearch/WebFetch queries contain task-slug/solution-shaped strings or where
+   artifacts appear without generating tool activity. Run3's never-claim-unfinished cluster (×6)
+   is adjacent evidence. NO hard in-harness blocking of web tools (TB2.1 grants internet
+   deliberately; honest competition = keep the capability, steer the intent, audit the exhaust).
+
+**Tests:** description-clause presence; integrity line composes with boot-minimal (turn-1 door
+intact via preset test harness); env off = byte-identical prompts (prefix-stability gate).
+
+**Verification rung:** DEBUG_PAYLOAD probe → the TB2.1 exploratory pass runs WITH integrity
+armed; distiller integrity lens on its trajectories; compare flagged-rate vs the AA narrative.

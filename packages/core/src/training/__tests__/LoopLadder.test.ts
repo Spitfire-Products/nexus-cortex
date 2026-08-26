@@ -84,3 +84,54 @@ describe('formatLadderSignal', () => {
     expect(s?.toLowerCase()).toMatch(/summar|conclude|final/);
   });
 });
+
+// ── Poll guard (run3 busy-wait deficiency class; CORTEX_POLL_GUARD) ──
+import { describe as d2, it as it2, expect as ex2, beforeEach as be2, afterEach as ae2 } from 'vitest';
+import { LoopLadder as LL2, formatLadderSignal as fmt2 } from '../loopLadder.js';
+
+d2('poll guard (busy-wait detection on SUCCEEDING repeats)', () => {
+  const prev = process.env.CORTEX_POLL_GUARD;
+  be2(() => { process.env.CORTEX_POLL_GUARD = 'true'; });
+  ae2(() => { if (prev === undefined) delete process.env.CORTEX_POLL_GUARD; else process.env.CORTEX_POLL_GUARD = prev; });
+
+  const ok = (hash: string) => ({ status: 'ok' as const, approachHash: hash });
+
+  it2('nudges ONCE at the 4th consecutive identical succeeding call', () => {
+    const l = new LL2();
+    ex2(l.observe('Bash', ok('h1')).action).toBe('none');
+    ex2(l.observe('Bash', ok('h1')).action).toBe('none');
+    ex2(l.observe('Bash', ok('h1')).action).toBe('none');
+    const r = l.observe('Bash', ok('h1'));
+    ex2(r.action).toBe('remind');
+    ex2(r.family).toBe('poll');
+    // once per streak — 5th repeat stays quiet
+    ex2(l.observe('Bash', ok('h1')).action).toBe('none');
+  });
+
+  it2('a different call resets the streak; failures reset it too', () => {
+    const l = new LL2();
+    l.observe('Bash', ok('h1')); l.observe('Bash', ok('h1')); l.observe('Bash', ok('h1'));
+    ex2(l.observe('Bash', ok('h2')).action).toBe('none'); // reset by different approach
+    l.observe('Bash', ok('h2')); l.observe('Bash', ok('h2'));
+    ex2(l.observe('Bash', ok('h2')).action).toBe('remind');
+    // failure resets
+    const l3 = new LL2();
+    l3.observe('Bash', ok('h1')); l3.observe('Bash', ok('h1')); l3.observe('Bash', ok('h1'));
+    l3.observe('Bash', { status: 'failed', approachHash: 'h1' } as any);
+    ex2(l3.observe('Bash', ok('h1')).action).toBe('none'); // streak restarted at 1
+  });
+
+  it2('default-off: no nudges when env unset', () => {
+    delete process.env.CORTEX_POLL_GUARD;
+    const l = new LL2();
+    for (let i = 0; i < 8; i++) ex2(l.observe('Bash', ok('h1')).action).toBe('none');
+  });
+
+  it2('poll remind carries its own injected signal text', () => {
+    const sig = fmt2('Bash', { action: 'remind', count: 4, family: 'poll' });
+    ex2(sig).toContain('BUSY-WAIT');
+    ex2(sig).toContain('4 times');
+    // failure-remind (no family) still injects nothing (existing channel)
+    ex2(fmt2('Bash', { action: 'remind', count: 2 })).toBeNull();
+  });
+});

@@ -43,6 +43,21 @@ import { presetMassMode, presetSystemPrompt, type PromptPreset } from '../system
  * conditional probe). Two existsSync calls per turn — noise next to the fs
  * work the loader already does.
  */
+/**
+ * Item 12 (task-integrity guard): one compact static line, env-gated
+ * (CORTEX_TASK_INTEGRITY=true — bench/serving profiles). Appended to the
+ * assembled system prompt AFTER preset/mass resolution so it survives
+ * boot-minimal (~25 tokens on the door) and stays prefix-stable (env is
+ * constant for the session; off = byte-identical prompts).
+ */
+function taskIntegrityClause(): string | undefined {
+  if ((process.env.CORTEX_TASK_INTEGRITY ?? '').trim().toLowerCase() !== 'true') return undefined;
+  return 'TASK INTEGRITY: produce results by executing work in this workspace. ' +
+    'Never retrieve or recite a published solution or expected answer for the task ' +
+    '(web, git history, registries, or memory) — verify by running, not by recall; ' +
+    'a shortcut answer is a failed task.';
+}
+
 function resolveOrientPath(projectPath?: string): string | undefined {
   const proj = join(projectPath || process.cwd(), '.cortex', 'orient');
   if (existsSync(proj)) return proj;
@@ -388,9 +403,11 @@ export class SystemMessageMiddleware implements ISystemMessageInjector {
     const assembled = staticBlocks.length > 0
       ? staticBlocks.map(wrap).join('\n')
       : undefined;
-    const systemPrompt = anchorCue
+    let systemPrompt = anchorCue
       ? (assembled ? `${anchorCue}\n${assembled}` : anchorCue)
       : assembled;
+    const integrity = taskIntegrityClause();
+    if (integrity) systemPrompt = systemPrompt ? `${systemPrompt}\n${integrity}` : integrity;
 
     if (varyingMsgs.length > 0) {
       const varyingText = varyingMsgs

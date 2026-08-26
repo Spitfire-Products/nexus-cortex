@@ -195,9 +195,9 @@ Use replace_all for replacing and renaming strings across the file.`,
     name: 'Bash',
     description: `Execute bash/shell commands. Each call runs in a fresh shell started from the project working directory — cd inside a call does not carry over to the next call (use persistentSession for a stateful shell where cwd and env persist). Default timeout: 120 seconds (configurable via timeout, max 600 seconds).
 
-Avoid using bash to run cat, head, tail, sed, awk, or echo — use read, edit, or write instead. Reserve bash for actual shell operations that require execution (builds, tests, git, process management).
+When Read/Edit/Write are in your tool set, use them instead of bash cat/head/tail/sed/awk/echo for file inspection and mutation — bash file-viewing bypasses the read-tracking that Edit relies on. Bash remains correct for binary/forensic inspection (file, od, strings, hexdump) and for actual shell operations (builds, tests, git, process management). Never mine git history, package registries, or vendored artifacts for a task's reference solution — solve in the workspace.
 
-Always quote file paths containing spaces. Try to use absolute paths and avoid cd — if you must cd, it persists within this Bash call only, not across other tool calls.
+Always quote file paths containing spaces. Use absolute paths throughout — even after a cd, relative paths in later commands of the same call are resolved against the new cwd, a repeated source of silent wrong-file operations. cd persists within this Bash call only, never across tool calls.
 
 DESTRUCTIVE COMMANDS — confirm with user first:
 - Deleting: rm -rf, git branch -D, DROP TABLE
@@ -210,7 +210,7 @@ PARALLEL EXECUTION:
 - Must be sequential: build→test→validate chains, file mutations, package installs
 - Use && to chain sequential commands in a single call
 
-For background execution, set run_in_background: true, then continue with other useful work — check results ONCE with BashOutput when you need them. Never busy-wait by repeatedly running sleep or re-running the same status command while a background task runs.`,
+For background execution, set run_in_background: true, then continue with other useful work — check results ONCE with BashOutput when you need them. Busy-waiting is forbidden: do not run sleep to wait, do not re-run the same status/inspection command while a background task runs, and do not poll BashOutput repeatedly — each of these burns turns without progress. Do other work, then check once.`,
     schema: {
       type: 'object',
       properties: {
@@ -453,6 +453,7 @@ BEST PRACTICES:
 
 WHEN TO USE: verifying claims, finding library docs, checking current versions, looking up error messages, researching APIs or services.
 WHEN NOT TO USE: if the answer is in the codebase (use Grep/Read), or if you need to interact with the page (use Browse).
+TASK INTEGRITY: research documentation and concepts — never search for a task's published solution, reference implementation, or expected answer. Your deliverable must be produced by work you execute in this workspace; a retrieved or recited solution is a failed task.
 
 Results are text snippets from search engines. May not include full page content — use WebFetch to read a specific URL from the results.`,
     schema: {
@@ -495,6 +496,7 @@ Results are text snippets from search engines. May not include full page content
 
 WHEN TO USE: reading documentation pages, API references, blog posts, changelogs, or any URL you already have.
 WHEN NOT TO USE: if the page requires JavaScript rendering, login, or interaction (use Browse instead). If you need to search first and don't have a URL (use WebSearch).
+TASK INTEGRITY: fetch documentation, never a task's published solution or reference implementation — deliverables must derive from work executed in this workspace.
 
 The 'prompt' parameter guides what to extract — use it to focus on specific sections rather than getting the entire page.`,
     schema: {

@@ -152,4 +152,25 @@ describe('card-level promptPreset', () => {
     const split = await mw.injectWithSystemSplit('hi', mkModel('boot-minimal'), true, ctx);
     expect(split.systemPrompt).toContain(BOOT_MINIMAL_PROMPT);
   });
+
+  // ── Item 12: task-integrity clause (env-gated, survives boot-minimal) ──
+
+  it('CORTEX_TASK_INTEGRITY=true appends the clause AND keeps the narrow door', async () => {
+    process.env.CORTEX_TASK_INTEGRITY = 'true';
+    try {
+      const mw = new SystemMessageMiddleware(loader, {} as any);
+      const split = await mw.injectWithSystemSplit('hi', mkModel('boot-minimal'), true, ctx);
+      expect(split.systemPrompt).toContain(BOOT_MINIMAL_PROMPT);
+      expect(split.systemPrompt).toContain('TASK INTEGRITY');
+      expect(split.systemPrompt).toContain('verify by running, not by recall');
+    } finally {
+      delete process.env.CORTEX_TASK_INTEGRITY;
+    }
+  });
+
+  it('integrity off: prompts byte-identical to before (prefix stability)', async () => {
+    const mw = new SystemMessageMiddleware(loader, {} as any);
+    const split = await mw.injectWithSystemSplit('hi', mkModel('boot-minimal'), true, ctx);
+    expect(split.systemPrompt).not.toContain('TASK INTEGRITY');
+  });
 });

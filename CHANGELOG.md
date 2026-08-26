@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.74.0] - 2026-08-26
+
+### Added
+- **Task-integrity guard** (`CORTEX_TASK_INTEGRITY=true`): tool descriptions (WebSearch, WebFetch,
+  Bash) now carry explicit integrity clauses — research documentation, never a task's published
+  solution; no mining git history or registries for reference implementations — and the env flag
+  appends a compact, prefix-stable system line ("verify by running, not by recall") that survives
+  the minimal prompt. Built for internet-enabled evaluations (Terminal-Bench 2.1) where
+  solution-retrieval trajectories are tracked and penalized — and because shortcut trajectories
+  poison training corpora.
+- **Busy-wait poll guard** (`CORTEX_POLL_GUARD=true`): the loop ladder now detects repeated
+  identical SUCCEEDING calls (status polling, sleep loops) — a failure-blind spot no existing
+  guard covered — and nudges once per streak to do useful work and check results once.
+
+### Changed
+- **Doctrine-mined tool-description hardening** (evidence: 96-session mining pass, quote-verified,
+  arm-filtered): the Bash description's file-inspection guidance is frame-neutral ("when
+  Read/Edit/Write are in your tool set"), keeps a binary/forensics carve-out, hardens
+  absolute-paths-after-cd, and makes the busy-wait prohibition explicit with observed patterns.
+
 ## [4.73.0] - 2026-08-26
 
 ### Added
