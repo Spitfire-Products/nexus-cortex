@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.75.1] - 2026-08-26
+
+### Fixed
+- **Browse included in the integrity schema**: browser-driven page retrieval now triggers the
+  sources attestation, feeds the transplant check, and carries the task-integrity description
+  clause — previously the richest retrieval channel bypassed all Stage-5 evidence.
+
+## [4.75.1] - 2026-08-26
+
+### Fixed
+- **Browse included in the Stage-5 integrity schema**: the headless-browser tool now triggers
+  the sources attestation and feeds the transplant/solution-query checks like WebSearch and
+  WebFetch — previously it was an uncovered retrieval channel. Same justify-don't-block
+  semantics; legitimate interactive research is untouched.
+
 ## [4.75.0] - 2026-08-26
 
 ### Added

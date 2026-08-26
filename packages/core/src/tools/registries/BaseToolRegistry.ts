@@ -529,7 +529,7 @@ The 'prompt' parameter guides what to extract — use it to focus on specific se
 
   {
     name: 'Browse',
-    description: 'Drive a headless browser via a nexus-browser subagent. Use for interactive page work (click, form-fill, login), JS-rendered SPA scraping, or anti-bot bypass. For static text search prefer WebSearch; for plain URL reads prefer WebFetch.',
+    description: 'Drive a headless browser via a nexus-browser subagent. Use for interactive page work (click, form-fill, login), JS-rendered SPA scraping, or anti-bot bypass. For static text search prefer WebSearch; for plain URL reads prefer WebFetch. TASK INTEGRITY: browse for documentation and data your task legitimately needs — never to retrieve a task\'s published solution or reference implementation; deliverables must derive from work executed in this workspace.',
     schema: {
       type: 'object',
       properties: {

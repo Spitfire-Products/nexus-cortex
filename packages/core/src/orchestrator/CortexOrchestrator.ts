@@ -2323,6 +2323,11 @@ export class CortexOrchestrator {
           if (toolUse.name === 'WebSearch') {
             const q = (toolUse.input as any)?.query;
             if (typeof q === 'string' && q) integrityWebQueries.push(q);
+          } else if (toolUse.name === 'Browse') {
+            // Browse renders full pages — the richest retrieval channel; its
+            // task text rides the query checks and triggers attestation.
+            const t = (toolUse.input as any)?.task;
+            if (typeof t === 'string' && t) integrityWebQueries.push(t);
           } else if (toolUse.name === 'Write') {
             const c = (toolUse.input as any)?.content;
             if (typeof c === 'string' && c) integrityWriteInputs.push(c);
@@ -2479,7 +2484,7 @@ export class CortexOrchestrator {
             if (tr.tool_name === 'EndTurn' || tr.is_error) continue;
             const txt = typeof tr.content === 'string' ? tr.content : JSON.stringify(tr.content);
             if (txt) thisTurnToolOutputs.push(txt);
-            if ((tr.tool_name === 'WebSearch' || tr.tool_name === 'WebFetch') && txt) {
+            if ((tr.tool_name === 'WebSearch' || tr.tool_name === 'WebFetch' || tr.tool_name === 'Browse') && txt) {
               integrityWebContent.push(txt);
             }
           }
