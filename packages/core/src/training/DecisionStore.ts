@@ -62,7 +62,9 @@ export type SteeringEventKind =
   | 'doctrine_curation_timeout'
   // Item 12 layer 4: EndTurn Stage-5 integrity flags (web transplant /
   // solution-seeking query) — pre-labeled rows for the distiller lens.
-  | 'integrity_flag';
+  | 'integrity_flag'
+  // Item 13b: execute-your-plan nudge on honest-premature-surrender finishes.
+  | 'surrender_nudge';
 
 export interface SteeringEventInput {
   sessionId: string;

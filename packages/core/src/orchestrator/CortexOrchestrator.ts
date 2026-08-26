@@ -81,6 +81,7 @@ import { shouldNudgeInaction, formatInactionNudge } from './inactionGuard.js';
 import { applyImageTtlForRequest } from './imageTtl.js';
 import { verifyRequirements, resolveEndTurnRequirementsMode } from './requirementsVerification.js';
 import { verifyIntegrity, resolveEndTurnIntegrityMode } from './integrityVerification.js';
+import { detectSurrenderText, resolveSurrenderNudgeMode, SURRENDER_REMINDER } from './turnEndGuards.js';
 import { ModelRouterMatrix } from '../training/ModelRouterMatrix.js';
 import { classifyTask } from '../training/TaskClassifier.js';
 import { closestToolMatches } from './toolNameMatcher.js';
@@ -1600,6 +1601,7 @@ export class CortexOrchestrator {
     // that refuses cannot hang the turn (fallback: accept after N nudges).
     let endTurnCalled = false;
     let endTurnNudges = 0;
+    let surrenderNudgeUsed = false; // item 13b: one execute-your-plan nudge per turn
     const END_TURN_MAX_NUDGES = 2;
     // EndTurn gate / Stages 1-3 are OPT-IN (default OFF). The line-number
     // fabrication they targeted is fully resolved at the root cause:
@@ -2034,6 +2036,18 @@ export class CortexOrchestrator {
           // un-attested passes.
           const endTurnGateUnsatisfied =
             endTurnGateEnabled && turnUsedTools && (!endTurnCalled || stage3Violations.length > 0);
+          // Item 13b (surrender guard): honest capitulation-with-a-plan — the
+          // final text enumerates remaining steps instead of executing them.
+          // One nudge per turn, own flag, shares the continuation plumbing.
+          const surrenderDraftText = Array.isArray(currentAssistantCanonicalMessage.content)
+            ? (currentAssistantCanonicalMessage.content as any[])
+                .filter((b: any) => b?.type === 'text')
+                .map((b: any) => b.text || '')
+                .join('\n')
+            : String(currentAssistantCanonicalMessage.content ?? '');
+          const surrenderUnsatisfied =
+            resolveSurrenderNudgeMode() && turnUsedTools && !surrenderNudgeUsed &&
+            detectSurrenderText(surrenderDraftText);
           if (endTurnGateUnsatisfied && endTurnNudges >= END_TURN_MAX_NUDGES) {
             const fallbackReason = !endTurnCalled ? 'missing-EndTurn' : 'coordinate-violation';
             console.warn(
@@ -2051,8 +2065,21 @@ export class CortexOrchestrator {
             }
           }
 
-          if (endTurnGateUnsatisfied && endTurnNudges < END_TURN_MAX_NUDGES) {
-            endTurnNudges++;
+          if (surrenderUnsatisfied || (endTurnGateUnsatisfied && endTurnNudges < END_TURN_MAX_NUDGES)) {
+            if (surrenderUnsatisfied) {
+              surrenderNudgeUsed = true;
+              const store = this.getDecisionStore();
+              if (store) {
+                void store.recordEvent({
+                  sessionId: this.currentSessionId ?? 'unknown',
+                  kind: 'surrender_nudge',
+                  detail: { iteration: toolCallIteration, chars: surrenderDraftText.length },
+                }).catch(() => {});
+              }
+              console.warn('[Orchestrator] Surrender guard: remaining-steps finish detected — execute-your-plan nudge.');
+            } else {
+              endTurnNudges++;
+            }
             const gateReason = !endTurnCalled ? 'missing-EndTurn' : 'coordinate-violation';
             console.warn(
               `[Orchestrator] EndTurn gate: ${gateReason} ` +
@@ -2083,7 +2110,9 @@ export class CortexOrchestrator {
             const verEmphasis = turnUsedMutatingTool
               ? ' You ran edit/write/bash this turn: in `verification` list every build/test/lint command you ACTUALLY ran with the real result line you saw — do not claim a check you did not run.'
               : '';
-            const endTurnReminderText = !endTurnCalled
+            const endTurnReminderText = surrenderUnsatisfied
+              ? SURRENDER_REMINDER
+              : !endTurnCalled
               ? ('<system-reminder>You used tools this turn but have not called EndTurn. ' +
                  'You MUST call EndTurn before any final answer. It is generative, not a checkbox: ' +
                  'reconstruct `citations` (array of {reference, verbatim_source}), `verification` ' +
@@ -3147,6 +3176,19 @@ export class CortexOrchestrator {
         `[Orchestrator] R29a: loop exited without a delivered answer ` +
         `(iteration=${toolCallIteration}). Forcing one tools-suppressed synthesis turn.`,
       );
+      // Item 13a: the R29a path structurally bypasses the EndTurn gate (it
+      // runs post-loop with tools suppressed). When the gate was armed and
+      // owed an attestation, make the un-attested pass VISIBLE.
+      if (endTurnGateEnabled && turnUsedTools && !endTurnCalled) {
+        const store = this.getDecisionStore();
+        if (store) {
+          void store.recordEvent({
+            sessionId: this.currentSessionId ?? 'unknown',
+            kind: 'endturn_gate_fallback',
+            detail: { reason: 'abnormal-exit-bypass', iteration: toolCallIteration },
+          }).catch(() => {});
+        }
+      }
       try {
         const synthUserMessage: Message = {
           uuid: uuidv4(),
@@ -3156,7 +3198,7 @@ export class CortexOrchestrator {
             role: 'user',
             content: [{
               type: 'text',
-              text: '<system-reminder>You stopped without giving a final answer. Provide your complete answer now in plain text — summarize your findings and deliver the requested result. Do NOT call any tools.</system-reminder>',
+              text: '<system-reminder>You stopped without giving a final answer. Provide your complete answer now in plain text — summarize your findings and deliver the requested result. Enumerate each requirement STATED in the task: which are satisfied (and how you verified each) and which are NOT — never imply completion you cannot ground. Do NOT call any tools.</system-reminder>',
             }],
           },
           timeline: {
@@ -5003,7 +5045,7 @@ export class CortexOrchestrator {
             role: 'user',
             content: [{
               type: 'text',
-              text: '<system-reminder>You stopped without giving a final answer. Provide your complete answer now in plain text — summarize your findings and deliver the requested result. Do NOT call any tools.</system-reminder>',
+              text: '<system-reminder>You stopped without giving a final answer. Provide your complete answer now in plain text — summarize your findings and deliver the requested result. Enumerate each requirement STATED in the task: which are satisfied (and how you verified each) and which are NOT — never imply completion you cannot ground. Do NOT call any tools.</system-reminder>',
             }],
           },
           timeline: {
@@ -5385,9 +5427,22 @@ export class CortexOrchestrator {
     };
   }
 
+  // Item 13c: fire on threshold CROSSINGS only (10, 20, 40… doubling) — the
+  // unlatched version re-injected every iteration once any tool crossed 10
+  // (train-fasttext specimen: 15 consecutive injections). Under a narrow
+  // bash-* profile the Bash threshold starts at 30: when bash is the whole
+  // working surface, 10+ calls is the norm, not a smell.
+  private diversityFiredAt = new Map<string, number>();
   getDiversityWarning(toolCallCounts: Map<string, number>): string | null {
+    const narrow = isNarrowProfile(resolveToolProfile()) ||
+      !!resolveToolAnchor(process.env, this.cardAnchorProfile);
     for (const [tool, count] of toolCallCounts) {
-      if (count >= 10) {
+      const base = narrow && tool === 'Bash' ? 30 : 10;
+      if (count < base) continue;
+      const last = this.diversityFiredAt.get(tool) ?? 0;
+      const nextThreshold = last === 0 ? base : last * 2;
+      if (count >= nextThreshold) {
+        this.diversityFiredAt.set(tool, nextThreshold);
         return `[${tool} called ${count} times. Consider synthesizing from gathered results instead of continuing to search.]`;
       }
     }

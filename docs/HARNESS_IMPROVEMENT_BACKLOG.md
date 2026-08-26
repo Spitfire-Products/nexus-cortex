@@ -662,3 +662,34 @@ intact via preset test harness); env off = byte-identical prompts (prefix-stabil
 
 **Verification rung:** DEBUG_PAYLOAD probe → the TB2.1 exploratory pass runs WITH integrity
 armed; distiller integrity lens on its trajectories; compare flagged-rate vs the AA narrative.
+
+## Item 13 — Turn-end coherence: gate-bypass, surrender, steering spam (SPEC+BUILD 2026-08-26)
+
+**Source:** first train-fasttext specimen under full observability (mini-persist-gate, 4.74.1) —
+the honest-premature-surrender class, causal chain fully grounded: OOM'd background run → varied
+/proc probes (tracker-invisible) → nonzero exits under pipefail → MAX_CONSECUTIVE_ERRORS=3 blunt
+loop-kill MID-DIAGNOSIS → R29a tools-suppressed synthesis (EndTurn gate structurally BYPASSED —
+it lives inside the loop; R29a runs post-loop with tools=[]) → impeccably honest surrender WITH
+a self-written recovery plan and 85% budget unused. Also: `diversity` steering injected 15
+consecutive iterations (no latch), wrong message for Bash under a bash-anchored frame.
+
+**13a — Gate-coherent abnormal exits.** (i) When gate-armed + tools-used and the turn ends via
+the R29a path, bank `endturn_gate_fallback` reason 'abnormal-exit-bypass' — un-attested passes
+become visible to the distiller. (ii) R29a's reminder gains attestation-lite: enumerate which
+task requirements are satisfied (and how verified) and which are NOT — Stage-4's re-read-the-task
+effect without needing the tool.
+
+**13b — Surrender guard.** (i) In-loop, at the normal no-tool-use exit (same mechanics as gate
+nudges): final text matching remaining-work shapes + tools used + CORTEX_SURRENDER_NUDGE=true →
+ONE "you wrote the plan — execute it now" nudge, then continue; surrender_nudge event either way.
+(ii) ROOT TRIGGER: bench/serving profiles raise MAX_CONSECUTIVE_ERRORS 3→6 (three failing
+diagnostic probes are normal debugging; the ladder's remind@2/diversify@4/break@6 is the graceful
+owner of persistent failure — the blunt breaker should be a rarer backstop).
+
+**13c — Diversity-warning latch.** getDiversityWarning fires on threshold CROSSINGS only
+(10, 20, 40… doubling), not every iteration after 10; under a narrow bash-* profile the Bash
+threshold starts at 30 (10+ Bash calls is the NORM when bash is the whole surface).
+
+**Non-goals:** re-entering the tool loop post-R29a (structural change to the mega-loop, wrong
+risk profile hours before a launch); budget-fraction awareness in-harness (budget is a
+bench-side concept).

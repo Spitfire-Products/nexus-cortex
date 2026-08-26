@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.76.0] - 2026-08-26
+
+### Added
+- **Surrender guard** (`CORTEX_SURRENDER_NUDGE=true`): when a turn ends by listing remaining
+  steps instead of executing them — an honest status report with a self-written recovery plan
+  and budget left on the table — the model gets one bounded "execute your plan" nudge before
+  the turn is accepted.
+
+### Fixed
+- **Abnormal exits no longer silently bypass the EndTurn gate**: the forced post-loop synthesis
+  path now records un-attested passes, and its reminder demands a requirements enumeration
+  (satisfied-and-verified vs not) so honest incompleteness stays honest.
+- **Tool-diversity warning spam**: fires once per threshold crossing (10, 20, 40…) instead of
+  every iteration; under narrow bash frames the Bash threshold starts at 30 (heavy bash usage
+  is the norm when bash is the whole tool surface).
+
 ## [4.75.1] - 2026-08-26
 
 ### Fixed
