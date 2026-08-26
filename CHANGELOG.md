@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.76.1] - 2026-08-26
+
+### Fixed
+- Surrender-guard detection covers three additional live-observed surrender phrasings from the
+  first specimen reruns; plain successful answers remain untrippable.
+
 ## [4.76.0] - 2026-08-26
 
 ### Added

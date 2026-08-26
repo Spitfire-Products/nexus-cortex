@@ -27,6 +27,11 @@ I did not claim the model exists because it does not — the task is incomplete.
     expect(detectSurrenderText('next steps: n/a')).toBe(false); // <80 chars
   });
 
+  it('detects the live mini-vision and defer-flash rerun phrasings (4.76.1)', () => {
+    expect(detectSurrenderText('Remaining work is listed below for completeness and reference.\nI have not claimed the task complete, because the final deliverable (/app/model.bin) with verified size and accuracy was not produced.')).toBe(true);
+    expect(detectSurrenderText('The background run may still finish later on its own.\n**What remains to complete the task:** check the output, evaluate, tune, save the final model. I am not claiming completion — the deliverable is not yet in place.')).toBe(true);
+  });
+
   it('reminder demands execution, bounded framing', () => {
     expect(SURRENDER_REMINDER).toContain('EXECUTE those steps now');
     expect(SURRENDER_REMINDER).toContain('hard limit');

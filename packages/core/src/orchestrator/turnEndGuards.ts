@@ -27,6 +27,11 @@ const SURRENDER_RES = [
   /\btask is (incomplete|not (yet )?complete)\b/i,
   /\bi (did|could) not (finish|complete) the task\b/i,
   /\bto finish the task:?\b/i,
+  // 4.76.1 — live-specimen phrasings the first set missed (mini-vision rerun):
+  /\bwhat remains to complete\b/i,
+  /\bhave not (claimed|marked) the task (as )?complete\b/i,
+  /\bdeliverable[^.]{0,60}not (yet )?(produced|in place|created)\b/i,
+  /\bnot claiming completion\b/i,
 ];
 
 export function detectSurrenderText(finalText: string): boolean {
