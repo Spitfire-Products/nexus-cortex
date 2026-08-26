@@ -96,7 +96,7 @@ export class ChatCompletionsAPIHelperAdapter extends BaseHelperAdapter {
     const chatMessages: ChatCompletionsMessage[] = [
       {
         role: 'system',
-        content: 'You are a helpful assistant that summarizes conversations concisely while preserving key information.'
+        content: this.helperSystemFor('compaction', 'Summarize an agentic coding conversation for context compaction.', targetTokens)
       },
       {
         role: 'user',
@@ -162,7 +162,7 @@ export class ChatCompletionsAPIHelperAdapter extends BaseHelperAdapter {
     const chatMessages: ChatCompletionsMessage[] = [
       {
         role: 'system',
-        content: 'You are a helpful assistant that summarizes tool results concisely while preserving essential information.'
+        content: this.helperSystemFor('tool-result-summary', 'Summarize a large tool result, preserving errors and key data.', maxTokens)
       },
       {
         role: 'user',
@@ -226,11 +226,11 @@ export class ChatCompletionsAPIHelperAdapter extends BaseHelperAdapter {
         const chatMessages: ChatCompletionsMessage[] = [
           {
             role: 'system',
-            content: 'You are a helpful assistant that summarizes conversations concisely.'
+            content: this.helperSystemFor('compaction-chunk', 'Summarize one section of an agentic coding conversation.', Math.floor(targetTokens / chunks.length))
           },
           {
             role: 'user',
-            content: `Summarize this conversation section in ${Math.floor(targetTokens / chunks.length)} tokens:\n\n${chunk}`
+            content: this.createChunkCompactionPrompt(chunk, Math.floor(targetTokens / chunks.length))
           }
         ];
 
@@ -258,7 +258,7 @@ export class ChatCompletionsAPIHelperAdapter extends BaseHelperAdapter {
       const finalMessages: ChatCompletionsMessage[] = [
         {
           role: 'system',
-          content: 'You are a helpful assistant that summarizes conversations concisely.'
+          content: this.helperSystemFor('compaction-merge', 'Merge section summaries of one agentic coding conversation into a single coherent summary, keeping the category structure.', targetTokens)
         },
         {
           role: 'user',

@@ -7,6 +7,7 @@
  * and handles its own API pattern communication.
  */
 
+import { buildHelperSystem } from './helperFrame.js';
 import type { ModelConfig } from '../../models/ModelConfig.interface.js';
 
 /**
@@ -230,14 +231,42 @@ export abstract class BaseHelperAdapter implements HelperMiddlewareAdapter {
    * @returns Concatenated text content
    */
   protected extractTextContent(messages: HelperCanonicalMessage[]): string {
+    // Item 11b: render NON-text blocks as one-line shapes instead of dropping
+    // them. The old text-only filter made the compaction helper blind to the
+    // agent's ACTION STREAM — tool_use blocks (what the agent did) and nested
+    // tool_result content contributed nothing, while the summary template's
+    // categories 3/5 (files touched, decisions made) ask for exactly that
+    // evidence. Same digest pattern as doctrine-mine: `tool: Name(args…)` /
+    // `result: first chars…`.
+    const renderBlock = (block: any): string => {
+      if (block.type === 'text') return block.text || '';
+      if (block.type === 'tool_use' || block.toolUse) {
+        const tu = block.toolUse ?? block;
+        const inp = tu.input ?? {};
+        const arg = String(inp.command ?? inp.file_path ?? JSON.stringify(inp)).slice(0, 160);
+        return `tool: ${tu.name}(${arg})`;
+      }
+      if (block.type === 'tool_result' || block.toolResult) {
+        const tr = block.toolResult ?? block;
+        const raw = typeof tr.content === 'string'
+          ? tr.content
+          : Array.isArray(tr.content)
+            ? tr.content.map((c: any) => c?.text ?? '').join(' ')
+            : '';
+        const flag = tr.is_error ? ' [is_error]' : '';
+        return raw ? `result${flag}: ${raw.slice(0, 200)}` : `result${flag}: (empty)`;
+      }
+      if (block.type === 'thinking') return ''; // reasoning volume, not evidence
+      return '';
+    };
     return messages
       .map(msg => {
         if (typeof msg.content === 'string') {
           return msg.content;
         }
         return msg.content
-          .filter(block => block.type === 'text')
-          .map(block => block.text || '')
+          .map(renderBlock)
+          .filter(Boolean)
           .join('\n');
       })
       .join('\n\n');
@@ -266,6 +295,8 @@ export abstract class BaseHelperAdapter implements HelperMiddlewareAdapter {
 6. ALL USER MESSAGES: Preserve the user's exact instructions and preferences — never paraphrase away constraints.
 7. CURRENT STATE: What was just completed, what's in progress.
 8. PENDING WORK: Tasks remaining, blockers, next steps.
+9. DURABLE PROJECT NOTES: facts worth persisting beyond this session — corrections to project
+   docs, conventions discovered, gotchas hit (candidate memory entries; omit if none).
 
 CONVERSATION HISTORY:
 ${conversationText}
@@ -273,6 +304,46 @@ ${conversationText}
 Preserve code snippets, file paths, and technical details verbatim. Target ~${targetTokens} tokens.
 
 SUMMARY:`;
+  }
+
+  /**
+   * Item 11a: the uniform system line for this adapter's helper calls —
+   * built from the shared frame layer so all five dialects carry the same
+   * persona/grounding/budget discipline (previously each adapter hardcoded
+   * its own drifting one-liner).
+   */
+  protected helperSystemFor(surface: string, task: string, outputBudgetTokens: number): string {
+    return buildHelperSystem({
+      surface,
+      persona: 'You are a precise summarization assistant for an agentic coding harness.',
+      task,
+      outputBudgetTokens,
+    });
+  }
+
+  /**
+   * Item 11b: chunk-path compaction prompt — the FULL 8-category template on a
+   * raw text chunk. Previously the chunked path (sessions LARGE enough to need
+   * chunking — exactly where fidelity matters most) degraded to a bare
+   * "summarize this section" instruction with none of the structure.
+   */
+  protected createChunkCompactionPrompt(chunkText: string, targetTokens: number): string {
+    return `Summarize this conversation SECTION in ~${targetTokens} tokens. Structure your summary using these categories (skip empty ones):
+
+1. PRIMARY REQUEST: What the user is trying to accomplish and why.
+2. KEY TECHNICAL CONCEPTS: Important terms, patterns, or architectural decisions established.
+3. FILES AND CODE: Specific files read/modified, with key code sections or changes.
+4. ERRORS AND FIXES: Problems encountered and how they were resolved.
+5. DECISIONS MADE: Implementation choices, trade-offs accepted, approaches rejected.
+6. ALL USER MESSAGES: Preserve the user's exact instructions and preferences — never paraphrase away constraints.
+7. CURRENT STATE / PENDING: What was in progress at this section's end.
+
+CONVERSATION SECTION:
+${chunkText}
+
+Preserve code snippets, file paths, and technical details verbatim. Target ~${targetTokens} tokens.
+
+SECTION SUMMARY:`;
   }
 
   /**

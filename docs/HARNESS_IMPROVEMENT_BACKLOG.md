@@ -431,3 +431,185 @@ distiller: orient-obedience rate, SearchTools/Skill first-ever invocations, inpu
 only adds the workspace map); boot-prompt growth must not break turn-1 action (defer-trap lesson —
 DEBUG_PAYLOAD gate before any fleet fire); NOT a change to minimal/full behavior or to the
 model-synthesized /init flow (the mechanical render is additive).
+
+## Item 10 — Helper-curated doctrine freshness (BUILT 2026-08-26 — legs 1,2,6 + compaction category; see status)
+
+**STATUS: CORE BUILT (release-gated).** Built: orient v2 (machine-section markers, drift check,
+.next/.diff staging, zero-decision stdout — full lifecycle live-tested), curateDoctrine helper
+one-shot (frame-layer surface, adapter-registry provider-agnostic), orchestrator
+ensureDoctrineFresh (synchronous-by-boundary: defer-lift await + full-mass pre-assembly hook;
+bounded fail-open; doctrine_curation/_timeout decisions events), applyCuratedDoctrine containment
+(size budget, .prev, atomic rename, staging cleanup — 8 tests), compaction template DURABLE
+PROJECT NOTES category. Env: CORTEX_DOCTRINE_CURATION (default off) + timeout/budget knobs.
+DEFERRED to a later train: leg 4 staged memory fold; compaction staged-delta FILE emission
+(category lands in-summary only); fresh-edges sidecar emitter (canon-side).
+
+**The problem:** system-message doctrine (CORTEX.md family, MEMORY.md) must stay fresh across
+sessions in persistent environments (TUIs, repeated headless use) WITHOUT (a) busting the cached
+prefix mid-session, or (b) giving the working model ANY turn-1 decision surface — every measured
+failure class (defer-trap reason-to-the-wall, pro-persist paralysis, never-acted rows) was
+deliberation induced where the model should have been acting. Earlier design candidates (model
+merges the diff; model approves a staged diff; fresh-edges evidence in turn 1) were all rejected
+for reintroducing exactly that hazard.
+
+**The organizing doctrine (operator-set):** the MAIN model acts, always, only — turn 1 carries an
+imperative and a map, never a question. The HELPER model (HELPER_MODEL_ID, default flash — the
+same rail that already runs compaction summaries via HelperModelMiddleware.compactHistoryViaHelper
+and the TURN_SUMMARY_PREDICTION post-turn hook) judges and curates in DISPOSABLE side contexts.
+The MECHANICAL layer stages. BOUNDARIES deliver (session start / compaction / the defer lift —
+the three moments the prefix is rebuilt anyway, so refresh is cache-free).
+
+**Design:**
+1. **Orient stays imperative + stages drift materials.** On drift (cheap structural check:
+   machine-section content vs live ls/scripts), orient writes the mechanical refresh candidate to
+   `.cortex/CORTEX.md.next` + a compact diff. Its stdout to the main model stays zero-decision
+   (map + one informational line). Fresh containers/first sessions: write-if-absent as today —
+   no drift branch, no overhead (bench path byte-identical).
+2. **Session-start helper curation (new hook, mentorship-pattern).** A one-shot helper call —
+   separate request, own context, zero main-session cache impact — receives: stale CORTEX.md +
+   mechanical .next + diff (+ the OPTIONAL canon fresh-edges sidecar, see 5). It returns the
+   CURATED doc. Harness validates (hard size budget, structural sanity), applies ATOMICALLY with
+   `cp → .prev` rollback, records the event in the decisions store with helper provenance.
+   SYNCHRONOUS-BY-BOUNDARY (operator-corrected 2026-08-25 — the earlier race design is
+   REJECTED: it made doc delivery a nondeterministic function of helper latency, an uncontrolled
+   instrument variable): under DEFER, the lift's corpus assembly AWAITS the helper's completion
+   before delivering (the lift is the doc's only context entry, so this guarantees the session
+   never runs on stale curated doctrine; the helper's seconds still overlap the model's turn-1
+   tool execution). Under FULL MASS (persistent TUI/CLI), a PRE-ASSEMBLY hook completes drift
+   check + curation BEFORE the turn-0 prompt is built. Both bounded by a hard timeout (~20-30s):
+   on expiry, deliver the previous doc + log a curation_timeout decisions event — a helper
+   outage degrades to yesterday's behavior, visibly, and can never hang a session. The
+   first-turn pause is an ACCEPTED trade-off (operator-ratified 2026-08-25): drift-gating means
+   only drifted sessions pay it, it lands once pre-first-token (the most forgivable latency slot),
+   and surfaces (TUI/CLI) MUST show a status line during the hold ("refreshing workspace
+   doctrine…") so the wait reads as work, not lag.
+3. **Compaction leg = prompt extension to the EXISTING summary call.** The helper is already
+   reading the whole session at compaction — extend compactHistoryViaHelper's prompt to also emit
+   staged doctrine/memory deltas (a few hundred output tokens on an already-paid context; no new
+   invocation). Deltas land in staging, folded at the next boundary.
+4. **Staged memory fold (mechanical).** MemoryWrite lands in per-session staging files
+   (`.cortex/staged/<sessionId>.memory.jsonl`); startup/compaction folds them into MEMORY.md
+   deduped + budgeted (hot-index cap, overflow to archive tier via MemoryRecall). Multi-writer
+   safe (parallel sessions/dispatch teams never race one file).
+5. **Fresh edges: helper-input ONLY, never main-context.** canon-cron precomputes an optional
+   per-workspace sidecar (edges touching this workspace since CORTEX.md mtime, success-filtered
+   per the corpus-hygiene rule, ranked, capped ~10). Orient/hook cats it INTO THE HELPER PROMPT
+   if present; absent = leg silently skipped. The main model never sees evidence, only outcomes.
+6. **Containment for helper-written doctrine:** hard output budget · atomic write + .prev ·
+   decisions-store provenance · conservative authorship rule (helper freely refreshes mechanical
+   sections and its own prior curations, APPENDS observations, never deletes human-authored
+   text) · compaction re-read verification (confirm rebuilt context reads docs fresh through the
+   loader's mtime cache; one probe, else a one-line re-read at the boundary).
+
+**Touchpoints:** orient scaffold (drift check + staging), HelperModelMiddleware (new session-start
+hook + compaction prompt extension), memory tools (staged landing), scripts/canon (fresh-edges
+sidecar emitter), SettingsSchema (hook toggle env, default off).
+
+**Tests:** drift-detector table (no-doc / current / drifted); staging golden files; helper-apply
+atomicity + rollback + budget rejection; race (lift before helper completes → previous doc, no
+error); memory fold dedup/budget; bench-path regression (fresh container = today's behavior,
+byte-identical orient output).
+
+**Verification rung:** local probe (session 1 → drift session 2 → helper curates → lift delivers
+curated doc) → persistent-workspace canary (dev TUI use) → optionally a TB2 cell only if a bench
+analog exists (bench is session-1-only by construction, so this item is product-serving, not
+bench-serving).
+
+**Explicitly rejected designs (do not resurrect):** main-model merge at session start
+(deliberation hazard); main-model diff approval (same hazard in miniature, fake judgment over
+mechanical facts); fresh edges in main context (worst offender); silent unbounded auto-curation
+(no provenance, no rollback).
+
+**Companion item (also next-train): persist schema-presentation leak** — hidden tool schemas
+surface in continuations under CORTEX_TOOL_ANCHOR_PERSIST (~40 wasted calls/arm measured on the
+flip boards, dispatch guard correctly refuses); fix = keep hidden schemas out of persist-frame
+continuation requests.
+
+## Item 11 — Helper frame unification + compaction fidelity + foreign-thinking removal (BUILT 2026-08-26 — see status)
+
+**STATUS: BUILT (release-gated).** 11a helperFrame.ts + base helpers (ChatCompletions adapter
+wired: compaction/tool-summary/chunk/merge system lines; OTHER 4 adapters inherit the layer but
+keep their existing frames this train — parity wiring = follow-up). 11b chunk-path full template
++ action-stream digest rendering in the shared extractTextContent (decisions-join at compaction
+DEFERRED). 11c injectThinkingBlock unified to attributed user-role system-reminder for ALL
+adapters (last thinking-typed branch removed; rechannel value preserved — the guidance content is
+unchanged, only the channel; wire-validity reasoning_content untouched). 11d prefixStability.test
+(3 tests: shared-prefix byte-identity, call-order purity, item-9 mixed-message delivery shape).
+Tests: 8 curation + 3 prefix + 29 adapter + 117 mentorship/helper/prompt adjacent green; tsc
+clean core/executors/types.
+
+**Source:** full audit of every helper-model surface (HelperModelMiddleware.ts + the 5 dialect
+adapters), operator-reviewed. Ten surfaces, ten hand-rolled frames, five dialect implementations
+each — and two fidelity defects in the most load-bearing surface (compaction).
+
+**11a — Shared helper-frame layer.** One composition implemented ONCE above the adapters, inherited
+by all dialects and parameterized per surface: persona line + task frame + optional workspace
+one-liner + HARD output budget + grounding rule ("preserve verbatim, never invent, cite what you
+kept"). Today: roles inconsistent ("helpful assistant" ChatCompletions:99 vs "AI mentor" :1192 vs
+none), Messages adapter routes a systemPrompt variable while ChatCompletions hardcodes one (parity
+drift by construction), no surface receives workspace grounding, no uniform budget/grounding
+discipline. Every FUTURE helper surface (item 10's curation hook included) registers on this layer
+instead of hand-rolling frame #11.
+
+**11b — Compaction fidelity (two defects, one improvement):**
+1. **Chunk-path degradation (defect):** the shared 8-category template (HelperMiddlewareAdapter
+   .interface.ts:253 — request/concepts/files/errors/decisions/verbatim-user-messages/state/
+   pending) applies only to single-call compactions; the chunked path
+   (ChatCompletionsAPIHelperAdapter.ts:228-233) swaps to a bare "Summarize this conversation
+   section in N tokens" — the sessions LARGE enough to need chunking get the weakest frame.
+   Fix: chunk path uses the full template with per-chunk budgets + a category-merge final pass.
+2. **Action-stream blindness (defect, confirmed-in-code-path):** extractTextContent
+   (interface.ts:238-244) joins `block.text || ''` — tool_use blocks (agent actions) and nested
+   tool_result content contribute NOTHING, so an agentic session's summary is built from prose
+   alone while the template's categories 3/5 ask for exactly the dropped evidence. Fix: render
+   non-text blocks as one-line shapes (the doctrine-mine digest pattern: `tool: Bash(cmd…)` /
+   `result: …first 120 chars`). Verify runtime shape with a tool-heavy probe first.
+3. **Decisions join (improvement):** compaction reads the session while `.cortex/decisions.jsonl`
+   sits beside it — join kind-tagged event rows (loop escalations, gate fallbacks, exit-masked
+   failures) so summaries stop laundering failures as successes (corpus-hygiene rule applied to
+   compaction).
+
+**11c — RECHANNEL (or remove) mentorship interleaved thinking (operator-refined).**
+generateInterleavedThinking + the between-tool-calls variant (HelperModelMiddleware.ts:1597-1700)
+inject HELPER-AUTHORED first-person thinking into the main model's reasoning stream. Past evidence
+(repeated): incongruence, confusion, coherence loss — the FOREIGN-THINKING mechanism: thinking
+blocks are the one channel a model treats as its own prior voice; another model's content there is
+identity contamination. The mentorship VALUE may survive via REFRAME: deliver the same guidance as
+an ATTRIBUTED mentor nudge — system-reminder-wrapped text on the MOVING turn (tool_result/user
+tail) — the exact proven channel of the ladder/R32/inaction/EndTurn nudges (+21 flips, zero cache
+regressions). Rechannel first; remove only if the rechanneled form measures useless. ⚠ WIRING
+CARE (touched in many surfaces): (a) distinguish WIRE-VALIDITY filler from mentorship injection —
+DeepSeek REQUIRES reasoning_content on assistant messages (glossary), so some synthetic thinking
+is transport-load-bearing and must NOT be swept; (b) the browser twin generateContinuationThinking
+(live layer-3 emulation) is the same reframe candidate on its own surface; (c) map 2nd/3rd-order
+consumers BEFORE editing (downstream-order rule). Doctrine in THINKING_GLOSSARY: helper output
+arrives as ATTRIBUTED content, never first-person thinking; real provider thinking (layer 3, xAI
+path) untouched and sacred.
+
+**11d — Cache-compliance contract for ALL middleware injection routines (operator-set).** The R28
+rule graduates from a comment to a TESTED contract every routine must pass:
+1. NEVER mutate the stable prefix mid-session (system field, prior messages) — the only sanctioned
+   history rewrite is compaction itself (a full prefix rebuild at a boundary).
+2. ALL mid-session injections ride the MOVING TAIL (latest user turn / tool_result append),
+   system-reminder-wrapped and attributed — the tail sits after every provider's cache boundary
+   (xAI end-of-messages; Anthropic after the cache_control breakpoint; OpenAI/DeepSeek prefix
+   tail), so it varies freely without busting the cache.
+3. One-shot deliveries land at boundaries only (anchor lift, session start, compaction rebuild).
+4. Helper calls are separate requests by construction — main-session cache untouchable from them.
+5. TEST: a prefix byte-stability harness — across a multi-iteration tool loop, assert request N's
+   serialized prefix is a byte-prefix of request N+1 (moving tail excluded) for each dialect;
+   any middleware change that breaks the assertion fails CI. This turns the 0.27%-vs-98.5%
+   cache-hit cliff into a regression gate instead of an archaeology exercise.
+
+**Touchpoints:** HelperMiddlewareAdapter.interface.ts (frame layer + extractTextContent), all 5
+adapters (inherit frame, chunk-path fix), HelperModelMiddleware.ts (surface registration, 11c
+removal), SettingsSchema (any removed toggles deprecated not repurposed).
+
+**Tests:** frame-layer composition table (each surface gets persona+budget+grounding); adapter
+parity (same surface → same frame bytes across dialects); chunk-path template presence; digest
+rendering golden (tool-heavy session → actions visible in helper input); decisions-join presence;
+11c: no thinking-channel injection remains (grep-level + runtime probe).
+
+**Verification rung:** unit + one compaction probe on a real tool-heavy session (before/after
+summary quality read via distiller categories); 11c removal = regression sweep on mentorship
+tests + one live session confirming no synthetic thinking blocks in the wire payload.

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.73.0] - 2026-08-26
+
+### Added
+- **Helper-curated doctrine freshness** (`CORTEX_DOCTRINE_CURATION=true`, default off). The
+  shipped orient script now maintains machine-authored CORTEX.md sections between markers; when
+  the workspace drifts, it stages a mechanical refresh instead of touching the doc, and a helper
+  model curates the merge in a disposable side context — applied atomically with a `.prev`
+  rollback, a hard size budget, and decisions-store provenance. Delivery is synchronous at
+  prefix-rebuild boundaries (the defer lift, or before turn-0 assembly under full mass), bounded
+  by a timeout that fails open to the previous doc. The working model never sees a diff or makes
+  a merge decision — its first turn stays a pure imperative.
+- **Shared helper frame layer**: helper-model calls (compaction, summaries, guidance) now build
+  from one persona/grounding/output-budget composition instead of per-surface hardcoded strings.
+- **Cache-compliance test gate**: a prefix byte-stability test asserts that appending turns never
+  changes how earlier messages serialize — protecting the provider prompt-cache discount that
+  dominates agentic-loop economics.
+
+### Fixed
+- **Chunked compaction fidelity**: large sessions compacted in chunks now get the full
+  8-category structured summary template (previously a bare "summarize this section").
+- **Compaction action-stream blindness**: tool calls and tool results now render into the
+  compaction digest as one-line shapes — summaries can finally answer "what did the agent do".
+
+### Changed
+- **Mentorship guidance never enters the thinking channel**: all helper guidance is delivered as
+  attributed `<system-reminder>` text in a user message on every provider (the last synthetic
+  thinking-block branch is removed — foreign thinking caused model incongruence). Provider
+  wire-validity reasoning fields are untouched.
+- Compaction summaries gain a DURABLE PROJECT NOTES category (candidate memory entries).
+
 ## [4.72.0] - 2026-08-25
 
 ### Added

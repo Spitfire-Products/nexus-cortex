@@ -48,22 +48,50 @@ if [ -d "$SK" ]; then
   done | head -14
 fi
 echo "note: when your tool list is limited, additional tools may be discoverable via the SearchTools tool."
-# Mechanical CORTEX.md (item 9c feed): written synchronously so the deferred
-# doctrine corpus delivered at anchor-lift carries project context. Refine
-# later with the init_cortex_context tool; never overwritten here.
-if [ ! -f .cortex/CORTEX.md ]; then
+# Mechanical CORTEX.md (items 9c + 10): machine-authored sections live between
+# markers so the drift check can regenerate ONLY what the machine wrote.
+# - absent doc  -> write fresh (with markers)
+# - doc w/ markers + drift -> stage .cortex/CORTEX.md.next + .diff for the
+#   HELPER-model curation boundary (item 10); print ONE informational line —
+#   the working model gets zero decision surface.
+# - doc without markers -> fully hand-authored; never touched, never staged.
+MB_BEGIN="<!-- orient:auto:begin -->"
+MB_END="<!-- orient:auto:end -->"
+machine_block() {
+  echo "$MB_BEGIN"
+  echo "## Project"
+  echo "${PROJECT:-$(basename "$W")} — see README for details."
+  echo
+  echo "## Key Commands"
+  if [ -n "$CMDS" ]; then printf '%s\n' "$CMDS"; else echo "- (no package.json scripts; check README/Makefile)"; fi
+  echo
+  echo "## Structure (top level)"
+  ls -1A "$W" 2>/dev/null | head -25 | sed 's/^/- /'
+  echo "$MB_END"
+}
+DOC=.cortex/CORTEX.md
+if [ ! -f "$DOC" ]; then
   mkdir -p .cortex 2>/dev/null
   {
     echo "# CORTEX.md (mechanical orient scan — refine with init_cortex_context)"
     echo
-    echo "## Project"
-    echo "${PROJECT:-$(basename "$W")} — see README for details."
-    echo
-    echo "## Key Commands"
-    if [ -n "$CMDS" ]; then printf '%s\n' "$CMDS"; else echo "- (no package.json scripts; check README/Makefile)"; fi
-    echo
-    echo "## Structure (top level)"
-    ls -1A "$W" 2>/dev/null | head -25 | sed 's/^/- /'
-  } > .cortex/CORTEX.md 2>/dev/null && echo "(wrote mechanical .cortex/CORTEX.md)"
+    machine_block
+  } > "$DOC" 2>/dev/null && echo "(wrote mechanical .cortex/CORTEX.md)"
+elif grep -q "orient:auto:begin" "$DOC" 2>/dev/null; then
+  machine_block > .cortex/.orient-fresh-block 2>/dev/null
+  awk '/orient:auto:begin/{f=1} f{print} /orient:auto:end/{f=0}' "$DOC" > .cortex/.orient-cur-block 2>/dev/null
+  if cmp -s .cortex/.orient-cur-block .cortex/.orient-fresh-block; then
+    rm -f .cortex/.orient-fresh-block .cortex/.orient-cur-block
+    rm -f "$DOC.next" "$DOC.diff"
+    echo "(CORTEX.md current)"
+  else
+    awk -v fresh=.cortex/.orient-fresh-block '
+      /orient:auto:begin/ {skip=1; while ((getline line < fresh) > 0) print line; close(fresh); next}
+      /orient:auto:end/ {skip=0; next}
+      skip!=1 {print}' "$DOC" > "$DOC.next" 2>/dev/null
+    diff -u "$DOC" "$DOC.next" > "$DOC.diff" 2>/dev/null
+    rm -f .cortex/.orient-fresh-block .cortex/.orient-cur-block
+    echo "(doctrine refresh staged for curation: machine sections drifted)"
+  fi
 fi
 exit 0

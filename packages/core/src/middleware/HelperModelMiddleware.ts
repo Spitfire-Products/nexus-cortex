@@ -17,6 +17,7 @@
  * - Supports Messages API, Chat Completions API, Google GenAI API
  */
 
+import { frameHelperPrompt } from './helpers/helperFrame.js';
 import { ModelConfig, ModelRegistry } from '../models/ModelConfig.interface.js';
 import {
   HelperModelMiddlewareRegistry,
@@ -1173,6 +1174,58 @@ export class HelperModelMiddleware {
    *
    * Analyzes tool errors and provides strategic guidance for recovery
    */
+  /**
+   * Item 10 — doctrine curation one-shot (session-start boundary; frame layer
+   * item 11a). Receives the stale CORTEX.md + the orient script's staged
+   * mechanical refresh + the diff, returns the CURATED doc. Runs in a
+   * disposable side context — the MAIN model never sees the diff or makes
+   * the merge decision (foreign-deliberation hazard, operator-set doctrine).
+   * The caller (orchestrator) validates size, applies atomically with a
+   * .prev rollback, and records provenance; this method only curates.
+   */
+  async curateDoctrine(context: {
+    staleDoc: string;
+    stagedNext: string;
+    diff: string;
+    workspaceLine?: string;
+    maxOutputTokens?: number;
+    helperModelId?: string;
+  }): Promise<string> {
+    const budget = context.maxOutputTokens ?? 4000;
+    const body = `CURRENT CORTEX.md (the doc in use — its curated sections are load-bearing):
+---
+${context.staleDoc}
+---
+STAGED MECHANICAL REFRESH (machine-authored sections regenerated from live workspace state):
+---
+${context.stagedNext}
+---
+DIFF (current -> staged):
+---
+${context.diff}
+---
+Produce the FULL updated CORTEX.md. Rules, in priority order:
+1. Adopt the staged machine-authored sections (they reflect live workspace state).
+2. PRESERVE all human/model-curated content outside the machine markers — never delete text you did not regenerate; you may append dated observations.
+3. Keep the machine-section markers exactly as they appear in the staged version.
+4. Output ONLY the file content — no commentary, no code fences.`;
+    const prompt = frameHelperPrompt({
+      surface: 'doctrine-curation',
+      persona: 'You are a documentation curator for an agentic coding workspace.',
+      task: 'Merge a mechanical refresh into the workspace doctrine file, preserving curated knowledge.',
+      workspaceLine: context.workspaceLine,
+      outputBudgetTokens: budget,
+    }, body);
+    const helperConfig = this.getHelperModelConfig(
+      context.helperModelId || process.env.HELPER_MODEL_ID || 'deepseek-v4-flash'
+    );
+    const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
+    const messages: HelperCanonicalMessage[] = [{ role: 'user', content: prompt }];
+    const out = await adapter.generate(messages, helperConfig, budget);
+    // strip accidental fences
+    return out.replace(/^```[a-z]*\n/, '').replace(/\n```\s*$/, '').trim();
+  }
+
   async generateErrorGuidance(context: {
     toolName: string;
     toolUseId: string;

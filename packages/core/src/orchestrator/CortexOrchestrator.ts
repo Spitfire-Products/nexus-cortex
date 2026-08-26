@@ -62,6 +62,7 @@ import type { AgentDefinition, SubAgentResult, ISubAgentEventEmitter } from './S
 // Phase 1: Tool Architecture Refactor - Unified Tool Registry
 import { toolFactory } from '../tools/ToolFactory.js';
 import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, isNarrowProfile, isToolAllowedByProfile, applyToolProfile } from '../tools/ToolProfile.js';
+import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
 
 // Phase 2.9: MCP Integration
 import { McpClientManager } from '../mcp/index.js';
@@ -557,6 +558,63 @@ export class CortexOrchestrator {
   private deferredCorpusDelivered = false;
 
   /**
+   * Item 10 — helper-curated doctrine freshness (operator-designed; docs/
+   * HARNESS_IMPROVEMENT_BACKLOG.md). SYNCHRONOUS-BY-BOUNDARY: under defer the
+   * lift AWAITS the curated doc before corpus assembly; under full mass the
+   * session-start call runs orient harness-side then curates BEFORE turn-0
+   * assembly. Bounded + fail-open: on timeout/error the previous doc stands
+   * and a doctrine_curation_timeout event records the degradation. The MAIN
+   * model never sees the diff — zero turn-1 decision surface.
+   */
+  private doctrineCurationDone = false;
+  private async ensureDoctrineFresh(reason: 'lift' | 'session-start'): Promise<void> {
+    if (this.doctrineCurationDone) return;
+    if ((process.env.CORTEX_DOCTRINE_CURATION ?? '').trim().toLowerCase() !== 'true') return;
+    this.doctrineCurationDone = true; // one-shot per session, even on failure
+    const projectPath = this.config.projectPath || process.cwd();
+    try {
+      if (reason === 'session-start') runOrientForStaging(projectPath);
+      const staged = readStagedDoctrine(projectPath);
+      if (!staged) return;
+      if (!this.helperMiddleware?.curateDoctrine) return;
+      const timeoutMs = parseInt(process.env.CORTEX_DOCTRINE_CURATION_TIMEOUT_MS ?? '25000', 10);
+      const maxBytes = parseInt(process.env.CORTEX_DOCTRINE_MAX_BYTES ?? '16384', 10);
+      const curated = await withTimeout(
+        this.helperMiddleware.curateDoctrine({
+          staleDoc: staged.staleDoc,
+          stagedNext: staged.stagedNext,
+          diff: staged.diff,
+          maxOutputTokens: Math.floor(maxBytes / 4),
+        }),
+        timeoutMs
+      );
+      const store = this.getDecisionStore();
+      if (curated === null) {
+        if (store) void store.recordEvent({
+          sessionId: this.currentSessionId ?? 'unknown',
+          kind: 'doctrine_curation_timeout',
+          detail: { reason, timeoutMs },
+        }).catch(() => {});
+        return; // fail-open: previous doc stands
+      }
+      const { bytes } = applyCuratedDoctrine(staged, curated, maxBytes);
+      if (store) void store.recordEvent({
+        sessionId: this.currentSessionId ?? 'unknown',
+        kind: 'doctrine_curation',
+        detail: { reason, bytes },
+      }).catch(() => {});
+      if (this.config.debug) console.log(`[Doctrine] curated CORTEX.md applied (${bytes}B, ${reason})`);
+    } catch (e: any) {
+      const store = this.getDecisionStore();
+      if (store) void store.recordEvent({
+        sessionId: this.currentSessionId ?? 'unknown',
+        kind: 'doctrine_curation_timeout',
+        detail: { reason, error: String(e?.message ?? e) },
+      }).catch(() => {});
+    }
+  }
+
+  /**
    * P6 deferral: at the anchor-lift boundary, append the deferred static
    * corpus (every static doc except the core system_prompt) as an extra
    * TEXT BLOCK on the just-recorded first tool_result message — the corpus
@@ -570,6 +628,9 @@ export class CortexOrchestrator {
     if (this.deferredCorpusDelivered) return;
     if ((process.env.CORTEX_PROMPT_MASS ?? '').trim().toLowerCase() !== 'defer') return;
     this.deferredCorpusDelivered = true; // one-shot even if assembly fails
+    // Item 10: the lift AWAITS doctrine curation so the lazy corpus read (9c)
+    // delivers the CURATED doc — deterministic, never a latency race.
+    await this.ensureDoctrineFresh('lift');
     if (!this.systemMessageMiddleware) return;
     try {
       const corpus = await this.systemMessageMiddleware.buildDeferredStaticCorpus(
@@ -781,6 +842,13 @@ export class CortexOrchestrator {
   ): Promise<OrchestratorResponse> {
     if (!this.sessionTimeline) {
       throw new Error('Session not initialized. Call createSession() first.');
+    }
+
+    // Item 10: full-mass pre-assembly boundary — doctrine curation completes
+    // BEFORE the turn-0 prompt is built (under defer this no-ops here and the
+    // lift boundary awaits instead; one-shot flag makes both calls safe).
+    if ((process.env.CORTEX_PROMPT_MASS ?? '').trim().toLowerCase() !== 'defer') {
+      await this.ensureDoctrineFresh('session-start');
     }
 
     // Graduation-signal capture (Decision Capture Layer §5): the previous turn's
@@ -7964,7 +8032,6 @@ export class CortexOrchestrator {
 
     // Create thinking block message with metadata for visual distinction
     const thinkingMessageId = uuidv4();
-    const helperModelId = this.config.reactiveMentorship?.helperModelId || 'grok-4-1-fast-non-reasoning';
 
     // Check current model's API pattern AND provider to determine content format.
     // Only inject thinking blocks for adapters that truly handle them:
@@ -7973,36 +8040,22 @@ export class CortexOrchestrator {
     // All others get <system-reminder> text — they either strip thinking blocks (XAI Messages,
     // GoogleGenAI SDK) or don't recognize them (Chat Completions, Responses), resulting in
     // empty content arrays and "Each message must have at least one content element" errors.
-    const currentModel = this.modelRegistry?.getModel(this.currentModelId);
-    const apiPattern = currentModel?.api?.pattern || 'chat/completions';
-    // Anthropic requires `signature` on thinking blocks (model-generated, can't be synthesized).
-    // Synthetic mentorship thinking blocks must use text format for Anthropic.
-    // Only Google GenerateContent safely converts thinking → text parts.
-    const supportsThinking = apiPattern === 'generateContent';
+    // Item 11c (FOREIGN-THINKING doctrine, docs/THINKING_GLOSSARY.md): helper
+    // output NEVER enters the thinking channel — thinking blocks are the one
+    // channel a model treats as its own prior voice, and another model's
+    // content there is identity contamination (measured: incongruence,
+    // confusion, coherence loss). ALL adapters now get the same attributed
+    // system-reminder text in a USER message (assistant role caused models to
+    // see guidance as their own output and mimic it; user-role
+    // <system-reminder> is the standard SystemMessageMiddleware pattern).
+    // The former generateContent thinking-typed branch is removed — its
+    // adapter converted to text parts anyway, so the wire shape is unchanged.
+    const supportsThinking = false;
 
-    const contentBlocks: any[] = [];
-
-    if (supportsThinking) {
-      // Adapter handles thinking blocks — inject as thinking
-      contentBlocks.push({
-        type: 'thinking',
-        thinking: ` **AI Mentor Insight** (${source})\n\n${thinking}`,
-        thinkingMetadata: {
-          source: 'mentorship',
-          modelId: helperModelId
-        }
-      });
-    } else {
-      // Inject as system-reminder text in a user message (NOT assistant).
-      // Using assistant role caused models (DeepSeek, Grok) to see guidance as their
-      // own previous response and mimic the <system-reminder> pattern. User messages
-      // with <system-reminder> tags are the standard injection pattern used by
-      // SystemMessageMiddleware — models are conditioned to expect these in user messages.
-      contentBlocks.push({
-        type: 'text',
-        text: `<system-reminder>\n AI Mentor Insight (${source})\n\n${thinking}\n</system-reminder>`
-      });
-    }
+    const contentBlocks: any[] = [{
+      type: 'text',
+      text: `<system-reminder>\n AI Mentor Insight (${source})\n\n${thinking}\n</system-reminder>`
+    }];
 
     // For non-thinking models, inject as user message to avoid model echo pattern.
     // Models see assistant messages as their own prior output and may mimic the format.

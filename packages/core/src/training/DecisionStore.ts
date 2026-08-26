@@ -55,7 +55,11 @@ export type SteeringEventKind =
   | 'steering_injected'
   | 'loop_escalation'
   | 'endturn_gate_fallback'
-  | 'inaction_nudge';
+  | 'inaction_nudge'
+  // Item 10: doctrine-curation provenance (helper-curated CORTEX.md refresh
+  // at session-start/lift boundaries; timeout = fail-open to previous doc).
+  | 'doctrine_curation'
+  | 'doctrine_curation_timeout';
 
 export interface SteeringEventInput {
   sessionId: string;
