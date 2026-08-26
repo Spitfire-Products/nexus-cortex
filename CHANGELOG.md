@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.74.1] - 2026-08-26
+
+### Fixed
+- **Loop-kill false positives on legitimate repeats**: `MAX_LOOP_REPETITIONS` now counts
+  CONSECUTIVE byte-identical calls only. Previously it counted occurrences across the whole
+  turn, so a legitimate verify cycle (the same `npm test` after each of several fixes) was
+  killed as an infinite loop with corrupted turn metrics. Uninterrupted identical spam — the
+  guard's actual target — still trips at the same threshold, and the busy-wait poll guard's
+  soft nudge now layers cleanly beneath it.
+
 ## [4.74.0] - 2026-08-26
 
 ### Added

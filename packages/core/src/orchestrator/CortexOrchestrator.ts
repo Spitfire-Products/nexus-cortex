@@ -63,6 +63,7 @@ import type { AgentDefinition, SubAgentResult, ISubAgentEventEmitter } from './S
 import { toolFactory } from '../tools/ToolFactory.js';
 import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, isNarrowProfile, isToolAllowedByProfile, applyToolProfile } from '../tools/ToolProfile.js';
 import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
+import { ExactRepeatTracker } from '../training/loopLadder.js';
 
 // Phase 2.9: MCP Integration
 import { McpClientManager } from '../mcp/index.js';
@@ -1636,6 +1637,7 @@ export class CortexOrchestrator {
 
     // Loop detection: Track recent tool calls to detect repetitive loops
     const recentToolCalls: Array<{ name: string; inputHash: string }> = [];
+    const exactRepeatTracker = new ExactRepeatTracker();
     // Unified Outcome Ladder (docs/UNIFIED_OUTCOME_LADDER.md): per-approach
     // FAILURE escalation — remind(2)→diversify(4)→break(6) over normalized
     // near-duplicate approaches. Complements isToolProgressStalled (which is
@@ -2309,10 +2311,10 @@ export class CortexOrchestrator {
 
           recentToolCalls.push(toolSignature);
 
-          // Check for loops: count how many times this exact call appears in recent history
-          const matchCount = recentToolCalls.filter(
-            call => call.name === toolUse.name && call.inputHash === inputHash
-          ).length;
+          // CONSECUTIVE byte-identical repeats only (2026-08-26 fix — the old
+          // whole-turn occurrence count killed legitimate scattered repeats,
+          // e.g. identical `npm test` after each fix; see ExactRepeatTracker).
+          const matchCount = exactRepeatTracker.observe(toolUse.name, inputHash);
 
           if (matchCount >= MAX_LOOP_REPETITIONS) {
             console.warn(
@@ -3895,6 +3897,7 @@ export class CortexOrchestrator {
     let emptyResponseRetryUsed = false; // R32: parity with sendMessage R18b guard
     let inactionNudgeUsed = false; // Inaction guard (backlog item 2) — streaming parity
     const allToolCalls: Array<{ name: string; inputHash: string }> = [];
+    const streamRepeatTracker = new ExactRepeatTracker();
     // Unified Outcome Ladder (streaming parity — see sendMessage).
     const loopLadder = new LoopLadder();
     let ladderBreak: string | null = null;
@@ -4264,9 +4267,9 @@ export class CortexOrchestrator {
         const inputHash = JSON.stringify(toolUse.input);
         allToolCalls.push({ name: toolUse.name, inputHash });
 
-        const matchCount = allToolCalls.filter(
-          call => call.name === toolUse.name && call.inputHash === inputHash
-        ).length;
+        // CONSECUTIVE byte-identical repeats only (2026-08-26 fix — parity
+        // with the sendMessage loop; see ExactRepeatTracker).
+        const matchCount = streamRepeatTracker.observe(toolUse.name, inputHash);
 
         if (matchCount >= MAX_LOOP_REPETITIONS) {
           if (this.config.debug) {

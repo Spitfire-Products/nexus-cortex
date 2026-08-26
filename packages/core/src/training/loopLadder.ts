@@ -123,3 +123,34 @@ export function formatLadderSignal(toolName: string, result: LadderResult): stri
   }
   return null;
 }
+
+/**
+ * ExactRepeatTracker — CONSECUTIVE byte-identical call detection for the
+ * MAX_LOOP_REPETITIONS hard killer (2026-08-26 fix). The legacy check counted
+ * occurrences over the WHOLE turn (unbounded window), so legitimate scattered
+ * repeats — identical `npm test` after each of four fixes — blunt-killed the
+ * turn exactly like spam (the turns=1000 sentinel class; prime suspect in the
+ * train-fasttext forensics). Consecutive-only semantics keep the killer's real
+ * job (uninterrupted byte-identical spam — which is always consecutive) and
+ * layer cleanly under the poll guard: nudge at POLL_REMIND_AT consecutive
+ * succeeding repeats, hard kill at MAX_LOOP_REPETITIONS consecutive repeats.
+ * Known v1 limitation (shared with the poll guard): strict alternation
+ * (sleep → status → sleep → status) resets both trackers — covered by the
+ * budget-pressure system, not by repeat detection.
+ */
+export class ExactRepeatTracker {
+  private lastKey: string | null = null;
+  private count = 0;
+
+  /** Returns the CONSECUTIVE occurrence count for this exact call. */
+  observe(toolName: string, inputHash: string): number {
+    const key = `${toolName}\u0000${inputHash}`;
+    if (key === this.lastKey) {
+      this.count += 1;
+    } else {
+      this.lastKey = key;
+      this.count = 1;
+    }
+    return this.count;
+  }
+}

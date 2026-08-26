@@ -135,3 +135,38 @@ d2('poll guard (busy-wait detection on SUCCEEDING repeats)', () => {
     ex2(fmt2('Bash', { action: 'remind', count: 2 })).toBeNull();
   });
 });
+
+// ── ExactRepeatTracker (consecutive-only MAX_LOOP_REPETITIONS semantics) ──
+import { ExactRepeatTracker } from '../loopLadder.js';
+
+d2('ExactRepeatTracker (consecutive-only hard-kill semantics)', () => {
+  it2('counts consecutive identical calls', () => {
+    const t = new ExactRepeatTracker();
+    ex2(t.observe('Bash', 'h1')).toBe(1);
+    ex2(t.observe('Bash', 'h1')).toBe(2);
+    ex2(t.observe('Bash', 'h1')).toBe(3);
+  });
+
+  it2('ANY different call resets — scattered legitimate repeats never accumulate', () => {
+    const t = new ExactRepeatTracker();
+    // npm test after each of four fixes: test, edit, test, edit, test, edit, test, edit, test
+    for (let i = 0; i < 4; i++) {
+      ex2(t.observe('Bash', 'npm-test')).toBe(1); // never exceeds 1
+      t.observe('Edit', `fix-${i}`);
+    }
+    ex2(t.observe('Bash', 'npm-test')).toBe(1); // 5th scattered run: still 1, no kill
+  });
+
+  it2('true spam (uninterrupted identical) still reaches the kill threshold', () => {
+    const t = new ExactRepeatTracker();
+    let n = 0;
+    for (let i = 0; i < 5; i++) n = t.observe('Bash', 'same');
+    ex2(n).toBe(5);
+  });
+
+  it2('same input on a different tool is a different key', () => {
+    const t = new ExactRepeatTracker();
+    t.observe('Bash', 'x'); t.observe('Bash', 'x');
+    ex2(t.observe('Grep', 'x')).toBe(1);
+  });
+});
