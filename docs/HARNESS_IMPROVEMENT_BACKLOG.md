@@ -724,3 +724,56 @@ error. Relabel at the classification site next train.
 **Run-target staleness (miner hygiene):** doctrine-mine's run2 target carries pre-4.74
 description text — regenerate the target from CURRENT BaseToolRegistry before run5, or the
 miner audits doctrine that no longer ships (one marginal cluster produced exactly this way).
+
+## Item 15 — $() blacklist + YOLO/permissions-in-headless (RULED + BUILT 2026-08-26; operator-set)
+
+**STATUS: operator ruled "go ahead with the recommended fixes" → BUILT (rides 4.78.0):**
+(b)-minimum — `$(( ))` arithmetic no longer flagged (nested real substitution inside
+arithmetic still blocked); (a) — `CORTEX_ALLOW_CMD_SUBSTITUTION=true` lifts the check for
+sandboxed profiles, default off, documented in .env.example; denial message now teaches the
+accepted alternative. 4 new integration tests; env-docs gate green. NOT built (explicitly):
+backtick/`<()` coverage — closing the porosity would need a semantic validator or a
+permissions-plane move; left for a future ruling/autoresearch.
+
+**Finding:** mini specimens show 8+ `command substitution using $() is not allowed` denials
+(tb2-friction-bash-subst, still unfixed) including FALSE POSITIVES on `$(( ))` arithmetic (naive
+substring match); the denial→rewrite→variant loop feeds the near-dup class (14b's feeder).
+**Operator question first:** headless CLI was believed `--yolo` by default (permissions layer
+inactive headless), but `.env.example` ships `YOLO=false` — map the YOLO env through the
+permissions middleware and establish what the sterile bench container ACTUALLY runs before any
+policy change. **Then rule (operator decision — $() blocking is the injection defense, a
+SECURITY control):** (a) bench-profile allowance in sandboxed containers, (b) semantic validator
+(un-flag `$(( ))` at minimum — plain bug in any threat model), (c) leave for autoresearch.
+
+**INVESTIGATED 2026-08-26 (post-compaction; all claims file:line-verified). Three findings:**
+
+1. **The operator's belief is CONFIRMED in effect — headless runs are permissions-bypassed
+   regardless of `YOLO=false`.** Persistent-server path: `packages/server/src/index.ts:555`
+   `headlessAutoApprove = !process.stdout.isTTY && CORTEX_HEADLESS_APPROVE !== 'false'` feeds
+   `yolo` (index.ts:556) → `permissionMode: 'auto'` (index.ts:231) → `bypassAll: true`
+   (OrchestratorFactory.ts:459) → PermissionsMiddleware.ts:160 short-circuits ALLOW on every
+   tool with no policy evaluation. Stateless per-request path (routes/messages.ts:95):
+   `YOLO=false` → `permissionMode: 'disabled'` → the middleware is never constructed
+   (factory:423). The bench adapter spawns `cortex-server` from a python subprocess (no TTY),
+   so `headlessAutoApprove` is true → bypassAll. `.env.example`'s `YOLO=false` is INERT for
+   every headless surface; it only governs TTY-attached interactive prompting.
+
+2. **The $() denial does NOT come from the permissions layer** — it is
+   `ShellTool.validateToolParams` (packages/executors/.../ShellTool.ts:162-164): an
+   unconditional `params.command.includes('$(')` substring check inside the tool itself,
+   active in EVERY mode including full YOLO/bypassAll. Options (a)/(b) therefore mean
+   editing the tool validator, not the permissions plane.
+
+3. **The control is porous by construction**: backticks and `<()` process substitution are
+   not checked anywhere in ShellTool — only the `$(` spelling is blocked. A model wanting
+   substitution semantics rewrites with backticks (observed: the denial→rewrite→variant
+   loop), so the check does not foreclose command substitution; it taxes the natural
+   spelling, false-positives on `$(( ))` arithmetic and quoted literals, and feeds the
+   near-dup class.
+
+**Recommendation (ruling stays with the operator):** (b)-minimum now — stop flagging `$(`
+immediately followed by `(` (the arithmetic false positive is a plain bug under any threat
+model). Given finding 3, (a) for sandboxed bench containers costs nothing security-wise the
+backtick hole doesn't already give away; a real injection defense would need a semantic
+validator covering all three substitution spellings plus quoting context, or should live in
+the permissions plane where modes can govern it.

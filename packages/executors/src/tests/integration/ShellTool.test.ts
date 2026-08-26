@@ -173,6 +173,43 @@ describe('ShellTool Integration', () => {
     expect(result.error).toContain('Command substitution using $() is not allowed');
   });
 
+  it('should allow $(( )) arithmetic expansion', async () => {
+    const result = await tool.execute(
+      { command: 'echo $((2 + 3))' },
+      new AbortController().signal,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.llmContent).toContain('5');
+  });
+
+  it('should still block command substitution nested inside arithmetic', async () => {
+    const result = await tool.execute(
+      { command: 'echo $(( $(date +%s) / 60 ))' },
+      new AbortController().signal,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Command substitution using $() is not allowed');
+  });
+
+  it('should allow $() when CORTEX_ALLOW_CMD_SUBSTITUTION=true', async () => {
+    const prev = process.env.CORTEX_ALLOW_CMD_SUBSTITUTION;
+    process.env.CORTEX_ALLOW_CMD_SUBSTITUTION = 'true';
+    try {
+      const result = await tool.execute(
+        { command: 'echo "count=$(echo 1 2 3 | wc -w)"' },
+        new AbortController().signal,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.llmContent).toContain('count=3');
+    } finally {
+      if (prev === undefined) delete process.env.CORTEX_ALLOW_CMD_SUBSTITUTION;
+      else process.env.CORTEX_ALLOW_CMD_SUBSTITUTION = prev;
+    }
+  });
+
   it('should validate command is not empty', async () => {
     const result = await tool.execute(
       { command: '' },

@@ -79,7 +79,8 @@ export interface ShellToolParams {
  * Security:
  * - Commands run in specified working directory
  * - Path traversal prevention for directory parameter
- * - Blocks command substitution with $()
+ * - Blocks command substitution with $() ($(( )) arithmetic exempt;
+ *   liftable via CORTEX_ALLOW_CMD_SUBSTITUTION=true for sandboxed profiles)
  */
 export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
   private static readonly DEFAULT_TIMEOUT_MS = 120000; // 2 minutes
@@ -159,9 +160,15 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
       return 'Command cannot be empty.';
     }
 
-    // Security: block command substitution with $()
-    if (params.command.includes('$(')) {
-      return 'Command substitution using $() is not allowed for security reasons.';
+    // Security: block command substitution with $(). $(( )) arithmetic
+    // expansion is NOT command substitution and is never flagged. Sandboxed
+    // profiles (e.g. bench containers) may lift the check entirely via
+    // CORTEX_ALLOW_CMD_SUBSTITUTION=true.
+    if (process.env.CORTEX_ALLOW_CMD_SUBSTITUTION !== 'true') {
+      const withoutArithmetic = params.command.replace(/\$\(\(/g, '');
+      if (withoutArithmetic.includes('$(')) {
+        return 'Command substitution using $() is not allowed for security reasons. Run the inner command separately and pass its output via a file or pipeline. ($(( )) arithmetic is allowed.)';
+      }
     }
 
     // Validate directory if provided
