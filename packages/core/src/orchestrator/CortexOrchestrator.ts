@@ -6214,11 +6214,30 @@ export class CortexOrchestrator {
       );
     }
 
+    const toolLower = toolName.toLowerCase();
+
+    // Item 14a (mini-distill finding, 2026-08-26): BashOutput has NO
+    // navigation parameters — "be more targeted" is unactionable advice, and
+    // the hard refusal meant a model could not harvest its own background
+    // training results (observed: a 368K-token training log → refusal → task
+    // failure). For a background stream the TAIL is the answer: return the
+    // last ~limit tokens as a SUCCESS with a truncation notice.
+    if (toolLower === 'bashoutput') {
+      const keepChars = (MAX_TOOL_OUTPUT_TOKENS - 500) * 4; // headroom for the notice
+      const tail = toolOutput.slice(-keepChars);
+      return {
+        content:
+          `(output truncated: showing the LAST ~${Math.ceil(tail.length / 4).toLocaleString()} ` +
+          `tokens of ~${estimatedTokens.toLocaleString()} — earlier output dropped; use the ` +
+          `filter parameter to search the full stream)\n` + tail,
+        isError: false,
+      };
+    }
+
     // Strategy: Return as error with guidance and preview
     // This gives the model a chance to try a more targeted approach
     const truncated = this.truncateToolOutput(toolOutput, MAX_TOOL_OUTPUT_TOKENS);
 
-    const toolLower = toolName.toLowerCase();
     let toolSpecificHint = '';
     if (toolLower === 'read') {
       toolSpecificHint = `This file is too large to read ${MAX_TOOL_OUTPUT_TOKENS.toLocaleString()} tokens at once. ` +

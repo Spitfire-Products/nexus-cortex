@@ -693,3 +693,34 @@ threshold starts at 30 (10+ Bash calls is the NORM when bash is the whole surfac
 **Non-goals:** re-entering the tool loop post-R29a (structural change to the mega-loop, wrong
 risk profile hours before a launch); budget-fraction awareness in-harness (budget is a
 bench-side concept).
+
+## Item 14 — Mini-distill findings: BashOutput tail-truncation + near-dup breaker (2026-08-26)
+
+**Source:** formal distill over the 6 train-fasttext mini cells (.bench/distill-minis/) + the
+FIRST events-joined doctrine-mine pass (run4: 128 events joined, 21 clusters, busy-wait
+corroborated with event-grounded quotes).
+
+**14a — BashOutput tail-truncation (BUILT, rides next train).** The oversized-result guard
+hard-refused a 368K-token background training log with Read/Grep-shaped advice that is
+unactionable for BashOutput (no navigation params) — the model could NOT harvest its own
+training results. Fix: BashOutput oversize returns the TAIL (~limit tokens) as a SUCCESS with a
+truncation notice pointing at the filter param; Read/Grep/Bash keep the guidance-error path.
+3 tests.
+
+**14b — Normalized near-dup breaker (SPEC — the fix-set item c, now twice-corroborated).**
+Distiller: near-identical call cluster ×65, max 4 CONSECUTIVE (varied params: model_v#, pids)
+— below the exact tracker AND the poll guard by construction; the models even used the correct
+in-call wait idiom but re-issued it with tweaked params for hours. Design: sliding-window
+counter over normalizeApproachText hashes (the approachHash already collides near-dups) —
+N same-approach calls within the last M calls regardless of interleaving → one ladder-style
+diversify nudge; 2N → break. Bounded, window-based (NOT consecutive), env-gated
+CORTEX_NEARDUP_BREAKER. Defer to post-matrix train — core-loop change, wrong risk hours
+before a launch.
+
+**14c — Timeout error-family mislabel (NOTE).** Tool-timeout kills surface as error family
+"command was cancelled by user" — misleading to the family lens and to models reading the
+error. Relabel at the classification site next train.
+
+**Run-target staleness (miner hygiene):** doctrine-mine's run2 target carries pre-4.74
+description text — regenerate the target from CURRENT BaseToolRegistry before run5, or the
+miner audits doctrine that no longer ships (one marginal cluster produced exactly this way).

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.76.2] - 2026-08-26
+
+### Fixed
+- **BashOutput no longer refuses oversized background logs**: results past the size cap return
+  the tail with a truncation notice (a background stream's tail is the answer; the old refusal
+  offered navigation advice BashOutput has no parameters for, and cost a model its own training
+  results in live testing).
+
 ## [4.76.1] - 2026-08-26
 
 ### Fixed
