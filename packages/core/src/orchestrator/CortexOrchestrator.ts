@@ -80,6 +80,7 @@ import { LoopLadder, formatLadderSignal } from '../training/loopLadder.js';
 import { shouldNudgeInaction, formatInactionNudge } from './inactionGuard.js';
 import { applyImageTtlForRequest } from './imageTtl.js';
 import { verifyRequirements, resolveEndTurnRequirementsMode } from './requirementsVerification.js';
+import { verifyIntegrity, resolveEndTurnIntegrityMode } from './integrityVerification.js';
 import { ModelRouterMatrix } from '../training/ModelRouterMatrix.js';
 import { classifyTask } from '../training/TaskClassifier.js';
 import { closestToolMatches } from './toolNameMatcher.js';
@@ -1638,6 +1639,12 @@ export class CortexOrchestrator {
     // Loop detection: Track recent tool calls to detect repetitive loops
     const recentToolCalls: Array<{ name: string; inputHash: string }> = [];
     const exactRepeatTracker = new ExactRepeatTracker();
+    // EndTurn Stage 5 (integrity): turn-level evidence accumulators — web
+    // activity and mutating-tool inputs can land many batches before the
+    // EndTurn call, so per-batch state is not enough.
+    const integrityWebQueries: string[] = [];
+    const integrityWebContent: string[] = [];
+    const integrityWriteInputs: string[] = [];
     // Unified Outcome Ladder (docs/UNIFIED_OUTCOME_LADDER.md): per-approach
     // FAILURE escalation — remind(2)→diversify(4)→break(6) over normalized
     // near-duplicate approaches. Complements isToolProgressStalled (which is
@@ -2311,6 +2318,19 @@ export class CortexOrchestrator {
 
           recentToolCalls.push(toolSignature);
 
+          // Stage-5 evidence accumulation (cheap, always-on; verdicts only
+          // computed at the gate when CORTEX_ENDTURN_INTEGRITY is armed).
+          if (toolUse.name === 'WebSearch') {
+            const q = (toolUse.input as any)?.query;
+            if (typeof q === 'string' && q) integrityWebQueries.push(q);
+          } else if (toolUse.name === 'Write') {
+            const c = (toolUse.input as any)?.content;
+            if (typeof c === 'string' && c) integrityWriteInputs.push(c);
+          } else if (toolUse.name === 'Edit') {
+            const ns = (toolUse.input as any)?.new_string;
+            if (typeof ns === 'string' && ns) integrityWriteInputs.push(ns);
+          }
+
           // CONSECUTIVE byte-identical repeats only (2026-08-26 fix — the old
           // whole-turn occurrence count killed legitimate scattered repeats,
           // e.g. identical `npm test` after each fix; see ExactRepeatTracker).
@@ -2459,6 +2479,9 @@ export class CortexOrchestrator {
             if (tr.tool_name === 'EndTurn' || tr.is_error) continue;
             const txt = typeof tr.content === 'string' ? tr.content : JSON.stringify(tr.content);
             if (txt) thisTurnToolOutputs.push(txt);
+            if ((tr.tool_name === 'WebSearch' || tr.tool_name === 'WebFetch') && txt) {
+              integrityWebContent.push(txt);
+            }
           }
           for (const tr of toolResults) {
             if (tr.tool_name !== 'EndTurn') continue;
@@ -2489,6 +2512,38 @@ export class CortexOrchestrator {
                 }
               } else {
                 endTurnCalled = true;
+              }
+              // Stage 5 (item 12 layer 4, CORTEX_ENDTURN_INTEGRITY): mechanical
+              // task-integrity checks — web-content transplant into artifacts +
+              // solution-seeking queries. Flags ALWAYS bank as integrity_flag
+              // events (the distiller lens reads them); the nudge rides the
+              // same bounded budget, fallback-accept preserves liveness.
+              if (endTurnCalled && resolveEndTurnIntegrityMode()) {
+                const s5 = verifyIntegrity({
+                  webQueries: integrityWebQueries,
+                  webContent: integrityWebContent,
+                  writeInputs: integrityWriteInputs,
+                  userTaskText: this.lastRealUserText(),
+                  sourcesAttestation: (etUse?.input as any)?.sources,
+                });
+                if (s5.flags.length > 0) {
+                  const store = this.getDecisionStore();
+                  if (store) {
+                    for (const f of s5.flags) {
+                      void store.recordEvent({
+                        sessionId: this.currentSessionId ?? 'unknown',
+                        kind: 'integrity_flag',
+                        detail: { check: f.check, detail: f.detail },
+                      }).catch(() => {});
+                    }
+                  }
+                }
+                if (!s5.ok) {
+                  endTurnCalled = false;
+                  tr.is_error = true;
+                  tr.content = s5.nudge!;
+                  console.warn(`[Orchestrator] Stage5: EndTurn rejected — ${s5.flags.length} integrity flag(s).`);
+                }
               }
             } else {
               const bad = verdict.ungrounded

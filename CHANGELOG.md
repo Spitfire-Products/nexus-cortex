@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.75.0] - 2026-08-26
+
+### Added
+- **EndTurn Stage-5 integrity verifier** (`CORTEX_ENDTURN_INTEGRITY=true`): before a turn can
+  complete, the gate mechanically checks the turn's own evidence — fetched-web-content
+  transplanted into artifacts, solution-seeking queries — and requires a **show-your-work
+  `sources` attestation** whenever web tools were used ({accessed, purpose, used_for} per
+  access; new optional EndTurn field). **Justify, don't block**: mechanical findings are
+  audit events when an honest attestation is present — legitimate documentation research and
+  repository archaeology are never penalized; only unattested web usage draws a bounded nudge.
+
 ## [4.74.1] - 2026-08-26
 
 ### Fixed

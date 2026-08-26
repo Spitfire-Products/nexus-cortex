@@ -623,7 +623,10 @@ byte-identical) + run3 doctrine edits applied ARM-FILTERED (frame-neutral inspec
 carve-out kept per the miner's own counter-evidence cluster; edit-2 downgraded, 9/11 persist
 artifact) + busy-wait POLL GUARD in the loop ladder (CORTEX_POLL_GUARD, ok-streak detector,
 'poll'-family signal+event — the run3 class nothing failure-based could see). Layer 3 distiller
-integrity lens = adjudication-side, next distill pass. Tests: 14 ladder + 12 preset + adjacent
+integrity lens = adjudication-side, next distill pass. LAYER 4 (BUILT 2026-08-26,
+operator-designed): EndTurn Stage-5 verifier — deterministic transplant/solution-query checks +
+mandatory sources attestation for web usage; JUSTIFY-DON'T-BLOCK (A/B audit-only when attested;
+only unattested web use nudges). integrityVerification.ts, 10 tests; integrity_flag events. Tests: 14 ladder + 12 preset + adjacent
 green. Run4 hygiene note: miner's 96-cap on sorted glob sampled flash arms only — stratify.
 
 **Trigger:** Artificial Analysis's TB2.1 leaderboard (pass@1 ×3, Terminus 2, e2b, internet ON)

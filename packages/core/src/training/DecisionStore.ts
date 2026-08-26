@@ -59,7 +59,10 @@ export type SteeringEventKind =
   // Item 10: doctrine-curation provenance (helper-curated CORTEX.md refresh
   // at session-start/lift boundaries; timeout = fail-open to previous doc).
   | 'doctrine_curation'
-  | 'doctrine_curation_timeout';
+  | 'doctrine_curation_timeout'
+  // Item 12 layer 4: EndTurn Stage-5 integrity flags (web transplant /
+  // solution-seeking query) — pre-labeled rows for the distiller lens.
+  | 'integrity_flag';
 
 export interface SteeringEventInput {
   sessionId: string;

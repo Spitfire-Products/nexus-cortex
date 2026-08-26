@@ -1001,6 +1001,11 @@ Use plan mode for tasks with genuine ambiguity — multiple reasonable architect
 
 - citations: list EACH specific reference in your draft with the exact verbatim source you copied it from this turn. If you cannot produce the verbatim source, the reference is unverified — delete it from your answer and do not list it (quote the code instead of asserting a coordinate). Inventing one is a failed answer, exactly like a non-matching edit old_string.
 - verification: list each build/test/lint command you actually ran with the real result line you saw. Do not list a command you did not run.
+- sources: {
+-   type: 'array',
+-   description: 'REQUIRED under the integrity gate whenever web tools were used this turn: one row per access — what you looked up, why, and how it informed work you executed yourself. { accessed, purpose, used_for }.',
+-   items: { type: 'object', properties: { accessed: { type: 'string' }, purpose: { type: 'string' }, used_for: { type: 'string' } } }
+- },
 - requirements: re-read the ORIGINAL task statement and list each requirement it states, with what in your artifact satisfies it and the command/observation that proves it (or the literal "UNVERIFIED"). Finishing without checking the artifact against the stated task is the most common failed answer.
 - self_review: re-read your draft as a skeptical reviewer — what you did NOT check, what is assumed/possibly wrong, what one more tool call would verify. This pass exists to catch your own mistakes before they ship.
 - summary / open_items: what you delivered and any gaps — do not hide them.
