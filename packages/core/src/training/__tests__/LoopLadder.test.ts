@@ -170,3 +170,67 @@ d2('ExactRepeatTracker (consecutive-only hard-kill semantics)', () => {
     ex2(t.observe('Grep', 'x')).toBe(1);
   });
 });
+
+// ── Item 14b: windowed near-dup breaker (outcome-agnostic, interleaving-proof) ──
+d2('near-dup breaker (CORTEX_NEARDUP_BREAKER)', () => {
+  const prevN = process.env.CORTEX_NEARDUP_BREAKER;
+  be2(() => { process.env.CORTEX_NEARDUP_BREAKER = 'true'; delete process.env.CORTEX_POLL_GUARD; });
+  ae2(() => { if (prevN === undefined) delete process.env.CORTEX_NEARDUP_BREAKER; else process.env.CORTEX_NEARDUP_BREAKER = prevN; });
+  const ok = (h: string) => ({ status: 'ok' as const, approachHash: h });
+
+  it2('the x65 specimen shape: interleaved same-approach polling nudges at 8-in-window', () => {
+    const l = new LL2();
+    let fired: any = null;
+    // poll, work, poll, work … (poll guard blind: never consecutive)
+    for (let i = 0; i < 20; i++) {
+      const r = i % 2 === 0 ? l.observe('Bash', ok('poll-check')) : l.observe('Bash', ok(`work-${i}`));
+      if (r.family === 'neardup' && !fired) fired = r;
+    }
+    ex2(fired).not.toBeNull();
+    ex2(fired.action).toBe('diversify');
+    ex2(fired.count).toBeGreaterThanOrEqual(8);
+  });
+
+  it2('sustained recurrence after the nudge escalates to break at 2N', () => {
+    const l = new LL2();
+    let last: any = { action: 'none' };
+    for (let i = 0; i < 40; i++) {
+      const r = l.observe('Bash', ok('same-wait-loop'));
+      if (r.family === 'neardup') last = r;
+    }
+    ex2(last.action).toBe('break');
+  });
+
+  it2('legitimate varied work never fires', () => {
+    const l = new LL2();
+    for (let i = 0; i < 40; i++) {
+      ex2(l.observe('Bash', ok(`distinct-${i}`)).family).not.toBe('neardup');
+    }
+  });
+
+  it2('scattered legit repeats (5 test runs across long work) stay silent', () => {
+    const l = new LL2();
+    let fired = false;
+    for (let block = 0; block < 5; block++) {
+      if (l.observe('Bash', ok('npm-test')).family === 'neardup') fired = true;
+      for (let j = 0; j < 6; j++) l.observe('Edit', ok(`fix-${block}-${j}`));
+    }
+    ex2(fired).toBe(false); // window slides past each test run
+  });
+
+  it2('default-off: env unset means never fires', () => {
+    delete process.env.CORTEX_NEARDUP_BREAKER;
+    const l = new LL2();
+    for (let i = 0; i < 40; i++) ex2(l.observe('Bash', ok('same')).family).not.toBe('neardup');
+  });
+
+  it2('failure-ladder signals take precedence over neardup', () => {
+    const l = new LL2();
+    for (let i = 0; i < 7; i++) l.observe('Bash', ok('x'));
+    // 8th same-key call FAILS twice → remind (failure ladder) wins over neardup diversify
+    const r1 = l.observe('Bash', { status: 'failed', approachHash: 'x' } as any);
+    const r2 = l.observe('Bash', { status: 'failed', approachHash: 'x' } as any);
+    ex2(r2.action).toBe('remind');
+    ex2(r2.family).not.toBe('neardup');
+  });
+});

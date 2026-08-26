@@ -44,6 +44,16 @@ export class LoopLadder {
   private lastOkKey: string | null = null;
   private okStreak = 0;
   private pollNudged = false;
+  // Item 14b (mini-distill: near-identical cluster x65, max 4 CONSECUTIVE —
+  // varied-param polling invisible to the exact tracker AND the poll guard):
+  // sliding-window counter over the normalized approachHash, outcome-agnostic
+  // and interleaving-proof. N same-approach calls within the last M calls →
+  // one diversify nudge; 2N → break. Env-gated CORTEX_NEARDUP_BREAKER.
+  private readonly nearDupEnabled: boolean;
+  private readonly nearDupWindow: number;
+  private readonly nearDupNudgeAt: number;
+  private readonly recentKeys: string[] = [];
+  private readonly nearDupNudged = new Set<string>();
 
   constructor(thresholds: LoopLadderThresholds = {}) {
     this.remindAt = thresholds.remindAt ?? envInt('LOOP_REMIND_AT', 2);
@@ -51,10 +61,32 @@ export class LoopLadder {
     this.breakAt = thresholds.breakAt ?? envInt('LOOP_BREAK_AT', 6);
     this.pollAt = envInt('POLL_REMIND_AT', 4);
     this.pollEnabled = (process.env.CORTEX_POLL_GUARD ?? '').trim().toLowerCase() === 'true';
+    this.nearDupEnabled = (process.env.CORTEX_NEARDUP_BREAKER ?? '').trim().toLowerCase() === 'true';
+    this.nearDupWindow = envInt('NEARDUP_WINDOW', 20);
+    this.nearDupNudgeAt = envInt('NEARDUP_NUDGE_AT', 8);
+  }
+
+  /** 14b: outcome-agnostic windowed near-dup check. Returns a result when the
+   *  same normalized approach recurs >= nudgeAt (diversify, once per key) or
+   *  >= 2x nudgeAt (break) within the sliding window. */
+  private observeNearDup(key: string): LadderResult | null {
+    if (!this.nearDupEnabled) return null;
+    this.recentKeys.push(key);
+    if (this.recentKeys.length > this.nearDupWindow) this.recentKeys.shift();
+    const count = this.recentKeys.filter(k => k === key).length;
+    if (count >= this.nearDupNudgeAt * 2) {
+      return { action: 'break', count, family: 'neardup' };
+    }
+    if (count >= this.nearDupNudgeAt && !this.nearDupNudged.has(key)) {
+      this.nearDupNudged.add(key);
+      return { action: 'diversify', count, family: 'neardup' };
+    }
+    return null;
   }
 
   observe(toolName: string, outcome: Pick<ToolOutcome, 'status' | 'approachHash' | 'family'>): LadderResult {
     const key = `${toolName}\n${outcome.approachHash}`;
+    const nearDup = this.observeNearDup(key);
     if (outcome.status === 'ok') {
       this.counts.delete(key);
       if (this.pollEnabled) {
@@ -70,6 +102,7 @@ export class LoopLadder {
           return { action: 'remind', count: this.okStreak, family: 'poll' };
         }
       }
+      if (nearDup) return nearDup;
       return { action: 'none', count: 0 };
     }
     this.lastOkKey = null;
@@ -83,6 +116,7 @@ export class LoopLadder {
     if (entry.count >= this.breakAt) action = 'break';
     else if (entry.count >= this.diversifyAt) action = 'diversify';
     else if (entry.count >= this.remindAt) action = 'remind';
+    if (action === 'none' && nearDup) return nearDup;
     return { action, count: entry.count, ...(entry.family ? { family: entry.family } : {}) };
   }
 }
@@ -101,6 +135,19 @@ export function formatLadderSignal(toolName: string, result: LadderResult): stri
       `${result.count} times in a row. Repeated polling burns turns without progress. Do other ` +
       `useful work, then check the result ONCE (BashOutput for background tasks) — or if nothing ` +
       `remains but waiting, conclude with what you have.\n</system-reminder>`
+    );
+  }
+  if (result.action === 'diversify' && result.family === 'neardup') {
+    return (
+      `<system-reminder>\nNEAR-DUPLICATE PATTERN: ${result.count} of your recent ${result.count >= 8 ? 'calls' : 'tool calls'} are minor variations of the same ${toolName} command. ` +
+      `Re-running variations does not create progress. Either wait properly (ONE blocking call with a timeout), ` +
+      `take a genuinely different diagnostic step, or proceed with your fallback plan.\n</system-reminder>`
+    );
+  }
+  if (result.action === 'break' && result.family === 'neardup') {
+    return (
+      `<system-reminder>\nNEAR-DUPLICATE BREAK: the same ${toolName} approach has recurred ${result.count} times in your recent calls despite a prior warning. ` +
+      `Stop issuing variants of this command. Summarize what is known, then either execute ONE clearly different strategy or conclude with your best final answer.\n</system-reminder>`
     );
   }
   if (result.action === 'diversify') {

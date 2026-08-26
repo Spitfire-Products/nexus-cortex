@@ -255,7 +255,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
 
       // Check if command was aborted during execution
       if (signal.aborted) {
-        return this.createErrorResult('Command was cancelled by user.');
+        return this.createErrorResult('Command was cancelled before completion (timed out or aborted).');
       }
 
       // Frame-coherence (backlog item 6a/6c): register bash file READS into
@@ -292,7 +292,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
       });
     } catch (error: any) {
       if (error.name === 'AbortError' || signal.aborted) {
-        return this.createErrorResult('Command was cancelled by user.');
+        return this.createErrorResult('Command was cancelled before completion (timed out or aborted).');
       }
       return this.createErrorResult(`Failed to execute command: ${error.message}`);
     }
@@ -496,7 +496,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
     };
 
     if (signal.aborted) {
-      llmContent = 'Command was cancelled by user before it could complete.';
+      llmContent = 'Command was cancelled before it could complete (timed out or aborted).';
       if (output.trim()) {
         llmContent += `\n\nOutput before cancellation:\n${truncateIfNeeded(output)}`;
       } else {
@@ -689,7 +689,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
       });
     } catch (error: any) {
       if (signal.aborted) {
-        return this.createErrorResult('Command was cancelled by user.');
+        return this.createErrorResult('Command was cancelled before completion (timed out or aborted).');
       }
       return this.createErrorResult(`Failed to execute in persistent session: ${error.message}`);
     }

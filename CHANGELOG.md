@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.77.0] - 2026-08-26
+
+### Added
+- **Near-duplicate call breaker** (`CORTEX_NEARDUP_BREAKER=true`): detects minor-variation
+  command loops (changed filenames, pids, counters) that slip past exact-repeat and poll
+  detection — one guidance nudge at N recurrences in a sliding window, graceful break at 2N.
+
+### Fixed
+- Shell cancellations no longer report "cancelled by user" when the cause was a timeout —
+  the message now states the truth ("timed out or aborted").
+
 ## [4.76.2] - 2026-08-26
 
 ### Fixed
