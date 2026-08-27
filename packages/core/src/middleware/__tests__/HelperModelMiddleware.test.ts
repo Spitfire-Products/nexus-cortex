@@ -59,9 +59,9 @@ describe('HelperModelMiddleware', () => {
       expect(helper).toBe('gemini-2.5-flash-lite'); // modernized: 1.5-flash deprecated
     });
 
-    it('should fallback to Gemma 4 (Cloudflare) for unknown provider', () => {
+    it('should fall back to deepseek-v4-flash for unknown provider (single-key congruence)', () => {
       const helper = middleware.selectHelperModel('unknown-provider');
-      expect(helper).toBe('@cf/google/gemma-4-26b-a4b-it'); // default helper
+      expect(helper).toBe('deepseek-v4-flash'); // last-resort default: reuse the DeepSeek key, no 2nd API key
     });
 
     it('should be case-insensitive', () => {
