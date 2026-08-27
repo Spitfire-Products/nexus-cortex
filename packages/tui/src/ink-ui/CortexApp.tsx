@@ -44,7 +44,7 @@ import { StreamDisplay } from './components/StreamDisplay.js';
 import { UnifiedDiffDisplay } from './components/DiffPreview.js';
 import { WritePreview } from './components/WritePreview.js';
 import { DocumentPreview } from './components/DocumentPreview.js';
-import { MarkdownText } from './components/MarkdownText.js';
+import { SimpleMarkdown } from './components/SimpleMarkdown.js';
 import { CommandSuggestions } from './components/CommandSuggestions.js';
 import { getSuggestions, type FlatCommand } from './commands/slashCommands.js';
 import { InteractiveMenu } from '../commands/system-message/InteractiveMenu.js';
@@ -193,7 +193,7 @@ const MessageDisplay: React.FC<{
           <Box>
             <Text color={Colors.AccentGreen}>◆ </Text>
             <Box flexDirection="column" flexGrow={1} flexShrink={1}>
-              <MarkdownText width={contentWidth}>{modelItem.modelContent || ''}</MarkdownText>
+              <SimpleMarkdown text={modelItem.modelContent || ''} width={contentWidth} />
             </Box>
           </Box>
         </Box>
@@ -324,7 +324,7 @@ const MessageDisplay: React.FC<{
                   <Box key={`${msg.uuid}-text-${i}`}>
                     <Text color={Colors.AccentGreen}>◆ </Text>
                     <Box flexDirection="column" flexGrow={1} flexShrink={1}>
-                      <MarkdownText width={contentWidth}>{block.text}</MarkdownText>
+                      <SimpleMarkdown text={block.text} width={contentWidth} />
                     </Box>
                   </Box>
                 );
