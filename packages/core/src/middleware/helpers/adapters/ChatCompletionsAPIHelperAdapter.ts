@@ -35,6 +35,8 @@ interface ChatCompletionsRequest {
   messages: ChatCompletionsMessage[];
   max_tokens?: number;
   temperature?: number;
+  /** DeepSeek dual-mode toggle: 'none' disables thinking; 'low'|'high'|'max' set effort. */
+  reasoning_effort?: string;
 }
 
 interface ChatCompletionsResponse {
@@ -373,12 +375,20 @@ export class ChatCompletionsAPIHelperAdapter extends BaseHelperAdapter {
       headers[config.api.versionHeader.name] = config.api.versionHeader.value;
     }
 
-    // Build request body
+    // Build request body.
     const requestBody: ChatCompletionsRequest = {
       model: config.id,
       messages,
       max_tokens: Math.min(maxTokens, config.limits.outputTokens),
-      temperature: 0.7
+      temperature: 0.7,
+      // THINKING-MODE TOGGLE (DeepSeek dual-mode; validated 2026-08-27 + api-docs.deepseek.com/
+      // guides/thinking_mode): helper configs set reasoning_effort:'none' to DISABLE thinking.
+      // deepseek-v4-* default to thinking (effort 'high'), which under a small helper cap spends
+      // the whole budget on reasoning_content and leaves message.content EMPTY ~50% of the time.
+      // Helper tasks are simple → no reasoning wanted (reliable content, cheaper, faster).
+      // Only sent when the card specifies reasoning.defaultEffort, so non-DeepSeek helpers
+      // are unaffected.
+      ...(config.reasoning?.defaultEffort ? { reasoning_effort: config.reasoning.defaultEffort } : {})
     };
 
     // Make real API call

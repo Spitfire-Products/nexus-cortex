@@ -17,7 +17,7 @@
  * - Supports Messages API, Chat Completions API, Google GenAI API
  */
 
-import { frameHelperPrompt } from './helpers/helperFrame.js';
+import { frameHelperPrompt, type HelperFrameSpec } from './helpers/helperFrame.js';
 import { ModelConfig, ModelRegistry } from '../models/ModelConfig.interface.js';
 import {
   HelperModelMiddlewareRegistry,
@@ -657,11 +657,12 @@ export class HelperModelMiddleware {
    * Select helper model based on main model provider
    */
   selectHelperModel(provider: string): string {
-    // Last-resort default = Gemma 4 on Cloudflare Workers AI
-    // (@cf/google/gemma-4-26b-a4b-it). Cheap, registered, strong for the
-    // text-only helper role (compaction/mentorship — no tool-calling, so
-    // the gemma-4 function-synthesis caveat doesn't apply here).
-    return HELPER_MODEL_REGISTRY[provider.toLowerCase()] || '@cf/google/gemma-4-26b-a4b-it';
+    // Last-resort default = deepseek-v4-flash. SINGLE-PROVIDER congruence: the
+    // shipped harness (and the TB2 bench container) runs one provider key; a
+    // Gemma/CF default would force the user to enter a 2nd API key before the
+    // helper works. deepseek-v4-flash is cheap, large-context, and reuses the
+    // main DeepSeek key for the text-only helper role (compaction/mentorship).
+    return HELPER_MODEL_REGISTRY[provider.toLowerCase()] || 'deepseek-v4-flash';
   }
 
   /**
@@ -893,6 +894,12 @@ export class HelperModelMiddleware {
       displayName: 'DeepSeek V4 Flash',
       provider: 'deepseek',
       family: 'deepseek-v4',
+      // DISABLE thinking for the HELPER role — deepseek-v4-* is dual-mode (thinking on by
+      // default); helper tasks (compaction/guidance/summaries) need no reasoning, and leaving
+      // it on starves message.content (all budget → reasoning_content). The ChatCompletions
+      // helper adapter forwards defaultEffort as `reasoning_effort` (DeepSeek OpenAI-format
+      // toggle: 'none' disables thinking).
+      reasoning: { supported: true, defaultEffort: 'none' },
       api: {
         pattern: 'chat/completions',
         endpoint: 'https://api.deepseek.com/chat/completions',
@@ -1226,6 +1233,28 @@ Produce the FULL updated CORTEX.md. Rules, in priority order:
     return out.replace(/^```[a-z]*\n/, '').replace(/\n```\s*$/, '').trim();
   }
 
+  /**
+   * Shared reactive-mentorship guidance generator (item-11a frame migration, 2026-08-27).
+   * Every generator builds a PLAIN body and routes through the item-11a helper frame
+   * (frameHelperPrompt: persona + verbatim-grounding rule + output budget), then generate()
+   * (RAW — the rewrap fix). No legacy <thinking> framing, no extractThinkingContent — the
+   * helper's output is plain guidance delivered as attributed user-role text (item 11c).
+   * Reasoning is disabled per the DeepSeek helper card (reasoning.defaultEffort:'none').
+   */
+  private async generateGuidance(
+    spec: HelperFrameSpec,
+    body: string,
+    helperModelId?: string,
+  ): Promise<string> {
+    const modelId = helperModelId || 'deepseek-v4-flash';
+    const helperConfig = this.getHelperModelConfig(modelId);
+    const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
+    const prompt = frameHelperPrompt(spec, body);
+    const messages: HelperCanonicalMessage[] = [{ role: 'user', content: prompt }];
+    const out = await adapter.generate(messages, helperConfig, spec.outputBudgetTokens);
+    return (out || '').replace(/^```[a-z]*\n/, '').replace(/\n```\s*$/, '').trim();
+  }
+
   async generateErrorGuidance(context: {
     toolName: string;
     toolUseId: string;
@@ -1233,53 +1262,32 @@ Produce the FULL updated CORTEX.md. Rules, in priority order:
     recentHistory: Message[];
     helperModelId?: string;
   }): Promise<string> {
-    // Format error for display
     const errorText = typeof context.error === 'string'
       ? context.error
       : JSON.stringify(context.error, null, 2);
-
-    // Format recent history for context
     const historyContext = this.formatRecentHistory(context.recentHistory);
+    const body = `A tool call just failed.
 
-    // Build mentorship prompt
-    const prompt = `You are an AI mentor analyzing a tool execution error. Provide concise, actionable guidance.
+Tool: ${context.toolName}
+Error: ${errorText}
 
-**Tool Used**: ${context.toolName}
-**Tool Use ID**: ${context.toolUseId}
-**Error**: ${errorText}
-
-**Recent Actions**:
+Recent actions:
 ${historyContext}
 
-Provide your analysis in this exact format:
-
-<thinking>
-**Error Analysis**: [What went wrong - 1-2 sentences]
-**Immediate Fix**: [Specific steps to fix - 2-3 bullet points]
-**Why This Works**: [Brief explanation of the solution]
-</thinking>
-
-Keep it concise and actionable. Focus on the immediate next steps.`;
-
-    // Get helper model configuration
-    const helperModelId = context.helperModelId || 'grok-4-1-fast-non-reasoning'; // Default to grok-beta for mentorship
-    const helperConfig = this.getHelperModelConfig(helperModelId);
-
-    // Get appropriate adapter for helper model
-    const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
-
-    // Convert prompt to HelperCanonicalMessage format
-    const messages: HelperCanonicalMessage[] = [{
-      role: 'user',
-      content: prompt
-    }];
-
-    // Make API call via adapter (using compact method as it does single-turn generation)
-    // We use targetTokens=500 for concise guidance
-    const result = await adapter.compact(messages, helperConfig, 500);
-
-    // Extract thinking content from the response
-    return this.extractThinkingContent(result.summary);
+Give concise, actionable guidance in plain text with these labeled parts:
+- Error analysis (what went wrong, 1-2 sentences)
+- Immediate fix (2-3 concrete steps)
+- Why this works (brief)`;
+    return this.generateGuidance(
+      {
+        surface: 'error-guidance',
+        persona: 'You are an AI coding mentor analyzing a tool execution error.',
+        task: 'Diagnose the failure and give the immediate next steps to fix it.',
+        outputBudgetTokens: 500,
+      },
+      body,
+      context.helperModelId,
+    );
   }
 
   /**
@@ -1359,29 +1367,18 @@ PREDICTION: <prediction>`;
     helperModelId?: string;
   }): Promise<string> {
     const historyContext = this.formatRecentHistory(context.recentHistory);
-
-    // Build keyword-specific prompt
-    const prompt = this.buildKeywordPrompt(context.keyword, historyContext);
-
-    // Get helper model configuration
-    const helperModelId = context.helperModelId || 'grok-4-1-fast-non-reasoning';
-    const helperConfig = this.getHelperModelConfig(helperModelId);
-
-    // Get appropriate adapter
-    const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
-
-    // Convert to message format
-    const messages: HelperCanonicalMessage[] = [{
-      role: 'user',
-      content: prompt
-    }];
-
-    // Get guidance (use higher token limit for keyword-based analysis)
-    const targetTokens = context.keyword === '@ultrathink' ? 1000 : 500;
-    const result = await adapter.compact(messages, helperConfig, targetTokens);
-
-    // Extract thinking content
-    return this.extractThinkingContent(result.summary);
+    const body = this.buildKeywordPrompt(context.keyword, historyContext);
+    const budget = context.keyword === '@ultrathink' ? 1000 : 500;
+    return this.generateGuidance(
+      {
+        surface: `keyword:${context.keyword}`,
+        persona: 'You are an AI coding mentor giving on-demand strategic guidance.',
+        task: 'Answer the user\'s keyword request directly and concisely.',
+        outputBudgetTokens: budget,
+      },
+      body,
+      context.helperModelId,
+    );
   }
 
   /**
@@ -1422,69 +1419,33 @@ PREDICTION: <prediction>`;
    * Build keyword-specific prompt
    */
   private buildKeywordPrompt(keyword: string, historyContext: string): string {
-    const keywordPrompts: Record<string, string> = {
-      '@ultrathink': `You are an AI mentor providing comprehensive strategic analysis.
-
-**Recent Context**:
+    const bodies: Record<string, string> = {
+      '@ultrathink': `Recent context:
 ${historyContext}
 
-The user requested @ultrathink - provide deep strategic guidance:
+The user requested @ultrathink — give deep strategic guidance in plain text with these labeled parts:
+- Current situation (2-3 sentences)
+- Strategy options (3 options, each with its trade-offs)
+- Recommended approach (which option and why)
+- Next steps (concrete actions to take)`,
 
-<thinking>
-**Current Situation**: [What's happening - 2-3 sentences]
-**Strategy Options**:
-1. [Option 1: Approach and trade-offs]
-2. [Option 2: Approach and trade-offs]
-3. [Option 3: Approach and trade-offs]
-**Recommended Approach**: [Which option and why - 2-3 sentences]
-**Next Steps**: [Concrete actions to take]
-</thinking>`,
-
-      '@analyze': `You are an AI mentor providing efficiency assessment.
-
-**Recent Context**:
+      '@analyze': `Recent context:
 ${historyContext}
 
-The user requested @analyze - provide quick efficiency analysis:
+The user requested @analyze — give a quick efficiency assessment in plain text with these labeled parts:
+- What worked (2-3 points)
+- What could improve (2-3 points)
+- Quick wins (immediate improvements to try)`,
 
-<thinking>
-**What Worked**: [Successful approaches - 2-3 bullet points]
-**What Could Improve**: [Inefficiencies identified - 2-3 bullet points]
-**Quick Wins**: [Immediate improvements to try]
-</thinking>`,
-
-      '@rethink': `You are an AI mentor challenging current assumptions.
-
-**Recent Context**:
+      '@rethink': `Recent context:
 ${historyContext}
 
-The user requested @rethink - reconsider from first principles:
-
-<thinking>
-**Current Assumptions**: [What we're assuming - 2-3 points]
-**Alternative Perspectives**: [Different ways to think about this]
-**Recommended Shift**: [New approach to try and why]
-</thinking>`
+The user requested @rethink — reconsider from first principles in plain text with these labeled parts:
+- Current assumptions (2-3 points)
+- Alternative perspectives (different ways to think about this)
+- Recommended shift (new approach to try and why)`
     };
-
-    // Return the matching prompt or default to @analyze
-    const prompt = keywordPrompts[keyword];
-    return prompt !== undefined ? prompt : keywordPrompts['@analyze']!;
-  }
-
-  /**
-   * Extract thinking content from response
-   */
-  private extractThinkingContent(response: string): string {
-    // Look for <thinking>...</thinking> tags
-    const thinkingMatch = response.match(/<thinking>([\s\S]*?)<\/thinking>/);
-
-    if (thinkingMatch && thinkingMatch[1]) {
-      return thinkingMatch[1].trim();
-    }
-
-    // If no tags, return the response as-is
-    return response;
+    return bodies[keyword] ?? bodies['@analyze']!;
   }
 
   // ============================================================
@@ -1501,30 +1462,19 @@ The user requested @rethink - reconsider from first principles:
     includeStrategicAdvice: boolean;
     helperModelId?: string;
   }): Promise<string> {
-    // Build appropriate prompt
-    const prompt = context.includeStrategicAdvice
+    const body = context.includeStrategicAdvice
       ? this.buildStrategicReviewPrompt(context)
       : this.buildSummaryReviewPrompt(context);
-
-    // Get helper model configuration
-    const helperModelId = context.helperModelId || 'grok-4-1-fast-non-reasoning';
-    const helperConfig = this.getHelperModelConfig(helperModelId);
-
-    // Get appropriate adapter
-    const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
-
-    // Convert to message format
-    const messages: HelperCanonicalMessage[] = [{
-      role: 'user',
-      content: prompt
-    }];
-
-    // Get guidance (strategic reviews get more tokens)
-    const targetTokens = context.includeStrategicAdvice ? 800 : 400;
-    const result = await adapter.compact(messages, helperConfig, targetTokens);
-
-    // Extract thinking content
-    return this.extractThinkingContent(result.summary);
+    return this.generateGuidance(
+      {
+        surface: 'periodic-review',
+        persona: 'You are an AI coding mentor doing a periodic check-in.',
+        task: 'Review recent progress and keep the work on track.',
+        outputBudgetTokens: context.includeStrategicAdvice ? 800 : 400,
+      },
+      body,
+      context.helperModelId,
+    );
   }
 
   /**
@@ -1536,29 +1486,15 @@ The user requested @rethink - reconsider from first principles:
   }): string {
     const historyContext = this.formatRecentHistory(context.recentHistory);
 
-    return `You are an AI mentor conducting a periodic review.
-
-**Current Turn**: ${context.turnNumber}
-**Conversation Snapshot** (last 5 messages):
+    return `Current turn: ${context.turnNumber}
+Conversation snapshot (last 5 messages):
 ${historyContext}
 
-Provide strategic review:
-
-<thinking>
- **Periodic Review (Turn ${context.turnNumber})**
-
-**Progress Summary**: [What's been accomplished in recent turns - 2-3 sentences]
-
-**Current Trajectory**: [Is the approach effective? Any concerns?]
-
-**Strategic Recommendations**:
-- [Recommendation 1]
-- [Recommendation 2]
-
-**Watch Out For**: [Potential issues to monitor]
-</thinking>
-
-Be concise but insightful. Focus on maintaining momentum.`;
+Give a strategic review in plain text with these labeled parts:
+- Progress summary (what's been accomplished in recent turns, 2-3 sentences)
+- Current trajectory (is the approach effective? any concerns?)
+- Strategic recommendations (2 bullets)
+- Watch out for (potential issues to monitor)`;
   }
 
   /**
@@ -1570,19 +1506,12 @@ Be concise but insightful. Focus on maintaining momentum.`;
   }): string {
     const historyContext = this.formatRecentHistory(context.recentHistory.slice(-3));
 
-    return `Provide brief progress summary.
+    return `Turn: ${context.turnNumber}
+Recent: ${historyContext}
 
-**Turn**: ${context.turnNumber}
-**Recent**: ${historyContext}
-
-<thinking>
- **Progress Check (Turn ${context.turnNumber})**
-
-**Summary**: [What's been done - 1-2 sentences]
-**Status**: [On track / Needs adjustment / Going well]
-</thinking>
-
-Very brief - just a quick check-in.`;
+Give a brief progress check in plain text with:
+- Summary (what's been done, 1-2 sentences)
+- Status (on track / needs adjustment / going well)`;
   }
 
   /**
@@ -1596,51 +1525,28 @@ Very brief - just a quick check-in.`;
     helperModelId?: string;
   }): Promise<string> {
     const historyContext = this.formatRecentHistory(context.recentHistory);
+    const body = `A repeated error pattern is blocking progress.
 
-    const prompt = `You are an AI mentor detecting a repeated error pattern.
+Pattern: ${context.errorPattern}
+Occurrences: ${context.occurrences} times
 
-**Pattern Detected**: ${context.errorPattern}
-**Occurrences**: ${context.occurrences} times
-
-**Recent Context**:
+Recent context:
 ${historyContext}
 
-Provide pattern-breaking guidance:
-
-<thinking>
- **Pattern Detected: ${context.errorPattern}**
-
-**Why This Keeps Happening**: [Root cause analysis - 2-3 sentences]
-
-**Breaking the Pattern**:
-1. [First step to try a different approach]
-2. [Second step to avoid the error]
-3. [Third step to verify success]
-
-**Alternative Strategy**: [Completely different approach to consider]
-</thinking>
-
-Focus on helping break out of the repeated failure loop.`;
-
-    // Get helper model configuration
-    const helperModelId = context.helperModelId || 'grok-4-1-fast-non-reasoning';
-    const helperConfig = this.getHelperModelConfig(helperModelId);
-
-    // Get appropriate adapter
-    const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
-
-    // Convert to message format
-    const messages: HelperCanonicalMessage[] = [{
-      role: 'user',
-      content: prompt
-    }];
-
-    // Get guidance
-    const targetTokens = 600;
-    const result = await adapter.compact(messages, helperConfig, targetTokens);
-
-    // Extract thinking content
-    return this.extractThinkingContent(result.summary);
+Give pattern-breaking guidance in plain text with these labeled parts:
+- Why this keeps happening (root cause, 2-3 sentences)
+- Breaking the pattern (3 concrete steps: a different approach, how to avoid the error, how to verify success)
+- Alternative strategy (one completely different approach)`;
+    return this.generateGuidance(
+      {
+        surface: 'pattern-detection',
+        persona: 'You are an AI coding mentor helping an agent break out of a repeated failure loop.',
+        task: 'Diagnose why the error keeps recurring and give concrete, different next steps.',
+        outputBudgetTokens: 600,
+      },
+      body,
+      context.helperModelId,
+    );
   }
 
   /**
@@ -1653,52 +1559,28 @@ Focus on helping break out of the repeated failure loop.`;
     helperModelId?: string;
   }): Promise<string> {
     const historyContext = this.formatRecentHistory(context.recentHistory);
+    const body = `Help think through this problem before acting.
 
-    const prompt = `You are an AI mentor helping a non-reasoning model think through a problem.
+User request: ${context.userMessage}
 
-**User Request**: ${context.userMessage}
-
-**Recent Context**:
+Recent context:
 ${historyContext}
 
-Provide thinking assistance:
-
-<thinking>
- **Thinking Assistance**
-
-**Problem Understanding**: [Restate the core challenge - 2 sentences]
-
-**Key Considerations**:
-- [Important factor 1]
-- [Important factor 2]
-- [Important factor 3]
-
-**Approach**: [Suggested reasoning path to solve this]
-
-**First Step**: [Concrete action to start with]
-</thinking>
-
-Help the model reason through the problem step by step.`;
-
-    // Get helper model configuration
-    const helperModelId = context.helperModelId || 'grok-4-1-fast-non-reasoning';
-    const helperConfig = this.getHelperModelConfig(helperModelId);
-
-    // Get appropriate adapter
-    const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
-
-    // Convert to message format
-    const messages: HelperCanonicalMessage[] = [{
-      role: 'user',
-      content: prompt
-    }];
-
-    // Get guidance
-    const targetTokens = 500;
-    const result = await adapter.compact(messages, helperConfig, targetTokens);
-
-    // Extract thinking content
-    return this.extractThinkingContent(result.summary);
+Give thinking assistance in plain text with these labeled parts:
+- Problem understanding (restate the core challenge, 2 sentences)
+- Key considerations (3 important factors)
+- Approach (suggested reasoning path)
+- First step (concrete action to start with)`;
+    return this.generateGuidance(
+      {
+        surface: 'interleaved-thinking',
+        persona: 'You are an AI coding mentor helping a model reason through a problem step by step.',
+        task: 'Map the problem and suggest a concrete first step.',
+        outputBudgetTokens: 500,
+      },
+      body,
+      context.helperModelId,
+    );
   }
 
   /**
@@ -1717,38 +1599,25 @@ Help the model reason through the problem step by step.`;
       .map(r => `- ${r.toolName}: ${r.isError ? 'FAILED — ' : ''}${r.summary}`)
       .join('\n');
 
-    const prompt = `You are providing brief inner thoughts for an AI assistant between tool calls.
-Be concise — 2-3 sentences max. Think out loud about what just happened and what to do next.
-Do NOT use headers, bullet points, or structured formatting. Write naturally, like stream of consciousness.
-
-Tool call iteration ${context.iterationNumber} just completed.
+    const body = `Tool call iteration ${context.iterationNumber} just completed.
 
 Tool results:
 ${toolResultsSummary}
 
 Original user request: ${context.userMessage}
 
-Provide a brief reflection:`;
-
-    // Get helper model configuration
-    const helperModelId = context.helperModelId || 'grok-4-1-fast-non-reasoning';
-    const helperConfig = this.getHelperModelConfig(helperModelId);
-
-    // Get appropriate adapter
-    const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
-
-    // Convert to message format
-    const messages: HelperCanonicalMessage[] = [{
-      role: 'user',
-      content: prompt
-    }];
-
-    // Short target — this is a subtle nudge, not a lecture
-    const targetTokens = 150;
-    const result = await adapter.compact(messages, helperConfig, targetTokens);
-
-    // Extract thinking content
-    return this.extractThinkingContent(result.summary);
+Write a brief reflection (2-3 sentences max) on what just happened and what to do next. Write naturally, like stream of consciousness — no headers, bullets, or structured formatting.`;
+    return this.generateGuidance(
+      {
+        surface: 'interleaved-continuation',
+        persona: 'You are the inner monologue of an AI assistant between tool calls.',
+        task: 'Reflect briefly and naturally on the last result and the next move.',
+        outputBudgetTokens: 150,
+        grounding: false,
+      },
+      body,
+      context.helperModelId,
+    );
   }
 
   /**
@@ -1767,61 +1636,31 @@ Provide a brief reflection:`;
       ? context.filesRead.join('\n- ')
       : 'None yet';
 
-    const prompt = `You are an AI research methodology advisor enforcing the Active Discovery methodology.
+    const body = `Core rule: NEVER infer how code works from documentation, imports, or comments alone — ALWAYS verify by reading the actual source.
 
-**Core Rule**: NEVER infer how code works from documentation, imports, or comments alone. ALWAYS verify by reading the actual source.
+User request: ${context.userMessage}
 
-**User Request**: ${context.userMessage}
-
-**Files Already Read**:
+Files already read:
 - ${filesReadList}
 
-**Recent Context**:
+Recent context:
 ${historyContext}
 
-Analyze what the user is asking about and provide guidance on what files MUST be read to answer accurately:
-
-<thinking>
- **Active Discovery Guidance**
-
-**What needs investigation**: [Identify the core question or system being analyzed]
-
-**Files read so far**: [List what's been read — are these sufficient?]
-
-**Critical gaps — files that MUST be read**:
-- [File 1 — why it's needed: what import, function call, or type reference leads here]
-- [File 2 — why it's needed]
-- [File 3 — why it's needed]
-
-**Anti-pattern warning**: Do NOT:
-- Infer behavior from documentation or file names
-- Cite line numbers in files you haven't read
-- Say "this likely calls..." without verifying
-- Use CLAUDE.md or system message context as a substitute for reading source
-
-**Research plan**: [Specific files to read and what to look for in each]
-</thinking>
-
-Focus on tracing the complete dependency chain — imports, function calls, type references. Every claim must cite a specific file and line that was actually read.`;
-
-    // Get helper model configuration
-    const helperModelId = context.helperModelId || 'grok-4-1-fast-non-reasoning';
-    const helperConfig = this.getHelperModelConfig(helperModelId);
-
-    // Get appropriate adapter
-    const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
-
-    // Convert to message format
-    const messages: HelperCanonicalMessage[] = [{
-      role: 'user',
-      content: prompt
-    }];
-
-    // Get guidance (slightly more tokens for detailed file analysis)
-    const targetTokens = 600;
-    const result = await adapter.compact(messages, helperConfig, targetTokens);
-
-    // Extract thinking content
-    return this.extractThinkingContent(result.summary);
+Give Active Discovery guidance in plain text with these labeled parts:
+- What needs investigation (the core question or system)
+- Files read so far (are they sufficient?)
+- Critical gaps — files that MUST be read (each with why: the import, function call, or type reference that leads there)
+- Research plan (specific files to read and what to look for in each)
+Anti-patterns to avoid: inferring behavior from docs or file names; citing line numbers in unread files; "this likely calls…" without verifying; using CLAUDE.md/system context as a substitute for reading source. Trace the complete dependency chain; every claim must cite a specific file and line actually read.`;
+    return this.generateGuidance(
+      {
+        surface: 'active-discovery',
+        persona: 'You are an AI research-methodology advisor enforcing the Active Discovery methodology.',
+        task: 'Identify exactly which source files must be read to answer accurately.',
+        outputBudgetTokens: 600,
+      },
+      body,
+      context.helperModelId,
+    );
   }
 }

@@ -259,7 +259,7 @@ export interface ModelConfig {
      *  reasoning block) and, for Google generateContent cards, translated to
      *  generationConfig.thinkingConfig.thinkingLevel (Gemini 3.6+/3.7
      *  thinking_level — set via createGeminiModelConfig({ thinkingLevel })). */
-    defaultEffort?: 'low' | 'medium' | 'high';
+    defaultEffort?: 'none' | 'low' | 'medium' | 'high';
   };
 
   // ============================================

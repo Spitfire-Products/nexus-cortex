@@ -137,6 +137,24 @@ export class GenerateContentAPIHelperAdapter extends BaseHelperAdapter {
   }
 
   /**
+   * RAW single-turn generation — sends the prompt unwrapped (no compaction
+   * template). Overrides the base generate() which routes through compact()
+   * and would bury an instruction prompt as "conversation history to summarize"
+   * (the rewrap defect; see RECURSIVE_PM_WAKE_LOOP_DESIGN.md §ADDENDUM 08-27d).
+   */
+  async generate(
+    messages: HelperCanonicalMessage[],
+    helperConfig: ModelConfig,
+    maxTokens: number
+  ): Promise<string> {
+    const prompt = messages
+      .map(m => typeof m.content === 'string' ? m.content : m.content.map((b: any) => b.text || '').join('\n'))
+      .join('\n');
+    const result = await this.makeAPICall(helperConfig, prompt, maxTokens);
+    return result.text;
+  }
+
+  /**
    * Make real API call to Google Generative AI
    *
    * CRITICAL: This makes REAL API calls, not mocks!

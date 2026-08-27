@@ -157,6 +157,35 @@ export class GoogleGenAPIHelperAdapter extends BaseHelperAdapter {
   }
 
   /**
+   * RAW single-turn generation — sends the prompt unwrapped. Overrides the base
+   * generate() (which routes through compact()) AND avoids tryModel's hardcoded
+   * "Summarize the following conversation" wrapper — an instruction prompt must
+   * reach the model as a directive, not as history to summarize (the rewrap
+   * defect; see RECURSIVE_PM_WAKE_LOOP_DESIGN.md §ADDENDUM 08-27d).
+   */
+  async generate(
+    messages: HelperCanonicalMessage[],
+    helperConfig: ModelConfig,
+    _maxTokens: number
+  ): Promise<string> {
+    const prompt = messages
+      .map(m => typeof m.content === 'string' ? m.content : m.content.map((b: any) => b.text || '').join('\n'))
+      .join('\n');
+    const client = this.getClient(helperConfig);
+    const modelToUse = helperConfig.id || this.defaultModel;
+    try {
+      const response = await client.models.generateContent({ model: modelToUse, contents: prompt });
+      return response.text || '';
+    } catch (error: any) {
+      if (error.message?.includes('404') || error.message?.includes('not found')) {
+        const response = await client.models.generateContent({ model: this.fallbackModel, contents: prompt });
+        return response.text || '';
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Compact content using free Gemma models
    * Automatically handles content based on model's context limit (dynamic chunking)
    */

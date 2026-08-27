@@ -173,6 +173,30 @@ export class ResponsesAPIHelperAdapter extends BaseHelperAdapter {
   }
 
   /**
+   * RAW single-turn generation — sends the prompt unwrapped (no compaction
+   * template). Overrides the base generate() which routes through compact()
+   * (the rewrap defect; see RECURSIVE_PM_WAKE_LOOP_DESIGN.md §ADDENDUM 08-27d).
+   */
+  async generate(
+    messages: HelperCanonicalMessage[],
+    helperConfig: ModelConfig,
+    maxTokens: number
+  ): Promise<string> {
+    const inputItems: ResponsesAPIInputItem[] = messages
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({
+        type: 'message',
+        role: m.role as 'user' | 'assistant',
+        content: [{
+          type: 'input_text',
+          text: typeof m.content === 'string' ? m.content : m.content.map((b: any) => b.text || '').join('\n')
+        }]
+      }));
+    const response = await this.makeAPICall(helperConfig, inputItems, maxTokens);
+    return response.text;
+  }
+
+  /**
    * Make real API call to OpenAI Responses API
    *
    * CRITICAL: This makes REAL API calls via client.responses.create(), not mocks!
