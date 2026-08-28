@@ -25,6 +25,11 @@ export interface DecisionInput {
   success: boolean;
   /** First ~200 chars of error message, if any. */
   errorSnippet?: string;
+  /** Normalized command-SHAPE fingerprint (toolOutcome.approachHash): version
+   *  pins / flags / digits / paths collapse, so varied retries of one approach
+   *  land in one bucket. The cross-turn key for the ×98 varied-retry lens
+   *  (BUILD 1a). Optional — rows written before this stay approach-invisible. */
+  approachHash?: string;
 }
 
 export interface Decision {
@@ -35,6 +40,9 @@ export interface Decision {
   inputSummary: string;
   success: boolean;
   errorSnippet?: string;
+  /** Normalized command-shape fingerprint (BUILD 1a) — the varied-retry lens
+   *  key. Absent on event rows and on rows written before 1a. */
+  approachHash?: string;
   /** Active tool-surface arm (CORTEX_TOOL_PROFILE) — stamped when not 'full',
    *  so the tool-profile A/B can slice selection/success per arm. */
   toolProfile?: string;
@@ -162,6 +170,7 @@ export class DecisionStore {
       ...(input.errorSnippet
         ? { errorSnippet: truncate(input.errorSnippet, MAX_ERROR_SNIPPET) }
         : {}),
+      ...(input.approachHash ? { approachHash: input.approachHash } : {}),
       // Tool-profile arm provenance (env-stamped; omitted for the default so
       // existing rows stay comparable as implicit 'full').
       ...(process.env.CORTEX_TOOL_PROFILE && process.env.CORTEX_TOOL_PROFILE !== 'full'
@@ -279,6 +288,35 @@ export class DecisionStore {
     const all = await this.readAllForTool(toolName);
     const matches = all.filter(
       (d) => !d.success && classifyErrorFamily(d.errorSnippet ?? '') === family,
+    );
+    const distinct = new Set(matches.map((d) => d.inputHash));
+    return {
+      count: matches.length,
+      distinctInputs: distinct.size,
+      recent: matches.slice(-recentLimit).reverse(),
+    };
+  }
+
+  /**
+   * Failures for (toolName, command-SHAPE approachHash) across ALL inputs —
+   * the varied-retry lens (BUILD 1a; the ×98 class). Unlike familyFailures
+   * (which groups by ERROR family) this groups by the normalized COMMAND
+   * shape, so it catches "retry the same approach with tweaked args" even when
+   * each attempt fails with a DIFFERENT error (or none the family lens knows).
+   * `distinctInputs` (distinct exact inputHash among the failures) lets the
+   * caller require >=2 so identical retries stay the exact-input reminder's
+   * job and the two lenses never stack for one cause. Rows lacking an
+   * approachHash (pre-1a, or event rows) never match.
+   */
+  async approachFailures(
+    toolName: string,
+    approachHash: string,
+    recentLimit = 3,
+  ): Promise<{ count: number; distinctInputs: number; recent: Decision[] }> {
+    if (!approachHash) return { count: 0, distinctInputs: 0, recent: [] };
+    const all = await this.readAllForTool(toolName);
+    const matches = all.filter(
+      (d) => !d.success && d.approachHash === approachHash,
     );
     const distinct = new Set(matches.map((d) => d.inputHash));
     return {

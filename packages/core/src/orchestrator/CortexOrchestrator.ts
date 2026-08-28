@@ -73,7 +73,7 @@ import { McpServerRegistry, type McpServerDefinition } from '../mcp/McpServerReg
 import type { McpServerConfig, McpTransportType } from '../mcp/McpClient.js';
 import { prefixMcpToolName, parseMcpToolName } from '../mcp/mcpToolNamespacing.js';
 import { DecisionStore } from '../training/DecisionStore.js';
-import { formatPriorReminder, formatFamilyReminder } from '../training/DecisionPriorInjector.js';
+import { formatPriorReminder, formatFamilyReminder, formatApproachReminder } from '../training/DecisionPriorInjector.js';
 import { classifyErrorFamily } from '../training/errorFamily.js';
 import { classifyToolOutcome } from '../training/toolOutcome.js';
 import { LoopLadder, formatLadderSignal } from '../training/loopLadder.js';
@@ -8108,12 +8108,28 @@ export class CortexOrchestrator {
           // failures spanning >=2 distinct inputs. Gated on the UNIFIED
           // outcome (not is_error) so failing-command loops are covered.
           const family = outcome.family ?? classifyErrorFamily(String(result.content).slice(0, 200));
+          let fired = false;
           if (family) {
             const ff = await store.familyFailures(toolUse.name, family);
             const famReminder = formatFamilyReminder(
               toolUse.name, family, ff.count, ff.distinctInputs, ff.recent);
             if (famReminder) {
               augmented = { ...result, content: famReminder + result.content };
+              fired = true;
+            }
+          }
+          // Approach lens (BUILD 1a — the ×98 varied-retry class): neither the
+          // exact-input nor the error-family reminder fired, but the CURRENT
+          // failure may be the latest of a repeated command-SHAPE loop (same
+          // approach, tweaked args, differing errors). Fires on >=2 failures of
+          // this approachHash across >=2 distinct inputs — the fuzzy net the
+          // exact/family lenses miss. Last, so more-specific lenses win.
+          if (!fired && outcome.approachHash) {
+            const af = await store.approachFailures(toolUse.name, outcome.approachHash);
+            const apReminder = formatApproachReminder(
+              toolUse.name, af.count, af.distinctInputs, af.recent);
+            if (apReminder) {
+              augmented = { ...result, content: apReminder + result.content };
             }
           }
         }
@@ -8138,6 +8154,10 @@ export class CortexOrchestrator {
           ...(outcome.status !== 'ok'
             ? { errorSnippet: String(result.content).slice(0, 200) }
             : {}),
+          // BUILD 1a: persist the command-shape fingerprint so the cross-turn
+          // approach lens (approachFailures) can see varied retries of one
+          // approach. Cheap, always recorded (both lenses read failures only).
+          approachHash: outcome.approachHash,
         });
       } catch (err) {
         if (this.config.debug) {

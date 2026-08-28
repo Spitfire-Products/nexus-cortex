@@ -74,3 +74,34 @@ export function formatFamilyReminder(
     `signature once, then switch to a different strategy.</system-reminder>\n\n`
   );
 }
+
+/**
+ * Approach-shape reminder (BUILD 1a — the ×98 varied-retry lens). Fires when
+ * the SAME normalized command SHAPE (approachHash) has failed on >=2 DIFFERENT
+ * exact inputs — the agent is looping on one approach while tweaking args, the
+ * class that slips BOTH the exact-input reminder (inputs differ) AND the family
+ * reminder (the failures need not share an error family). Requires
+ * distinctInputs >= 2 so identical retries stay the exact reminder's job.
+ */
+export function formatApproachReminder(
+  toolName: string,
+  count: number,
+  distinctInputs: number,
+  recent: Decision[],
+): string | null {
+  if (count < 2 || distinctInputs < 2) return null;
+  let recentBlock = '';
+  if (recent.length > 0) {
+    const lines = recent.slice(0, RECENT_LIMIT).map((d, i) => {
+      const err = d.errorSnippet ? `: ${d.errorSnippet}` : '';
+      return ` ${i + 1}. failed${err}`;
+    });
+    recentBlock = ` Recent attempts (newest first):\n${lines.join('\n')}`;
+  }
+  return (
+    `<system-reminder>REPEATED APPROACH for tool "${toolName}": ${count} failed attempts ` +
+    `at the SAME approach across ${distinctInputs} tweaked variations.` +
+    `${recentBlock} The approach itself is not working — tweaking arguments will not fix it. ` +
+    `Step back and change strategy: a different tool, method, or path to the goal.</system-reminder>\n\n`
+  );
+}
