@@ -816,6 +816,31 @@ Do NOT use this to ask "should I proceed?" — just proceed. Use it for genuine 
   },
 
   {
+    // AskForAdvice (MENTORSHIP_ASK_FOR_ADVICE_SPEC). Consult a STRONGER mentor model
+    // for a HINT when thrashing. Server-executed (dispatched in the orchestrator →
+    // HelperModelMiddleware.generateMentorHint). Included in the tool set only when
+    // mentorship-active for a weak model (gated at per-request assembly, Stage B).
+    name: 'AskForAdvice',
+    description: `Consult a senior engineer for a HINT when you are genuinely stuck after several failed attempts. Provide an optional question describing what you're stuck on. Use this INSTEAD of guessing again once you have tried multiple distinct approaches without progress. You will get directed guidance — a hint or a diagnostic question, not the solution — to reorient your work. Do the work yourself with the hint.`,
+    schema: {
+      type: 'object',
+      properties: {
+        question: {
+          type: 'string',
+          description: "Optional: what you're stuck on, in one sentence."
+        }
+      }
+    },
+    category: 'base',
+    discoveryTier: 'standard',
+    metadata: {
+      // Server-dispatched by NAME in the orchestrator (Stage B), not via
+      // executionEnvironment (which is client|sandbox for client-side tools).
+      version: '1.0.0'
+    }
+  },
+
+  {
     name: 'ExitPlanMode',
     description: `Exit planning mode and present a plan for the user to approve before implementation begins.
 

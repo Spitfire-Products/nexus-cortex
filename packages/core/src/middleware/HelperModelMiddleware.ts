@@ -18,6 +18,11 @@
  */
 
 import { frameHelperPrompt, type HelperFrameSpec } from './helpers/helperFrame.js';
+import {
+  buildMentorUserPrompt,
+  MENTOR_REFRAME_SYSTEM,
+  MENTOR_INTERVIEW_SYSTEM,
+} from '../training/mentorConsult.js';
 import { ModelConfig, ModelRegistry } from '../models/ModelConfig.interface.js';
 import {
   HelperModelMiddlewareRegistry,
@@ -1284,6 +1289,42 @@ Give concise, actionable guidance in plain text with these labeled parts:
         persona: 'You are an AI coding mentor analyzing a tool execution error.',
         task: 'Diagnose the failure and give the immediate next steps to fix it.',
         outputBudgetTokens: 500,
+      },
+      body,
+      context.helperModelId,
+    );
+  }
+
+  /**
+   * AskForAdvice mentor hint (MENTORSHIP_ASK_FOR_ADVICE_SPEC §5). A STRONGER model
+   * (helperModelId = MENTORSHIP_HELPER_MODEL, e.g. deepseek-v4-pro) reads the junior's
+   * failed trace and returns a HINT or a structured diagnostic — NEVER the solution.
+   * `rung` picks the directed-reframe vs structured-interview persona (spec §4).
+   * Prompts + context assembly live in training/mentorConsult (pure, tested).
+   */
+  async generateMentorHint(context: {
+    rung: 'reframe' | 'interview';
+    task: string;
+    failed: Array<{ call: string; error: string }>;
+    question?: string;
+    helperModelId?: string;
+  }): Promise<string> {
+    const body = buildMentorUserPrompt({
+      task: context.task,
+      failed: context.failed,
+      question: context.question,
+    });
+    const persona =
+      context.rung === 'interview' ? MENTOR_INTERVIEW_SYSTEM : MENTOR_REFRAME_SYSTEM;
+    return this.generateGuidance(
+      {
+        surface: 'mentor-consult',
+        persona,
+        task:
+          context.rung === 'interview'
+            ? 'Run a short structured diagnosis to isolate the blocker. Do not provide the solution or code.'
+            : 'Give a directed hint or redirection. Do not provide the solution or code.',
+        outputBudgetTokens: 400,
       },
       body,
       context.helperModelId,

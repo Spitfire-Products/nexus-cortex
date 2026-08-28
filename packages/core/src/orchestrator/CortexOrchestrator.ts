@@ -74,6 +74,12 @@ import type { McpServerConfig, McpTransportType } from '../mcp/McpClient.js';
 import { prefixMcpToolName, parseMcpToolName } from '../mcp/mcpToolNamespacing.js';
 import { DecisionStore } from '../training/DecisionStore.js';
 import { formatPriorReminder, formatFamilyReminder, formatApproachReminder } from '../training/DecisionPriorInjector.js';
+import {
+  resolveConsultRung,
+  resolveMentorConfig,
+  bounceMessage,
+  rateLimitedMessage,
+} from '../training/mentorConsult.js';
 import { classifyErrorFamily } from '../training/errorFamily.js';
 import { classifyToolOutcome } from '../training/toolOutcome.js';
 import { LoopLadder, formatLadderSignal } from '../training/loopLadder.js';
@@ -1272,6 +1278,12 @@ export class CortexOrchestrator {
     if (structuredOutputState) {
       toolsToUse = ensureStructuredOutputTool(toolsToUse, structuredOutputState);
     }
+
+    // AskForAdvice (MENTORSHIP_ASK_FOR_ADVICE_SPEC §12): append the mentor tool AFTER
+    // the deferred filter + anchor (standard-tier tools are otherwise stripped), so a
+    // thrashing model can call it without a SearchTools round-trip. Session-stable (gated
+    // on mentorship-active, off by default), so the tool-prefix cache is not toggled mid-run.
+    toolsToUse = this.ensureAskForAdviceTool(toolsToUse);
 
     // Reset sequential call counter at start of each user turn
     this.mentorshipMiddleware?.resetSequentialCalls(this.currentSessionId);
@@ -3781,6 +3793,12 @@ export class CortexOrchestrator {
     if (structuredOutputState) {
       toolsToUse = ensureStructuredOutputTool(toolsToUse, structuredOutputState);
     }
+
+    // AskForAdvice (MENTORSHIP_ASK_FOR_ADVICE_SPEC §12): append the mentor tool AFTER
+    // the deferred filter + anchor (standard-tier tools are otherwise stripped), so a
+    // thrashing model can call it without a SearchTools round-trip. Session-stable (gated
+    // on mentorship-active, off by default), so the tool-prefix cache is not toggled mid-run.
+    toolsToUse = this.ensureAskForAdviceTool(toolsToUse);
 
     // Reset sequential call counter at start of each user turn
     this.mentorshipMiddleware?.resetSequentialCalls(this.currentSessionId);
@@ -6629,6 +6647,9 @@ export class CortexOrchestrator {
         ];
         const isContextManagementTool = contextManagementToolNames.includes(toolUse.name);
 
+        // AskForAdvice (MENTORSHIP_ASK_FOR_ADVICE_SPEC): orchestrator-dispatched mentor tool.
+        const isMentorTool = toolUse.name === 'AskForAdvice';
+
         // Phase 2.6: Check if this is an MCP management tool
         const mcpManagementToolNames = [
           'ListAvailableMcpServers',
@@ -6645,8 +6666,8 @@ export class CortexOrchestrator {
         const mcpServerName = this.getMcpServerForTool(toolUse.name);
         const isMcpTool = mcpServerName !== undefined;
 
-        // Check if tool exists (context management, MCP management, MCP, or executor)
-        if (!isContextManagementTool && !isMcpManagementTool && !isMcpTool && !this.executorRegistry.hasExecutor(toolUse.name)) {
+        // Check if tool exists (context management, mentor, MCP management, MCP, or executor)
+        if (!isContextManagementTool && !isMentorTool && !isMcpManagementTool && !isMcpTool && !this.executorRegistry.hasExecutor(toolUse.name)) {
           const availableExecutors = this.executorRegistry.getExecutorNames();
           const availableMcpTools = this.mcpManager ? this.mcpManager.getAllTools().map(t => t.name) : [];
           const allAvailable = [...availableExecutors, ...availableMcpTools, ...contextManagementToolNames, ...mcpManagementToolNames];
@@ -6752,6 +6773,10 @@ export class CortexOrchestrator {
                   toolName: toolUse.name
                 }
               };
+            }
+            // AskForAdvice — consult the stronger mentor for a hint (spec §4-§5)
+            else if (isMentorTool) {
+              result = await this.executeAskForAdvice(toolUse.input);
             }
             // Phase 2.6: Execute MCP management tool
             else if (isMcpManagementTool) {
@@ -8072,6 +8097,87 @@ export class CortexOrchestrator {
    * Returns the (possibly-augmented) result. Failures in the store path
    * are swallowed so training never breaks tool execution.
    */
+  /** Include AskForAdvice in the turn's tool set when mentorship is active (spec §12).
+   *  Appended post-filter so the deferred filter can't strip this standard-tier tool;
+   *  gated on reactiveMentorship.enabled (off by default) and idempotent. */
+  private ensureAskForAdviceTool<T extends { name: string }>(tools: T[]): T[] {
+    if (!this.config.reactiveMentorship?.enabled || !tools) return tools;
+    if (tools.some((t) => t.name === 'AskForAdvice')) return tools;
+    const def = toolFactory.getTool('AskForAdvice') as unknown as T | undefined;
+    return def ? [...tools, def] : tools;
+  }
+
+  /** Honored AskForAdvice consults per session (rate-limit + rung state; persists across turns). */
+  private mentorConsultCounts = new Map<string, number>();
+
+  /**
+   * AskForAdvice executor (MENTORSHIP_ASK_FOR_ADVICE_SPEC v1). Orchestrator-dispatched
+   * because it needs helperMiddleware + the decision store + session state, which the
+   * packages/executors executors structurally lack. Graduated ladder: premature bounce →
+   * mentor DIRECTED REFRAME → structured interview → rate-limited. The stronger mentor
+   * (reactiveMentorship.helperModelId, e.g. deepseek-v4-pro) returns a HINT, never the
+   * solution. Banks a `mentor_consult` episode for the apprentice data lake. Fail-open —
+   * a mentor error never breaks the turn.
+   */
+  private async executeAskForAdvice(
+    input: { question?: string } | undefined,
+  ): Promise<{ success: boolean; llmContent: string; metadata: Record<string, unknown> }> {
+    const sessionId = this.currentSessionId ?? 'unknown';
+    const store = this.getDecisionStore();
+    const failedRows = store ? await store.recentFailures(6) : [];
+    const failed = failedRows.map((d) => ({
+      call: d.inputSummary || d.toolName,
+      error: d.errorSnippet || '',
+    }));
+    const honored = this.mentorConsultCounts.get(sessionId) ?? 0;
+    // v1 gate: the model self-selected by CALLING the tool, so a light "real struggle
+    // exists" check (>=2 recent failures) suffices. The full thrashDetector drives the
+    // proactive invite/forced-choice path (v2), not this executor.
+    const thrashing = failed.length >= 2;
+    const rung = resolveConsultRung(honored, thrashing);
+
+    if (rung === 'bounce') {
+      return { success: true, llmContent: bounceMessage(failed.length), metadata: { source: 'mentor-consult', rung } };
+    }
+    if (rung === 'ratelimited') {
+      return { success: true, llmContent: rateLimitedMessage(resolveMentorConfig().maxConsults), metadata: { source: 'mentor-consult', rung } };
+    }
+
+    let hint: string;
+    try {
+      hint = await this.helperMiddleware.generateMentorHint({
+        rung,
+        task: this.lastRealUserText(),
+        failed,
+        question: input?.question,
+        helperModelId: this.config.reactiveMentorship?.helperModelId,
+      });
+    } catch (err) {
+      return {
+        success: true,
+        llmContent: 'Advice is unavailable right now — keep working the problem: re-read the task and try a distinct approach.',
+        metadata: { source: 'mentor-consult', rung, error: String(err).slice(0, 120) },
+      };
+    }
+
+    this.mentorConsultCounts.set(sessionId, honored + 1);
+    if (store) {
+      // Reward-labeled episode for the apprentice pipeline (data pump). Best-effort.
+      store.recordEvent({
+        sessionId,
+        kind: 'mentor_consult',
+        toolName: 'AskForAdvice',
+        detail: {
+          rung,
+          helperModel: this.config.reactiveMentorship?.helperModelId ?? 'default',
+          hint: hint.slice(0, 400),
+          failedCount: failed.length,
+        },
+      }).catch(() => {});
+    }
+    return { success: true, llmContent: hint, metadata: { source: 'mentor-consult', rung, helperModel: this.config.reactiveMentorship?.helperModelId } };
+  }
+
   private async processToolTraining(
     toolUse: { id: string; name: string; input: any },
     result: { tool_use_id: string; tool_name: string; content: string; is_error?: boolean; metadata?: any },

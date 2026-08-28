@@ -72,7 +72,12 @@ export type SteeringEventKind =
   // solution-seeking query) — pre-labeled rows for the distiller lens.
   | 'integrity_flag'
   // Item 13b: execute-your-plan nudge on honest-premature-surrender finishes.
-  | 'surrender_nudge';
+  | 'surrender_nudge'
+  // AskForAdvice (MENTORSHIP_ASK_FOR_ADVICE_SPEC §10): a mentor consult episode — the
+  // reward-labeled thrash→ask→hint→follow trajectory that trains the apprentice's
+  // self-refer + hint-follow behavior. detail carries {rung, trigger, hint (truncated),
+  // helperModel}; the junior's subsequent tool rows join by sessionId + ts.
+  | 'mentor_consult';
 
 export interface SteeringEventInput {
   sessionId: string;
@@ -324,6 +329,30 @@ export class DecisionStore {
       distinctInputs: distinct.size,
       recent: matches.slice(-recentLimit).reverse(),
     };
+  }
+
+  /**
+   * The most recent FAILED tool decisions across ALL tools, newest first, capped
+   * at `limit` — the mentor's context for AskForAdvice (the recent failed trace).
+   * Event rows (kind set) are excluded. Reads both generations (rotated + main).
+   */
+  async recentFailures(limit = 6): Promise<Decision[]> {
+    if (limit <= 0) return [];
+    const readMaybe = async (p: string): Promise<string> => {
+      try { return await fs.readFile(p, 'utf-8'); }
+      catch (err: any) { if (err.code === 'ENOENT') return ''; throw err; }
+    };
+    const rotated = await readMaybe(this.storePath + '.1');
+    const main = await readMaybe(this.storePath);
+    const out: Decision[] = [];
+    for (const line of (rotated + main).split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const d = JSON.parse(line) as Decision;
+        if (!d.kind && !d.success) out.push(d); // failures only, non-event
+      } catch { /* torn line — skip */ }
+    }
+    return out.slice(-limit).reverse();
   }
 
   /** All decisions for a tool, oldest->newest (rotated gen first). */

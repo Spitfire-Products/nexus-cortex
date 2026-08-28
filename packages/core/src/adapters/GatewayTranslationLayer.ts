@@ -60,6 +60,15 @@ export interface PreparedRequest {
   /** Provider-specific tools (if applicable) */
   tools?: unknown[];
 
+  /**
+   * Forced tool selection for ONE turn (MENTORSHIP_ASK_FOR_ADVICE_SPEC §3). Normalized;
+   * APIClient translates to the provider-specific tool_choice shape (Anthropic
+   * {type:'tool',name} vs Chat/xAI {type:'function',function:{name}}). Per-request —
+   * NOT part of the cached tool/prefix, so setting it is cache-safe. `name` is the WIRE
+   * tool name. Unset = provider default (auto).
+   */
+  toolChoice?: { type: 'auto' | 'required' | 'tool'; name?: string };
+
   /** Request headers */
   headers: Record<string, string>;
 

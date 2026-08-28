@@ -95,6 +95,9 @@ export interface PreparedRequest {
   messages: unknown[];
   /** Provider-specific tools (if applicable) */
   tools?: unknown[];
+  /** Forced tool selection for ONE turn (MENTORSHIP_ASK_FOR_ADVICE_SPEC §3). Normalized;
+   *  APIClient translates to the provider tool_choice shape. Per-request (cache-safe). */
+  toolChoice?: { type: 'auto' | 'required' | 'tool'; name?: string };
   /** Request headers */
   headers: Record<string, string>;
   /** Request parameters */
