@@ -95,9 +95,10 @@ export interface PreparedRequest {
   messages: unknown[];
   /** Provider-specific tools (if applicable) */
   tools?: unknown[];
-  /** Forced tool selection for ONE turn (MENTORSHIP_ASK_FOR_ADVICE_SPEC §3). Normalized;
-   *  APIClient translates to the provider tool_choice shape. Per-request (cache-safe). */
-  toolChoice?: { type: 'auto' | 'required' | 'tool'; name?: string };
+  /** Forced tool selection for ONE turn (MENTORSHIP_ASK_FOR_ADVICE_SPEC §3/§13-B1),
+   *  ALREADY provider-shaped by the gateway ({key, value}); the transport just splats it.
+   *  Per-request → cache-safe. */
+  toolChoice?: import('../orchestrator/toolChoiceTranslation.js').WireToolChoice;
   /** Request headers */
   headers: Record<string, string>;
   /** Request parameters */

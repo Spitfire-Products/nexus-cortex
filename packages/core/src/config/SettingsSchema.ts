@@ -364,7 +364,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   ANTHROPIC_PROMPT_CACHING: 'true',
 
   // Model Configuration
-  DEFAULT_MODEL_ID: 'deepseek-v4-pro',
+  DEFAULT_MODEL_ID: 'deepseek-v4-flash',
   HELPER_MODEL_ID: 'deepseek-v4-flash',
 
   // System Settings
@@ -373,12 +373,12 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   USE_EMOJI: 'false',
 
   // Reactive Mentorship
-  MENTORSHIP_ENABLED: 'false',
-  MENTORSHIP_TRIGGER_ON_ERROR: 'true',
+  MENTORSHIP_ENABLED: 'true',
+  MENTORSHIP_TRIGGER_ON_ERROR: 'false',
   MENTORSHIP_ERROR_THRESHOLD: 'medium',
   MENTORSHIP_KEYWORDS_ENABLED: 'false',
   MENTORSHIP_CUSTOM_KEYWORDS: '',
-  MENTORSHIP_HELPER_MODEL: 'deepseek-v4-flash',
+  MENTORSHIP_HELPER_MODEL: 'deepseek-v4-pro',
   MENTORSHIP_TURN_BASED_ENABLED: 'false',
   MENTORSHIP_TURN_INTERVAL: '10',
   MENTORSHIP_INTERLEAVED_THINKING: 'false',
@@ -409,7 +409,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
 
   // Loop Control
   MAX_TOOL_ITERATIONS: '1000',
-  MAX_CONSECUTIVE_ERRORS: '3',
+  MAX_CONSECUTIVE_ERRORS: '6',
   TOOL_BUDGET_SOFT: '400',
   TOOL_TIMEOUT_MS: '120000',
   MAX_LOOP_REPETITIONS: '5',
@@ -430,7 +430,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   // Model Router
   MODEL_ROUTER_ENABLED: 'false',
   MODEL_ROUTER_STRATEGY: 'auto',
-  MODEL_ROUTER_RECORD: 'true',
+  MODEL_ROUTER_RECORD: 'false',
   ROUTER_MIN_CONFIDENCE: '0.3',
   ROUTER_MIN_SAMPLES: '3',
   MODEL_ROUTER_EXPLORATION: 'false',
@@ -637,7 +637,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     type: 'string',
     category: 'models',
     required: true,
-    default: 'deepseek-v4-pro'
+    default: 'deepseek-v4-flash'
   },
   {
     key: 'HELPER_MODEL_ID',
@@ -685,7 +685,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     description: 'Enable AI-to-AI reactive mentorship system',
     type: 'boolean',
     category: 'mentorship',
-    default: 'false'
+    default: 'true'
   },
   {
     key: 'MENTORSHIP_TRIGGER_ON_ERROR',
@@ -693,7 +693,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     description: 'Automatically trigger mentorship on tool errors',
     type: 'boolean',
     category: 'mentorship',
-    default: 'true'
+    default: 'false'
   },
   {
     key: 'MENTORSHIP_ERROR_THRESHOLD',
@@ -726,7 +726,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     description: 'Model for mentorship guidance (any registered model ID)',
     type: 'string',
     category: 'mentorship',
-    default: 'deepseek-v4-flash'
+    default: 'deepseek-v4-pro'
   },
   {
     key: 'MENTORSHIP_TURN_BASED_ENABLED',
@@ -908,7 +908,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     description: 'Maximum consecutive tool errors before stopping',
     type: 'number',
     category: 'loop_control',
-    default: '3'
+    default: '6'
   },
   {
     key: 'TOOL_BUDGET_SOFT',
@@ -1019,7 +1019,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     description: 'Automatically record turn metrics (tool calls, tokens, latency) into the routing matrix after each turn.',
     type: 'boolean',
     category: 'model_router',
-    default: 'true'
+    default: 'false'
   },
   {
     key: 'ROUTER_MIN_CONFIDENCE',

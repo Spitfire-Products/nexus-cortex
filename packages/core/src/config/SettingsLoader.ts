@@ -74,8 +74,11 @@ export function getGlobalEnvPath(): string {
  * THE canonical .env → process.env bootstrap for every CLI/TUI entry point.
  *
  * One implementation, so a consumer never hand-rolls dotenv loading (and can't
- * forget the global `~/.cortex/.env` — the install/hosted location where the
- * shipped `.env.example` is copied on first run). All bins call this ONCE at
+ * forget the global `~/.cortex/.env`). This function ONLY READS + layers existing
+ * .env files into process.env — it never CREATES one. The global `~/.cortex/.env`
+ * is seeded SEPARATELY, on first run, by the bin: `packages/cli/bin/cortex.js`
+ * copies the shipped `.env.example` → `~/.cortex/.env` when that file is missing
+ * (the Docker image does the same copy at build time). All bins call this ONCE at
  * startup; a change here takes effect for every launcher.
  *
  * Precedence (highest → lowest): a `.env.local` beside any of the base files wins
@@ -93,6 +96,34 @@ export function getGlobalEnvPath(): string {
  */
 export function bootstrapEnv(packageRoot?: string): { loadedFrom: string[] } {
   const cwd = process.cwd();
+
+  // FIRST-ACTIVATION SEED: the first time ANY entry point activates the library
+  // (server, `cortex`, `cortex-cli`, `fuzzycortex`, `neoncortex`, …), create BOTH
+  // .env files from the shipped `.env.example` when missing — the global
+  // `~/.cortex/.env` AND a USER-FINDABLE `packageRoot/.env` (the install dir the user
+  // can open in a file manager). Byte-identical at creation, so no conflict; the user
+  // edits the install-dir copy and it presides over the global (precedence below).
+  // Delete either file and the next activation re-seeds it. Best-effort — a read-only
+  // location is skipped, and a real injected env still works (blank template = unset).
+  const examplePath = [
+    packageRoot ? path.join(packageRoot, '.env.example') : undefined,
+    path.join(cwd, '.env.example'),
+  ].find((p): p is string => !!p && fs.existsSync(p));
+  if (examplePath) {
+    const seedTargets = [
+      getGlobalEnvPath(),                                        // global ~/.cortex/.env
+      ...(packageRoot ? [path.join(packageRoot, '.env')] : []), // user-findable install-dir .env
+    ];
+    for (const target of seedTargets) {
+      try {
+        if (!fs.existsSync(target)) {
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          fs.copyFileSync(examplePath, target);
+        }
+      } catch { /* read-only dir — skip; the file just won't exist for this launch */ }
+    }
+  }
+
   // Base files, HIGHEST precedence first (first-wins → earlier entries win).
   const baseFiles = [
     path.join(cwd, '.env'),

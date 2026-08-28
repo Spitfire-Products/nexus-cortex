@@ -80,6 +80,7 @@ import {
   bounceMessage,
   rateLimitedMessage,
 } from '../training/mentorConsult.js';
+import { resolveThrashState, resolveThrashConfig } from '../training/thrashDetector.js';
 import { classifyErrorFamily } from '../training/errorFamily.js';
 import { classifyToolOutcome } from '../training/toolOutcome.js';
 import { LoopLadder, formatLadderSignal } from '../training/loopLadder.js';
@@ -1288,6 +1289,8 @@ export class CortexOrchestrator {
     // Reset sequential call counter at start of each user turn
     this.mentorshipMiddleware?.resetSequentialCalls(this.currentSessionId);
 
+    // §13-B2: force AskForAdvice this turn on high-confidence thrash (mentor-force armed).
+    const forcedMentorChoice = await this.resolveForcedMentorChoice(toolsToUse);
     const preparedRequest = this.gatewayTranslation.prepareRequest(
       canonicalHistory,
       toolsToUse,
@@ -1299,7 +1302,8 @@ export class CortexOrchestrator {
         reasoningEffort: options.parameters?.reasoningEffort, // GPT-5.1 reasoning level
         stream: options.streaming,
         staticSystemPrompt: this.currentStaticSystemPrompt, // R28
-        conversationId: this.currentConversationId // R28b
+        conversationId: this.currentConversationId, // R28b
+        toolChoice: forcedMentorChoice // §13-B2 forced mentor tool_choice
       }
     );
 
@@ -3819,6 +3823,8 @@ export class CortexOrchestrator {
       console.log(`[Orchestrator Streaming] Input-sliced initial for cross-turn chain: sent ${initialHistoryForApiStreaming.length}/${messageHistoryForApi.length} messages`);
     }
 
+    // §13-B2: force AskForAdvice this turn on high-confidence thrash (mentor-force armed).
+    const forcedMentorChoice = await this.resolveForcedMentorChoice(toolsToUse);
     // Prepare request
     const preparedRequest = this.gatewayTranslation.prepareRequest(
       canonicalHistory,
@@ -3831,7 +3837,8 @@ export class CortexOrchestrator {
         reasoningEffort: options.parameters?.reasoningEffort, // GPT-5.1 reasoning level
         stream: true, // Enable streaming!
         staticSystemPrompt: this.currentStaticSystemPrompt, // R28
-        conversationId: this.currentConversationId // R28b
+        conversationId: this.currentConversationId, // R28b
+        toolChoice: forcedMentorChoice // §13-B2 forced mentor tool_choice
       }
     );
 
@@ -8107,6 +8114,36 @@ export class CortexOrchestrator {
     return def ? [...tools, def] : tools;
   }
 
+  /**
+   * AskForAdvice v2 (§13-B2): decide whether to FORCE `AskForAdvice` for the NEXT
+   * request (delivers the mentor hint through the heed-friendly tool-result channel,
+   * routing around flash's weak voluntary heed — v1 measured 0/6). Gated on ALL of:
+   * mentorship active, `CORTEX_MENTOR_FORCE=true` (default off), the tool is present
+   * in this request's surface, the session is not yet rate-limited, and HIGH-confidence
+   * thrash (the full `resolveThrashState` window — past the turn floor, a full window
+   * of mostly-failures, currently failing). Returns the CANONICAL forced choice; the
+   * gateway converts its name to the wire form. `tool_choice` is body-level → cache-safe.
+   */
+  private async resolveForcedMentorChoice<T extends { name: string }>(
+    toolsToUse: T[],
+  ): Promise<{ type: 'tool'; name: string } | undefined> {
+    if (!this.config.reactiveMentorship?.enabled) return undefined;
+    if (process.env.CORTEX_MENTOR_FORCE !== 'true') return undefined;
+    if (!toolsToUse?.some((t) => t.name === 'AskForAdvice')) return undefined;
+    const sessionId = this.currentSessionId ?? 'unknown';
+    if ((this.mentorConsultCounts.get(sessionId) ?? 0) >= resolveMentorConfig().maxConsults) return undefined;
+    const store = this.getDecisionStore();
+    if (!store) return undefined;
+    try {
+      const outcomes = await store.recentOutcomes(resolveThrashConfig().window);
+      return resolveThrashState(outcomes, this.turnNumber).thrashing
+        ? { type: 'tool', name: 'AskForAdvice' }
+        : undefined;
+    } catch {
+      return undefined; // fail-open: never let the thrash read break a turn
+    }
+  }
+
   /** Honored AskForAdvice consults per session (rate-limit + rung state; persists across turns). */
   private mentorConsultCounts = new Map<string, number>();
 
@@ -8162,16 +8199,24 @@ export class CortexOrchestrator {
 
     this.mentorConsultCounts.set(sessionId, honored + 1);
     if (store) {
-      // Reward-labeled episode for the apprentice pipeline (data pump). Best-effort.
+      // §13-B3: the FULL episode for the apprentice data pump (§10). Tagged
+      // `mentor_episode` so the distiller/canon can filter; `turn` lets it JOIN to
+      // this task's graded outcome (the reward label lives on the task row, known
+      // only at grade time). Full hint (not truncated) + the question + the failed
+      // trace = the training-ready thrash→ask→hint record. Best-effort, never throws.
       store.recordEvent({
         sessionId,
         kind: 'mentor_consult',
         toolName: 'AskForAdvice',
         detail: {
+          tag: 'mentor_episode',
           rung,
+          turn: this.turnNumber,
           helperModel: this.config.reactiveMentorship?.helperModelId ?? 'default',
-          hint: hint.slice(0, 400),
+          question: input?.question ?? null,
+          hint,
           failedCount: failed.length,
+          failedTrace: failed.slice(0, 6),
         },
       }).catch(() => {});
     }

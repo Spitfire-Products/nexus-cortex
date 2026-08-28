@@ -207,6 +207,27 @@ execution stays the junior's.
   corroboration: heed AND forced-hint redirect were both higher on the knowledge-gap (query) trace
   than the both-hard (gcode) trace. Build the A/B set from **flash-fails-∧-pro-passes** tasks (mine
   the matrix cells for that split), NOT 1a's rare varied-loop tasks and NOT both-fail tasks.
+- 🔵 **GROUNDED with the actual matrix mine (2026-08-28, `.bench/distill-final` fl-lifted vs pl-lifted,
+  full 89):** `flash-fails ∧ pro-passes` = **17 raw** (flash-fails 32, both-fail 15). But 17 ≠ 17 mentor
+  targets — broken down by flash's FAILURE MODE, only a slice is mentor-shaped:
+  - **retry-loop ∧ pro-passes = 4 — the TRUE AskForAdvice core:** dna-assembly, filter-js-from-html,
+    polyglot-rust-c, winning-avg-corewars (flash loops, pro solves → a hint can break the loop).
+  - no-trajectory/plumbing = 6 (adaptive-rejection-sampler, gpt2-codegolf, hf-model-inference,
+    largest-eigenval, make-mips-interpreter, qemu-alpine-ssh) → **infra-DNF (empty-session/402 era),
+    REQUEUE not mentor** — some may flip to pass on a clean flash rerun.
+  - wrong-artifact = 2 (polyglot-c-py, torch-pipeline-parallelism) → **EndTurn gate (built)**, not mentor.
+  - never-acted = 2 (regex-chess [EASY], schemelike-metacircular-eval) → **inaction guard (built)**.
+  - budget/error-cascade/unclassified = 3 (model-extraction-relu-logits, compile-compcert,
+    db-wal-recovery) → maybe 1-2 real knowledge-gap.
+  - **Retry-loop reframe corrected:** flash's ~11 retry-loop tasks SPLIT 4 pro-pass (addressable) / 7
+    both-fail capability ceiling (make-doom, path-tracing, query-optimize, rstan-to-pystan, sam-cell-seg,
+    torch-tensor-parallelism, train-fasttext — mentor useless). The earlier "dna-*/gcode/make-mips are
+    both-fail" was coarse: dna-ASSEMBLY is pro-pass, dna-INSERT/gcode/make-mips-interp are not.
+  - **⇒ v2's genuine mentor target ≈ 4-6 tasks, not 17.** As a BENCH lever it's modest (and shrinks:
+    several are in TB2.1's 28-fix set — polyglot-rust-c/polyglot-c-py/torch-tensor-parallelism/query-optimize
+    — and the 4.71.0 guard build already cut flash loops 13→5, so the Aug-25 basis over-states it). v2's
+    load-bearing justification is the DATA PUMP (§10), where even 4-6 clean thrash→ask→hint→solve episodes
+    ×k are the reward-labeled positives. **Confirmatory 4-task A/B = the retry-loop∧pro-pass core above.**
 - A/B arms: control (no mentorship) vs AskForAdvice (thrash→invite/forced→pro-hint). k≥5 (variance).
 - **Read:** (a) heed — did flash call the tool on invite; (b) conversion — did the hint flip fails
   to passes; (c) cost — pro-mentor $/task; (d) no over-reliance regression on easy controls.
@@ -299,7 +320,12 @@ wire", `ToolNamingHandler.ts:1-15`). Set by three independent `ModelConfig` keys
   per-provider SCHEMA shape → APIClient body-builders emit `{key:value}` (`tool_choice` vs Google
   `tool_config`). `tool_choice` is body-level, NOT the cached tools/prefix → cache-safe.
 
-**C. DEFERRED LOADING + ANCHOR LIFT (the optimal "lift-full" config)** — filter order per request
+**C. DEFERRED LOADING + ANCHOR LIFT (the winning config is "lifted, DEFERRED" — NOT full catalog;
+verified 2026-08-28: full base catalog = 51 tools, essential tier = 15; the bench inherits
+`ENABLE_DEFERRED_TOOL_LOADING='true'` (default, adapter does NOT override) so the model sees ~15
+essential+recently-used tools, and the bash-edit anchor lifts to THAT set, never the 51. "Lifted"
+= the anchor lifting, orthogonal to deferred-on/off; the true full-catalog/deferred-OFF config is
+an UNTESTED lever)** — filter order per request
 (`CortexOrchestrator.ts:1240-1274`): deferred filter (`:1246`, `!isPTCEnabled && enableDeferredToolLoading`
 → `toolFilter.getFilteredTools` keeps **essential + recently-used only**) → anchor (`:1259`
 `applyAnchorIfArmed`, {Bash,Edit} turn-1, no-op once lifted) → post-filter append (`:1272`).
@@ -325,3 +351,100 @@ Do NOT rely on the tier or SearchTools discovery (a thrashing model can't afford
 - Capability flags `supportsToolChoice`/`toolChoiceOptions` are UNPOPULATED on production cards (only
   the interface templates, `models/ModelConfig.interface.ts:59/111`) → gate on provider/pattern, not
   the flag. `generateContent` does NOT spread `request.parameters` → tool_config needs explicit insert.
+
+## 13. V2 BUILD PLAN + 4-TASK VALIDATION (✅ CODE BUILT 2026-08-28; validation cost-gated, NOT run)
+
+**✅ BUILD STATUS (2026-08-28): B1+B2+B3 CODE COMPLETE, typecheck+build clean, tests green, UNRELEASED
+(gated off: needs `reactiveMentorship.enabled` + `CORTEX_MENTOR_FORCE=true`).**
+- B1 (toolChoice→wire) — 🔵 REFACTORED to the correct layering (operator: "the gateway translator
+  translates canonical→provider schemas"): the GATEWAY does BOTH translations. `prepareRequest` takes a
+  NORMALIZED `toolChoice` opt, name-converts it (`AskForAdvice`→`ask_for_advice`) AND calls
+  `translateToolChoice(named, api.pattern)` → stores the fully PROVIDER-SHAPED `{key,value}` on
+  `PreparedRequest.toolChoice` (only when tools are sent). The TRANSPORT (`APIClient.applyToolChoice`) is
+  now a DUMB SPLAT — `body[request.toolChoice.key] = request.toolChoice.value` — at all 10 tool-attach
+  sites (Anthropic/xAI-messages/chat/responses/gemini-HTTP + google-SDK ×2, stream+non-stream;
+  responses-stream inlined for the `this`-less closure). NO per-provider logic in APIClient anymore
+  (removed the hand-rolled `applyToolChoiceGenAI` + the per-site `translateToolChoice` import). xAI site
+  additive-only (does not touch interleaved thinking). ✅ GOOGLE GAP CLOSED: `translateToolChoice` now
+  owns the split — `generateContent` → snake `tool_config` (REST HTTP wire), `google-sdk`/`google-genai`
+  → camelCase `toolConfig`/`functionCallingConfig`/`allowedFunctionNames` (@google/genai SDK config).
+  `WireToolChoice.key` ∈ {tool_choice, tool_config, toolConfig}. **COVERAGE AUDIT (2026-08-28): every
+  dispatched `api.pattern` is wired both sides** — messages (Anthropic+xAI, stream+non-stream), chat/completions,
+  responses (×2), generateContent (×2), google-sdk/google-genai (×2). **ONE structural exception: `hf-space`
+  (Gradio Spaces)** — the gateway SHAPES it, but `sendHFSpaceAPI` calls the Space's `/run` predict with a
+  FIXED signature `[messages, tools, maxTokens, temperature]` (no tool_choice slot), so it can't forward the
+  force → silently no-ops. Not a harness bug — a SERVING-side limit (the Space `app.py` template needs a
+  tool_choice arg). 🎯 ENDGAME RELEVANCE: when the trained apprentice is served via hf-space and we want to
+  force AskForAdvice on IT, the Space template must add that parameter. (`pattern:'chat'` for Cohere is a
+  doc-only placeholder in ADDING_NEW_MODELS.md — not a live card, not dispatched.)
+- B2 (arm on thrash): `resolveForcedMentorChoice(toolsToUse)` — gated mentorship-active + `CORTEX_MENTOR_FORCE`
+  + tool-present + not-rate-limited + `resolveThrashState(recentOutcomes, turnNumber)` high-confidence →
+  `{type:'tool',name:'AskForAdvice'}`, passed as `toolChoice` at BOTH main prepareRequest calls
+  (non-stream :1291, stream :3824). New `DecisionStore.recentOutcomes(limit)` = chronological pass/fail
+  window (thrashDetector needs the mix, not recentFailures' failures-only). Fail-open on read error.
+- B3 (episode banking): `executeAskForAdvice` now banks the FULL episode — `tag:'mentor_episode'`, `turn`
+  (trajectory-join key), `question`, full `hint` (untruncated), `failedTrace` — reward label joined at
+  distill time from the task row.
+- TESTS (all green, scoped-single-file): `GatewayTranslationLayer.toolChoice.test.ts` (4 — gateway does
+  name-conv + provider-shape + only-when-tools + default-path-clean), `DecisionStore.test.ts` +2
+  (recentOutcomes window/limit/event-excl), `ToolChoiceTranslation` 14 (+2 for the google HTTP-vs-SDK
+  split), v1 ThrashDetector 8 / MentorConsult 12 / ReactiveMentorship 30 = no regression. typecheck+build clean.
+- NOT DONE: soft-invite `<system-reminder>` thrash tier (B2 uses the forced path only — the invite/rung-1
+  is v1's executor ladder; a proactive pre-tool reminder tier is optional). NOT released, NOT validated.
+
+
+**Already built (v1, shipped 4.82.0 + tested):** `thrashDetector.ts`, `mentorConsult.ts` (graduated
+ladder), `generateMentorHint`, `AskForAdvice` tool + `ensureAskForAdviceTool` inclusion + orchestrator
+dispatch, `DecisionStore.recentFailures`/`recordEvent('mentor_consult')`, and **`translateToolChoice`
+(12 tests, all provider patterns incl. xAI additive).** v1 verdict: wiring sound, voluntary heed 0/6.
+
+**Net-new for v2 = 3 wiring pieces + banking (all touchpoints grounded in §12.D — verify each with a
+downstream-order map before editing, per feedback-downstream-order-mapping):**
+- **B1 — carry `toolChoice` to the wire.** Add the `toolChoice` opt to `prepareRequest` (§12.D.3:
+  GatewayTranslationLayer `:234`/`:308`), name-convert it THERE (gateway, not orchestrator), then call
+  `translateToolChoice(choice, apiPattern)` at APIClient's ~6 tool-attach sites and set `body[key]=value`.
+  🔴 xAI site (`:584`) is the SACRED interleaved-thinking path — tool_choice is an ADDITIVE body key that
+  does NOT touch the thinking round-trip, but gate it behind before/after grok canary probes per
+  [[feedback_xai_interleaved_sacred]]. `generateContent` needs an explicit `tool_config` insert (no
+  param-spread). Test: extend `prefixStability` — forced-choice leaves the cached tools/prefix
+  byte-identical (it's body-level).
+- **B2 — arm forcing on HIGH-confidence thrash.** In the continuation `prepareRequest` (§12.D.4,
+  `MentorshipMiddleware.shouldTriggerMentorship:112`): when `resolveThrashState` = high-confidence
+  thrash AND the tool hasn't been honored this window, set `toolChoice={type:'tool',name:'AskForAdvice'}`
+  for THAT ONE turn (soft-invite reminder stays rung-1 for the ~40% self-referrers). Gate behind
+  `CORTEX_MENTOR_FORCE=true` (default off). False-positive force wastes a pro call → keep the confidence
+  bar high (past turn floor + full window + no success). Test: scripted thrash → forced turn emits the
+  tool_use; below-threshold → not forced.
+- **B3 — full-episode banking (the data pump, §10).** On a mentor_consult: bank the WHOLE episode
+  (thrash window → AskForAdvice+question → pro hint verbatim → subsequent junior actions → graded
+  outcome), tag `mentor_episode`, reward-label by outcome. Rides the harvest-the-exhaust trajectory rail
+  (harbor-bench §📐 invariant 10) → arm store → canon. This is what makes the run worth its cost even at
+  n=4: positive episodes are apprentice training data.
+- Effort: ~1 focused build session (B1 is the bulk — 6 grounded sites + canary; B2/B3 are small). TDD
+  per §8 + the two new tests above; typecheck + no-keys unit run BEFORE any publish ([[feedback-preflight-before-publish]]).
+
+**4-TASK VALIDATION (the retry-loop∧pro-pass core, §9 mine):** `dna-assembly`, `filter-js-from-html`,
+`polyglot-rust-c`, `winning-avg-corewars`.
+- **Arms (k≥5/task — the loop-assist variance lesson):** (A) CONTROL = flash-lifted, mentorship OFF
+  (or reuse the matrix baseline rows for these 4). (B) TREATMENT = flash-lifted + `MENTORSHIP_ENABLED` +
+  `CORTEX_MENTOR_FORCE=true` + `MENTORSHIP_HELPER_MODEL=deepseek-v4-pro`.
+- **Reads:** (a) MECHANISM FIRED — thrash trigger + forced tool_use in the trajectory (grep
+  `ask_for_advice` + `mentor_consult` events) — the loop-assist lesson: NEVER attribute a delta without
+  confirming firing; (b) CONVERSION — hint flips fail→pass, reproduced (n≥2 of the k); (c) pro-mentor
+  $/task; (d) episodes banked with reward labels (data-pump deliverable); (e) no over-reliance regression
+  (spot-check an easy control task doesn't start over-calling the tool).
+- **Cost (rough):** 4 tasks × 5 reps × 2 arms = 40 flash runs (~$0.02–0.10 each) + forced pro-mentor
+  calls (~$0.10 each, ~1–2/thrash-task) ≈ **$5–10**. Schedule OFF-PEAK (DeepSeek peak 2× — harbor-bench).
+- **Durability + teardown (the container-cost lesson):** one arm store per arm, durable supervisor +
+  idempotent relaunch (harbor-bench §📐); **short `sleepAfter` on the bench session AND `/admin/sessions/destroy`
+  every session on completion** ([[nexus-cortex-sandbox-kill-switch]]); NEVER poke to verify. Checkpoint
+  the resume memory BEFORE walking away ([[feedback-checkpoint-before-autocompaction]]).
+- **Merge gate:** standard statistical gate + judge; the confirmatory single cell (no FWER family). A
+  conversion on ≥2/4 tasks reproduced = build the data-pump loop; 0 conversions = the bench-lever thesis
+  dies, keep only if the banked episodes justify the pump on their own.
+
+**DECISION FRAME for the operator:** v2-as-bench-lever ≈ 4 real targets (shrinking after guards + TB2.1)
+→ modest. v2-as-data-pump = the load-bearing reason (manufactures apprentice training episodes deepseek
+won't self-generate). Cheaper alternatives that DON'T need v2 and may matter more for TB2.1: REQUEUE the
+6 infra-DNF flash fails (may flip some to pass for free) + ride the already-shipped inaction/EndTurn
+guards (cover the never-acted + wrong-artifact tasks in the 17).

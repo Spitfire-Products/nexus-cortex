@@ -141,4 +141,23 @@ describe('DecisionStore', () => {
     const hits = await store.lookup('Read', stableInputHash({ file_path: '/a' }));
     expect(hits.length).toBe(2);
   });
+
+  // AskForAdvice v2 §13-B2: recentOutcomes feeds the thrash detector.
+  it('recentOutcomes returns the mixed pass/fail window chronologically (oldest→newest)', async () => {
+    await store.record({ sessionId: 's', toolName: 'Bash', input: { c: '1' }, success: true });
+    await store.record({ sessionId: 's', toolName: 'Bash', input: { c: '2' }, success: false });
+    await store.record({ sessionId: 's', toolName: 'Bash', input: { c: '3' }, success: false });
+    const win = await store.recentOutcomes(6);
+    expect(win).toEqual([true, false, false]);
+  });
+
+  it('recentOutcomes respects the limit and excludes event rows', async () => {
+    for (let i = 0; i < 8; i++) {
+      await store.record({ sessionId: 's', toolName: 'Bash', input: { c: String(i) }, success: i % 2 === 0 });
+    }
+    await store.recordEvent({ sessionId: 's', kind: 'mentor_consult', toolName: 'AskForAdvice', detail: {} });
+    const win = await store.recentOutcomes(3);
+    expect(win.length).toBe(3); // last 3 decisions only, the event row excluded
+    expect(win).toEqual([false, true, false]); // outcomes for i=5,6,7
+  });
 });

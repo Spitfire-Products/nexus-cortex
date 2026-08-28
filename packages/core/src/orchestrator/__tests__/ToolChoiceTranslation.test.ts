@@ -47,13 +47,24 @@ describe('translateToolChoice — universal per-provider fan-out', () => {
     });
   });
 
-  describe('google (generateContent / google-sdk / google-genai) — tool_config', () => {
+  describe('google generateContent (REST HTTP) — snake_case tool_config', () => {
     it('force → tool_config with ANY mode + allowed_function_names', () => {
       expect(translateToolChoice(FORCE, 'generateContent')).toEqual({ key: 'tool_config', value: { function_calling_config: { mode: 'ANY', allowed_function_names: ['ask_for_advice'] } } });
     });
     it('auto → mode AUTO; required → mode ANY (no allow-list)', () => {
-      expect(translateToolChoice({ type: 'auto' }, 'google-sdk')).toEqual({ key: 'tool_config', value: { function_calling_config: { mode: 'AUTO' } } });
-      expect(translateToolChoice({ type: 'required' }, 'google-genai')).toEqual({ key: 'tool_config', value: { function_calling_config: { mode: 'ANY' } } });
+      expect(translateToolChoice({ type: 'auto' }, 'generateContent')).toEqual({ key: 'tool_config', value: { function_calling_config: { mode: 'AUTO' } } });
+      expect(translateToolChoice({ type: 'required' }, 'generateContent')).toEqual({ key: 'tool_config', value: { function_calling_config: { mode: 'ANY' } } });
+    });
+  });
+
+  describe('google-sdk / google-genai (@google/genai SDK config) — camelCase toolConfig', () => {
+    it('force → toolConfig with ANY mode + allowedFunctionNames (camelCase)', () => {
+      expect(translateToolChoice(FORCE, 'google-sdk')).toEqual({ key: 'toolConfig', value: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['ask_for_advice'] } } });
+      expect(translateToolChoice(FORCE, 'google-genai')).toEqual({ key: 'toolConfig', value: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['ask_for_advice'] } } });
+    });
+    it('auto → mode AUTO; required → mode ANY', () => {
+      expect(translateToolChoice({ type: 'auto' }, 'google-sdk')).toEqual({ key: 'toolConfig', value: { functionCallingConfig: { mode: 'AUTO' } } });
+      expect(translateToolChoice({ type: 'required' }, 'google-genai')).toEqual({ key: 'toolConfig', value: { functionCallingConfig: { mode: 'ANY' } } });
     });
   });
 

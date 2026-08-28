@@ -355,6 +355,31 @@ export class DecisionStore {
     return out.slice(-limit).reverse();
   }
 
+  /**
+   * AskForAdvice v2 (§13-B2): the last `limit` non-event tool outcomes as a
+   * CHRONOLOGICAL boolean[] (oldest→newest, true=success). Feeds
+   * `resolveThrashState` (thrashDetector), which needs the mixed pass/fail window
+   * — unlike `recentFailures` (failures only). Same whole-store read semantics.
+   */
+  async recentOutcomes(limit = 6): Promise<boolean[]> {
+    if (limit <= 0) return [];
+    const readMaybe = async (p: string): Promise<string> => {
+      try { return await fs.readFile(p, 'utf-8'); }
+      catch (err: any) { if (err.code === 'ENOENT') return ''; throw err; }
+    };
+    const rotated = await readMaybe(this.storePath + '.1');
+    const main = await readMaybe(this.storePath);
+    const out: boolean[] = [];
+    for (const line of (rotated + main).split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const d = JSON.parse(line) as Decision;
+        if (!d.kind) out.push(!!d.success); // non-event decisions only, chronological
+      } catch { /* torn line — skip */ }
+    }
+    return out.slice(-limit);
+  }
+
   /** All decisions for a tool, oldest->newest (rotated gen first). */
   private async readAllForTool(toolName: string): Promise<Decision[]> {
     const readMaybe = async (p: string): Promise<string> => {

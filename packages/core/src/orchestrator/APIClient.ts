@@ -232,6 +232,20 @@ export class APIClient {
    * @param modelConfig - Model configuration
    * @returns Provider response
    */
+
+  /**
+   * AskForAdvice v2 (§13-B1): attach the forced tool_choice onto an already-built
+   * provider request body. Pure TRANSPORT — the gateway (prepareRequest) already did
+   * BOTH translations (naming + provider schema shape), so `request.toolChoice` is a
+   * ready-to-splat {key, value}. Call right after `body.tools = request.tools` at each
+   * tool-attach site. No-op when unset → zero effect on the default path; body-level →
+   * cache-safe. (The 3rd arg is retained for call-site readability but unused.)
+   */
+  private applyToolChoice(body: Record<string, unknown>, request: PreparedRequest, _apiPattern?: string): void {
+    if (!request.toolChoice) return;
+    (body as Record<string, unknown>)[request.toolChoice.key] = request.toolChoice.value;
+  }
+
   async sendRequest(request: PreparedRequest, modelConfig: ModelConfig): Promise<APIResponse> {
     // Clamp any requested temperature to THIS model's valid range before dispatch — the
     // cross-provider gate (e.g. Anthropic is 0–1, OpenAI/DeepSeek 0–2). Lets a per-subagent
@@ -445,6 +459,7 @@ export class APIClient {
       } else {
         anthropicRequest.tools = request.tools;
       }
+      this.applyToolChoice(anthropicRequest, request, 'messages'); // §13-B1 forced tool_choice
     }
 
     // Phase 2.8: Enable extended thinking for Claude 4+ models with reasoning support
@@ -582,6 +597,9 @@ export class APIClient {
 
     if (request.tools && request.tools.length > 0) {
       messagesRequest.tools = request.tools;
+      // §13-B1 forced tool_choice. xAI Messages = Anthropic dialect; tool_choice is an
+      // ADDITIVE body key that does NOT touch the interleaved-thinking round-trip.
+      this.applyToolChoice(messagesRequest, request, 'messages');
     }
 
     const debugPayloadXai = process.env.DEBUG_PAYLOAD;
@@ -886,6 +904,7 @@ export class APIClient {
     // Attach tools
     if (request.tools && request.tools.length > 0) {
       chatRequest.tools = request.tools;
+      this.applyToolChoice(chatRequest, request, 'chat/completions'); // §13-B1 forced tool_choice
     }
 
     this.logChatCompletionsPayload(chatRequest, request.modelId, opts.stream);
@@ -1239,6 +1258,7 @@ export class APIClient {
     // Add tools if present (already in correct format from ResponsesAPIAdapter)
     if (request.tools && request.tools.length > 0) {
       responsesRequest.tools = request.tools;
+      this.applyToolChoice(responsesRequest, request, 'responses'); // §13-B1 forced tool_choice
     }
 
     if (process.env.DEBUG === 'true') {
@@ -1386,6 +1406,7 @@ export class APIClient {
     if (request.tools && request.tools.length > 0) {
       // REST API uses snake_case "function_declarations", not camelCase "functionDeclarations"
       requestBody.tools = [{ function_declarations: request.tools }];
+      this.applyToolChoice(requestBody, request, 'generateContent'); // §13-B1 forced tool_choice (tool_config)
 
       // DEBUG: Log Gemini tool request details
       if (process.env.DEBUG === 'true') {
@@ -1538,6 +1559,7 @@ export class APIClient {
         } else {
           anthropicRequest.tools = request.tools;
         }
+        this.applyToolChoice(anthropicRequest, request, 'messages'); // §13-B1 forced tool_choice
       }
 
       // Phase 2.8: Enable extended thinking for Claude 4+ models with reasoning support
@@ -1918,6 +1940,8 @@ export class APIClient {
       if (request.tools && request.tools.length > 0) {
         // XAI requires complete tool schemas with descriptions for ALL tools and parameters
         anthropicRequest.tools = this.validateXAITools(request.tools);
+        // §13-B1 forced tool_choice — additive body key, does NOT touch xAI interleaved thinking.
+        this.applyToolChoice(anthropicRequest, request, 'messages');
       }
 
       // Use SDK streaming (same as Anthropic!)
@@ -2492,6 +2516,11 @@ export class APIClient {
 
       if (request.tools && request.tools.length > 0) {
         responsesRequest.tools = request.tools;
+        // §13-B1 forced tool_choice — splat the gateway-shaped choice (inlined: `this` is
+        // not the class instance in this stream closure).
+        if (request.toolChoice) {
+          (responsesRequest as Record<string, unknown>)[request.toolChoice.key] = request.toolChoice.value;
+        }
       }
 
       if (process.env.DEBUG === 'true' || process.env.DEBUG_THINKING === 'true') {
@@ -2810,6 +2839,7 @@ export class APIClient {
     // Add tools if present - REST API uses snake_case "function_declarations"
     if (request.tools && request.tools.length > 0) {
       requestBody.tools = [{ function_declarations: request.tools }];
+      this.applyToolChoice(requestBody, request, 'generateContent'); // §13-B1 forced tool_choice (tool_config)
 
       // DEBUG: Log Gemini streaming tool request details
       if (process.env.DEBUG === 'true') {
@@ -3140,6 +3170,7 @@ export class APIClient {
           parameters: tool.input_schema
         }]
       }));
+      this.applyToolChoice(config, request, 'google-genai'); // §13-B1 forced tool_choice (gateway-shaped)
     }
 
     const sdkRequest: any = {
@@ -3248,6 +3279,7 @@ export class APIClient {
           parameters: tool.input_schema
         }]
       }));
+      this.applyToolChoice(config, request, 'google-genai'); // §13-B1 forced tool_choice (gateway-shaped)
 
       if (process.env.DEBUG === 'true') {
         console.log(`[DEBUG APIClient SDK] Gemini SDK request with ${request.tools.length} tools`);

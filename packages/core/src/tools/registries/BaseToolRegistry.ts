@@ -832,7 +832,13 @@ Do NOT use this to ask "should I proceed?" — just proceed. Use it for genuine 
       }
     },
     category: 'base',
-    discoveryTier: 'standard',
+    // ESSENTIAL tier (2026-08-28 heed experiment): survives the deferred filter
+    // unconditionally so AskForAdvice is reliably present (no reliance on the
+    // post-filter append or on the model calling SearchTools — verified 0 SearchTools
+    // calls across 47 lifted transcripts). Present turn-2+ (the anchor still narrows
+    // turn-1 to {Bash,Edit}, then lifts). Lets us test whether the model VOLUNTARILY
+    // calls it when reliably visible, disambiguating "heed≈0" from "append silently failed".
+    discoveryTier: 'essential',
     metadata: {
       // Server-dispatched by NAME in the orchestrator (Stage B), not via
       // executionEnvironment (which is client|sandbox for client-side tools).

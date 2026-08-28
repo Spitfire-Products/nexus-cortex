@@ -17,9 +17,12 @@ export interface NormalizedToolChoice {
   name?: string;
 }
 
-/** The body key + value to set on the outgoing request for a given provider pattern. */
+/** The body key + value to set on the outgoing request for a given provider pattern.
+ *  `tool_config` = google REST (snake_case); `toolConfig` = @google/genai SDK config
+ *  object (camelCase) — the same distinction the gateway already makes between the
+ *  generateContent HTTP path and the google-sdk/google-genai SDK paths. */
 export interface WireToolChoice {
-  key: 'tool_choice' | 'tool_config';
+  key: 'tool_choice' | 'tool_config' | 'toolConfig';
   value: unknown;
 }
 
@@ -59,10 +62,9 @@ export function translateToolChoice(
       if (type === 'required') return { key: 'tool_choice', value: 'required' };
       return { key: 'tool_choice', value: { type: 'function', name } };
 
-    // Google Gemini (REST + SDK + free Gemma). Uses tool_config, not tool_choice.
+    // Google Gemini REST (generateContent HTTP). snake_case wire — matches the
+    // requestBody's `generation_config`/`function_declarations`.
     case 'generateContent':
-    case 'google-sdk':
-    case 'google-genai':
       if (type === 'auto')
         return { key: 'tool_config', value: { function_calling_config: { mode: 'AUTO' } } };
       if (type === 'required')
@@ -70,6 +72,19 @@ export function translateToolChoice(
       return {
         key: 'tool_config',
         value: { function_calling_config: { mode: 'ANY', allowed_function_names: [name] } },
+      };
+
+    // Google @google/genai + legacy SDK. camelCase config object (`config.toolConfig`) —
+    // matches the SDK's `functionDeclarations`/`thinkingConfig` casing.
+    case 'google-sdk':
+    case 'google-genai':
+      if (type === 'auto')
+        return { key: 'toolConfig', value: { functionCallingConfig: { mode: 'AUTO' } } };
+      if (type === 'required')
+        return { key: 'toolConfig', value: { functionCallingConfig: { mode: 'ANY' } } };
+      return {
+        key: 'toolConfig',
+        value: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: [name] } },
       };
 
     default:

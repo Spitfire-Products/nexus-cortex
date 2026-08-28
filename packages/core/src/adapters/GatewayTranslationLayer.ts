@@ -16,6 +16,7 @@ import { ModelConfig } from '../models/ModelConfig.interface.js';
 import { AdapterRegistry } from '../adapters/AdapterRegistry.js';
 import { ToolNamingHandler } from '../adapters/ToolNamingHandler.js';
 import { noteServedModel, formatDriftWarning } from './servedModelDrift.js';
+import { translateToolChoice, type WireToolChoice, type NormalizedToolChoice } from '../orchestrator/toolChoiceTranslation.js';
 
 /**
  * Decode HTML entities in tool arguments (recursive).
@@ -61,13 +62,14 @@ export interface PreparedRequest {
   tools?: unknown[];
 
   /**
-   * Forced tool selection for ONE turn (MENTORSHIP_ASK_FOR_ADVICE_SPEC §3). Normalized;
-   * APIClient translates to the provider-specific tool_choice shape (Anthropic
-   * {type:'tool',name} vs Chat/xAI {type:'function',function:{name}}). Per-request —
-   * NOT part of the cached tool/prefix, so setting it is cache-safe. `name` is the WIRE
-   * tool name. Unset = provider default (auto).
+   * Forced tool selection for ONE turn (MENTORSHIP_ASK_FOR_ADVICE_SPEC §3/§13-B1),
+   * ALREADY translated to the provider wire shape by the gateway ({key, value} —
+   * e.g. Chat/xAI `tool_choice:{type:'function',function:{name}}`, google SDK
+   * `toolConfig:{functionCallingConfig:...}`). The transport (APIClient) just splats
+   * `body[key] = value` — no per-provider logic there. Per-request → NOT part of the
+   * cached tool/prefix, so setting it is cache-safe. Unset = provider default (auto).
    */
-  toolChoice?: { type: 'auto' | 'required' | 'tool'; name?: string };
+  toolChoice?: WireToolChoice;
 
   /** Request headers */
   headers: Record<string, string>;
@@ -254,6 +256,15 @@ export class GatewayTranslationLayer {
        * may hit a cold instance.
        */
       conversationId?: string;
+      /**
+       * AskForAdvice v2 (MENTORSHIP_ASK_FOR_ADVICE_SPEC §12.D.3 / §13-B1): forced
+       * tool_choice for a single turn. Pass the CANONICAL, NORMALIZED choice (e.g.
+       * {type:'tool', name:'AskForAdvice'}). The gateway does BOTH translations here —
+       * naming (canonical→wire via ToolNamingHandler) AND schema shape (via
+       * translateToolChoice) — so PreparedRequest carries the fully provider-shaped
+       * result and the transport just splats it. Body-level → cache-safe.
+       */
+      toolChoice?: NormalizedToolChoice;
     }
   ): PreparedRequest {
     // Get appropriate adapter
@@ -305,6 +316,20 @@ export class GatewayTranslationLayer {
     // while sending the correct API model ID (e.g., "gpt-5.1")
     const modelIdToSend = (modelConfig as any).modelId || (modelConfig as any).openRouterModelId || modelConfig.id;
 
+    // AskForAdvice v2 (§13-B1): the gateway does BOTH translations for a forced
+    // tool_choice — naming (canonical→wire) AND provider schema shape — so the
+    // transport carries a ready-to-splat {key, value}. A forced `tool` choice is only
+    // meaningful when tools are actually sent.
+    let wireToolChoice: WireToolChoice | undefined;
+    if (options?.toolChoice && providerTools && providerTools.length > 0) {
+      const tc = options.toolChoice;
+      const named: NormalizedToolChoice =
+        tc.type === 'tool' && tc.name
+          ? { type: 'tool', name: this.toolNamingHandler.convertName(tc.name, modelConfig.tools.namingConvention) }
+          : { type: tc.type };
+      wireToolChoice = translateToolChoice(named, modelConfig.api.pattern);
+    }
+
     return {
       messages: providerMessages,
       tools: providerTools,
@@ -312,7 +337,8 @@ export class GatewayTranslationLayer {
       parameters,
       systemMessage,
       modelId: modelIdToSend,
-      conversationId: options?.conversationId // R28b: enables x-grok-conv-id sticky routing
+      conversationId: options?.conversationId, // R28b: enables x-grok-conv-id sticky routing
+      toolChoice: wireToolChoice
     };
   }
 
