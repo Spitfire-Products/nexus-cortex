@@ -161,10 +161,15 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
     }
 
     // Security: block command substitution with $(). $(( )) arithmetic
-    // expansion is NOT command substitution and is never flagged. Sandboxed
-    // profiles (e.g. bench containers) may lift the check entirely via
-    // CORTEX_ALLOW_CMD_SUBSTITUTION=true.
-    if (process.env.CORTEX_ALLOW_CMD_SUBSTITUTION !== 'true') {
+    // expansion is NOT command substitution and is never flagged. The guard
+    // exists to stop a nested command bypassing the command-level permission
+    // allowlist (smuggling `rm` inside an allowlisted `echo $(...)`). It is
+    // AUTO-LIFTED when the permission model is already off — this.config
+    // .allowCommandSubstitution, set by the orchestrator under autoApproveActions
+    // (headless / piped / --yolo / sandboxed bench) where there is no gate to
+    // bypass — and stays ON for interactive/permission-gated sessions. Env
+    // CORTEX_ALLOW_CMD_SUBSTITUTION=true is an explicit override on top.
+    if (process.env.CORTEX_ALLOW_CMD_SUBSTITUTION !== 'true' && !this.config.allowCommandSubstitution) {
       const withoutArithmetic = params.command.replace(/\$\(\(/g, '');
       if (withoutArithmetic.includes('$(')) {
         return 'Command substitution using $() is not allowed for security reasons. Run the inner command separately and pass its output via a file or pipeline. ($(( )) arithmetic is allowed.)';

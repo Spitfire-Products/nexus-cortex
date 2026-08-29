@@ -41,6 +41,11 @@ export const deepseekV4FlashVisionExp: ModelConfig = createDeepSeekModelConfig({
   vision: true,
   anchorProfile: 'bash-edit',
   promptPreset: 'boot-minimal',
+  // A′ config (TB2 matrix 2026-08-29, n=1): beats control on vision (50% vs 41%), the recovered full
+  // data reversed the earlier "A′ hurts vision" (incomplete-read artifact). B (deferred-off) is worst
+  // on vision (33%) and broke controls — not an option here.
+  liftNudge: true,
+  headlessDropAskUser: true,
   contextWindow: 1000000,
   outputTokens: 65536,
   inputCost: 0.14,

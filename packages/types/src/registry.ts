@@ -298,6 +298,19 @@ export interface ExecutorConfig {
   activeAnchorProfile?: string | null;
 
   /**
+   * Whether `$()` command substitution is permitted in ShellTool. The guard
+   * exists to stop a nested command from bypassing the command-level permission
+   * allowlist (smuggling `rm` inside an allowlisted `echo $(...)`). The
+   * orchestrator sets this TRUE whenever the permission model is already OFF —
+   * i.e. autoApproveActions (headless / piped / --yolo / sandboxed bench), where
+   * the operator has explicitly opted out of per-command approval so there is no
+   * gate to bypass. Interactive/permission-gated sessions leave it undefined →
+   * the guard stays on. Env CORTEX_ALLOW_CMD_SUBSTITUTION=true is an explicit
+   * override on top (for a sandboxed profile that isn't auto-approve).
+   */
+  allowCommandSubstitution?: boolean;
+
+  /**
    * Additional directories the user has explicitly granted tool access to,
    * OUTSIDE the working directory (the `--add-dir` / CORTEX_ADD_DIRS mechanism,
    * same model as `claude --add-dir`). Absolute paths. File tools treat a path

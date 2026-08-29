@@ -21,6 +21,13 @@ export const deepseekV4Flash: ModelConfig = createDeepSeekModelConfig({
   // the full corpus at equal accuracy on short AND long tasks, both members
   // (BASH_PLUS_SPEC P6 series). Env levers override per session.
   promptPreset: 'boot-minimal',
+  // A′ config — flash-specific optimum (TB2 matrix 2026-08-29, n=1 hard-subset): flash uniquely
+  // benefits from the lift-boundary SearchTools/AskForAdvice signpost (db-wal-recovery flip,
+  // 0 genuine control regressions) because boot-minimal drops TOOL_USAGE_GUIDE so flash otherwise
+  // never sees the discovery steering. NOT set on pro/vision (A′ hurt vision; unproven on pro) —
+  // those follow the env baseline. Precedence card > env: this card wins over CORTEX_LIFT_NUDGE.
+  liftNudge: true,
+  headlessDropAskUser: true,
   contextWindow: 1000000,
   outputTokens: 65536,
   inputCost: 0.14,

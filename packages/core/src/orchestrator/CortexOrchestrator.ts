@@ -61,7 +61,7 @@ import type { AgentDefinition, SubAgentResult, ISubAgentEventEmitter } from './S
 
 // Phase 1: Tool Architecture Refactor - Unified Tool Registry
 import { toolFactory } from '../tools/ToolFactory.js';
-import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, isNarrowProfile, isToolAllowedByProfile, applyToolProfile } from '../tools/ToolProfile.js';
+import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile } from '../tools/ToolProfile.js';
 import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
 import { ExactRepeatTracker } from '../training/loopLadder.js';
 
@@ -567,6 +567,7 @@ export class CortexOrchestrator {
    *  exactly once, at the anchor-lift boundary. One-shot per orchestrator. */
   private deferredCorpusDelivered = false;
   private liftNudgeDelivered = false; // A′ proposal-1: lift-boundary SearchTools/AskForAdvice nudge, one-shot
+  private effectiveDeferredLoading = true; // per-turn resolved deferred-loading (card > env > settings); set at assembly
 
   /**
    * Item 10 — helper-curated doctrine freshness (operator-designed; docs/
@@ -671,12 +672,6 @@ export class CortexOrchestrator {
     }
   }
 
-  /** Truthy check for a raw env flag (mirrors the CORTEX_PROMPT_MASS parse idiom). */
-  private envOn(v?: string): boolean {
-    const s = (v ?? '').trim().toLowerCase();
-    return s === '1' || s === 'true' || s === 'yes' || s === 'on';
-  }
-
   /** A′ proposal-2: in a NON-INTERACTIVE session (stateless /v1/messages, headless
    *  API, piped oneshot) there is no human to answer AskUserQuestion — it becomes a
    *  stall trap. When CORTEX_HEADLESS_DROP_ASKUSER is truthy AND the session is
@@ -684,8 +679,8 @@ export class CortexOrchestrator {
    *  (deferred filter, anchor, lift rebuild, re-filter) excludes it. Kept in
    *  interactive TUIs (a real user can answer). Headless swaps the human-ask for the
    *  model-ask (AskForAdvice, which the lift nudge signposts). Gated + idempotent. */
-  private stripHeadlessOnlyTools<T extends { name: string }>(tools: T[]): T[] {
-    if (!this.envOn(process.env.CORTEX_HEADLESS_DROP_ASKUSER)) return tools;
+  private stripHeadlessOnlyTools<T extends { name: string }>(tools: T[], model?: ModelConfig): T[] {
+    if (!resolveHeadlessDropAskUser(process.env, model?.headlessDropAskUser)) return tools; // card > env > false
     if (!this.approvalMode.autoApproveActions) return tools; // interactive: keep it
     return tools.filter((t) => t.name !== 'AskUserQuestion');
   }
@@ -698,10 +693,10 @@ export class CortexOrchestrator {
    *  AFTER the model has committed to acting (post-lift is where prompt mass is safe —
    *  this is a one-line signpost, NOT defer's full corpus). Fires at most once.
    *  Mirrors deliverDeferredCorpusAtLift's append-to-last-tool_result mechanism. */
-  private deliverLiftNudge(allTools: CanonicalTool[]): void {
+  private deliverLiftNudge(allTools: CanonicalTool[], model?: ModelConfig): void {
     if (this.liftNudgeDelivered) return;
-    if (!this.envOn(process.env.CORTEX_LIFT_NUDGE)) return;
-    if (!this.config.enableDeferredToolLoading) return; // deferred off ⇒ no hidden tools to point at
+    if (!resolveLiftNudge(process.env, model?.liftNudge)) return; // card > env > false
+    if (!this.effectiveDeferredLoading) return; // deferred off ⇒ no hidden tools to point at
     this.liftNudgeDelivered = true; // one-shot even if assembly fails
     try {
       const hidden = this.toolFilter.getDeferredToolNames(allTools);
@@ -848,7 +843,7 @@ export class CortexOrchestrator {
     // The closure captures `this` so it resolves the active model's naming
     // convention at call-time — names in SearchTools results match the tools
     // array the model sees (e.g. snake_case for XAI, PascalCase for Anthropic).
-    if (this.config.enableDeferredToolLoading) {
+    if (this.config.enableDeferredToolLoading) { // constructor setup — base capability, not per-turn
       const searchExecutor = this.executorRegistry.getExecutor('SearchTools') as Record<string, any> | undefined;
       if (searchExecutor && typeof searchExecutor.setToolProvider === 'function') {
         const namingHandler = new ToolNamingHandler();
@@ -888,7 +883,7 @@ export class CortexOrchestrator {
       console.log(`[Orchestrator] Dependency injection pattern - all components injected`);
       console.log(`[Orchestrator] ExecutorRegistry: ${this.executorRegistry.getExecutorCount()} executors`);
       console.log(`[Orchestrator] MCP enabled: ${mcpManager !== null}`);
-      if (this.config.enableDeferredToolLoading) {
+      if (this.config.enableDeferredToolLoading) { // constructor debug log
         console.log(`[Orchestrator] Deferred tool loading: ENABLED`);
       }
     }
@@ -1042,11 +1037,16 @@ export class CortexOrchestrator {
     const mcpManagementTools = bashOnlyProfile ? [] : this.getMcpManagementTools();
     const contextManagementTools = bashOnlyProfile ? [] : this.getContextManagementTools();
 
+    // Per-model deferred-loading resolved ONCE per turn (card > env > settings), so every per-request
+    // deferred gate below flips together — this is what makes the pro card's deferredToolLoading:false
+    // toggle (or a global env) coherent instead of split-brain. Constructor SearchTools wiring keeps
+    // this.config (base capability, pre-turn).
+    this.effectiveDeferredLoading = resolveDeferredLoading(process.env, model?.deferredToolLoading, this.config.enableDeferredToolLoading);
     // Include all default tools by default, or custom tools if provided
     // A′ proposal-2: strip AskUserQuestion in non-interactive sessions (gated) at the source.
     const allTools = this.stripHeadlessOnlyTools(options.tools !== undefined
       ? [...factoryTools, ...mcpTools, ...mcpManagementTools, ...contextManagementTools, ...options.tools]
-      : [...factoryTools, ...mcpTools, ...mcpManagementTools, ...contextManagementTools]);
+      : [...factoryTools, ...mcpTools, ...mcpManagementTools, ...contextManagementTools], model);
     // Phase 2.3: Inject server-side tools when enabled and model supports them
     // R20: provider-aware — XAI gets web/x/code; OpenAI gets web/code/file/image
     // (Responses API hosted tools); other providers stay client-only.
@@ -1168,7 +1168,7 @@ export class CortexOrchestrator {
 
     // Deferred tool loading: categorized announcement with descriptions so
     // the model can match user intent to tool names without needing full schemas.
-    if (this.config.enableDeferredToolLoading && Array.isArray(injectedContent)) {
+    if (this.effectiveDeferredLoading && Array.isArray(injectedContent)) {
       const convention = model.tools?.namingConvention || 'PascalCase';
       const announcement = this.buildDeferredToolAnnouncement(convention);
       if (announcement) {
@@ -1311,7 +1311,7 @@ export class CortexOrchestrator {
     const isPTCEnabled = this.config.enablePTC && effectiveModel.supportsPTC && effectiveModel.provider === 'anthropic';
 
     // Deferred loading: filter tools for non-PTC paths (essential + recently-used only)
-    if (!isPTCEnabled && this.config.enableDeferredToolLoading && toolsToUse && toolsToUse.length > 0) {
+    if (!isPTCEnabled && this.effectiveDeferredLoading && toolsToUse && toolsToUse.length > 0) {
       toolsToUse = this.toolFilter.getFilteredTools(toolsToUse);
     }
     // First-turn anchoring narrows further while armed (no-op once lifted).
@@ -1322,7 +1322,7 @@ export class CortexOrchestrator {
     // Thread the CARD's anchor to the executors (per-orchestrator config, by
     // reference) so framing-aware executor behavior (ShellTool steering
     // default) is model-card/registry-scoped, not process-global env.
-    this.executorRegistry.updateConfig({ activeAnchorProfile: this.cardAnchorProfile });
+    this.executorRegistry.updateConfig({ activeAnchorProfile: this.cardAnchorProfile, allowCommandSubstitution: this.approvalMode.autoApproveActions });
     if (toolsToUse && toolsToUse.length > 0) {
       toolsToUse = this.applyAnchorIfArmed(toolsToUse);
     }
@@ -2719,7 +2719,7 @@ export class CortexOrchestrator {
         processedToolUseIds.add(toolResult.tool_use_id);
 
         // Progressive filter: record tool use for deferred loading
-        if (this.config.enableDeferredToolLoading) {
+        if (this.effectiveDeferredLoading) {
           this.toolFilter.recordToolUse(toolResult.tool_name);
           // Record discovered tools from SearchTools results
           if (toolResult.tool_name === 'SearchTools' && !toolResult.is_error) {
@@ -2932,7 +2932,7 @@ export class CortexOrchestrator {
         resolveFrameProfile(process.env, this.cardFrameProfile) !== 'persist'
       ) {
         this.anchorLifted = true;
-        if (!(this.config.enableDeferredToolLoading && !isPTCEnabled)) {
+        if (!(this.effectiveDeferredLoading && !isPTCEnabled)) {
           toolsToUse = allTools;
           if (structuredOutputState) {
             toolsToUse = ensureStructuredOutputTool(toolsToUse, structuredOutputState);
@@ -2941,13 +2941,13 @@ export class CortexOrchestrator {
         // P6 deferral: the static corpus arrives at the same boundary as the
         // full tool catalog (no-op unless CORTEX_PROMPT_MASS=defer).
         await this.deliverDeferredCorpusAtLift(effectiveModel);
-        this.deliverLiftNudge(allTools); // A′ proposal-1: SearchTools/AskForAdvice signpost at lift
+        this.deliverLiftNudge(allTools, effectiveModel); // A′ proposal-1: SearchTools/AskForAdvice signpost at lift
         if (this.config.debug) console.log('[Anchor] lifted at first tool_result boundary — session profile applies');
       }
 
       // Re-filter tools after SearchTools discovery so newly discovered tools
       // are included in the continuation request's tools array
-      if (this.config.enableDeferredToolLoading && !isPTCEnabled) {
+      if (this.effectiveDeferredLoading && !isPTCEnabled) {
         const beforeCount = toolsToUse.length;
         toolsToUse = this.toolFilter.getFilteredTools(allTools);
         // StructuredOutput: the re-filter rebuilds from allTools (which never
@@ -3630,10 +3630,12 @@ export class CortexOrchestrator {
     const mcpTools = this.mcpAutoInject && !bashOnlyProfile2 ? this.getMcpToolsAsCanonical() : [];
     const mcpManagementTools = bashOnlyProfile2 ? [] : this.getMcpManagementTools();
     const contextManagementTools = bashOnlyProfile2 ? [] : this.getContextManagementTools();
+    // Per-model deferred-loading resolved once per turn (card > env > settings) — streaming mirror.
+    this.effectiveDeferredLoading = resolveDeferredLoading(process.env, model?.deferredToolLoading, this.config.enableDeferredToolLoading);
     // A′ proposal-2: strip AskUserQuestion in non-interactive sessions (gated) at the source.
     const allTools = this.stripHeadlessOnlyTools(options.tools !== undefined
       ? [...factoryTools, ...mcpTools, ...mcpManagementTools, ...contextManagementTools, ...options.tools]
-      : [...factoryTools, ...mcpTools, ...mcpManagementTools, ...contextManagementTools]);
+      : [...factoryTools, ...mcpTools, ...mcpManagementTools, ...contextManagementTools], model);
 
     // Phase 2.3: Inject server-side tools when enabled and model supports them
     // R20: provider-aware (streaming path mirror of non-streaming injection above).
@@ -3743,7 +3745,7 @@ export class CortexOrchestrator {
 
     // Deferred tool loading: categorized announcement with descriptions so
     // the model can match user intent to tool names without needing full schemas.
-    if (this.config.enableDeferredToolLoading && Array.isArray(injectedContent)) {
+    if (this.effectiveDeferredLoading && Array.isArray(injectedContent)) {
       const convention = model.tools?.namingConvention || 'PascalCase';
       const announcement = this.buildDeferredToolAnnouncement(convention);
       if (announcement) {
@@ -3834,7 +3836,7 @@ export class CortexOrchestrator {
     const isPTCEnabled = this.config.enablePTC && effectiveModel.supportsPTC && effectiveModel.provider === 'anthropic';
 
     // Deferred loading: filter tools for non-PTC paths (essential + recently-used only)
-    if (!isPTCEnabled && this.config.enableDeferredToolLoading && toolsToUse && toolsToUse.length > 0) {
+    if (!isPTCEnabled && this.effectiveDeferredLoading && toolsToUse && toolsToUse.length > 0) {
       toolsToUse = this.toolFilter.getFilteredTools(toolsToUse);
     }
     // First-turn anchoring narrows further while armed (no-op once lifted).
@@ -3845,7 +3847,7 @@ export class CortexOrchestrator {
     // Thread the CARD's anchor to the executors (per-orchestrator config, by
     // reference) so framing-aware executor behavior (ShellTool steering
     // default) is model-card/registry-scoped, not process-global env.
-    this.executorRegistry.updateConfig({ activeAnchorProfile: this.cardAnchorProfile });
+    this.executorRegistry.updateConfig({ activeAnchorProfile: this.cardAnchorProfile, allowCommandSubstitution: this.approvalMode.autoApproveActions });
     if (toolsToUse && toolsToUse.length > 0) {
       toolsToUse = this.applyAnchorIfArmed(toolsToUse);
     }
@@ -4606,7 +4608,7 @@ export class CortexOrchestrator {
           processedToolUseIds.add(toolResult.tool_use_id);
 
           // Progressive filter: record tool use for deferred loading (streaming)
-          if (this.config.enableDeferredToolLoading) {
+          if (this.effectiveDeferredLoading) {
             this.toolFilter.recordToolUse(toolResult.tool_name);
             if (toolResult.tool_name === 'SearchTools' && !toolResult.is_error) {
               const content = typeof toolResult.content === 'string'
@@ -4793,7 +4795,7 @@ export class CortexOrchestrator {
         resolveFrameProfile(process.env, this.cardFrameProfile) !== 'persist'
       ) {
           this.anchorLifted = true;
-          if (!(this.config.enableDeferredToolLoading && !isPTCEnabled)) {
+          if (!(this.effectiveDeferredLoading && !isPTCEnabled)) {
             toolsToUse = allTools;
             if (structuredOutputState) {
               toolsToUse = ensureStructuredOutputTool(toolsToUse, structuredOutputState);
@@ -4801,12 +4803,12 @@ export class CortexOrchestrator {
           }
           // P6 deferral: same one-shot corpus delivery as the sendMessage path.
           await this.deliverDeferredCorpusAtLift(effectiveModel);
-          this.deliverLiftNudge(allTools); // A′ proposal-1: SearchTools/AskForAdvice signpost at lift
+          this.deliverLiftNudge(allTools, effectiveModel); // A′ proposal-1: SearchTools/AskForAdvice signpost at lift
           if (this.config.debug) console.log('[Anchor] lifted at first tool_result boundary — session profile applies');
         }
 
         // Re-filter tools after SearchTools discovery (same as sendMessage path)
-        if (this.config.enableDeferredToolLoading && !isPTCEnabled) {
+        if (this.effectiveDeferredLoading && !isPTCEnabled) {
           toolsToUse = this.toolFilter.getFilteredTools(allTools);
           // StructuredOutput: re-filter rebuilds from allTools — re-append the
           // request-scoped tool (same as the sendMessage continuation path).

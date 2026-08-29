@@ -210,6 +210,16 @@ describe('ShellTool Integration', () => {
     }
   });
 
+  it('should allow $() when config.allowCommandSubstitution=true (auto-approve/sandbox context, no env flag)', async () => {
+    const permissiveTool = new ShellTool({ ...config, allowCommandSubstitution: true });
+    const result = await permissiveTool.execute(
+      { command: 'echo "count=$(echo 1 2 3 | wc -w)"' },
+      new AbortController().signal,
+    );
+    expect(result.success).toBe(true);
+    expect(result.llmContent).toContain('count=3');
+  });
+
   it('should validate command is not empty', async () => {
     const result = await tool.execute(
       { command: '' },

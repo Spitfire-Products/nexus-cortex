@@ -91,6 +91,49 @@ export function resolveFrameProfile(
   return 'lifted';
 }
 
+/** A′ deferred-refinement levers — per-model config. Precedence: **card > env baseline > default**.
+ *  The model CARD is the per-model truth and wins (a model that differs sets its own value, provider-
+ *  agnostic — see ModelConfig, not just DeepSeek). The `.env` is a GLOBAL baseline applied to every
+ *  model WITHOUT a card opinion (so any provider/model can be enabled/disabled fleet-wide from env).
+ *  A model with no card value follows the env baseline; neither set → the built-in default. */
+function boolEnv(raw: string): boolean | null {
+  const v = raw.trim().toLowerCase();
+  if (v === 'true' || v === '1' || v === 'yes' || v === 'on') return true;
+  if (v === 'false' || v === '0' || v === 'no' || v === 'off') return false;
+  return null;
+}
+/** CORTEX_LIFT_NUDGE — lift-boundary SearchTools/AskForAdvice signpost. card > env > false. */
+export function resolveLiftNudge(
+  env: NodeJS.ProcessEnv = process.env,
+  cardLiftNudge?: boolean | null,
+): boolean {
+  if (typeof cardLiftNudge === 'boolean') return cardLiftNudge; // per-model card wins
+  const e = boolEnv(env.CORTEX_LIFT_NUDGE ?? '');
+  return e === null ? false : e; // global env baseline, else default
+}
+/** CORTEX_HEADLESS_DROP_ASKUSER — drop AskUserQuestion in non-interactive sessions. card > env > false. */
+export function resolveHeadlessDropAskUser(
+  env: NodeJS.ProcessEnv = process.env,
+  cardDrop?: boolean | null,
+): boolean {
+  if (typeof cardDrop === 'boolean') return cardDrop; // per-model card wins
+  const e = boolEnv(env.CORTEX_HEADLESS_DROP_ASKUSER ?? '');
+  return e === null ? false : e; // global env baseline, else default
+}
+/** ENABLE_DEFERRED_TOOL_LOADING per-model override. card > env > settings default. WIRED: the
+ *  orchestrator resolves this ONCE per turn into `effectiveDeferredLoading`, read by all 11 per-request
+ *  deferred gates together (no split-brain). Default = deferred ON (deferred-OFF regresses genuine
+ *  controls, TB2 A′ matrix 2026-08-29); the pro card ships an OFF toggle commented out as a caveat. */
+export function resolveDeferredLoading(
+  env: NodeJS.ProcessEnv = process.env,
+  cardDeferred?: boolean | null,
+  settingsDefault = true,
+): boolean {
+  if (typeof cardDeferred === 'boolean') return cardDeferred; // per-model card wins
+  const e = boolEnv(env.ENABLE_DEFERRED_TOOL_LOADING ?? '');
+  return e === null ? settingsDefault : e; // global env baseline, else settings default
+}
+
 /** Do MCP / management / context tools ride along? Narrow arms suppress them
  *  (surface leak otherwise); full and lean keep them. */
 export function isNarrowProfile(profile: ToolProfileName = resolveToolProfile()): boolean {

@@ -376,6 +376,22 @@ export interface ModelConfig {
    *  Meaningless without an anchorProfile. */
   frameProfile?: 'lifted' | 'persist';
 
+  /** A′ deferred-refinement levers — provider-agnostic per-model config (TB2 matrix
+   *  2026-08-29). Precedence CARD > env baseline > default: a card value is the per-model
+   *  truth and wins over the global `.env`; env applies to any model WITHOUT a card opinion.
+   *  liftNudge: append the lift-boundary SearchTools/AskForAdvice signpost (deepseek-v4-flash
+   *  ships true — flash-specific win; A′ hurt vision, unproven on pro/other providers so unset).
+   *  Env CORTEX_LIFT_NUDGE is the fleet-wide baseline for un-carded models. */
+  liftNudge?: boolean;
+  /** Drop AskUserQuestion in NON-INTERACTIVE sessions (no human to answer — a stall trap).
+   *  Provider-agnostic; card > env baseline (CORTEX_HEADLESS_DROP_ASKUSER) > default. */
+  headlessDropAskUser?: boolean;
+  /** Per-model deferred-tool-loading override; card > env (ENABLE_DEFERRED_TOOL_LOADING) >
+   *  settings default. WIRED (resolved once per turn, all deferred gates read it together). Default
+   *  ON; deferred-OFF regresses genuine controls (TB2 2026-08-29) so no card ships it enabled — the
+   *  pro card carries it as a commented A′/B caveat toggle. */
+  deferredToolLoading?: boolean;
+
   // ============================================
   // METADATA
   // ============================================

@@ -28,6 +28,15 @@ export const deepseekV4Pro: ModelConfig = createDeepSeekModelConfig({
   // the full corpus at equal accuracy on short AND long tasks, both members
   // (BASH_PLUS_SPEC P6 series). Env levers override per session.
   promptPreset: 'boot-minimal',
+  // A′ config (TB2 matrix 2026-08-29, n=1): beats control on pro (50% vs 33%), 0 control regressions.
+  liftNudge: true,
+  headlessDropAskUser: true,
+  // ⚠️ A′/B CAVEAT TOGGLE — pro's HARD-SUBSET best was actually B (deferred-off, 66% vs A′ 50%): a
+  // stronger model carries the full 57-tool catalog well. BUT deferred-off is HIGH-VARIANCE — it broke
+  // a genuine control (bn-fit-modify) on vision, and pro's regression was tested on only 2 controls
+  // (both held). So A′ is the SAFE shipped default; B stays OFF pending a WIDER pro regression probe
+  // (8-10 pass-candidates + n=2). To run pro in the B config, uncomment the next line (deferred-off):
+  // deferredToolLoading: false,
   contextWindow: 1000000,
   outputTokens: 65536,
   inputCost: 0.50,

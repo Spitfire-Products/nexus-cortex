@@ -19,6 +19,14 @@ export interface DeepSeekModelOptions {
   vision?: boolean;
   /** Card-level prompt-composition preset (P6c/P6e/P6f evidence); env levers override. */
   promptPreset?: 'boot-minimal';
+  /** A′ deferred-refinement levers (TB2 matrix 2026-08-29; env levers override).
+   *  liftNudge: append the lift-boundary SearchTools/AskForAdvice signpost (flash-optimal).
+   *  headlessDropAskUser: drop AskUserQuestion in non-interactive sessions. */
+  liftNudge?: boolean;
+  headlessDropAskUser?: boolean;
+  /** Per-model deferred-loading override (resolver ready; not orchestrator-wired — deferred-OFF
+   *  regresses controls so no card ships it). */
+  deferredToolLoading?: boolean;
   id: string;
   displayName: string;
   family: string;
@@ -40,6 +48,9 @@ export function createDeepSeekModelConfig(options: DeepSeekModelOptions): ModelC
     ...(options.frameProfile ? { frameProfile: options.frameProfile } : {}),
     ...(options.vision ? { vision: true } : {}),
     ...(options.promptPreset ? { promptPreset: options.promptPreset } : {}),
+    ...(options.liftNudge !== undefined ? { liftNudge: options.liftNudge } : {}),
+    ...(options.headlessDropAskUser !== undefined ? { headlessDropAskUser: options.headlessDropAskUser } : {}),
+    ...(options.deferredToolLoading !== undefined ? { deferredToolLoading: options.deferredToolLoading } : {}),
     id: options.id,
     provider: 'deepseek',
     displayName: options.displayName,
