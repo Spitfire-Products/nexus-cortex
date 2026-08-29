@@ -281,10 +281,16 @@ export class GatewayTranslationLayer {
     // Convert tools to provider format (if provided)
     let providerTools: unknown[] | undefined;
     if (tools && tools.length > 0 && modelConfig.tools.supported) {
+      // §13-B1: a FORCED named tool_choice must ship ONLY that tool in the tools array. With the full
+      // catalog present, providers (DeepSeek observed 2026-08-29) IGNORE the named choice and call
+      // another available tool. Restrict to the forced tool (canonical name, pre-naming-conversion).
+      const forcedName =
+        options?.toolChoice?.type === 'tool' ? options.toolChoice.name : undefined;
+      const effectiveTools = forcedName ? tools.filter((t) => t.name === forcedName) : tools;
       // Apply naming convention BEFORE passing to adapter
       // This is the key architectural change - gateway handles naming
       const toolsWithCorrectNaming = this.toolNamingHandler.applyNamingConvention(
-        tools,
+        effectiveTools,
         modelConfig.tools.namingConvention
       );
 
@@ -741,8 +747,12 @@ export class GatewayTranslationLayer {
     // Enable parallel tool calls for ChatCompletions API models that support tools
     // This allows models to output multiple tool_use blocks in a single response
     // OpenAI docs: https://platform.openai.com/docs/guides/function-calling/parallel-function-calling
+    // 🔴 §13-B1 (root cause 2026-08-29): a FORCED tool_choice + parallel_tool_calls makes DeepSeek
+    // IGNORE the forced choice and echo the LAST history tool_call (bisected against the live wire).
+    // A forced single-tool choice is inherently non-parallel — disable it when forcing.
     if (modelConfig.api.pattern === 'chat/completions' && modelConfig.tools.supported) {
-      params.parallel_tool_calls = true;
+      const forcing = (options as { toolChoice?: { type?: string } } | undefined)?.toolChoice?.type === 'tool';
+      params.parallel_tool_calls = !forcing;
     }
 
     return params;

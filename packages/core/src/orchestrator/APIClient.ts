@@ -360,6 +360,11 @@ export class APIClient {
       if (message.content) {
         yield { type: 'text_delta', delta: message.content, snapshot: message.content };
       }
+      if (process.env.DEBUG === 'true' && (message.tool_calls?.length || data?.choices?.[0]?.finish_reason)) {
+        console.error('[V2-RESP] RAW deepseek tool_calls=',
+          JSON.stringify((message.tool_calls ?? []).map((t: any) => t?.function?.name)),
+          '| finish=', data?.choices?.[0]?.finish_reason);
+      }
       for (const tc of message.tool_calls ?? []) {
         yield { type: 'tool_use_complete', data: tc };
       }
@@ -877,7 +882,14 @@ export class APIClient {
     // the model still works without explicit reasoning effort (defaults apply).
     const willAttachTools = !!(request.tools && request.tools.length > 0);
     const isChatCompletionsRoute = modelConfig.api.pattern === 'chat/completions';
-    const dropReasoningForToolCompat = willAttachTools && isChatCompletionsRoute && modelConfig.provider === 'openai';
+    // DeepSeek (chat/completions) rejects reasoning_effort + a FORCED tool_choice:
+    // "400 Thinking mode does not support this tool_choice" (v2 mentor-force, 2026-08-29). Normal
+    // deepseek runs (reasoning + tools, no forced choice) are fine — so drop reasoning ONLY when a
+    // tool_choice is actually forced. OpenAI's R19b case (tools alone) stays as-is.
+    const hasForcedToolChoice = !!request.toolChoice;
+    const dropReasoningForToolCompat =
+      (willAttachTools && isChatCompletionsRoute && modelConfig.provider === 'openai') ||
+      (hasForcedToolChoice && isChatCompletionsRoute && modelConfig.provider === 'deepseek');
 
     // Enable reasoning for OpenAI models that support it (GPT-5 family, o-series)
     if (
@@ -899,6 +911,14 @@ export class APIClient {
     } else if (process.env.DEBUG === 'true' || process.env.DEBUG_THINKING === 'true') {
       const tag = opts.stream ? 'streaming ' : '';
       console.log(`[DEBUG APIClient] Reasoning DISABLED for ${tag}${modelConfig.id} (effort: ${reasoningEffort}, disableThinking: ${disableThinking})`);
+    }
+
+    // DeepSeek: a FORCED tool_choice requires thinking OFF — thinking is ON by default (effort high)
+    // and the API returns "400 Thinking mode does not support this tool_choice". Dropping
+    // reasoning_effort is NOT enough (thinking stays on); the OpenAI-format explicit disable field is
+    // required (DeepSeek thinking-mode docs). Only fires when a tool_choice is actually forced.
+    if (hasForcedToolChoice && isChatCompletionsRoute && modelConfig.provider === 'deepseek') {
+      chatRequest.thinking = { type: 'disabled' };
     }
 
     // Attach tools

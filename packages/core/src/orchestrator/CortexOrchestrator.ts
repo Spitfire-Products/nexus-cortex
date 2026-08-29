@@ -1351,7 +1351,7 @@ export class CortexOrchestrator {
     this.mentorshipMiddleware?.resetSequentialCalls(this.currentSessionId);
 
     // §13-B2: force AskForAdvice this turn on high-confidence thrash (mentor-force armed).
-    const forcedMentorChoice = await this.resolveForcedMentorChoice(toolsToUse);
+    const forcedMentorChoice = await this.resolveForcedMentorChoice(toolsToUse, 0); // initial request: 0 tool calls yet
     const preparedRequest = this.gatewayTranslation.prepareRequest(
       canonicalHistory,
       toolsToUse,
@@ -2975,6 +2975,11 @@ export class CortexOrchestrator {
         : this.messageHistory;
       const continuationCanonicalHistory = this.convertToCanonicalMessages([...continuationHistorySource]);
 
+      // §13-B2: re-evaluate the forced mentor choice on THIS continuation — thrash develops HERE
+      // (turnNumber ≥ 1 with accumulating failing outcomes), NOT on the initial request (turnNumber 0
+      // where the window is empty). Attaching it only to the initial assembly made the force unreachable.
+      const continuationForcedChoice = await this.resolveForcedMentorChoice(toolsToUse, toolCallIteration);
+
       const continuationRequest = this.gatewayTranslation.prepareRequest(
         continuationCanonicalHistory,
         toolsToUse,
@@ -2986,7 +2991,8 @@ export class CortexOrchestrator {
           reasoningEffort: options.parameters?.reasoningEffort, // GPT-5.1 reasoning level
           stream: options.streaming,
           staticSystemPrompt: this.currentStaticSystemPrompt, // R28
-          conversationId: this.currentConversationId // R28b
+          conversationId: this.currentConversationId, // R28b
+          toolChoice: continuationForcedChoice // §13-B2 forced mentor tool_choice (continuation)
         }
       );
 
@@ -3889,7 +3895,7 @@ export class CortexOrchestrator {
     }
 
     // §13-B2: force AskForAdvice this turn on high-confidence thrash (mentor-force armed).
-    const forcedMentorChoice = await this.resolveForcedMentorChoice(toolsToUse);
+    const forcedMentorChoice = await this.resolveForcedMentorChoice(toolsToUse, 0); // initial request: 0 tool calls yet
     // Prepare request
     const preparedRequest = this.gatewayTranslation.prepareRequest(
       canonicalHistory,
@@ -4828,6 +4834,10 @@ export class CortexOrchestrator {
           : this.messageHistory;
         const continuationCanonicalHistory = this.convertToCanonicalMessages([...streamContinuationHistorySource]);
 
+        // §13-B2: re-evaluate the forced mentor choice on THIS streaming continuation — thrash
+        // develops here, not on the initial request (mirror of the non-stream continuation fix).
+        const continuationForcedChoice = await this.resolveForcedMentorChoice(toolsToUse, toolCallIteration);
+
         // Phase 2.8: Prepare continuation request
         // All providers maintain thinking throughout multi-turn execution
         const continuationRequest = this.gatewayTranslation.prepareRequest(
@@ -4842,6 +4852,7 @@ export class CortexOrchestrator {
             stream: true, // STREAMING continuation
             staticSystemPrompt: this.currentStaticSystemPrompt, // R28
             conversationId: this.currentConversationId, // R28b
+            toolChoice: continuationForcedChoice // §13-B2 forced mentor tool_choice (continuation)
             // Thinking enabled for all providers in continuations
             // This allows interleaved thinking during tool execution
           }
@@ -8192,6 +8203,7 @@ export class CortexOrchestrator {
    */
   private async resolveForcedMentorChoice<T extends { name: string }>(
     toolsToUse: T[],
+    turnCount: number, // TOOL-CALL count (toolCallIteration), NOT this.turnNumber (a per-message counter)
   ): Promise<{ type: 'tool'; name: string } | undefined> {
     if (!this.config.reactiveMentorship?.enabled) return undefined;
     if (process.env.CORTEX_MENTOR_FORCE !== 'true') return undefined;
@@ -8202,7 +8214,7 @@ export class CortexOrchestrator {
     if (!store) return undefined;
     try {
       const outcomes = await store.recentOutcomes(resolveThrashConfig().window);
-      return resolveThrashState(outcomes, this.turnNumber).thrashing
+      return resolveThrashState(outcomes, turnCount).thrashing
         ? { type: 'tool', name: 'AskForAdvice' }
         : undefined;
     } catch {
