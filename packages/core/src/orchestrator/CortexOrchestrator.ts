@@ -15,7 +15,7 @@ import { AdapterRegistry } from '../adapters/AdapterRegistry.js';
 import { GatewayTranslationLayer } from '../adapters/GatewayTranslationLayer.js';
 import { ToolNamingHandler } from '../adapters/ToolNamingHandler.js';
 import type { ModelConfig } from '../models/ModelConfig.interface.js';
-import type { CanonicalMessage } from '../adapters/FormatAdapter.interface.js';
+import type { CanonicalMessage, CanonicalTool } from '../adapters/FormatAdapter.interface.js';
 
 // Phase 2.4: Server-Side Tools Support
 import { shouldUseServerSideTools, isServerSideToolsEnabled, modelSupportsServerSideTools, type ServerSideToolDetectionResult } from '../adapters/ServerSideToolDetection.js';
@@ -566,6 +566,7 @@ export class CortexOrchestrator {
   /** P6 deferral (CORTEX_PROMPT_MASS=defer): the static corpus is delivered
    *  exactly once, at the anchor-lift boundary. One-shot per orchestrator. */
   private deferredCorpusDelivered = false;
+  private liftNudgeDelivered = false; // A′ proposal-1: lift-boundary SearchTools/AskForAdvice nudge, one-shot
 
   /**
    * Item 10 — helper-curated doctrine freshness (operator-designed; docs/
@@ -667,6 +668,65 @@ export class CortexOrchestrator {
       }
     } catch (e: any) {
       console.warn(`[Anchor] deferred corpus delivery failed (continuing without): ${e?.message ?? e}`);
+    }
+  }
+
+  /** Truthy check for a raw env flag (mirrors the CORTEX_PROMPT_MASS parse idiom). */
+  private envOn(v?: string): boolean {
+    const s = (v ?? '').trim().toLowerCase();
+    return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+  }
+
+  /** A′ proposal-2: in a NON-INTERACTIVE session (stateless /v1/messages, headless
+   *  API, piped oneshot) there is no human to answer AskUserQuestion — it becomes a
+   *  stall trap. When CORTEX_HEADLESS_DROP_ASKUSER is truthy AND the session is
+   *  non-interactive, strip it at the `allTools` SOURCE so every downstream path
+   *  (deferred filter, anchor, lift rebuild, re-filter) excludes it. Kept in
+   *  interactive TUIs (a real user can answer). Headless swaps the human-ask for the
+   *  model-ask (AskForAdvice, which the lift nudge signposts). Gated + idempotent. */
+  private stripHeadlessOnlyTools<T extends { name: string }>(tools: T[]): T[] {
+    if (!this.envOn(process.env.CORTEX_HEADLESS_DROP_ASKUSER)) return tools;
+    if (!this.approvalMode.autoApproveActions) return tools; // interactive: keep it
+    return tools.filter((t) => t.name !== 'AskUserQuestion');
+  }
+
+  /** A′ proposal-1: at the anchor-lift boundary, when deferred loading is on and
+   *  CORTEX_LIFT_NUDGE is truthy, append a MINIMAL system-reminder pointing the model
+   *  at SearchTools (to reach the tools the deferred filter hides — names come from
+   *  the otherwise-dead getDeferredToolNames) and, when mentorship is active,
+   *  AskForAdvice. Turn 1 stays a pristine ~400B narrow door; the pointer lands only
+   *  AFTER the model has committed to acting (post-lift is where prompt mass is safe —
+   *  this is a one-line signpost, NOT defer's full corpus). Fires at most once.
+   *  Mirrors deliverDeferredCorpusAtLift's append-to-last-tool_result mechanism. */
+  private deliverLiftNudge(allTools: CanonicalTool[]): void {
+    if (this.liftNudgeDelivered) return;
+    if (!this.envOn(process.env.CORTEX_LIFT_NUDGE)) return;
+    if (!this.config.enableDeferredToolLoading) return; // deferred off ⇒ no hidden tools to point at
+    this.liftNudgeDelivered = true; // one-shot even if assembly fails
+    try {
+      const hidden = this.toolFilter.getDeferredToolNames(allTools);
+      const parts: string[] = [];
+      if (hidden.length > 0) {
+        const sample = hidden.slice(0, 6).join(', ');
+        parts.push(`Your tool set has expanded. ${hidden.length} more tools exist beyond your current set — keep acting with what you have, but if you need a capability you don't have, call SearchTools to discover and use them (e.g. ${sample}${hidden.length > 6 ? ', …' : ''}).`);
+      } else {
+        parts.push(`Your tool set has expanded. Call SearchTools to discover tools beyond your current set when a task needs a capability you don't have.`);
+      }
+      if (this.config.reactiveMentorship?.enabled) {
+        parts.push(`If you are stuck or repeating a failing approach, call AskForAdvice to consult a stronger model.`);
+      }
+      const lastMsg = this.messageHistory[this.messageHistory.length - 1] as any;
+      if (lastMsg?.message?.content?.[0]?.type === 'tool_result') {
+        lastMsg.message.content.push({
+          type: 'text',
+          text: `<system-reminder>\n${parts.join(' ')}\n</system-reminder>`
+        });
+        if (this.config.debug) {
+          console.log(`[Anchor] lift nudge delivered (${parts.join(' ').length} chars, ${hidden.length} hidden tools)`);
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[Anchor] lift nudge delivery failed (continuing without): ${e?.message ?? e}`);
     }
   }
 
@@ -983,9 +1043,10 @@ export class CortexOrchestrator {
     const contextManagementTools = bashOnlyProfile ? [] : this.getContextManagementTools();
 
     // Include all default tools by default, or custom tools if provided
-    const allTools = options.tools !== undefined
+    // A′ proposal-2: strip AskUserQuestion in non-interactive sessions (gated) at the source.
+    const allTools = this.stripHeadlessOnlyTools(options.tools !== undefined
       ? [...factoryTools, ...mcpTools, ...mcpManagementTools, ...contextManagementTools, ...options.tools]
-      : [...factoryTools, ...mcpTools, ...mcpManagementTools, ...contextManagementTools];
+      : [...factoryTools, ...mcpTools, ...mcpManagementTools, ...contextManagementTools]);
     // Phase 2.3: Inject server-side tools when enabled and model supports them
     // R20: provider-aware — XAI gets web/x/code; OpenAI gets web/code/file/image
     // (Responses API hosted tools); other providers stay client-only.
@@ -2880,6 +2941,7 @@ export class CortexOrchestrator {
         // P6 deferral: the static corpus arrives at the same boundary as the
         // full tool catalog (no-op unless CORTEX_PROMPT_MASS=defer).
         await this.deliverDeferredCorpusAtLift(effectiveModel);
+        this.deliverLiftNudge(allTools); // A′ proposal-1: SearchTools/AskForAdvice signpost at lift
         if (this.config.debug) console.log('[Anchor] lifted at first tool_result boundary — session profile applies');
       }
 
@@ -3568,9 +3630,10 @@ export class CortexOrchestrator {
     const mcpTools = this.mcpAutoInject && !bashOnlyProfile2 ? this.getMcpToolsAsCanonical() : [];
     const mcpManagementTools = bashOnlyProfile2 ? [] : this.getMcpManagementTools();
     const contextManagementTools = bashOnlyProfile2 ? [] : this.getContextManagementTools();
-    const allTools = options.tools !== undefined
+    // A′ proposal-2: strip AskUserQuestion in non-interactive sessions (gated) at the source.
+    const allTools = this.stripHeadlessOnlyTools(options.tools !== undefined
       ? [...factoryTools, ...mcpTools, ...mcpManagementTools, ...contextManagementTools, ...options.tools]
-      : [...factoryTools, ...mcpTools, ...mcpManagementTools, ...contextManagementTools];
+      : [...factoryTools, ...mcpTools, ...mcpManagementTools, ...contextManagementTools]);
 
     // Phase 2.3: Inject server-side tools when enabled and model supports them
     // R20: provider-aware (streaming path mirror of non-streaming injection above).
@@ -4738,6 +4801,7 @@ export class CortexOrchestrator {
           }
           // P6 deferral: same one-shot corpus delivery as the sendMessage path.
           await this.deliverDeferredCorpusAtLift(effectiveModel);
+          this.deliverLiftNudge(allTools); // A′ proposal-1: SearchTools/AskForAdvice signpost at lift
           if (this.config.debug) console.log('[Anchor] lifted at first tool_result boundary — session profile applies');
         }
 
