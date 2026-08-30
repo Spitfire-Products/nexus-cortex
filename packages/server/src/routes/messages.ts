@@ -33,6 +33,7 @@ messagesRouter.post('/v1/messages', async (req: Request, res: Response, next) =>
       max_tokens,
       temperature,
       top_p,
+      reasoning_effort,
       stream,
       json_schema
     } = req.body;
@@ -110,6 +111,7 @@ messagesRouter.post('/v1/messages', async (req: Request, res: Response, next) =>
     if (temperature !== undefined) parameters.temperature = temperature;
     if (max_tokens !== undefined) parameters.maxTokens = max_tokens;
     if (top_p !== undefined) parameters.topP = top_p;
+    if (reasoning_effort !== undefined) parameters.reasoningEffort = reasoning_effort;
 
     const messageOptions = {
       modelId: model,

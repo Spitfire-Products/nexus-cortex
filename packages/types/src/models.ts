@@ -246,6 +246,13 @@ export interface ModelConfig {
     pattern?: 'upfront' | 'interleaved';
 
     /**
+     * Default reasoning-effort level for this model (canonical per-model default).
+     * Sent as `reasoning_effort` on chat/completions; an explicit request param
+     * overrides it. e.g. DeepSeek V4's own harness uses 'max' for code-agent work.
+     */
+    effort?: 'none' | 'low' | 'medium' | 'high' | 'max' | string;
+
+    /**
      * Whether reasoning can be toggled on/off by user (Tab key)
      *
      * - `true`: Extended reasoning - user can toggle on/off (e.g., Grok-4, DeepSeek R1)

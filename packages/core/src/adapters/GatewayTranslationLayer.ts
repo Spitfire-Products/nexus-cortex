@@ -678,10 +678,13 @@ export class GatewayTranslationLayer {
       }
     }
 
-    // Add top_p
-    if (options?.topP !== undefined && modelConfig.parameters.topP?.supported) {
+    // Add top_p — fall through to the card default (symmetric with temperature
+    // above); previously top_p was sent ONLY when a request passed it explicitly,
+    // so the card's parameters.topP.default was dead code.
+    const effectiveTopP = options?.topP ?? modelConfig.parameters.topP?.default;
+    if (effectiveTopP !== undefined && modelConfig.parameters.topP?.supported) {
       const paramName = modelConfig.parameters.topP.paramName;
-      const value = Math.max(0, Math.min(1, options.topP));
+      const value = Math.max(0, Math.min(1, effectiveTopP));
 
       if (modelConfig.parameters.topP.path) {
         this.setNestedParam(params, modelConfig.parameters.topP.path, value);

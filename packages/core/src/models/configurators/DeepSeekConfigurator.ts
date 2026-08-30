@@ -39,6 +39,8 @@ export interface DeepSeekModelOptions {
     format?: 'reasoning_content' | 'thinking_block';
     extractionMethod?: 'content_block' | 'separate_field';
     pattern?: 'upfront' | 'interleaved';
+    /** Canonical per-model reasoning-effort default (e.g. 'max' for DeepSeek code-agent). */
+    effort?: 'none' | 'low' | 'medium' | 'high' | 'max';
   };
 }
 
@@ -87,9 +89,13 @@ export function createDeepSeekModelConfig(options: DeepSeekModelOptions): ModelC
         max: options.outputTokens
       },
       topP: {
+        // 0.95 = DeepSeek's own agentic/code-agent recipe (HF card
+        // deepseek-ai/DeepSeek-V4-Flash-0731: temp=1.0, top_p=0.95, max effort).
+        // Now actually reaches the provider (APIClient no longer strips top_p for
+        // deepseek reasoning; GatewayTranslationLayer falls through to this default).
         supported: true,
         paramName: 'top_p',
-        default: 1.0,
+        default: 0.95,
         min: 0.0,
         max: 1.0
       }

@@ -845,8 +845,13 @@ export class APIClient {
       }
     }
 
-    // Extract reasoningEffort before spreading (custom param, not OpenAI)
-    const reasoningEffort = (transformedParams as any).reasoningEffort || 'medium';
+    // Extract reasoningEffort before spreading (custom param, not OpenAI).
+    // Precedence: explicit request param > the model card's reasoning.effort
+    // default (canonical per-model, e.g. deepseek 'max' per DeepSeek's own
+    // harness recipe) > 'medium'.
+    const reasoningEffort = (transformedParams as any).reasoningEffort
+      || (modelConfig.reasoning as any)?.effort
+      || 'medium';
     delete (transformedParams as any).reasoningEffort;
 
     // R63: deliver the static system prompt. The gateway extracts system
@@ -899,12 +904,19 @@ export class APIClient {
       !dropReasoningForToolCompat
     ) {
       chatRequest.reasoning_effort = reasoningEffort;
-      delete chatRequest.temperature;
-      delete chatRequest.top_p;
+      // DeepSeek V4 ACCEPTS temperature + top_p alongside reasoning — their own
+      // harness recipe is temp=1.0, top_p=0.95, max reasoning effort (HF card
+      // deepseek-ai/DeepSeek-V4-Flash-0731). Only OpenAI/o-series reject sampling
+      // params with reasoning, so strip them there; keep them for deepseek so the
+      // card's top_p/temperature actually reach the provider.
+      if (modelConfig.provider !== 'deepseek') {
+        delete chatRequest.temperature;
+        delete chatRequest.top_p;
+      }
       delete chatRequest.logprobs;
       if (process.env.DEBUG === 'true' || process.env.DEBUG_THINKING === 'true') {
         const tag = opts.stream ? 'streaming ' : '';
-        console.log(`[DEBUG APIClient] Reasoning ENABLED for ${tag}${modelConfig.id} (effort: ${reasoningEffort}, removed temperature/top_p)`);
+        console.log(`[DEBUG APIClient] Reasoning ENABLED for ${tag}${modelConfig.id} (effort: ${reasoningEffort}, top_p: ${chatRequest.top_p ?? 'none'}, temperature: ${chatRequest.temperature ?? 'none'})`);
       }
     } else if (dropReasoningForToolCompat && (process.env.DEBUG === 'true' || process.env.DEBUG_THINKING === 'true')) {
       console.log(`[DEBUG APIClient] Reasoning DROPPED for ${modelConfig.id} — chat/completions doesn't support reasoning_effort+tools combo (R19b)`);
