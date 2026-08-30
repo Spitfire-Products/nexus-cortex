@@ -53,7 +53,7 @@ export const deepseekV4FlashVisionExp: ModelConfig = createDeepSeekModelConfig({
   reasoning: {
     supported: true,
     format: 'reasoning_content',
-    effort: 'max', // DeepSeek's own code-agent recipe (max reasoning effort)
+    effort: 'medium', // reverted from 'max': max over-deliberated on solvable tasks (sampling A/B 2026-08-30: 35min/93 iters on circuit-fibsqrt where medium solved it fast, no pass-rate gain)
     extractionMethod: 'separate_field',
     pattern: 'interleaved'
   }
