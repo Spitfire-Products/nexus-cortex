@@ -51,7 +51,13 @@ export async function sendSingleMessage(prompt: string, options: SingleMessageOp
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(600000), // 10 min
+      // Configurable via the SAME knob as every other CLI request path
+      // (CortexClient/OrchestratorClient) — this was the last hardcoded request
+      // timeout in the CLI (a literal 10-min abort, not liftable by any env),
+      // which cut long agentic one-shots and forced the TB bench adapter to
+      // bypass the CLI entirely (harbor-bench fix-ledger #7). Default matches
+      // the other client paths (15 min).
+      signal: AbortSignal.timeout(parseInt(process.env.CORTEX_CLIENT_FETCH_TIMEOUT_MS || '900000', 10)),
     });
     if (!resp.ok) {
       const text = await resp.text();

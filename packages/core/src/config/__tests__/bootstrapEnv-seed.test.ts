@@ -72,4 +72,27 @@ describe('bootstrapEnv first-activation seed', () => {
   it('no-ops safely when no packageRoot / no .env.example is available', () => {
     expect(() => bootstrapEnv(undefined)).not.toThrow();
   });
+
+  it("🔴 FALLS BACK to core's OWN shipped template when the calling package has none (server-direct boots)", () => {
+    // The server package historically shipped no .env.example: bootstrapEnv(serverRoot)
+    // found no template and silently skipped seeding — bench/task containers (which
+    // boot cortex-server directly, never the CLI) ran with NO .env at all. The fix:
+    // core ships the template itself and is a dependency of every entry point, so a
+    // caller with no template of its own still seeds from core's copy.
+    const bareRoot = fs.mkdtempSync(path.join(tmpdir(), 'bse-bare-')); // simulates the server pkg: NO .env.example
+    try {
+      const globalEnv = getGlobalEnvPath();
+      expect(fs.existsSync(globalEnv)).toBe(false);
+      bootstrapEnv(bareRoot);
+      // Seeded from core's own template (packages/core/.env.example, build-synced from
+      // the repo root) — the real canonical content, so assert a known canonical key.
+      expect(fs.existsSync(globalEnv)).toBe(true);
+      const seeded = fs.readFileSync(globalEnv, 'utf-8');
+      expect(seeded).toContain('ENABLE_DEFERRED_TOOL_LOADING=true');
+      // The bare package root also gets its user-findable copy.
+      expect(fs.existsSync(path.join(bareRoot, '.env'))).toBe(true);
+    } finally {
+      fs.rmSync(bareRoot, { recursive: true, force: true });
+    }
+  });
 });

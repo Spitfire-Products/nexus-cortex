@@ -3,9 +3,18 @@
  * HTML dashboard, holographic preset
  */
 import { Router, Request, Response } from 'express';
-import { ModularModelRegistry } from '@nexus-cortex/core';
+import { ModularModelRegistry, collectEffectiveConfig } from '@nexus-cortex/core';
 
 export const healthRouter = Router();
+
+// LIVE EFFECTIVE CONFIG (operator debug tool, 2026-08-31 — born from the CONFIG
+// AUDIT that found the guard stack silently off for 5+ runs): what the RUNNING
+// process actually resolved per lever, with source (env vs code default) and
+// plain-language meaning. Secrets redacted to set/unset. The :4001 dashboard
+// renders this same data as a table at /config.
+healthRouter.get('/health/config', (_req: Request, res: Response) => {
+  res.json({ generatedAt: new Date().toISOString(), groups: collectEffectiveConfig() });
+});
 
 healthRouter.get('/health', (req: Request, res: Response) => {
   const registry = new ModularModelRegistry();
@@ -840,6 +849,14 @@ function generateHolographicDashboard(data: any): string {
             <div class="service-info">
               <span class="service-name">Sandboxes API</span>
               <span class="service-desc">GET /api/sandboxes — JSON listing</span>
+            </div>
+            <span class="service-arrow">&#8594;</span>
+          </a>
+          <a href="#" data-dash-path="/config" class="service-card" target="_blank">
+            <div class="service-icon">&#9881;</div>
+            <div class="service-info">
+              <span class="service-name">Effective Config</span>
+              <span class="service-desc">Live per-lever dump: guards, loop control, dark features — value + source</span>
             </div>
             <span class="service-arrow">&#8594;</span>
           </a>

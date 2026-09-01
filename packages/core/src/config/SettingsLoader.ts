@@ -8,6 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { fileURLToPath } from 'url';
 import type { OrchestratorConfig } from '../orchestrator/CortexOrchestrator.js';
 import type { EnvironmentVariables } from './SettingsSchema.js';
 import { DEFAULT_SETTINGS, validateSetting, getSettingMetadata } from './SettingsSchema.js';
@@ -105,9 +106,19 @@ export function bootstrapEnv(packageRoot?: string): { loadedFrom: string[] } {
   // edits the install-dir copy and it presides over the global (precedence below).
   // Delete either file and the next activation re-seeds it. Best-effort — a read-only
   // location is skipped, and a real injected env still works (blank template = unset).
+  // 🔴 GUARANTEED TEMPLATE (operator directive: the seed must work "no matter how
+  // the library or published npm package is invoked"): the calling package's own
+  // .env.example is preferred, but 4 of 5 entry-point packages historically did
+  // NOT ship one — the server entry point silently skipped seeding, so bench/task
+  // containers (server-direct boots) never got a .env at all (found 2026-08-31
+  // via the TB2.1 SearchTools dead-door). CORE ships the template itself
+  // (build-synced from the repo root) and is a dependency of every entry point,
+  // so this fallback makes the seed unconditional for any current or future bin.
+  const coreOwnRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   const examplePath = [
     packageRoot ? path.join(packageRoot, '.env.example') : undefined,
     path.join(cwd, '.env.example'),
+    path.join(coreOwnRoot, '.env.example'),
   ].find((p): p is string => !!p && fs.existsSync(p));
   if (examplePath) {
     const seedTargets = [

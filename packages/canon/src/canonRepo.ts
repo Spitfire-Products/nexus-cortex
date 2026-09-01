@@ -165,16 +165,46 @@ export function guardedPush(git: (args: string[]) => string, label: string, maxA
  * COMPLETE one — the mid-checkout race that fed both mass-deletion incidents
  * is structurally closed. Cleans up the temp dir on failure.
  */
-export function atomicClone(repoUrl: string, storePath: string, label: string): void {
+export function atomicClone(repoUrl: string, storePath: string, label: string, scope?: string[]): void {
   const tmp = `${storePath}.cloning-${process.pid}`;
   fs.rmSync(tmp, { recursive: true, force: true });
+  // PARTIAL clone by default (--filter=blob:none): the store's git history is
+  // metadata-only and historical blobs are fetched on demand (`canon pull` of an
+  // archived session still works — git promisor fetch). On a multi-GB store this
+  // roughly HALVES the clone (measured 5.1G -> 2.3G) and stops growing with
+  // history — critical for quota'd /tmp and per-container storage billing, where
+  // every fresh container/repl re-clone paid the full-history cost (2026-09-01;
+  // the repl store ran partial for days with add/commit/push + rebase-retry all
+  // working natively). Escape hatch: CANON_FULL_CLONE=true restores a full clone
+  // (e.g. offline archives / mirrors that must not depend on the remote).
+  //
+  // SCOPED clone (scope !== undefined): cone-mode sparse checkout limited to the
+  // given top-level dirs — a SYNC-ONLY store (a container capturing its own
+  // harness leg) materializes ~its leg instead of the whole 2.3G surface
+  // (measured: native/nexus-cortex ≈380M vs 2.3G full surface). Cone mode keeps
+  // every root-level file (HARNESSES.json, .gitattributes) plus files in cone
+  // ancestors (native/SKIPPED.md), so sync's config + skip-log still work.
+  // scope=[] = root files only (the bootstrap for auto-scoping: read config
+  // first, then sparseAdd the discovered legs). Full-surface verbs
+  // (translate/graph/artifacts) REFUSE scoped stores — see requireFullSurfaceStore.
+  const filterArgs = process.env.CANON_FULL_CLONE === 'true' ? [] : ['--filter=blob:none'];
+  const scoped = scope !== undefined;
+  const cloneArgs = scoped ? [...filterArgs, '--no-checkout'] : filterArgs;
   try {
-    execFileSync('git', [...gitAuthArgs(), 'clone', '-q', repoUrl, tmp], {
+    execFileSync('git', [...gitAuthArgs(), 'clone', '-q', ...cloneArgs, repoUrl, tmp], {
       encoding: 'utf8',
       maxBuffer: 256 * 1024 * 1024,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    if (scoped) {
+      const g = (args: string[]) => execFileSync('git', ['-C', tmp, ...args], {
+        encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      g(['sparse-checkout', 'init', '--cone']);
+      if (scope.length > 0) g(['sparse-checkout', 'set', ...scope]);
+      g(['checkout', '-q']);
+    }
     // A racing process may have completed its own clone while ours ran — keep
     // theirs (it is complete by the same invariant) and discard ours.
     if (fs.existsSync(`${storePath}/.git`)) {
@@ -187,5 +217,41 @@ export function atomicClone(repoUrl: string, storePath: string, label: string): 
     const stderr = redactRepoUrl(String((e as { stderr?: string }).stderr ?? (e as Error).message ?? e));
     console.error(`[${label}] clone FAILED: ${stderr.trim().split('\n').pop()}`);
     throw e;
+  }
+}
+
+/** True when the store is a cone-scoped (sparse) clone — a SYNC-ONLY store. */
+export function isScopedStore(storePath: string): boolean {
+  try {
+    const v = execFileSync('git', ['-C', storePath, 'config', '--get', 'core.sparseCheckout'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    return v === 'true';
+  } catch { return false; }
+}
+
+/** Widen a scoped store's cone (idempotent no-op for already-included dirs). */
+export function sparseAdd(storePath: string, dirs: string[], label: string): void {
+  if (dirs.length === 0) return;
+  try {
+    execFileSync('git', ['-C', storePath, 'sparse-checkout', 'add', ...dirs], {
+      encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (e) {
+    console.error(`[${label}] sparse-checkout add failed: ${String((e as Error).message).split('\n')[0]}`);
+    throw e;
+  }
+}
+
+/** Full-surface verbs (translate/graph/artifacts) must never run on a scoped
+ *  store — they would read a PARTIAL native surface and derive a wrong
+ *  canonical line/graph from it. Fail fast with the remedy. */
+export function requireFullSurfaceStore(storePath: string, label: string): void {
+  if (isScopedStore(storePath)) {
+    throw new Error(
+      `[${label}] the store at ${storePath} is a SCOPED (sparse) sync-only clone — ` +
+      `this verb needs the full surface. Re-clone without CANON_SYNC_SCOPE ` +
+      `(or run: git -C ${storePath} sparse-checkout disable) and retry.`,
+    );
   }
 }

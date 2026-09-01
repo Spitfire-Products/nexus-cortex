@@ -697,7 +697,10 @@ export class CortexOrchestrator {
     if (this.liftNudgeDelivered) return;
     if (!resolveLiftNudge(process.env, model?.liftNudge)) return; // card > env > false
     if (!this.effectiveDeferredLoading) return; // deferred off ⇒ no hidden tools to point at
-    this.liftNudgeDelivered = true; // one-shot even if assembly fails
+    // NOTE: the one-shot flag is set ONLY on successful delivery (inside the
+    // shape-match branch below) — setting it up-front consumed the nudge even
+    // when the last-message shape check failed, silently losing it for the
+    // whole session (found in the 2026-08-31 nudge-delivery audit).
     try {
       const hidden = this.toolFilter.getDeferredToolNames(allTools);
       const parts: string[] = [];
@@ -716,6 +719,7 @@ export class CortexOrchestrator {
           type: 'text',
           text: `<system-reminder>\n${parts.join(' ')}\n</system-reminder>`
         });
+        this.liftNudgeDelivered = true; // one-shot: consumed only on ACTUAL delivery
         if (this.config.debug) {
           console.log(`[Anchor] lift nudge delivered (${parts.join(' ').length} chars, ${hidden.length} hidden tools)`);
         }
@@ -843,7 +847,16 @@ export class CortexOrchestrator {
     // The closure captures `this` so it resolves the active model's naming
     // convention at call-time — names in SearchTools results match the tools
     // array the model sees (e.g. snake_case for XAI, PascalCase for Anthropic).
-    if (this.config.enableDeferredToolLoading) { // constructor setup — base capability, not per-turn
+    // 🔴 UNCONDITIONAL (was gated on config.enableDeferredToolLoading): the tool
+    // SURFACE decides deferred per-turn via the three-source resolveDeferredLoading
+    // (env/card/settings-default → effectiveDeferredLoading) while this gate
+    // read only the LEGACY config flag — two sources of truth. Whenever the config
+    // flag was unset but deferred resolved ON (its default), SearchTools was OFFERED
+    // to the model with an UNWIRED executor: every call returned "Tool provider not
+    // configured" (TB2.1 bench: 29/30 calls dead across 16 tasks, def-a1d888ee2d).
+    // Wiring costs nothing when SearchTools is never called — there is no reason to
+    // gate it, and an offered-but-dead tool must be structurally impossible.
+    {
       const searchExecutor = this.executorRegistry.getExecutor('SearchTools') as Record<string, any> | undefined;
       if (searchExecutor && typeof searchExecutor.setToolProvider === 'function') {
         const namingHandler = new ToolNamingHandler();
@@ -876,6 +889,25 @@ export class CortexOrchestrator {
               schema: (t as any).schema,
             }));
         });
+      }
+    }
+
+    // Wire WebFetch's provider-agnostic fallback summarizer (same injection
+    // pattern as SearchTools above, and unconditional for the same reason).
+    // Without this, keyless-Google deployments could only dump raw page content;
+    // with it, the fetched content is processed by the SAME helper layer as
+    // every other auxiliary task (deepseek/gemma/…, thinking-off, cheap).
+    {
+      const webFetchExecutor = this.executorRegistry.getExecutor('WebFetch') as Record<string, any> | undefined;
+      if (webFetchExecutor && typeof webFetchExecutor.setHelperSummarizer === 'function') {
+        webFetchExecutor.setHelperSummarizer((content: string, prompt: string, url: string) =>
+          this.helperMiddleware.summarizeWebContent({
+            content,
+            prompt,
+            url,
+            helperModelId: this.config.reactiveMentorship?.helperModelId,
+          }),
+        );
       }
     }
 
@@ -8213,10 +8245,21 @@ export class CortexOrchestrator {
     const store = this.getDecisionStore();
     if (!store) return undefined;
     try {
-      const outcomes = await store.recentOutcomes(resolveThrashConfig().window);
-      return resolveThrashState(outcomes, turnCount).thrashing
-        ? { type: 'tool', name: 'AskForAdvice' }
-        : undefined;
+      const cfg = resolveThrashConfig();
+      // Windowed density + the dilution-immune CUMULATIVE session-failure count:
+      // real retry-loops interleave successful probes between failing attempts
+      // (measured live: db-wal-recovery = 15 fails/108 calls but max 2 per
+      // 6-window → the windowed condition alone fires at ZERO positions on the
+      // exact class this trigger exists for). failureCount is session-scoped.
+      const [outcomes, cumFailures] = await Promise.all([
+        store.recentOutcomes(cfg.window),
+        store.failureCount(sessionId),
+      ]);
+      const state = resolveThrashState(outcomes, turnCount, cfg, cumFailures);
+      if (state.thrashing && this.config.debug) {
+        console.log(`[Mentor] thrash detected (trigger: ${state.trigger}, windowFails: ${state.failures}, cumFails: ${cumFailures}) — forcing AskForAdvice`);
+      }
+      return state.thrashing ? { type: 'tool', name: 'AskForAdvice' } : undefined;
     } catch {
       return undefined; // fail-open: never let the thrash read break a turn
     }
@@ -8359,6 +8402,53 @@ export class CortexOrchestrator {
               toolUse.name, af.count, af.distinctInputs, af.recent);
             if (apReminder) {
               augmented = { ...result, content: apReminder + result.content };
+            }
+          }
+        }
+        // AUTO-CONSULT (BUILD 1b — the DeepSeek-safe retry-loop breaker). Forced
+        // tool_choice is PROVIDER-UNRELIABLE on DeepSeek: with ANY prior tool_call
+        // in the message history the API ignores a forced/required choice and
+        // echoes the history tool (mapped 2026-08-30: 0 prior calls = honored,
+        // >=1 = echoed; independent of parallel_tool_calls/top_p/thinking). So on
+        // high-confidence thrash the orchestrator consults the mentor ITSELF
+        // (executeAskForAdvice: self-contained, rate-limited, banks the episode)
+        // and delivers the hint through the tool-result reminder channel — the
+        // delivery that provably works. Cumulative trigger only (dilution-immune;
+        // cumFailures is a sound lower bound on session tool calls, so it also
+        // serves as turnCount). Gated CORTEX_MENTOR_AUTO (default off — ship dark).
+        if (
+          process.env.CORTEX_MENTOR_AUTO === 'true' &&
+          this.config.reactiveMentorship?.enabled &&
+          outcome.status !== 'ok'
+        ) {
+          const sessionId = this.currentSessionId ?? 'unknown';
+          if ((this.mentorConsultCounts.get(sessionId) ?? 0) < resolveMentorConfig().maxConsults) {
+            const cfg = resolveThrashConfig();
+            const [outcomes, priorFailures] = await Promise.all([
+              store.recentOutcomes(cfg.window),
+              store.failureCount(sessionId),
+            ]);
+            // Off-by-one: this hook runs BEFORE the current call is recorded, so
+            // the store's tail/count exclude the in-flight FAILURE we are handling
+            // (outcome.status !== 'ok' is guaranteed here). Append it so the tail
+            // is currently-failing and the cumulative count includes it.
+            outcomes.push(false);
+            const cumFailures = priorFailures + 1;
+            const state = resolveThrashState(outcomes, cumFailures, cfg, cumFailures);
+            if (state.thrashing) {
+              const consult = await this.executeAskForAdvice(undefined);
+              const rung = (consult.metadata as { rung?: string } | undefined)?.rung;
+              if (consult.llmContent && rung !== 'bounce' && rung !== 'ratelimited') {
+                if (this.config.debug) {
+                  console.log(`[Mentor] AUTO-CONSULT fired (trigger: ${state.trigger}, cumFails: ${cumFailures}, rung: ${rung}) — injecting hint`);
+                }
+                augmented = {
+                  ...augmented,
+                  content:
+                    `<system-reminder>MENTOR ADVICE (auto-consult after ${cumFailures} failed attempts this session): ` +
+                    `${consult.llmContent}</system-reminder>\n\n` + augmented.content,
+                };
+              }
             }
           }
         }

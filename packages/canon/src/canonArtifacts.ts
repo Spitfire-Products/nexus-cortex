@@ -18,7 +18,7 @@
  *
  * @module canon/canonArtifacts
  */
-import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush, requireFullSurfaceStore } from './canonRepo.js';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -85,6 +85,8 @@ export async function canonArtifacts(o: CanonArtifactsOptions = {}): Promise<Can
     console.log(`[canon-artifacts] no store at ${STORE} — cloning ${redactRepoUrl(CANON_REPO)}`);
     atomicClone(CANON_REPO, STORE, 'canon-artifacts');
   }
+  // Artifact capture writes across the whole surface — refuse scoped stores.
+  requireFullSurfaceStore(STORE, 'canon-artifacts');
   const incr: Record<string, string> = fs.existsSync(MANIFEST_PATH)
     ? JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8')) : {};
   let captured = 0, unchanged = 0;

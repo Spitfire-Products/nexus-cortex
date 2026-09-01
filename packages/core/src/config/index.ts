@@ -11,3 +11,4 @@ export * from './InteractiveConfigurator.js';
 export * from './MentorshipConfigService.js';
 export * from './AnthropicCredentialService.js';
 export * from './RuntimeConfigRegistry.js';
+export { collectEffectiveConfig, type EffectiveConfigGroup, type EffectiveLever } from "./effectiveConfig.js";

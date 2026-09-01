@@ -63,7 +63,12 @@ export class LoopLadder {
     this.pollEnabled = (process.env.CORTEX_POLL_GUARD ?? '').trim().toLowerCase() === 'true';
     this.nearDupEnabled = (process.env.CORTEX_NEARDUP_BREAKER ?? '').trim().toLowerCase() === 'true';
     this.nearDupWindow = envInt('NEARDUP_WINDOW', 20);
-    this.nearDupNudgeAt = envInt('NEARDUP_NUDGE_AT', 8);
+    // Default 12 (was 8): the tb21g guarded run proved the diversify nudge MISFIRES on
+    // persistence-wins grinds (rstan-to-pystan regressed on BOTH arms: baseline passed
+    // via an 87-call grind; nudged runs got steered off it and failed). 12 gives
+    // genuine grinds more rope while still catching runaway loops (engaged help:harm
+    // was 3.75:1 at 8 — the tune trims the harm side). Ledger: r-tb21g-guarded.
+    this.nearDupNudgeAt = envInt('NEARDUP_NUDGE_AT', 12);
   }
 
   /** 14b: outcome-agnostic windowed near-dup check. Returns a result when the

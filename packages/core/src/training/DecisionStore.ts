@@ -380,6 +380,32 @@ export class DecisionStore {
     return out.slice(-limit);
   }
 
+  /**
+   * Total FAILED non-event tool decisions for ONE session — the dilution-immune
+   * cumulative thrash signal (thrashDetector cumFailThreshold). 🔴 MUST be
+   * session-scoped: a long-lived local store holds cross-session history and an
+   * unscoped count would trip the cumulative threshold instantly on session 2.
+   * (Bench containers get a fresh store per task, where scope is a no-op.)
+   */
+  async failureCount(sessionId: string): Promise<number> {
+    if (!sessionId) return 0;
+    const readMaybe = async (p: string): Promise<string> => {
+      try { return await fs.readFile(p, 'utf-8'); }
+      catch (err: any) { if (err.code === 'ENOENT') return ''; throw err; }
+    };
+    const rotated = await readMaybe(this.storePath + '.1');
+    const main = await readMaybe(this.storePath);
+    let n = 0;
+    for (const line of (rotated + main).split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const d = JSON.parse(line) as Decision;
+        if (!d.kind && d.sessionId === sessionId && d.success === false) n++;
+      } catch { /* torn line — skip */ }
+    }
+    return n;
+  }
+
   /** All decisions for a tool, oldest->newest (rotated gen first). */
   private async readAllForTool(toolName: string): Promise<Decision[]> {
     const readMaybe = async (p: string): Promise<string> => {

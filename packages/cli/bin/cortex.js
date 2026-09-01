@@ -30,6 +30,18 @@ import { homedir } from 'os';
 import { createRequire } from 'module';
 import { Agent as UndiciAgent } from 'undici';
 
+// 🔴 ENV BOOTSTRAP FIRST (operator directive: seed+load .env "no matter how
+// invoked"). This bin historically NEVER ran bootstrapEnv — it read only the raw
+// shell env, so .env values (DEFAULT_MODEL_ID, CORTEX_CLIENT_FETCH_TIMEOUT_MS, …)
+// never reached the CLI's own pre-send decisions even though the server it spawns
+// loaded them. Must run BEFORE any process.env read below. Best-effort.
+try {
+  const { bootstrapEnv } = await import('@nexus-cortex/core');
+  const { fileURLToPath: __f } = await import('node:url');
+  const { dirname: __d, resolve: __r } = await import('node:path');
+  bootstrapEnv(__r(__d(__f(import.meta.url)), '..')); // bin/.. = the cli package root
+} catch { /* core unresolvable or read-only fs — proceed with shell env */ }
+
 // Non-streaming turns send response headers only when the WHOLE turn completes,
 // so node fetch's built-in undici defaults (headersTimeout 300s) kill any slow
 // local-model turn with a bare "fetch failed" BEFORE our AbortSignal (10 min)

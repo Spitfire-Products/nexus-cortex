@@ -1260,6 +1260,39 @@ Produce the FULL updated CORTEX.md. Rules, in priority order:
     return (out || '').replace(/^```[a-z]*\n/, '').replace(/\n```\s*$/, '').trim();
   }
 
+  /**
+   * WebFetch fallback summarization (provider-agnostic). The tool's original
+   * fallback hard-required a GOOGLE/GEMINI key to process fetched content —
+   * keyless/single-key deployments (e.g. DeepSeek-only) had WebFetch dead on
+   * every path even with the content in hand (def-268e614134). This routes the
+   * summarization through the SAME helper layer as every other auxiliary task,
+   * so whatever cheap helper the deployment has (deepseek/gemma/…) serves it.
+   */
+  async summarizeWebContent(context: {
+    content: string;
+    prompt: string;
+    url?: string;
+    helperModelId?: string;
+  }): Promise<string> {
+    const body = `The user requested the following from a fetched web page${context.url ? ` (${context.url})` : ''}: "${context.prompt}"
+
+Below is the raw fetched page content. Answer the request using ONLY this content. Do not attempt to access the URL.
+
+---
+${context.content}
+---`;
+    return this.generateGuidance(
+      {
+        surface: 'web-fetch-summary',
+        persona: 'You are a precise web-content processor: extract and answer exactly what was requested from the provided page content.',
+        task: 'Answer the request from the fetched content. Be concise and factual; quote exact values where relevant.',
+        outputBudgetTokens: 700,
+      },
+      body,
+      context.helperModelId,
+    );
+  }
+
   async generateErrorGuidance(context: {
     toolName: string;
     toolUseId: string;

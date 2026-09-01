@@ -1,6 +1,6 @@
 {
   "name": "@nexus-cortex/core",
-  "version": "4.87.1",
+  "version": "4.88.0",
   "description": "Core orchestration library implementing Claude CLI architecture patterns",
   "type": "module",
   "main": "./dist/index.js",
@@ -33,7 +33,7 @@
   },
   "scripts": {
     "build": "npm run clean && tsc && npm run copy-assets",
-    "copy-assets": "mkdir -p dist/system-messages/messages && cp src/system-messages/*.json dist/system-messages/ && cp -r src/system-messages/messages/*.md dist/system-messages/messages/",
+    "copy-assets": "mkdir -p dist/system-messages/messages && cp src/system-messages/*.json dist/system-messages/ && cp -r src/system-messages/messages/*.md dist/system-messages/messages/ && cp ../../.env.example ./.env.example",
     "clean": "rm -rf dist",
     "test": "vitest",
     "test:ci": "vitest run --coverage",
@@ -47,8 +47,8 @@
     "@google/generative-ai": "^0.2.1",
     "@gradio/client": "^2.3.1",
     "@modelcontextprotocol/sdk": "^1.20.2",
-    "@nexus-cortex/executors": "4.87.1",
-    "@nexus-cortex/types": "4.87.1",
+    "@nexus-cortex/executors": "4.88.0",
+    "@nexus-cortex/types": "4.88.0",
     "@types/uuid": "^10.0.0",
     "ajv": "^8.12.0",
     "chokidar": "^3.6.0",
@@ -56,7 +56,7 @@
     "tiktoken": "^1.0.22",
     "undici": "^5.28.4",
     "uuid": "^13.0.0",
-    "nexus-canon": "1.10.0"
+    "nexus-canon": "1.11.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
@@ -75,7 +75,8 @@
     "dist",
     "README.md",
     "LICENSE",
-    "NOTICE"
+    "NOTICE",
+    ".env.example"
   ],
   "repository": {
     "type": "git",

@@ -388,7 +388,19 @@ export class ChatCompletionsAPIHelperAdapter extends BaseHelperAdapter {
       // Helper tasks are simple → no reasoning wanted (reliable content, cheaper, faster).
       // Only sent when the card specifies reasoning.defaultEffort, so non-DeepSeek helpers
       // are unaffected.
-      ...(config.reasoning?.defaultEffort ? { reasoning_effort: config.reasoning.defaultEffort } : {})
+      ...(config.reasoning?.defaultEffort
+        ? { reasoning_effort: config.reasoning.defaultEffort }
+        : config.provider === 'deepseek' && config.reasoning?.supported
+          // 🔴 Registry-resolved deepseek helpers (e.g. MENTORSHIP_HELPER_MODEL=
+          // deepseek-v4-pro hits the MAIN card via getHelperModelConfig priority 1,
+          // which has no defaultEffort) ran with thinking ON — the small helper
+          // budget went entirely to reasoning_content and message.content came back
+          // EMPTY (mentor hints were silently blank; found 2026-08-30 via the
+          // auto-consult seeded test). The helper ROLE never wants thinking:
+          // explicitly disable it (DeepSeek OpenAI-format toggle, same as the
+          // forced-tool_choice path).
+          ? { thinking: { type: 'disabled' } }
+          : {})
     };
 
     // Make real API call

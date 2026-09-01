@@ -52,6 +52,52 @@ describe('classifyToolOutcome', () => {
     expect(a.exactHash).not.toBe(b.exactHash);
     expect(a.approachHash).toBe(b.approachHash);
   });
+
+  // ── Masked-exit failures (the 4.88 gap): a wrapper/loop can reset the overall
+  //    script exit to 0 while an inner command genuinely failed. ──
+  it('failed: ShellTool marker present even though overall exit is 0 (pipe/wrapper reset)', () => {
+    // `failing-cmd | tail` (no pipefail): tail exits 0, but ShellTool still
+    // emitted its failure marker for the inner command.
+    const o = classifyToolOutcome(
+      'Bash',
+      { command: 'make 2>&1 | tail -5' },
+      res({ content: 'gcc: fatal error\nCommand failed with exit code 2', metadata: { exitCode: 0 } }),
+    );
+    expect(o.status).toBe('failed');
+  });
+
+  it('failed: masked command-not-found inside an exit-0 for-loop (the observed case)', () => {
+    const o = classifyToolOutcome(
+      'Bash',
+      { command: 'for f in --a --b; do frobnicate $f; ec=$?; echo "exit $ec"; done' },
+      res({
+        content: '=== frobnicate --a ===\nbash: frobnicate: command not found\nexit 127\n=== frobnicate --b ===\nbash: frobnicate: command not found\nexit 127',
+        metadata: { exitCode: 0 },
+      }),
+    );
+    expect(o.status).toBe('failed');
+    expect(o.family).toBeTruthy();
+  });
+
+  it('ok (FP guard): legit `|| echo "not found"` fallback that SUCCEEDED must NOT misfire', () => {
+    // No colon-prefixed shell 127 form → the model handled a missing tool and
+    // the command succeeded. Marking this failed would fire guards on a success.
+    const o = classifyToolOutcome(
+      'Bash',
+      { command: 'command -v jq >/dev/null || echo "jq not found, using python"' },
+      res({ content: 'jq not found, using python', metadata: { exitCode: 0 } }),
+    );
+    expect(o.status).toBe('ok');
+  });
+
+  it('ok (FP guard): grepping output that mentions failure words but exit 0', () => {
+    const o = classifyToolOutcome(
+      'Bash',
+      { command: 'grep -c error build.log' },
+      res({ content: '3', metadata: { exitCode: 0 } }),
+    );
+    expect(o.status).toBe('ok');
+  });
 });
 
 describe('approachHash (normalized near-duplicate collisions)', () => {

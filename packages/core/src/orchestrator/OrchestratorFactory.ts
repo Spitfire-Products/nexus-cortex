@@ -10,6 +10,7 @@
 
 import path from 'path';
 import { CortexOrchestrator, type OrchestratorConfig } from './CortexOrchestrator.js';
+import { bootstrapEnv } from '../config/SettingsLoader.js';
 import { AdapterRegistry } from '../adapters/AdapterRegistry.js';
 import { GatewayTranslationLayer } from '../adapters/GatewayTranslationLayer.js';
 import { ModularModelRegistry } from '../models/registry/ModularModelRegistry.js';
@@ -187,10 +188,28 @@ async function fsReadJson(filePath: string): Promise<any> {
  * @param middlewareConfig - Optional middleware configuration
  * @returns Configured orchestrator instance
  */
+/** Once-per-process guard for the library-level env bootstrap below. */
+let envBootstrapped = false;
+
 export async function createOrchestrator(
   config: OrchestratorConfig,
   middlewareConfig: MiddlewareConfig = {}
 ): Promise<CortexOrchestrator> {
+  // 🔴 LIBRARY-LEVEL ENV BOOTSTRAP (operator directive: the .env.example→.env seed
+  // + load must happen "no matter how the library or published npm package is
+  // invoked"). Entry-point bins historically had to call bootstrapEnv() themselves
+  // and THREE never did (the main `cortex` bin, canon, meta) while two that did had
+  // no template to seed from — so whole invocation classes (bench task containers,
+  // CLI agent-mode) ran with no .env at all. This factory is the one gate every
+  // brain-usage path passes through, so seeding here makes the directive true by
+  // construction. Idempotent + memoized (surfaces that already bootstrapped earlier
+  // in the process, e.g. the server, are unaffected — first-wins loading never
+  // clobbers existing env). Best-effort: env bootstrap failure must never block
+  // orchestrator creation.
+  if (!envBootstrapped) {
+    envBootstrapped = true;
+    try { bootstrapEnv(); } catch { /* read-only fs etc. — proceed with process env */ }
+  }
   // Phase 4.0: Context-Aware Storage Resolution
   // If storageDir not explicitly set, use context-aware resolution
   let resolvedStorageDir: string;

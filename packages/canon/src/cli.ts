@@ -3,6 +3,7 @@
  * (The full themed experience lives in the nexus-cortex harness as
  * `cortex canon <verb>`; this bin serves harness-less installs.)
  */
+import { canonArchive } from './canonArchive.js';
 import { canonArtifacts } from './canonArtifacts.js';
 import { canonGraph } from './canonGraph.js';
 import { canonInit } from './canonInit.js';
@@ -18,11 +19,12 @@ Usage: nexus-canon <verb> [options]
 
 Verbs:
   init [dir] [--remote <url>]         scaffold a canon store repository
-  sync [--dry-run] [--store <dir>]    native harness sessions -> store (scrubbed)
+  sync [--dry-run] [--store <dir>] [--scope auto|<labels>]  native harness sessions -> store (scrubbed); --scope = sparse sync-only clone of just those legs (auto = harnesses present on this machine)
   translate [--dry-run] [--store <dir>]  native -> canonical line + projections
   list [--all] [--project N/A] [--store <dir>]  list canon sessions
   pull <uuid> [--native] [--to <dir>] [--project <cwd>] [--harness <h>] [--force] [--store <dir>]  materialize a session (--native = byte-exact original-harness files, e.g. into ~/.claude/projects for claude --resume)
   artifacts [--dry-run] [--store <dir>]  capture capability artifacts
+  archive [--days N] [--dry-run] [--no-push] [--store <dir>]  move sessions older than N days (default 30) to archive/ (remote keeps all; local goes sparse + FLAT)
   tools [--store <dir>] [--json]      observed tool inventory + cross-harness concept map
   graph [--project <id>] [--merge-graph <path>] [--cognition] [--include-thought-text] [--dry-run] [--store <dir>]
   watch [--debounce <ms>] [--dry-run] [--store <dir>]  watch harness roots & auto-sync on change
@@ -52,7 +54,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
     case 'sync':
-      await canonSync({ dryRun: flag('--dry-run'), store: opt('--store') });
+      await canonSync({ dryRun: flag('--dry-run'), store: opt('--store'), scope: opt('--scope') });
       return 0;
     case 'translate': {
       const r = await canonTranslate({ dryRun: flag('--dry-run'), store: opt('--store') });
@@ -99,6 +101,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     case 'graph':
       await canonGraph({ store: opt('--store'), project: opt('--project'), mergeGraph: opt('--merge-graph'), dryRun: flag('--dry-run'), cognition: flag('--cognition'), includeThoughtText: flag('--include-thought-text') });
       return 0;
+    case 'archive': {
+      const d = opt('--days');
+      const days = d ? parseInt(d, 10) : undefined;
+      if (d && (isNaN(days!) || days! < 1)) { console.error('--days must be a positive integer'); return 2; }
+      return canonArchive({ store: opt('--store') ?? '/tmp/canon-store', days, dryRun: flag('--dry-run'), push: !flag('--no-push') });
+    }
     case 'watch': {
       const debounceMs = opt('--debounce');
       const debounce = debounceMs ? parseInt(debounceMs, 10) : undefined;

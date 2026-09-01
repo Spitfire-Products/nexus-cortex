@@ -27,7 +27,7 @@
  *
  * @module canon/canonGraph
  */
-import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush, requireFullSurfaceStore } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { discoverCanonSessions, type CanonSession } from './canonPull.js';
@@ -189,6 +189,8 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
     console.log(`[canon-graph] no store at ${STORE} — cloning ${redactRepoUrl(repo)}`);
     atomicClone(repo, STORE, 'canon-graph');
   }
+  // Graphs derive from the FULL surface — refuse scoped sync-only stores.
+  requireFullSurfaceStore(STORE, 'canon-graph');
   const projects = deriveProjectSessionMap(STORE);
   const sessions = discoverCanonSessions(STORE);
   for (const s of sessions) {

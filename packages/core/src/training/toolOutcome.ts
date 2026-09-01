@@ -33,10 +33,31 @@ interface ToolResultLike {
 }
 
 /** Content signatures that mean "the command ran and failed" even when the
- *  result carries no exit metadata (older executors, remote shells). */
+ *  result carries no exit metadata (older executors, remote shells). These are
+ *  ShellTool-EMITTED markers — they appear ONLY when the tool detected a real
+ *  failure, so they are trusted regardless of the overall exit code (a
+ *  `fail | tail` pipe or `fail; echo` trailer can reset the script exit to 0
+ *  while the inner command genuinely failed). Zero false-positive: our own
+ *  tool's output, never arbitrary user text. */
 const FAILURE_SIGNATURES = [
   /Command failed with exit code \d+/,
   /Command timed out after/i,
+];
+
+/** SHELL-emitted signatures of an unrecoverable inner failure that a masking
+ *  construct (for-loop capturing `ec=$?`, `|| true`, `cmd | tail` WITHOUT
+ *  pipefail) hid from the overall exit code (which reads 0). Deliberately
+ *  NARROW — only forms a genuine success would essentially never print — to
+ *  avoid the over-classification the guards are sensitive to
+ *  (docs/UNIFIED_OUTCOME_LADDER.md). Extend only with equally-unambiguous
+ *  shell-emitted forms. */
+const MASKED_FAILURE_SIGNATURES = [
+  // bash/sh exit-127: "<cmd>: command not found" (the colon-prefixed shell
+  // form). A legit `|| echo "not found"` fallback lacks the colon-prefixed
+  // shell message, so it does NOT misfire.
+  /^[^\n]*: command not found\b/m,
+  // Hard crashes the shell surfaces on a line of their own.
+  /^[^\n]*: Segmentation fault\b/m,
 ];
 
 /** Normalize an input's text the way errorFamily normalizes error snippets:
@@ -89,10 +110,20 @@ export function classifyToolOutcome(
     status = 'error';
   } else {
     const exit = result.metadata?.exitCode;
-    if (typeof exit === 'number' && exit !== 0) status = 'failed';
-    else if (typeof exit === 'number') status = 'ok';
-    else if (FAILURE_SIGNATURES.some((re) => re.test(content))) status = 'failed';
-    else status = 'ok';
+    if (typeof exit === 'number' && exit !== 0) {
+      // Non-zero exit is the primary, unambiguous failure signal.
+      status = 'failed';
+    } else if (FAILURE_SIGNATURES.some((re) => re.test(content))) {
+      // ShellTool's own failure marker present — trust it even when the overall
+      // exit is 0 (a pipe/wrapper reset it). Zero false-positive (our text).
+      status = 'failed';
+    } else if (MASKED_FAILURE_SIGNATURES.some((re) => re.test(content))) {
+      // Exit 0 (or absent) but the shell reported an unrecoverable inner failure
+      // a masking construct hid from the exit code. Narrow, shell-emitted forms.
+      status = 'failed';
+    } else {
+      status = 'ok';
+    }
   }
 
   return {

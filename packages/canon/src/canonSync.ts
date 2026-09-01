@@ -15,7 +15,7 @@
  *
  * @module canon/canonSync
  */
-import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush, isScopedStore, sparseAdd } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -28,6 +28,14 @@ export interface CanonSyncOptions {
   dryRun?: boolean;
   /** Store remote for the auto-clone (or env CANON_REPO). Unconfigured + no store = fail-fast. */
   repoUrl?: string;
+  /** SCOPED sync (or env CANON_SYNC_SCOPE): 'auto' = clone/materialize only the
+   *  legs whose harness roots exist on THIS machine (a container capturing its
+   *  own sessions gets ~its leg, not the whole multi-GB surface); or an explicit
+   *  comma list of harness labels ('nexus-cortex,browser-cortex'). Unset = full
+   *  surface (repl default — translate/graph need everything and REFUSE scoped
+   *  stores). Scoped stores are cone-mode sparse clones; root config files and
+   *  native/SKIPPED.md remain present (cone semantics). */
+  scope?: string;
 }
 
 export interface CanonSyncResult {
@@ -151,18 +159,33 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
   const MAX_BYTES = 50 * 1024 * 1024; // GitHub hard-rejects >100MB; margin for scrub growth
   const PART_BYTES = 25 * 1024 * 1024;
 
+  // Scoped-sync mode (see CanonSyncOptions.scope): 'auto' | 'label,label' | unset.
+  const SCOPE_RAW = (o.scope ?? process.env.CANON_SYNC_SCOPE ?? '').trim();
+  const SCOPE_AUTO = SCOPE_RAW === 'auto';
+  const SCOPE_LABELS = !SCOPE_AUTO && SCOPE_RAW
+    ? SCOPE_RAW.split(',').map((s) => s.trim()).filter(Boolean)
+    : null;
+
   if (!fs.existsSync(path.join(STORE, '.git'))) {
     // Working clone is disposable (quota lesson 2026-07-27: keep it OFF the
     // workspace quota — pass --store /tmp/canon-store); remote is the truth.
     const CANON_REPO = requireCanonRepo(o.repoUrl, STORE, 'canon-sync');
-    console.log(`[canon-sync] no store at ${STORE} — cloning ${redactRepoUrl(CANON_REPO)}`);
+    console.log(`[canon-sync] no store at ${STORE} — cloning ${redactRepoUrl(CANON_REPO)}${SCOPE_RAW ? ` (scoped: ${SCOPE_RAW})` : ''}`);
     // Atomic clone (temp dir + rename): the store path never holds a .git over
     // a partial checkout, so a concurrent canon verb can't operate on (and
     // commit!) a half tree — the 08-18/08-20 mass-deletion race. Auth-failure
     // hint (`could not read Username`/401 = missing/REVOKED GH_TOKEN; hosted:
     // re-save the canon store in CORTEX -> Connections) surfaces from the
     // helper's redacted error line.
-    atomicClone(CANON_REPO, STORE, 'canon-sync');
+    if (SCOPE_AUTO) {
+      // Bootstrap for auto-scope: root files only (HARNESSES.json travels in the
+      // store) — the discovered legs are sparse-added after config load below.
+      atomicClone(CANON_REPO, STORE, 'canon-sync', []);
+    } else if (SCOPE_LABELS) {
+      atomicClone(CANON_REPO, STORE, 'canon-sync', SCOPE_LABELS.map((l) => `native/${l}`));
+    } else {
+      atomicClone(CANON_REPO, STORE, 'canon-sync');
+    }
   }
 
   type Manifest = Record<string, { mtimeMs: number; size: number }>;
@@ -283,7 +306,27 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
   }
 
   // Generic capture over the declared sources.
-  const HARNESS_SOURCES = loadHarnessSources(STORE, HOME);
+  let HARNESS_SOURCES = loadHarnessSources(STORE, HOME);
+  if (SCOPE_AUTO || SCOPE_LABELS) {
+    // Resolve the active scope: 'auto' = harnesses with >=1 root present on THIS
+    // machine (a container only has its own); explicit = the listed labels.
+    const rootExists = (r: string | { label: string; path: string }) => {
+      const p = typeof r === 'string' ? r : r.path;
+      try { fs.statSync(p); return true; } catch { return false; }
+    };
+    const active = SCOPE_LABELS
+      ?? Object.entries(HARNESS_SOURCES)
+        .filter(([, src]) => src.roots.some(rootExists))
+        .map(([label]) => label);
+    // Widen the cone to the active legs (idempotent — safe on every run, and it
+    // heals a pre-existing scoped store whose local harness set grew).
+    if (isScopedStore(STORE)) sparseAdd(STORE, active.map((l) => `native/${l}`), 'canon-sync');
+    // Only capture in-scope harnesses: writes stay inside the sparse cone (an
+    // out-of-cone write would fight cone-mode `add -A` semantics).
+    const dropped = Object.keys(HARNESS_SOURCES).filter((l) => !active.includes(l));
+    if (dropped.length) console.log(`[canon-sync] scoped mode — capturing [${active.join(', ')}], skipping [${dropped.join(', ')}]`);
+    HARNESS_SOURCES = Object.fromEntries(Object.entries(HARNESS_SOURCES).filter(([l]) => active.includes(l)));
+  }
   for (const [label, src] of Object.entries(HARNESS_SOURCES)) {
     for (const r of src.roots) {
       const rootPath = typeof r === 'string' ? r : r.path;

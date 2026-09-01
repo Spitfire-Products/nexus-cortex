@@ -17,7 +17,7 @@
  *
  * @module canon/canonTranslate
  */
-import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, guardedPush } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, guardedPush, atomicClone, requireFullSurfaceStore } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
@@ -821,8 +821,13 @@ Until then their absence is stated here rather than implied.
     // workspace quota — pass --store /tmp/canon-store); remote is the truth.
     const CANON_REPO = requireCanonRepo(o.repoUrl, STORE, 'canon-translate');
     console.log(`[canon-translate] no store at ${STORE} — cloning ${redactRepoUrl(CANON_REPO)}`);
-    canonGit(null, 'canon-translate')(['clone', '-q', CANON_REPO, STORE]);
+    // atomicClone (NOT a raw clone): temp-dir+rename race safety AND the
+    // partial-clone default — this site previously full-cloned, dodging both.
+    atomicClone(CANON_REPO, STORE, 'canon-translate');
   }
+  // Translate derives the CANONICAL LINE from the full native surface — a
+  // scoped (sparse) sync-only store would silently produce a wrong/partial line.
+  requireFullSurfaceStore(STORE, 'canon-translate');
   const git = canonGit(STORE, 'canon-translate');
   blobs = blobMap();
 

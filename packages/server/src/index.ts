@@ -74,7 +74,7 @@ import { prRouter } from './routes/pr.js';
 import { configRouter } from './routes/config.js';
 
 // Import core library components
-import { createOrchestrator, DEFAULT_SETTINGS, type CortexOrchestrator } from '@nexus-cortex/core';
+import { createOrchestrator, DEFAULT_SETTINGS, collectEffectiveConfig, type CortexOrchestrator } from '@nexus-cortex/core';
 import { SandboxViewServer, TmuxViewServer, SessionPersistence, TmuxManager } from '@nexus-cortex/executors';
 import { resumeHFSpaceIfManaged, pauseHFSpaceIfManaged } from './hfSpaceLifecycle.js';
 
@@ -291,6 +291,39 @@ export class CortexV4Server {
     // Initialize TmuxViewServer routes (piggybacks on SandboxViewServer)
     const tmuxViewer = TmuxViewServer.getInstance();
     await tmuxViewer.initialize();
+
+    // EFFECTIVE CONFIG view (piggybacks like tmux) — the live "what is actually
+    // on?" per-lever dump (guards, loop control, dark features) with value +
+    // source. Same data as GET /health/config; this is the human-readable table.
+    this.viewServer.getApp().get('/config', (_req, res) => {
+      const groups = collectEffectiveConfig();
+      const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const rows = groups.map((g: any) => `
+        <h2>${esc(g.group)}</h2>
+        <table><thead><tr><th>Lever</th><th>Effective</th><th>Source</th><th>Code default</th><th>What it does</th></tr></thead><tbody>
+        ${g.levers.map((l: any) => `
+          <tr class="${l.active === true ? 'on' : l.active === false ? 'off' : ''}">
+            <td class="k">${esc(l.key)}</td>
+            <td class="v">${esc(l.effective)}${l.active === true ? ' <span class="pill pon">ON</span>' : l.active === false ? ' <span class="pill poff">OFF</span>' : ''}</td>
+            <td class="s ${l.source === 'env' ? 'senv' : ''}">${esc(l.source)}</td>
+            <td class="d">${esc(l.codeDefault)}</td>
+            <td class="w">${esc(l.what)}</td>
+          </tr>`).join('')}
+        </tbody></table>`).join('');
+      res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Effective Config</title><style>
+        body{background:#0a0e14;color:#c8d3e0;font:13px/1.5 ui-monospace,monospace;margin:0;padding:24px 32px}
+        h1{color:#5ccfe6;font-size:18px;margin:0 0 4px} .sub{color:#5a6a7a;margin-bottom:20px}
+        h2{color:#8a9bb0;font-size:13px;margin:22px 0 6px;border-bottom:1px solid #1d2836;padding-bottom:4px}
+        table{border-collapse:collapse;width:100%} th{color:#5a6a7a;text-align:left;font-weight:normal;padding:3px 10px 3px 0}
+        td{padding:3px 10px 3px 0;border-top:1px solid #131c28;vertical-align:top}
+        .k{color:#5ccfe6;white-space:nowrap} .v{white-space:nowrap} .d{color:#5a6a7a;white-space:nowrap}
+        .s{color:#5a6a7a} .senv{color:#ffd580} .w{color:#8a9bb0}
+        .pill{border-radius:3px;padding:0 5px;font-size:11px} .pon{background:#1c3a2a;color:#7fd88f} .poff{background:#3a1c1c;color:#d87f7f}
+        </style></head><body>
+        <h1>Effective Config — live process dump</h1>
+        <div class="sub">Source <b style="color:#ffd580">env</b> = explicitly set for this process; <b>code-default</b> = the var is absent and this is what the code does. Generated ${new Date().toISOString()} · JSON: <a style="color:#5ccfe6" href="/health/config">main-port /health/config</a></div>
+        ${rows}</body></html>`);
+    });
 
     // Recover persisted tmux sessions
     try {

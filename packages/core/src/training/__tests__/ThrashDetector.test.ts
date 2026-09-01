@@ -67,3 +67,53 @@ describe('thrashDetector', () => {
     expect(s.thrashing).toBe(true);
   });
 });
+
+describe('thrashDetector cumulative path (dilution-immune)', () => {
+  // The measured db-wal-recovery signature: failures diluted by successful
+  // probes — the windowed condition NEVER trips (max 2 fails per 6-window),
+  // but cumulative session failures keep climbing.
+  const dilutedWindow = [T, F, T, T, T, F]; // 2 fails in 6, tail failing
+
+  it('the WINDOWED condition alone stays silent on the diluted pattern (the measured gap)', () => {
+    const s = resolveThrashState(dilutedWindow, 100, cfg);
+    expect(s.thrashing).toBe(false);
+  });
+
+  it('FIRES via cumulative when session failures reach the threshold and tail is failing', () => {
+    const s = resolveThrashState(dilutedWindow, 100, cfg, 12);
+    expect(s.thrashing).toBe(true);
+    expect(s.trigger).toBe('cumulative');
+  });
+
+  it('does NOT fire cumulative below the threshold', () => {
+    const s = resolveThrashState(dilutedWindow, 100, cfg, 11);
+    expect(s.thrashing).toBe(false);
+  });
+
+  it('does NOT fire cumulative right after progress (tail success)', () => {
+    const s = resolveThrashState([T, F, T, T, F, T], 100, cfg, 20);
+    expect(s.thrashing).toBe(false); // currentlyFailing gate holds for cumulative too
+  });
+
+  it('does NOT fire cumulative before the turn floor', () => {
+    const s = resolveThrashState([F, F], 2, cfg, 20);
+    expect(s.thrashing).toBe(false);
+  });
+
+  it('undefined cumFailures = cumulative path disabled (backward compatible)', () => {
+    const s = resolveThrashState(dilutedWindow, 100, cfg, undefined);
+    expect(s.thrashing).toBe(false);
+  });
+
+  it('window trip labels trigger "window" and wins the label when both trip', () => {
+    const s = resolveThrashState([T, T, F, F, F, F], 10, cfg, 50);
+    expect(s.thrashing).toBe(true);
+    expect(s.trigger).toBe('window');
+  });
+
+  it('resolveThrashConfig reads CORTEX_THRASH_CUM_FAILS, defaults to 12', () => {
+    expect(resolveThrashConfig({} as NodeJS.ProcessEnv).cumFailThreshold).toBe(12);
+    expect(resolveThrashConfig({ CORTEX_THRASH_CUM_FAILS: '8' } as NodeJS.ProcessEnv).cumFailThreshold).toBe(8);
+    expect(resolveThrashConfig({ CORTEX_THRASH_CUM_FAILS: 'junk' } as NodeJS.ProcessEnv).cumFailThreshold).toBe(12);
+  });
+});

@@ -98,6 +98,16 @@ export interface WebFetchToolResult extends ToolResult {
 export class WebFetchTool extends BaseTool<WebFetchToolParams, WebFetchToolResult> {
   private genAI: GoogleGenAI | null = null;
 
+  /** Provider-agnostic summarizer injected by the orchestrator (HelperModelMiddleware
+   *  .summarizeWebContent) — same injection pattern as SearchToolsTool.setToolProvider.
+   *  Lets keyless-Google deployments process fetched content through whatever helper
+   *  model they DO have instead of failing or degrading to raw dumps. */
+  private helperSummarizer: ((content: string, prompt: string, url: string) => Promise<string>) | null = null;
+
+  setHelperSummarizer(fn: (content: string, prompt: string, url: string) => Promise<string>): void {
+    this.helperSummarizer = fn;
+  }
+
   constructor(private config: ExecutorConfig) {
     super(
       'WebFetch',
@@ -469,6 +479,46 @@ Include up to 20 URLs and instructions directly in the 'prompt' parameter. The t
 
       // Truncate to max length
       textContent = textContent.substring(0, MAX_CONTENT_LENGTH);
+
+      // 🔴 KEYLESS DEGRADATION LADDER (def-268e614134): this fallback path has
+      // already FETCHED the content successfully — the original code then threw
+      // at getGeminiClient when no Google key existed, discarding content we
+      // were holding (TB2.1: 14 errors across 10 tasks; single-key DeepSeek
+      // deployments had WebFetch 100% dead on every path). No Google key =>
+      // (1) PREFERRED: the orchestrator-injected provider-agnostic helper
+      //     summarizer (HelperModelMiddleware — routes to whatever cheap helper
+      //     model this deployment has: deepseek, gemma, …);
+      // (2) LAST RESORT: return the truncated raw content directly —
+      //     summarization is an enhancement, never a requirement.
+      if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_API_KEY) {
+        if (this.helperSummarizer) {
+          try {
+            const summary = await this.helperSummarizer(textContent, params.prompt, url);
+            if (summary && summary.trim()) {
+              return {
+                ...this.createSuccessResult(summary),
+                metadata: {
+                  executionTime: Date.now() - startTime,
+                  url,
+                  fallback: true,
+                  method: 'fallback-helper',
+                },
+              };
+            }
+          } catch { /* helper unavailable/failed — degrade to raw below */ }
+        }
+        return {
+          ...this.createSuccessResult(
+            `[Raw page content — no summarization model available]\n\n${textContent}`,
+          ),
+          metadata: {
+            executionTime: Date.now() - startTime,
+            url,
+            fallback: true,
+            method: 'fallback-raw',
+          },
+        };
+      }
 
       // Send to Gemini Flash for processing
       const genAI = this.getGeminiClient();
