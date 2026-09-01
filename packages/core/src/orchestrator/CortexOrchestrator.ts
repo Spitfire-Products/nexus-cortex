@@ -1727,6 +1727,9 @@ export class CortexOrchestrator {
     // read this turn (verifyCoordinates). Stage-2-grounded citations are the
     // trusted baseline a coordinate must map to.
     let lastEndTurnCitations: Array<{ reference: string; verbatim_source: string }> | undefined;
+    // EFFORT TAIL one-shot (def-efdbb67fd8): the first EndTurn of this turn has
+    // been bounced for a high-effort re-attestation cycle.
+    let effortTailBounced = false;
     let endTurnLastToolName: string | undefined; // for the cortex training record
     // R60: the ROUTING decision = the FIRST real tool called in response to the
     // user prompt, WITH ITS ACTUAL INPUT ARGS. Previously the router sample's
@@ -2631,6 +2634,34 @@ export class CortexOrchestrator {
           for (const tr of toolResults) {
             if (tr.tool_name !== 'EndTurn') continue;
             const etUse = toolUseBlocks.find((t: any) => t.name === 'EndTurn');
+            // EFFORT TAIL (def-efdbb67fd8, finish-discipline half): the FIRST
+            // EndTurn is the model's own "I'm done" declaration — generated at
+            // body effort. Bounce it ONCE ("verify at depth") and arm the effort
+            // pulse so the re-attestation cycle runs elevated: structure forces
+            // the check (the gate), effort funds it (the pulse). One-shot per
+            // turn; skipped when a thrash pulse is already active (chain already
+            // elevated). Rides the same is_error rejection channel as Stages
+            // 2/4/5; liveness bounded by the gate's existing fallback-accept.
+            // Requires CORTEX_ENDTURN_GATE (EndTurn must be offered). Ship dark.
+            if (
+              process.env.CORTEX_EFFORT_TAIL === 'true' &&
+              !effortTailBounced &&
+              this.effortPulseRemaining <= 0
+            ) {
+              effortTailBounced = true;
+              const tailTurns = Math.max(1, parseInt(process.env.CORTEX_EFFORT_TAIL_TURNS || '2', 10) || 2);
+              this.effortPulseRemaining = tailTurns;
+              tr.is_error = true;
+              tr.content =
+                'Before finishing: verify at depth. Re-read the original task statement; ' +
+                're-open and check each requirement against the ACTUAL files/outputs you produced this turn ' +
+                '(do not rely on memory of them); fix anything that does not match; then call EndTurn again ' +
+                'with the verified attestation.';
+              if (this.config.debug) {
+                console.log(`[EffortTail] first EndTurn bounced — re-attestation at elevated effort (${this.effortPulseRemaining} continuation(s))`);
+              }
+              continue;
+            }
             const cits = (etUse?.input as any)?.citations;
             lastEndTurnCitations = Array.isArray(cits) ? cits : undefined; // Stage 3 baseline
             const verdict = verifyCitationsGrounded(cits, thisTurnToolOutputs.join('\n'));
@@ -8496,6 +8527,15 @@ export class CortexOrchestrator {
             if (this.config.debug) {
               console.log(`[EffortPulse] armed (trigger: ${pState.trigger}, cumFails: ${pCum}) — next ${this.effortPulseRemaining} continuation(s) at elevated effort`);
             }
+            // Mechanism-engagement evidence (bench adjudication rule): bank the
+            // arm-fired fact in the decision store — console logs are not
+            // harvested, so without this the pulse arm cannot prove it fired.
+            void store.recordEvent({
+              sessionId: this.currentSessionId ?? 'unknown',
+              kind: 'effort_pulse',
+              toolName: toolUse.name,
+              detail: { trigger: pState.trigger, cumFailures: pCum, turns: this.effortPulseRemaining, level: process.env.CORTEX_EFFORT_PULSE_LEVEL || 'high' },
+            }).catch(() => {});
           }
         }
       } catch (err) {

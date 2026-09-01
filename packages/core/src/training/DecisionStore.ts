@@ -64,6 +64,7 @@ export type SteeringEventKind =
   | 'loop_escalation'
   | 'endturn_gate_fallback'
   | 'inaction_nudge'
+  | 'effort_pulse' // def-efdbb67fd8: think-harder ablation arm fired (mechanism-engagement evidence)
   // Item 10: doctrine-curation provenance (helper-curated CORTEX.md refresh
   // at session-start/lift boundaries; timeout = fail-open to previous doc).
   | 'doctrine_curation'
