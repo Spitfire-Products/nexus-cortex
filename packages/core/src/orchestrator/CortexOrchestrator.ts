@@ -3022,7 +3022,7 @@ export class CortexOrchestrator {
           temperature: options.parameters?.temperature,
           maxTokens: options.parameters?.maxTokens,
           topP: options.parameters?.topP,
-          reasoningEffort: options.parameters?.reasoningEffort, // GPT-5.1 reasoning level
+          reasoningEffort: this.consumeEffortPulse() ?? options.parameters?.reasoningEffort, // effort pulse > request param > card
           stream: options.streaming,
           staticSystemPrompt: this.currentStaticSystemPrompt, // R28
           conversationId: this.currentConversationId, // R28b
@@ -4882,7 +4882,7 @@ export class CortexOrchestrator {
             temperature: options.parameters?.temperature,
             maxTokens: options.parameters?.maxTokens,
             topP: options.parameters?.topP,
-            reasoningEffort: options.parameters?.reasoningEffort, // GPT-5.1 reasoning level
+            reasoningEffort: this.consumeEffortPulse() ?? options.parameters?.reasoningEffort, // effort pulse > request param > card
             stream: true, // STREAMING continuation
             staticSystemPrompt: this.currentStaticSystemPrompt, // R28
             conversationId: this.currentConversationId, // R28b
@@ -8267,6 +8267,18 @@ export class CortexOrchestrator {
     }
   }
 
+  /** EFFORT PULSE (ablation 'think harder' arm, def-efdbb67fd8): continuations
+   *  remaining at elevated reasoning effort after a cumulative-thrash trigger. */
+  private effortPulseRemaining = 0;
+
+  /** While the pulse is armed, continuation requests run at the elevated level
+   *  (CORTEX_EFFORT_PULSE_LEVEL, default 'high'); decrements per consumed request. */
+  private consumeEffortPulse(): 'low' | 'medium' | 'high' | undefined {
+    if (this.effortPulseRemaining <= 0) return undefined;
+    this.effortPulseRemaining -= 1;
+    return (process.env.CORTEX_EFFORT_PULSE_LEVEL || 'high') as 'low' | 'medium' | 'high';
+  }
+
   /** Honored AskForAdvice consults per session (rate-limit + rung state; persists across turns). */
   private mentorConsultCounts = new Map<string, number>();
 
@@ -8460,6 +8472,29 @@ export class CortexOrchestrator {
                     `${consult.llmContent}</system-reminder>\n\n` + augmented.content,
                 };
               }
+            }
+          }
+        }
+        // EFFORT PULSE trigger (def-efdbb67fd8, 'think harder' ablation arm): on
+        // cumulative thrash, escalate reasoning effort for the next N continuation
+        // requests — deep deliberation bought exactly at the stuck point. The
+        // introspective CONTRAST to the mentor's decorrelative consult: same
+        // trigger, same rstan gate (cumulative threshold), INDEPENDENT of
+        // CORTEX_MENTOR_AUTO so each ablation arm isolates cleanly. Ship dark.
+        if (process.env.CORTEX_EFFORT_PULSE === 'true' && outcome.status !== 'ok') {
+          const cfgP = resolveThrashConfig();
+          const [pOutcomes, pPrior] = await Promise.all([
+            store.recentOutcomes(cfgP.window),
+            store.failureCount(this.currentSessionId ?? 'unknown'),
+          ]);
+          pOutcomes.push(false);
+          const pCum = pPrior + 1;
+          const pState = resolveThrashState(pOutcomes, pCum, cfgP, pCum);
+          if (pState.thrashing) {
+            const turns = Math.max(1, parseInt(process.env.CORTEX_EFFORT_PULSE_TURNS || '2', 10) || 2);
+            if (this.effortPulseRemaining < turns) this.effortPulseRemaining = turns;
+            if (this.config.debug) {
+              console.log(`[EffortPulse] armed (trigger: ${pState.trigger}, cumFails: ${pCum}) — next ${this.effortPulseRemaining} continuation(s) at elevated effort`);
             }
           }
         }

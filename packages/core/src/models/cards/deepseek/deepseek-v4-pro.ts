@@ -43,6 +43,10 @@ export const deepseekV4Pro: ModelConfig = createDeepSeekModelConfig({
   outputCost: 2.0,
   reasoning: {
     supported: true,
+    // Hybrid thinker: effort IS API-settable (minimal..max all accepted, probe
+    // 2026-09-01) — required for the gateway to pass per-request effort (the
+    // pulse/envelope levers); without it the gateway silently dropped overrides.
+    toggleable: true,
     format: 'reasoning_content',
     effort: 'medium', // reverted from 'max': max over-deliberated on solvable tasks (sampling A/B 2026-08-30: 35min/93 iters on circuit-fibsqrt where medium solved it fast, no pass-rate gain)
     extractionMethod: 'separate_field',

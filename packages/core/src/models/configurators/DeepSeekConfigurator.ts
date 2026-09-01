@@ -41,6 +41,8 @@ export interface DeepSeekModelOptions {
     pattern?: 'upfront' | 'interleaved';
     /** Canonical per-model reasoning-effort default (e.g. 'max' for DeepSeek code-agent). */
     effort?: 'none' | 'low' | 'medium' | 'high' | 'max';
+    /** Effort is API-settable per request (gateway pass-through gate). */
+    toggleable?: boolean;
   };
 }
 

@@ -853,6 +853,9 @@ export class APIClient {
       || (modelConfig.reasoning as any)?.effort
       || 'medium';
     delete (transformedParams as any).reasoningEffort;
+    if (process.env.DEBUG === 'true') {
+      console.log(`[Effort] outbound reasoning_effort=${reasoningEffort} (source: ${ (request.parameters as any)?.reasoningEffort ? 'request/pulse' : ((modelConfig.reasoning as any)?.effort ? 'card' : 'default')})`);
+    }
 
     // R63: deliver the static system prompt. The gateway extracts system
     // content into PreparedRequest.systemMessage (R28 split) and every other
