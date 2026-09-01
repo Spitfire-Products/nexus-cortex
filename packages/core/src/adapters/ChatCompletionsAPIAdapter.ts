@@ -259,13 +259,16 @@ export class ChatCompletionsAPIAdapter implements FormatAdapter {
 
         // Thinking-as-text fallback (opt-in, ADDITIVE): renders prior thinking
         // as tagged visible text regardless of the reasoning_content plumbing
-        // above. Rationale (canon-bench finding, 2026-07-28): the condition for
-        // needing this is NOT "model lacks a reasoning slot" — it is "the
-        // reasoning channel does not provide RECALL". DeepSeek REQUIRES
-        // reasoning_content on assistant messages but its API ignores it as
-        // prior-turn context, so resumed reasoning is invisible either way.
-        // Costs real tokens; default off. (Gemini path untouched: R20d drops
-        // foreign thinking deliberately — echo-loop history.)
+        // above. Rationale: the condition for needing this is NOT "model lacks
+        // a reasoning slot" — it is "the reasoning channel does not provide
+        // RECALL". ⚠️ CORRECTED 2026-09-01 (live recall probe; the 2026-07-28
+        // claim was mode-blind): DeepSeek's replay is MODE-SPLIT — with the
+        // `tools` param the model DOES condition on replayed reasoning_content
+        // (seeded string recalled verbatim mid-chain), so for agentic DeepSeek
+        // this fallback is UNNECESSARY. Only the no-tools multi-turn path
+        // ignores prior reasoning (docs: guides/thinking_mode). Costs real
+        // tokens; default off. (Gemini path untouched: R20d drops foreign
+        // thinking deliberately — echo-loop history.)
         if (thinkingBlocks.length > 0 && process.env.THINKING_AS_TEXT_FALLBACK === 'true') {
           const reasoning = thinkingBlocks.map(b => b.thinking || '').join('\n\n').trim();
           if (reasoning.length > 0) {

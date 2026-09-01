@@ -78,6 +78,8 @@ import {
   resolveConsultRung,
   resolveMentorConfig,
   bounceMessage,
+  TEMPLATE_REFRAME,
+  TEMPLATE_INTERVIEW,
   rateLimitedMessage,
 } from '../training/mentorConsult.js';
 import { resolveThrashState, resolveThrashConfig } from '../training/thrashDetector.js';
@@ -8302,20 +8304,28 @@ export class CortexOrchestrator {
     }
 
     let hint: string;
-    try {
-      hint = await this.helperMiddleware.generateMentorHint({
-        rung,
-        task: this.lastRealUserText(),
-        failed,
-        question: input?.question,
-        helperModelId: this.config.reactiveMentorship?.helperModelId,
-      });
-    } catch (err) {
-      return {
-        success: true,
-        llmContent: 'Advice is unavailable right now — keep working the problem: re-read the task and try a distinct approach.',
-        metadata: { source: 'mentor-consult', rung, error: String(err).slice(0, 120) },
-      };
+    if (process.env.CORTEX_MENTOR_TEMPLATE === 'true') {
+      // Ablation-ladder rung 1 (no-LLM mentor): the FIXED self-interrogation
+      // replaces the helper call at the SAME rung — identical trigger, bounce
+      // ladder, rate limit and timing as the LLM mentor; only the hint CONTENT
+      // differs (the isolation the ladder needs). Zero cost, zero latency.
+      hint = rung === 'interview' ? TEMPLATE_INTERVIEW : TEMPLATE_REFRAME;
+    } else {
+      try {
+        hint = await this.helperMiddleware.generateMentorHint({
+          rung,
+          task: this.lastRealUserText(),
+          failed,
+          question: input?.question,
+          helperModelId: this.config.reactiveMentorship?.helperModelId,
+        });
+      } catch (err) {
+        return {
+          success: true,
+          llmContent: 'Advice is unavailable right now — keep working the problem: re-read the task and try a distinct approach.',
+          metadata: { source: 'mentor-consult', rung, error: String(err).slice(0, 120) },
+        };
+      }
     }
 
     this.mentorConsultCounts.set(sessionId, honored + 1);
@@ -8332,6 +8342,7 @@ export class CortexOrchestrator {
         detail: {
           tag: 'mentor_episode',
           rung,
+          ...(process.env.CORTEX_MENTOR_TEMPLATE === 'true' ? { template: true } : {}),
           turn: this.turnNumber,
           helperModel: this.config.reactiveMentorship?.helperModelId ?? 'default',
           question: input?.question ?? null,

@@ -104,3 +104,25 @@ export function buildMentorUserPrompt(ctx: MentorContext, maxFailed = 6): string
   parts.push('Give your hint (or diagnostic question) now. Be specific. Do not write code.');
   return parts.join('\n\n');
 }
+
+/** Templated reframe (ablation-ladder rung 1, no-LLM mentor — operator design 2026-09-01):
+ *  a FIXED self-interrogation injected at the same rung the LLM reframe would fire.
+ *  The template cannot NAME the wrong assumption (no trace access) — it forces the
+ *  model to name it itself (the child/rubber-duck mechanism). Gated
+ *  CORTEX_MENTOR_TEMPLATE=true; hint CONTENT is the only difference vs the LLM arm. */
+export const TEMPLATE_REFRAME =
+  'You have made several similar failed attempts. Stop retrying variants. ' +
+  '(1) State, in one sentence, the assumption your current approach depends on. ' +
+  '(2) Verify that assumption directly with one check before any further attempt. ' +
+  '(3) If it holds, name two structurally different approaches - a different tool, ' +
+  'a different entry point - and take one. (4) If an existing implementation of what ' +
+  'you need exists (a test file, a library\'s own code path, a reference config), ' +
+  'inspect it instead of reconstructing it.';
+
+/** Templated interview (rung 2 analog): generic structured diagnosis. */
+export const TEMPLATE_INTERVIEW =
+  'You followed the earlier redirection and are still stuck. Run a short structured ' +
+  'diagnosis on yourself: (1) Write down the 2-3 most plausible blockers as concrete ' +
+  'options. (2) For each, state the single command or file-read that would confirm or ' +
+  'eliminate it. (3) Execute those checks FIRST, before any further solution attempt. ' +
+  '(4) Then attack only the confirmed blocker.';
