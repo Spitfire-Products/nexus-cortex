@@ -62,7 +62,11 @@ export class LoopLadder {
     this.pollAt = envInt('POLL_REMIND_AT', 4);
     this.pollEnabled = (process.env.CORTEX_POLL_GUARD ?? '').trim().toLowerCase() === 'true';
     this.nearDupEnabled = (process.env.CORTEX_NEARDUP_BREAKER ?? '').trim().toLowerCase() === 'true';
-    this.nearDupWindow = envInt('NEARDUP_WINDOW', 20);
+    // Window 30 (was 20) scales WITH nudgeAt 12 (was 8) so DENSITY semantics are
+    // preserved exactly: nudge at 40% of window (8/20 -> 12/30), break at 80%
+    // (16/20 -> 24/30). Without this, break (2*12=24) could never fit a 20-window
+    // — the break rung would be structurally unreachable (caught by CI 2026-09-01).
+    this.nearDupWindow = envInt('NEARDUP_WINDOW', 30);
     // Default 12 (was 8): the tb21g guarded run proved the diversify nudge MISFIRES on
     // persistence-wins grinds (rstan-to-pystan regressed on BOTH arms: baseline passed
     // via an 87-call grind; nudged runs got steered off it and failed). 12 gives

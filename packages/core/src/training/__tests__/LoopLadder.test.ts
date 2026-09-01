@@ -178,17 +178,17 @@ d2('near-dup breaker (CORTEX_NEARDUP_BREAKER)', () => {
   ae2(() => { if (prevN === undefined) delete process.env.CORTEX_NEARDUP_BREAKER; else process.env.CORTEX_NEARDUP_BREAKER = prevN; });
   const ok = (h: string) => ({ status: 'ok' as const, approachHash: h });
 
-  it2('the x65 specimen shape: interleaved same-approach polling nudges at 8-in-window', () => {
+  it2('the x65 specimen shape: interleaved same-approach polling nudges at 12-in-window', () => {
     const l = new LL2();
     let fired: any = null;
     // poll, work, poll, work … (poll guard blind: never consecutive)
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 30; i++) {
       const r = i % 2 === 0 ? l.observe('Bash', ok('poll-check')) : l.observe('Bash', ok(`work-${i}`));
       if (r.family === 'neardup' && !fired) fired = r;
     }
     ex2(fired).not.toBeNull();
     ex2(fired.action).toBe('diversify');
-    ex2(fired.count).toBeGreaterThanOrEqual(8);
+    ex2(fired.count).toBeGreaterThanOrEqual(12);
   });
 
   it2('sustained recurrence after the nudge escalates to break at 2N', () => {
