@@ -31,6 +31,11 @@ if (!existsSync(CORE)) {
   process.exit(check ? 0 : 0); // non-fatal: nothing to update/verify without a build
 }
 
+// The README documents the SHIPPED registry, not one environment's surface: force the
+// full tool surface so env-dependent filters (ENABLE_WEBTOOLS=auto in CI's keyless fresh
+// clone, CORTEX_TOOL_PROFILE) cannot make the count drift (4.89.0 CI gate, 2026-09-02).
+process.env.ENABLE_WEBTOOLS = 'true';
+process.env.CORTEX_TOOL_PROFILE = 'full';
 const core = await import(pathToFileURL(CORE).href);
 const registry = new core.ModularModelRegistry();
 const models = registry.listModels().map((id) => registry.getModel(id));
