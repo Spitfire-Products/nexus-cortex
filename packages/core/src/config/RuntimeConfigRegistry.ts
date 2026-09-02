@@ -45,6 +45,8 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   ENABLE_LOCAL_CODE_EXECUTION:    { tier: 'env' },
   ENABLE_DEFERRED_TOOL_LOADING:   { tier: 'env' },
   ENABLE_WEBTOOLS:                { tier: 'env' },
+  VISION_HELPER_MODEL:            { tier: 'env' },
+  TOOL_TIMEOUT_MODE:              { tier: 'env' },
   USE_EMOJI:                      { tier: 'env' },
   WEB_TOOLS_MODEL:                { tier: 'env' },
   TOOL_BUDGET_SOFT:               { tier: 'env' },

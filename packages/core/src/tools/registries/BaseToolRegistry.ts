@@ -120,10 +120,10 @@ GUIDANCE:
   },
   {
     name: 'ReadImage',
-    description: `Load an image file (PNG, JPEG, GIF, or WebP) so you can SEE it — the image is attached to the conversation as visual input on the next message. Use this to inspect screenshots, diagrams, charts, rendered output, or video frames (extract frames first, e.g. via ffmpeg).
+    description: `Load an image file (PNG, JPEG, GIF, or WebP) so you can SEE it. Vision-capable models get the image attached as visual input on the next message; text-only models get an exact transcription/description from the vision helper (the image is read on your behalf — pass \`prompt\` to say what you need: "transcribe all text exactly", "give the chess position as FEN", "read the chart values"). Use this FIRST for screenshots, diagrams, charts, rendered output, board/game images, or video frames (extract frames via ffmpeg) — before building OCR/CV pipelines by hand.
 
 GUIDANCE:
-- Only available when the active model supports image input.
+- Available when the active model supports image input OR a vision helper is configured (VISION_HELPER_MODEL).
 - Format is detected from file content (magic bytes), not the extension.
 - Large images: the provider downscales (~800x800) — no need to resize first unless over the 32 MiB limit.
 - Unsupported formats (BMP/TIFF/PDF): convert first (e.g. Bash + Python PIL), then ReadImage.`,
@@ -133,6 +133,10 @@ GUIDANCE:
         file_path: {
           type: 'string',
           description: 'Path to the image file (absolute, or relative to the working directory).'
+        },
+        prompt: {
+          type: 'string',
+          description: 'What you need from the image (used by the vision helper when the active model is text-only): e.g. "transcribe all text exactly", "list every piece and its square", "read all axis labels and plotted values". Default: full description + verbatim transcription.'
         }
       },
       required: ['file_path']

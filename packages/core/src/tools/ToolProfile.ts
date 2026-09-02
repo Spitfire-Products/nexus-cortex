@@ -97,6 +97,19 @@ export function resolveWebToolsEnabled(env: NodeJS.ProcessEnv = process.env): bo
   return resolveWebToolsMode(env) !== 'false';
 }
 
+/** VISION_HELPER_MODEL — the vision HAND-OFF (2026-09-02, operator design): a text-only primary
+ *  keeps the ReadImage tool; the orchestrator sends the image + the caller's question to this
+ *  vision-capable card THROUGH THE HELPER MIDDLEWARE and returns TEXT. The primary never receives
+ *  an image payload (item 7's safety intent holds). Default deepseek-v4-flash-vision-exp (same
+ *  key as the DeepSeek apprentice/elder); 'false'|'off'|'none' disables → ReadImage is offered
+ *  only to vision-capable primaries (the pre-hand-off behavior). */
+export function resolveVisionHelperModel(env: NodeJS.ProcessEnv = process.env): string | null {
+  const raw = (env.VISION_HELPER_MODEL ?? '').trim();
+  const v = raw.toLowerCase();
+  if (v === 'false' || v === 'off' || v === 'none' || v === '0') return null;
+  return raw || 'deepseek-v4-flash-vision-exp';
+}
+
 export function resolveToolProfile(env: NodeJS.ProcessEnv = process.env): ToolProfileName {
   const raw = (env.CORTEX_TOOL_PROFILE ?? 'full').trim().toLowerCase();
   if (raw === 'lean' || raw === 'bash-only' || raw === 'bash-plus' || raw === 'bash-edit') return raw;

@@ -226,6 +226,12 @@ export interface EnvironmentVariables {
   /** Web surface mode: auto (fetch on; search/browse on iff a search key is present) | true | false */
   ENABLE_WEBTOOLS?: string; // 'auto' | 'true' | 'false'
 
+  /** Vision hand-off helper card for text-only primaries (ReadImage → helper → text); 'false' disables */
+  VISION_HELPER_MODEL?: string;
+
+  /** Tool timeout policy: kill (legacy) | background (promote at deadline) | auto (background when headless) */
+  TOOL_TIMEOUT_MODE?: string;
+
   /** Enable local code execution for non-PTC models (node -e with tool globals) */
   ENABLE_LOCAL_CODE_EXECUTION?: string; // 'true' | 'false'
 
@@ -430,6 +436,8 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   ENABLE_LOCAL_CODE_EXECUTION: 'false',
   ENABLE_DEFERRED_TOOL_LOADING: 'true',
   ENABLE_WEBTOOLS: 'auto',
+  VISION_HELPER_MODEL: 'deepseek-v4-flash-vision-exp',
+  TOOL_TIMEOUT_MODE: 'auto',
 
   // Model Router
   MODEL_ROUTER_ENABLED: 'false',
@@ -979,6 +987,23 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     type: 'boolean',
     category: 'server_side_tools',
     default: 'false'
+  },
+  {
+    key: 'TOOL_TIMEOUT_MODE',
+    displayName: 'Tool Timeout Mode',
+    description: 'What happens when a Bash call exceeds TOOL_TIMEOUT_MS. kill: terminate (legacy). background: promote the still-running command to a background shell (bash_id) and return the output so far. auto (default): background in headless/auto-approve sessions, kill in interactive sessions.',
+    type: 'choice',
+    category: 'server_side_tools',
+    choices: ['auto', 'kill', 'background'],
+    default: 'auto'
+  },
+  {
+    key: 'VISION_HELPER_MODEL',
+    displayName: 'Vision Helper Model',
+    description: 'Vision-capable card that reads images on behalf of text-only models: ReadImage sends the image + your question through the helper middleware and returns text (the primary never receives image bytes). Default deepseek-v4-flash-vision-exp (same DeepSeek key). Set false to offer ReadImage only to vision-capable primaries.',
+    type: 'string',
+    category: 'server_side_tools',
+    default: 'deepseek-v4-flash-vision-exp'
   },
   {
     key: 'ENABLE_WEBTOOLS',

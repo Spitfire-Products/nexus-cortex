@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.90.0] - 2026-09-02
+
+### Added
+- **Vision hand-off for text-only models** (`VISION_HELPER_MODEL`, default `deepseek-v4-flash-vision-exp`):
+  ReadImage is offered to text primaries; the orchestrator sends the image + the caller's `prompt` to the
+  vision card through the helper middleware and returns text. Banks a `vision_handoff` steering event.
+- **`TOOL_TIMEOUT_MODE=auto|kill|background`** (promote-at-deadline): headless/auto-approve sessions no
+  longer kill a Bash call at `TOOL_TIMEOUT_MS` — it moves to the background registry and returns
+  "STILL RUNNING … bash_id" (BashOutput/KillShell). Interactive keeps the kill. `tool_promoted` event.
+- **`CORTEX_ENDTURN_REQUIREMENTS=strict`**: Stage-4 additionally requires verbatim task clauses as
+  requirements and a `verified_how` grounded in an executed check's output this turn.
+- Shipped `.cortex/orient` prints a one-line tooling inventory (interpreters, venvs, common binaries).
+
+### Changed
+- `CORTEX_CLIENT_FETCH_TIMEOUT_MS` template default 3600000 → 12600000 (caps sit above the longest
+  legitimate unit of work; the old value was a latent self-cut on 1-3.3h headless tasks).
+- `.env.example` lever ledger updated with the c3 / p3 / timeout-audit verdicts; `CORTEX_IDLE_TIMEOUT`
+  documented as dead (no code reads it).
+
 ## [4.77.0] - 2026-08-26
 
 ### Added

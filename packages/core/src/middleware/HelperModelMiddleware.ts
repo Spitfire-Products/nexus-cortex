@@ -18,6 +18,7 @@
  */
 
 import { frameHelperPrompt, type HelperFrameSpec } from './helpers/helperFrame.js';
+import { resolveVisionHelperModel } from '../tools/ToolProfile.js';
 import {
   buildMentorUserPrompt,
   MENTOR_REFRAME_SYSTEM,
@@ -1291,6 +1292,47 @@ ${context.content}
       body,
       context.helperModelId,
     );
+  }
+
+  /**
+   * VISION HAND-OFF (2026-09-02, operator design): a text-only primary called ReadImage; send the
+   * image + the caller's question to the vision helper card through this middleware and return
+   * TEXT. Same shape as summarizeWebContent — the vision model is just a helper call. The helper
+   * card must accept image parts on user messages (DeepSeek vision envelope, probe-verified 08-25).
+   */
+  async describeImage(context: {
+    mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+    base64: string;
+    prompt?: string;
+    filePath?: string;
+    helperModelId?: string;
+  }): Promise<string> {
+    const modelId = context.helperModelId || resolveVisionHelperModel() || 'deepseek-v4-flash-vision-exp';
+    const helperConfig = this.getHelperModelConfig(modelId);
+    const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
+    const ask = (context.prompt || '').trim() ||
+      'Describe this image in full detail. Transcribe ALL visible text exactly (character-for-character, preserving line order and layout); for boards, charts, tables or diagrams give exact structured readings (positions, values, labels).';
+    const body = `A text-only agent loaded the image${context.filePath ? ` ${context.filePath}` : ''} and asks: "${ask}"
+
+Answer from the IMAGE ONLY. Be exact: transcribe text verbatim; give coordinates/positions/values precisely; state explicitly when something is unreadable or uncertain rather than guessing.`;
+    const text = frameHelperPrompt(
+      {
+        surface: 'vision-handoff',
+        persona: 'You are a precise visual transcriber and describer acting as the eyes of a text-only agent.',
+        task: 'Answer the request from the image. Exact transcription beats paraphrase; structure beats prose; flag uncertainty.',
+        outputBudgetTokens: 900,
+      },
+      body,
+    );
+    const messages: HelperCanonicalMessage[] = [{
+      role: 'user',
+      content: [
+        { type: 'text', text },
+        { type: 'image', image: { mediaType: context.mediaType, data: context.base64 } },
+      ],
+    }];
+    const out = await adapter.generate(messages, helperConfig, 900);
+    return (out || '').replace(/^```[a-z]*\n/, '').replace(/\n```\s*$/, '').trim();
   }
 
   async generateErrorGuidance(context: {

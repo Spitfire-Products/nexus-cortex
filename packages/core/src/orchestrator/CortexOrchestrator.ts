@@ -61,7 +61,7 @@ import type { AgentDefinition, SubAgentResult, ISubAgentEventEmitter } from './S
 
 // Phase 1: Tool Architecture Refactor - Unified Tool Registry
 import { toolFactory } from '../tools/ToolFactory.js';
-import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked } from '../tools/ToolProfile.js';
+import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked, resolveVisionHelperModel } from '../tools/ToolProfile.js';
 import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
 import { ExactRepeatTracker } from '../training/loopLadder.js';
 
@@ -88,7 +88,7 @@ import { classifyToolOutcome } from '../training/toolOutcome.js';
 import { LoopLadder, formatLadderSignal } from '../training/loopLadder.js';
 import { shouldNudgeInaction, formatInactionNudge } from './inactionGuard.js';
 import { applyImageTtlForRequest } from './imageTtl.js';
-import { verifyRequirements, resolveEndTurnRequirementsMode } from './requirementsVerification.js';
+import { verifyRequirements, resolveEndTurnRequirementsMode, resolveEndTurnRequirementsStrict } from './requirementsVerification.js';
 import { verifyIntegrity, resolveEndTurnIntegrityMode } from './integrityVerification.js';
 import { detectSurrenderText, resolveSurrenderNudgeMode, SURRENDER_REMINDER } from './turnEndGuards.js';
 import { ModelRouterMatrix } from '../training/ModelRouterMatrix.js';
@@ -886,7 +886,7 @@ export class CortexOrchestrator {
           const catalogVision = (this.getModel(this.currentModelId ?? '') as { vision?: boolean } | undefined)?.vision === true;
           return [...toolFactory.getAllTools(), ...extras]
             .filter((t) => endTurnGateOn || t.name !== 'EndTurn')
-            .filter((t) => catalogVision || t.name !== 'ReadImage')
+            .filter((t) => catalogVision || !!resolveVisionHelperModel(process.env) || t.name !== 'ReadImage')
             .filter((t) => (seen.has(t.name) ? false : (seen.add(t.name), true)))
             .map((t) => ({
               name: namingHandler.convertName(t.name, convention),
@@ -1065,7 +1065,7 @@ export class CortexOrchestrator {
     const factoryTools = this.applyBaseToolAllowlist(
       toolFactory.getAllTools()
         .filter(t => endTurnGateOn || t.name !== 'EndTurn')
-        .filter(t => visionOn || t.name !== 'ReadImage'),
+        .filter(t => visionOn || !!resolveVisionHelperModel(process.env) || t.name !== 'ReadImage'),
     );
     // Tool-profile: MCP/management/context tools bypass ToolFactory, so the
     // bash-only arm must suppress them here or the surface leaks (lean keeps
@@ -1363,7 +1363,7 @@ export class CortexOrchestrator {
     // Thread the CARD's anchor to the executors (per-orchestrator config, by
     // reference) so framing-aware executor behavior (ShellTool steering
     // default) is model-card/registry-scoped, not process-global env.
-    this.executorRegistry.updateConfig({ activeAnchorProfile: this.cardAnchorProfile, allowCommandSubstitution: this.approvalMode.autoApproveActions });
+    this.executorRegistry.updateConfig({ activeAnchorProfile: this.cardAnchorProfile, allowCommandSubstitution: this.approvalMode.autoApproveActions, headless: this.approvalMode.autoApproveActions });
     if (toolsToUse && toolsToUse.length > 0) {
       toolsToUse = this.applyAnchorIfArmed(toolsToUse);
     }
@@ -2697,6 +2697,8 @@ export class CortexOrchestrator {
                   verification: (etUse?.input as any)?.verification,
                   userTaskText: this.lastRealUserText(),
                   turnUsedMutatingTool,
+                  strict: resolveEndTurnRequirementsStrict(process.env),
+                  toolOutputs: thisTurnToolOutputs.join('\n'),
                 });
                 if (s4.ok) {
                   endTurnCalled = true;
@@ -2759,6 +2761,7 @@ export class CortexOrchestrator {
             toolResults,
             (effectiveModel as { vision?: boolean }).vision === true,
           );
+          await this.applyVisionHandoffs();
 
           // Create tool_result messages and add to history
           for (const toolResult of toolResults) {
@@ -3940,7 +3943,7 @@ export class CortexOrchestrator {
     // Thread the CARD's anchor to the executors (per-orchestrator config, by
     // reference) so framing-aware executor behavior (ShellTool steering
     // default) is model-card/registry-scoped, not process-global env.
-    this.executorRegistry.updateConfig({ activeAnchorProfile: this.cardAnchorProfile, allowCommandSubstitution: this.approvalMode.autoApproveActions });
+    this.executorRegistry.updateConfig({ activeAnchorProfile: this.cardAnchorProfile, allowCommandSubstitution: this.approvalMode.autoApproveActions, headless: this.approvalMode.autoApproveActions });
     if (toolsToUse && toolsToUse.length > 0) {
       toolsToUse = this.applyAnchorIfArmed(toolsToUse);
     }
@@ -4650,6 +4653,7 @@ export class CortexOrchestrator {
           toolResults,
           (effectiveModel as { vision?: boolean }).vision === true,
         );
+        await this.applyVisionHandoffs();
 
         // Create tool_result messages and save to history
         for (const toolResult of toolResults) {
@@ -8180,6 +8184,42 @@ export class CortexOrchestrator {
    *  hallucinated/PTC call that slipped the surface gate), the result is
    *  rewritten into an actionable error — a text-only model must never have
    *  an image dangled at it. */
+  /** Vision hand-off queue (filled by collectPendingImages for text-only primaries). */
+  private pendingVisionHandoffs: Array<{ tr: any; payload: any; prompt?: string; filePath?: string }> = [];
+
+  /** Resolve queued ReadImage hand-offs through the helper middleware: the vision helper's TEXT
+   *  replaces the tool_result content. Failures degrade to the pre-hand-off guidance (bash OCR). */
+  private async applyVisionHandoffs(): Promise<void> {
+    const queue = this.pendingVisionHandoffs; this.pendingVisionHandoffs = [];
+    for (const h of queue) {
+      const modelId = resolveVisionHelperModel(process.env) || 'deepseek-v4-flash-vision-exp';
+      try {
+        const t0 = Date.now();
+        const text = await this.helperMiddleware.describeImage({
+          mediaType: h.payload.mediaType, base64: h.payload.base64, prompt: h.prompt, filePath: h.filePath, helperModelId: modelId,
+        });
+        h.tr.is_error = false;
+        h.tr.content =
+          `[ReadImage → vision helper ${modelId}${h.filePath ? ` on ${h.filePath}` : ''}]\n` +
+          (text || '(the vision helper returned no description)') +
+          `\n\n(Read by the vision helper on your behalf — the active model is text-only. Ask again with a more specific \`prompt\` if you need a different reading.)`;
+        if (this.config.debug) console.log(`[VisionHandoff] ${modelId} described ${h.filePath || 'image'} in ${Date.now() - t0}ms (${(text || '').length} chars)`);
+        const store = this.getDecisionStore();
+        if (store) {
+          void store.recordEvent({
+            sessionId: this.currentSessionId ?? 'unknown', kind: 'steering_injected', toolName: 'ReadImage',
+            detail: { kind: 'vision_handoff', helper: modelId, chars: (text || '').length, filePath: h.filePath },
+          }).catch(() => {});
+        }
+      } catch (err: any) {
+        h.tr.is_error = true;
+        h.tr.content =
+          `ReadImage vision hand-off failed (${modelId}: ${err?.message || err}). ` +
+          'Extract what you need through bash instead (e.g. tesseract OCR, ffprobe, PIL).';
+      }
+    }
+  }
+
   private collectPendingImages(
     toolResults: Array<{ tool_name: string; content: any; is_error?: boolean; metadata?: any }>,
     modelVision: boolean,
@@ -8191,6 +8231,15 @@ export class CortexOrchestrator {
       delete tr.metadata.imagePayload;
       if (tr.is_error) continue;
       if (!modelVision) {
+        // VISION HAND-OFF (2026-09-02): a text-only primary called ReadImage. If a vision helper
+        // is configured, queue the payload for the helper middleware (applyVisionHandoffs runs
+        // right after this at both call sites and REPLACES the tool_result with the helper's
+        // text). The primary never receives an image payload — item 7's safety intent holds.
+        if (resolveVisionHelperModel(process.env)) {
+          this.pendingVisionHandoffs.push({ tr, payload, prompt: tr.metadata?.imagePrompt, filePath: tr.metadata?.imageFilePath });
+          delete tr.metadata.imagePrompt; delete tr.metadata.imageFilePath;
+          continue;
+        }
         tr.is_error = true;
         tr.content =
           'ReadImage requires a vision-capable model — the active model cannot see images. ' +
@@ -8445,6 +8494,13 @@ export class CortexOrchestrator {
   ): Promise<typeof result> {
     const store = this.getDecisionStore();
     if (!store) return result;
+    // TOOL_TIMEOUT_MODE engagement evidence: a promoted-to-background tool call.
+    if (result.metadata?.promotedToBackground) {
+      void store.recordEvent({
+        sessionId: this.currentSessionId ?? 'unknown', kind: 'steering_injected', toolName: toolUse.name,
+        detail: { kind: 'tool_promoted', bashId: result.metadata.promotedToBackground },
+      }).catch(() => {});
+    }
 
     // Unified outcome layer (docs/UNIFIED_OUTCOME_LADDER.md): ONE failure
     // semantics for recording + reminders. Critically, a bash command that

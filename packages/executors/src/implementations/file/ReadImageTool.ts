@@ -9,8 +9,9 @@
  * block on a synthetic USER message (providers reject image parts on tool
  * messages; DeepSeek accepts them on user messages only).
  *
- * Only offered to vision-capable model cards (ModelConfig.vision) — the
- * orchestrator filters it from the tool surface otherwise.
+ * Offered to vision-capable model cards (ModelConfig.vision) AND, since 2026-09-02, to
+ * text-only primaries when a vision helper is configured (VISION_HELPER_MODEL): the
+ * orchestrator hands the payload + `prompt` to the helper middleware and returns text.
  */
 
 import fs from 'fs';
@@ -23,6 +24,8 @@ import { FileReadTracker } from './EditTool.js';
 
 export interface ReadImageToolParams {
   file_path: string;
+  /** Vision hand-off: what the caller needs from the image (text-only primaries). */
+  prompt?: string;
 }
 
 export class ReadImageTool extends BaseTool<ReadImageToolParams, ToolResult> {
@@ -37,6 +40,10 @@ export class ReadImageTool extends BaseTool<ReadImageToolParams, ToolResult> {
           file_path: {
             type: 'string',
             description: 'Path to the image file (absolute, or relative to the working directory).',
+          },
+          prompt: {
+            type: 'string',
+            description: 'What you need from the image (used by the vision helper when the active model is text-only).',
           },
         },
         required: ['file_path'],
@@ -90,6 +97,9 @@ export class ReadImageTool extends BaseTool<ReadImageToolParams, ToolResult> {
           // (the image rides the injected user message, not this metadata —
           // no double-stored base64).
           imagePayload: payload,
+          // Vision hand-off inputs (consumed + stripped by the orchestrator with the payload).
+          imagePrompt: params.prompt,
+          imageFilePath: relativePath,
         },
       );
     } catch (error: any) {

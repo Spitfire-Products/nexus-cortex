@@ -309,6 +309,8 @@ export interface ExecutorConfig {
    * override on top (for a sandboxed profile that isn't auto-approve).
    */
   allowCommandSubstitution?: boolean;
+  /** Headless / auto-approve session (no human watching): lets executors pick non-interactive policies (e.g. TOOL_TIMEOUT_MODE=auto → promote long commands to background instead of killing). */
+  headless?: boolean;
 
   /**
    * Additional directories the user has explicitly granted tool access to,

@@ -27,7 +27,37 @@ export interface RequirementsVerdict {
 export function resolveEndTurnRequirementsMode(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return (env.CORTEX_ENDTURN_REQUIREMENTS ?? '').trim().toLowerCase() === 'true';
+  const v = (env.CORTEX_ENDTURN_REQUIREMENTS ?? '').trim().toLowerCase();
+  return v === 'true' || v === 'strict';
+}
+
+/** CORTEX_ENDTURN_REQUIREMENTS=strict (2026-09-02, "attestation backed by a run"): Stage-4 additionally
+ *  requires (a) each `requirement` to be a verbatim clause of the task statement and (b) each
+ *  `verified_how` to be grounded in an EXECUTED check's output this turn. Motivation: four pro fails
+ *  (cancel-async-tasks, dna-assembly, dna-insert, pytorch-model-cli) were 85-95% complete with TRUE
+ *  attestations that verified against the model's own tests, not the task's exact constraints — the
+ *  gate accepted a wrong artifact three times in one week. */
+export function resolveEndTurnRequirementsStrict(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (env.CORTEX_ENDTURN_REQUIREMENTS ?? '').trim().toLowerCase() === 'strict';
+}
+
+const norm = (s: string): string => s.toLowerCase().replace(/\s+/g, ' ').trim();
+/** Is `needle` (≥ minLen chars) a verbatim substring of `hay`, whitespace/case-insensitively? */
+function verbatimIn(needle: string, hay: string, minLen: number): boolean {
+  const n = norm(needle); const h = norm(hay);
+  if (n.length < minLen) return true; // too short to be a meaningful claim — do not block
+  return h.includes(n);
+}
+/** Does any window of `text` of `win` chars appear in `outputs`? (Stage-2-style grounding.) */
+function windowGrounded(text: string, outputs: string, win: number): boolean {
+  const t = norm(text); const o = norm(outputs);
+  if (t.length <= win) return o.includes(t);
+  for (let i = 0; i + win <= t.length; i += Math.max(4, Math.floor(win / 2))) {
+    if (o.includes(t.slice(i, i + win))) return true;
+  }
+  return o.includes(t.slice(t.length - win));
 }
 
 /** Conservative imperative/task-shape heuristic: does the user text ask for
@@ -55,6 +85,10 @@ export function verifyRequirements(input: {
   userTaskText: string;
   /** Did this turn run Edit/Write/Bash/NotebookEdit? */
   turnUsedMutatingTool: boolean;
+  /** STRICT mode (CORTEX_ENDTURN_REQUIREMENTS=strict): verbatim requirements + run-grounded verification. */
+  strict?: boolean;
+  /** This turn's tool outputs, joined — the grounding corpus for `verified_how` in strict mode. */
+  toolOutputs?: string;
 }): RequirementsVerdict {
   const reqs = Array.isArray(input.requirements) ? input.requirements : null;
   const verification = Array.isArray(input.verification) ? input.verification : [];
@@ -110,6 +144,34 @@ export function verifyRequirements(input: {
     }
   }
 
+    // 4e (STRICT) — attestation backed by a run: requirements must be verbatim task clauses and
+    // verified_how must be grounded in an executed check's OUTPUT this turn (not a claim).
+    if (input.strict) {
+      const rows = reqs as RequirementRow[];
+      const notVerbatim = rows.filter((r) => !verbatimIn(r.requirement, input.userTaskText || '', 12));
+      if (notVerbatim.length > 0 && (input.userTaskText || '').trim().length > 0) {
+        const names = notVerbatim.slice(0, 3).map((r) => `"${r.requirement.slice(0, 80)}"`).join(', ');
+        return {
+          ok: false,
+          nudge:
+            `EndTurn REJECTED (requirements/strict) — ${notVerbatim.length} requirement(s) are paraphrases, not the task's own words: ${names}. ` +
+            'Re-read the task statement and copy each requirement VERBATIM (the exact clause, including numbers, ' +
+            'file names, formats and thresholds) — paraphrasing is where constraints get lost. Then call EndTurn again.',
+        };
+      }
+      const outputs = input.toolOutputs || '';
+      const ungrounded = rows.filter((r) => !UNVERIFIED_RE.test(r.verified_how) && !windowGrounded(r.verified_how, outputs, 16));
+      if (ungrounded.length > 0) {
+        const names = ungrounded.slice(0, 3).map((r) => `"${r.requirement.slice(0, 60)}" ⇐ "${r.verified_how.slice(0, 60)}"`).join('; ');
+        return {
+          ok: false,
+          nudge:
+            `EndTurn REJECTED (requirements/strict) — ${ungrounded.length} verification(s) are claims, not runs: ${names}. ` +
+            '`verified_how` must quote the ACTUAL output of a check you executed THIS turn (copy the real result line). ' +
+            'If you did not run it, run it now — against the task\'s stated constraint, not your own test — or mark it "UNVERIFIED". Then call EndTurn again.',
+        };
+      }
+    }
   // 4d — mutating turn that ran no checks at all.
   if (input.turnUsedMutatingTool && verification.length === 0) {
     return {

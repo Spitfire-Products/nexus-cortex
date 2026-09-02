@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 import {
   verifyRequirements,
   resolveEndTurnRequirementsMode,
+  resolveEndTurnRequirementsStrict,
   isTaskShaped,
 } from '../requirementsVerification.js';
 
@@ -132,6 +133,82 @@ describe('verifyRequirements — Stage 4 table', () => {
       verification: [],
       userTaskText: task,
       turnUsedMutatingTool: false,
+    });
+    expect(v.ok).toBe(true);
+  });
+});
+
+describe('verifyRequirements — STRICT mode (CORTEX_ENDTURN_REQUIREMENTS=strict, item 10)', () => {
+  const task = 'Implement `dna_insert` in insert.py so that inserting AGCT at position 3 yields the 12-bp sequence; write results to /app/out.fasta';
+  const okRow = {
+    requirement: 'write results to /app/out.fasta',
+    satisfied_by: 'insert.py writes out.fasta',
+    verified_how: 'ls -l /app/out.fasta → -rw-r--r-- 1 root root 13 out.fasta',
+  };
+  const outputs = 'total 4\n-rw-r--r-- 1 root root 13 Sep  2 22:00 out.fasta\n';
+
+  it('mode resolvers: strict implies mode on, and strict flag only for "strict"', () => {
+    expect(resolveEndTurnRequirementsMode({ CORTEX_ENDTURN_REQUIREMENTS: 'strict' } as any)).toBe(true);
+    expect(resolveEndTurnRequirementsStrict({ CORTEX_ENDTURN_REQUIREMENTS: 'strict' } as any)).toBe(true);
+    expect(resolveEndTurnRequirementsStrict({ CORTEX_ENDTURN_REQUIREMENTS: 'true' } as any)).toBe(false);
+    expect(resolveEndTurnRequirementsStrict({} as any)).toBe(false);
+  });
+
+  it('non-strict accepts a paraphrased requirement with an ungrounded claim (legacy behaviour unchanged)', () => {
+    const v = verifyRequirements({
+      requirements: [{ requirement: 'output file exists', satisfied_by: 'x', verified_how: 'checked it manually' }],
+      verification: ['ls'], userTaskText: task, turnUsedMutatingTool: true, strict: false, toolOutputs: outputs,
+    });
+    expect(v.ok).toBe(true);
+  });
+
+  it('strict rejects a PARAPHRASED requirement (must be a verbatim task clause)', () => {
+    const v = verifyRequirements({
+      requirements: [{ ...okRow, requirement: 'the output fasta file must exist' }],
+      verification: ['ls'], userTaskText: task, turnUsedMutatingTool: true, strict: true, toolOutputs: outputs,
+    });
+    expect(v.ok).toBe(false);
+    expect(v.nudge).toMatch(/paraphrases, not the task's own words/);
+  });
+
+  it('strict rejects a verified_how that is a CLAIM with no matching tool output this turn', () => {
+    const v = verifyRequirements({
+      requirements: [{ ...okRow, verified_how: 'ran the unit tests and they all passed cleanly' }],
+      verification: ['pytest'], userTaskText: task, turnUsedMutatingTool: true, strict: true, toolOutputs: outputs,
+    });
+    expect(v.ok).toBe(false);
+    expect(v.nudge).toMatch(/claims, not runs/);
+  });
+
+  it('strict accepts a verbatim requirement whose verified_how quotes real tool output', () => {
+    const v = verifyRequirements({
+      requirements: [okRow],
+      verification: ['ls -l /app/out.fasta'], userTaskText: task, turnUsedMutatingTool: true, strict: true, toolOutputs: outputs,
+    });
+    expect(v.ok).toBe(true);
+  });
+
+  it('strict is whitespace/case-insensitive on the verbatim check', () => {
+    const v = verifyRequirements({
+      requirements: [{ ...okRow, requirement: 'Write  results to /APP/out.fasta' }],
+      verification: ['ls'], userTaskText: task, turnUsedMutatingTool: true, strict: true, toolOutputs: outputs,
+    });
+    expect(v.ok).toBe(true);
+  });
+
+  it('strict still lets UNVERIFIED rows fall through to the 4c nudge (not the grounding check)', () => {
+    const v = verifyRequirements({
+      requirements: [{ ...okRow, verified_how: 'UNVERIFIED' }],
+      verification: ['ls'], userTaskText: task, turnUsedMutatingTool: true, strict: true, toolOutputs: outputs,
+    });
+    expect(v.ok).toBe(false);
+    expect(v.nudge).toMatch(/UNVERIFIED/);
+  });
+
+  it('strict does not block when the task text is unknown (empty userTaskText)', () => {
+    const v = verifyRequirements({
+      requirements: [{ ...okRow, requirement: 'some paraphrase of a requirement' }],
+      verification: ['ls'], userTaskText: '', turnUsedMutatingTool: false, strict: true, toolOutputs: outputs,
     });
     expect(v.ok).toBe(true);
   });

@@ -294,6 +294,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
       }
 
       return this.createSuccessResult(result.llmContent, {
+        promotedToBackground: result.promotedShellId ?? undefined,
         executionTime: Date.now() - startTime,
         exitCode: result.exitCode,
         signal: result.processSignal,
@@ -326,6 +327,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
     pgid: number | null;
     truncated: boolean;
     timedOut: boolean;
+    promotedShellId: string | null;
   }> {
     const isWindows = os.platform() === 'win32';
     const timeout = this.resolveTimeoutMs(params);
@@ -450,18 +452,37 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
     };
     signal.addEventListener('abort', abortHandler);
 
-    // Timeout handler
+    // Timeout handler — TOOL_TIMEOUT_MODE (2026-09-02): 'kill' (legacy) or 'background'
+    // = PROMOTE-AT-DEADLINE: the still-running child is registered in the
+    // BackgroundProcessRegistry (same handle the run_in_background path gives) and the
+    // tool returns immediately with the output so far + a bash_id. Nothing is lost and
+    // the model keeps working. 'auto' (default) = background in headless/auto-approve
+    // sessions (bench, server, autoresearch), kill in interactive TTY sessions. Bench
+    // evidence: the 120s kill fired 42x across 14 task-runs and rescued none of them.
     let timedOut = false;
+    let promotedShellId: string | null = null;
+    let resolveWait: () => void = () => {};
+    const timeoutMode = ShellTool.resolveTimeoutMode(this.config.headless === true);
     const timeoutId = setTimeout(async () => {
-      if (!exited && shell.pid) {
-        timedOut = true;
-        await this.killProcess(shell.pid, isWindows);
+      if (exited || !shell.pid) return;
+      if (timeoutMode === 'background' && !isWindows) {
+        const shellId = `bg-${crypto.randomBytes(4).toString('hex')}`;
+        try {
+          BackgroundProcessRegistry.getInstance().registerProcess(shellId, shell.pid, params.command, shell);
+          shell.unref();
+          promotedShellId = shellId;
+          resolveWait();
+          return;
+        } catch { /* fall through to kill */ }
       }
+      timedOut = true;
+      await this.killProcess(shell.pid, isWindows);
     }, timeout);
 
     try {
-      // Wait for process to exit
+      // Wait for process to exit (or for promotion to background)
       await new Promise<void>((resolve) => {
+        resolveWait = resolve;
         shell.on('exit', () => resolve());
       });
     } finally {
@@ -514,6 +535,13 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
       } else {
         llmContent += ' No output was produced before cancellation.';
       }
+    } else if (promotedShellId) {
+      llmContent =
+        `STILL RUNNING — the command exceeded ${timeout}ms and was moved to the BACKGROUND as bash_id ${promotedShellId} (PID ${shell.pid}). It was NOT killed; it keeps running.`;
+      llmContent += output.trim()
+        ? `\n\nOutput so far:\n${truncateIfNeeded(output)}`
+        : ' No output yet.';
+      llmContent += `\n\nDo other useful work now. When you need the result, read it ONCE with BashOutput({ bash_id: "${promotedShellId}" }); stop it with KillShell({ shell_id: "${promotedShellId}" }). Do not busy-poll.`;
     } else if (timedOut) {
       // Timeout: explicit, actionable message (was: opaque "exit code null")
       llmContent = `Command timed out after ${timeout}ms and was killed.`;
@@ -562,6 +590,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
       pgid: shell.pid ?? null,
       truncated,
       timedOut,
+      promotedShellId,
     };
   }
 
@@ -758,6 +787,14 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
    * Resolve the effective timeout: requested (or default), clamped to the max.
    * @private
    */
+  /** TOOL_TIMEOUT_MODE=kill|background|auto (default auto = background when headless, else kill). */
+  static resolveTimeoutMode(headless: boolean, env: NodeJS.ProcessEnv = process.env): 'kill' | 'background' {
+    const v = (env.TOOL_TIMEOUT_MODE ?? 'auto').trim().toLowerCase();
+    if (v === 'kill') return 'kill';
+    if (v === 'background') return 'background';
+    return headless ? 'background' : 'kill';
+  }
+
   private resolveTimeoutMs(params: ShellToolParams): number {
     return Math.min(params.timeout || ShellTool.DEFAULT_TIMEOUT_MS, ShellTool.MAX_TIMEOUT_MS);
   }

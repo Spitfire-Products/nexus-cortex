@@ -27,7 +27,7 @@ import type { ModelConfig } from '../../../models/ModelConfig.interface.js';
  */
 interface ChatCompletionsMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>;
 }
 
 interface ChatCompletionsRequest {
@@ -335,10 +335,20 @@ export class ChatCompletionsAPIHelperAdapter extends BaseHelperAdapter {
     helperConfig: ModelConfig,
     maxTokens: number
   ): Promise<string> {
-    const chatMessages: ChatCompletionsMessage[] = messages.map(m => ({
-      role: (m.role === 'user' ? 'user' : m.role === 'assistant' ? 'assistant' : 'system') as 'system' | 'user' | 'assistant',
-      content: typeof m.content === 'string' ? m.content : m.content.map((b: any) => b.text || '').join('\n'),
-    }));
+    const chatMessages: ChatCompletionsMessage[] = messages.map(m => {
+      const role = (m.role === 'user' ? 'user' : m.role === 'assistant' ? 'assistant' : 'system') as 'system' | 'user' | 'assistant';
+      if (typeof m.content === 'string') return { role, content: m.content };
+      // Vision hand-off: image parts become OpenAI/DeepSeek `image_url` data URIs on a
+      // multimodal content array; text-only messages keep the joined-string shape.
+      const hasImage = m.content.some((b: any) => b.type === 'image' && b.image);
+      if (!hasImage) return { role, content: m.content.map((b: any) => b.text || '').join('\n') };
+      const parts: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> = [];
+      for (const b of m.content as any[]) {
+        if (b.type === 'image' && b.image) parts.push({ type: 'image_url', image_url: { url: `data:${b.image.mediaType};base64,${b.image.data}` } });
+        else if (b.text) parts.push({ type: 'text', text: b.text });
+      }
+      return { role, content: parts };
+    });
     const response = await this.makeAPICall(helperConfig, chatMessages, maxTokens);
     return response.choices[0]?.message.content || '';
   }

@@ -17,10 +17,12 @@ import type { ModelConfig } from '../../models/ModelConfig.interface.js';
 export interface HelperCanonicalMessage {
   role: 'user' | 'assistant' | 'system';
   content: string | Array<{
-    type: 'text' | 'tool_use' | 'tool_result';
+    type: 'text' | 'tool_use' | 'tool_result' | 'image';
     text?: string;
     toolUse?: any;
     toolResult?: any;
+    /** Vision hand-off: inline image for a vision-capable helper card. */
+    image?: { mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string };
   }>;
   timestamp?: string;
 }

@@ -625,3 +625,48 @@ describe('ShellTool Integration', () => {
     });
   });
 });
+
+// TOOL_TIMEOUT_MODE (2026-09-02): promote-at-deadline instead of kill.
+import { BackgroundProcessRegistry } from '../../implementations/execution/BackgroundProcessRegistry.js';
+describe('TOOL_TIMEOUT_MODE promote-at-deadline', () => {
+  const ORIG = process.env.TOOL_TIMEOUT_MODE;
+  afterEach(() => { if (ORIG === undefined) delete process.env.TOOL_TIMEOUT_MODE; else process.env.TOOL_TIMEOUT_MODE = ORIG; });
+
+  it('resolves modes: auto = background when headless, kill otherwise; explicit values force', () => {
+    delete process.env.TOOL_TIMEOUT_MODE;
+    expect(ShellTool.resolveTimeoutMode(true)).toBe('background');
+    expect(ShellTool.resolveTimeoutMode(false)).toBe('kill');
+    process.env.TOOL_TIMEOUT_MODE = 'kill'; expect(ShellTool.resolveTimeoutMode(true)).toBe('kill');
+    process.env.TOOL_TIMEOUT_MODE = 'background'; expect(ShellTool.resolveTimeoutMode(false)).toBe('background');
+  });
+
+  it('background mode: a long command is promoted, not killed; BashOutput can read it; KillShell cleans up', async () => {
+    process.env.TOOL_TIMEOUT_MODE = 'background';
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shell-promote-'));
+    const t = new ShellTool({ workingDirectory: dir, headless: true } as ExecutorConfig);
+    const res = await t.execute({ command: 'echo started; sleep 3; echo finished', timeout: 800 }, new AbortController().signal);
+    expect(res.isError ?? res.is_error ?? false).toBeFalsy();
+    const text = typeof res.llmContent === 'string' ? res.llmContent : JSON.stringify(res);
+    expect(text).toContain('STILL RUNNING');
+    const id = (res as any).metadata?.promotedToBackground as string;
+    expect(id).toMatch(/^bg-/);
+    const reg = BackgroundProcessRegistry.getInstance();
+    expect(reg.hasProcess(id)).toBe(true);
+    await new Promise((r) => setTimeout(r, 3500));
+    const out = reg.getOutput(id).join('\n');
+    expect(out).toContain('finished');
+    reg.killProcess(id); reg.removeProcess(id);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }, 15000);
+
+  it('kill mode: the legacy behavior is unchanged', async () => {
+    process.env.TOOL_TIMEOUT_MODE = 'kill';
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shell-kill-'));
+    const t = new ShellTool({ workingDirectory: dir, headless: true } as ExecutorConfig);
+    const res = await t.execute({ command: 'sleep 3; echo finished', timeout: 500 }, new AbortController().signal);
+    const text = typeof res.llmContent === 'string' ? res.llmContent : JSON.stringify(res);
+    expect(text).toContain('timed out');
+    expect((res as any).metadata?.promotedToBackground).toBeUndefined();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }, 10000);
+});

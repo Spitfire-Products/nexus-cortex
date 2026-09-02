@@ -23,6 +23,21 @@ if [ -f package.json ]; then
     CMDS=$(printf '%s\n' "$SCRIPTS" | head -8 | sed 's/^/- `npm run /;s/$/`/')
   fi
 fi
+# Tooling inventory (item 11, 2026-09-02): ONE line of generic process intelligence —
+# which interpreters/venvs and which common binaries exist — so the model does not
+# discover `python3: command not found` five turns in. Read-only, always cheap.
+TI=""
+for i in python3 python node; do
+  v=$(command -v "$i" 2>/dev/null) && TI="$TI $i=$v"
+done
+for v in /opt/*/bin/python /app/.venv/bin/python /root/.venv/bin/python /venv/bin/python; do
+  [ -x "$v" ] && TI="$TI venv=$v"
+done
+HAVE=""; MISS=""
+for b in file xxd strings ps pgrep free pdftotext tesseract gcc make git curl; do
+  if command -v "$b" >/dev/null 2>&1; then HAVE="$HAVE $b"; else MISS="$MISS $b"; fi
+done
+echo "-- tooling:${TI:- (no python/node on PATH)} | have:${HAVE:- none} | missing:${MISS:- none}"
 [ -f requirements.txt ] && echo "-- python deps: requirements.txt ($(wc -l < requirements.txt | tr -d ' ') lines)"
 [ -f pyproject.toml ] && echo "-- python: pyproject.toml present"
 [ -f Cargo.toml ] && echo "-- rust: Cargo.toml present (cargo build / cargo test)"
