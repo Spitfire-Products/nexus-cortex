@@ -223,6 +223,9 @@ export interface EnvironmentVariables {
   /** Enable Anthropic Programmatic Tool Calling (server-side code execution sandbox) */
   ENABLE_PTC?: string; // 'true' | 'false'
 
+  /** Web surface mode: auto (fetch on; search/browse on iff a search key is present) | true | false */
+  ENABLE_WEBTOOLS?: string; // 'auto' | 'true' | 'false'
+
   /** Enable local code execution for non-PTC models (node -e with tool globals) */
   ENABLE_LOCAL_CODE_EXECUTION?: string; // 'true' | 'false'
 
@@ -426,6 +429,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   ENABLE_PTC: 'false',
   ENABLE_LOCAL_CODE_EXECUTION: 'false',
   ENABLE_DEFERRED_TOOL_LOADING: 'true',
+  ENABLE_WEBTOOLS: 'auto',
 
   // Model Router
   MODEL_ROUTER_ENABLED: 'false',
@@ -975,6 +979,15 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     type: 'boolean',
     category: 'server_side_tools',
     default: 'false'
+  },
+  {
+    key: 'ENABLE_WEBTOOLS',
+    displayName: 'Web Tools',
+    description: 'Web surface mode. auto (default): WebFetch on; WebSearch / Browse / browser MCP / hosted search on only when a search-capable key is present (Gemini grounding, XAI, OpenAI). true = all on. false = all off — stripped from every tool surface and refused at dispatch. Benches must pin true/false explicitly.',
+    type: 'choice',
+    choices: ['auto', 'true', 'false'],
+    category: 'server_side_tools',
+    default: 'auto'
   },
   {
     key: 'ENABLE_LOCAL_CODE_EXECUTION',

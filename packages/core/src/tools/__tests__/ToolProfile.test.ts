@@ -6,7 +6,7 @@
  * break), the ToolFactory choke point (essential backstop cannot re-admit
  * hidden tools), and the dispatch-guard face.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import {
   resolveToolProfile,
   resolveToolAnchor,
@@ -191,5 +191,77 @@ describe('resolveFrameProfile (backlog item 5 — per-model frame defaults)', ()
   });
   it('garbage card falls back to lifted', () => {
     expect(resolveFrameProfile({} as NodeJS.ProcessEnv, 'sideways')).toBe('lifted');
+  });
+});
+
+// ENABLE_WEBTOOLS — the web-surface switch (2026-09-02; auto mode = shipped default).
+// Rides the same choke point + dispatch guard as the profile, so a disabled web
+// tool is neither offered nor executable, under every profile.
+import { resolveWebToolsMode, isWebTool, isWebToolEnabled, webToolBlocked, WEB_SEARCH_CREDENTIAL_ENVS } from '../ToolProfile.js';
+describe('ENABLE_WEBTOOLS', () => {
+  const SAVED: Record<string, string | undefined> = {};
+  const KEYS = ['ENABLE_WEBTOOLS', ...WEB_SEARCH_CREDENTIAL_ENVS];
+  beforeEach(() => { for (const k of KEYS) { SAVED[k] = process.env[k]; delete process.env[k]; } });
+  afterEach(() => { for (const k of KEYS) { if (SAVED[k] === undefined) delete process.env[k]; else process.env[k] = SAVED[k]; } });
+  const WEB = [T('WebSearch', 'essential'), T('WebFetch', 'essential'), T('Browse', 'essential'), T('nexus-browser__browse')];
+
+  it('mode resolution: unset/garbage → auto; true/false spellings', () => {
+    expect(resolveWebToolsMode()).toBe('auto');
+    process.env.ENABLE_WEBTOOLS = 'maybe'; expect(resolveWebToolsMode()).toBe('auto');
+    process.env.ENABLE_WEBTOOLS = 'off';   expect(resolveWebToolsMode()).toBe('false');
+    process.env.ENABLE_WEBTOOLS = '1';     expect(resolveWebToolsMode()).toBe('true');
+  });
+
+  it('recognizes builtin web tools, the nexus-browser MCP prefix, and hosted search names', () => {
+    expect(isWebTool('WebFetch')).toBe(true);
+    expect(isWebTool('nexus-browser__scan')).toBe(true);
+    expect(isWebTool('web_search')).toBe(true);
+    expect(isWebTool('x_search')).toBe(true);
+    expect(isWebTool('Bash')).toBe(false);
+  });
+
+  it('auto + keyless: WebFetch on, search/browse/MCP/hosted search off', () => {
+    expect(isWebToolEnabled('WebFetch')).toBe(true);
+    expect(isWebToolEnabled('WebSearch')).toBe(false);
+    expect(isWebToolEnabled('Browse')).toBe(false);
+    expect(isWebToolEnabled('nexus-browser__browse')).toBe(false);
+    expect(isWebToolEnabled('web_search')).toBe(false);
+    expect(isWebToolEnabled('Bash')).toBe(true);
+    const names = applyToolProfile([...SAMPLE, ...WEB], 'full').map((t) => t.name);
+    expect(names).toContain('WebFetch');
+    expect(names).not.toContain('WebSearch');
+    expect(names).not.toContain('nexus-browser__browse');
+  });
+
+  it('auto + a search key: everything on', () => {
+    process.env.GEMINI_API_KEY = 'k';
+    for (const n of ['WebSearch', 'Browse', 'nexus-browser__browse', 'web_search']) expect(isWebToolEnabled(n)).toBe(true);
+    const names = applyToolProfile([...SAMPLE, ...WEB], 'full').map((t) => t.name);
+    expect(names).toEqual(expect.arrayContaining(['WebSearch', 'WebFetch', 'Browse', 'nexus-browser__browse']));
+  });
+
+  it('false strips every web tool from every profile surface, keeps everything else', () => {
+    process.env.ENABLE_WEBTOOLS = 'false'; process.env.GEMINI_API_KEY = 'k';
+    const full = applyToolProfile([...SAMPLE, ...WEB], 'full').map((t) => t.name);
+    expect(full).toEqual(expect.arrayContaining(['Read', 'Bash', 'EndTurn']));
+    expect(full.some(isWebTool)).toBe(false);
+    expect(applyToolProfile([...SAMPLE, ...WEB], 'lean').map((t) => t.name).some(isWebTool)).toBe(false);
+  });
+
+  it('true leaves the surface untouched even keyless', () => {
+    process.env.ENABLE_WEBTOOLS = 'true';
+    const names = applyToolProfile([...SAMPLE, ...WEB], 'full').map((t) => t.name);
+    expect(names).toEqual(expect.arrayContaining(['WebSearch', 'WebFetch', 'nexus-browser__browse']));
+  });
+
+  it('dispatch guard refuses blocked web tools even under the full profile', () => {
+    process.env.ENABLE_WEBTOOLS = 'false';
+    expect(webToolBlocked('WebSearch')).toBe(true);
+    expect(isToolAllowedByProfile('WebSearch', () => 'essential', 'full')).toBe(false);
+    expect(isToolAllowedByProfile('nexus-browser__browse', () => undefined, 'full')).toBe(false);
+    expect(isToolAllowedByProfile('Bash', () => 'essential', 'full')).toBe(true);
+    delete process.env.ENABLE_WEBTOOLS; // auto keyless
+    expect(isToolAllowedByProfile('WebFetch', () => 'essential', 'full')).toBe(true);
+    expect(isToolAllowedByProfile('WebSearch', () => 'essential', 'full')).toBe(false);
   });
 });

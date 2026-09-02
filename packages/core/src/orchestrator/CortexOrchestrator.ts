@@ -61,7 +61,7 @@ import type { AgentDefinition, SubAgentResult, ISubAgentEventEmitter } from './S
 
 // Phase 1: Tool Architecture Refactor - Unified Tool Registry
 import { toolFactory } from '../tools/ToolFactory.js';
-import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile } from '../tools/ToolProfile.js';
+import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked } from '../tools/ToolProfile.js';
 import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
 import { ExactRepeatTracker } from '../training/loopLadder.js';
 
@@ -682,6 +682,10 @@ export class CortexOrchestrator {
    *  interactive TUIs (a real user can answer). Headless swaps the human-ask for the
    *  model-ask (AskForAdvice, which the lift nudge signposts). Gated + idempotent. */
   private stripHeadlessOnlyTools<T extends { name: string }>(tools: T[], model?: ModelConfig): T[] {
+    // ENABLE_WEBTOOLS=false: factory tools are already stripped at the ToolFactory
+    // choke point, but MCP tools (nexus-browser__*) join the list HERE, past it —
+    // strip them at this seam too so the web surface is gone from every request.
+    tools = tools.filter((t) => !webToolBlocked(t.name));
     if (!resolveHeadlessDropAskUser(process.env, model?.headlessDropAskUser)) return tools; // card > env > false
     if (!this.approvalMode.autoApproveActions) return tools; // interactive: keep it
     return tools.filter((t) => t.name !== 'AskUserQuestion');
@@ -1103,6 +1107,9 @@ export class CortexOrchestrator {
           toCanonicalTool(OpenAIServerSideTools.imageGeneration()),
         ];
       }
+      // ENABLE_WEBTOOLS=false also suppresses the provider-native search tools
+      // (web_search / x_search); code/image hosted tools are unaffected.
+      serverTools = serverTools.filter((t) => !webToolBlocked(t.name));
       if (serverTools.length > 0) {
         allTools.push(...serverTools);
         if (this.config.debug) {
@@ -2651,6 +2658,18 @@ export class CortexOrchestrator {
               effortTailBounced = true;
               const tailTurns = Math.max(1, parseInt(process.env.CORTEX_EFFORT_TAIL_TURNS || '2', 10) || 2);
               this.effortPulseRemaining = tailTurns;
+              // Mechanism-engagement evidence (bench adjudication rule): bank the
+              // tail-fired fact — the fd cell (2026-09-02) had to read engagement
+              // from session text because the tail armed the counter silently.
+              const tailStore = this.getDecisionStore();
+              if (tailStore) {
+                void tailStore.recordEvent({
+                  sessionId: this.currentSessionId ?? 'unknown',
+                  kind: 'effort_pulse',
+                  toolName: 'EndTurn',
+                  detail: { trigger: 'tail', cumFailures: 0, turns: tailTurns, level: process.env.CORTEX_EFFORT_PULSE_LEVEL || 'high' },
+                }).catch(() => {});
+              }
               tr.is_error = true;
               tr.content =
                 'Before finishing: verify at depth. Re-read the original task statement; ' +
@@ -3729,6 +3748,9 @@ export class CortexOrchestrator {
           toCanonicalTool(OpenAIServerSideTools.imageGeneration()),
         ];
       }
+      // ENABLE_WEBTOOLS=false also suppresses the provider-native search tools
+      // (web_search / x_search); code/image hosted tools are unaffected.
+      serverTools = serverTools.filter((t) => !webToolBlocked(t.name));
       if (serverTools.length > 0) {
         allTools.push(...serverTools);
         if (this.config.debug) {
@@ -6845,6 +6867,17 @@ export class CortexOrchestrator {
         // not EXECUTE either (executors register unconditionally, so a model
         // hallucinating a hidden tool name would otherwise run it and leak the
         // A/B). MCP/context tools are already suppressed at assembly.
+        // ENABLE_WEBTOOLS=false dispatch face: checked BEFORE the MCP bypass so a
+        // nexus-browser__* call is refused too, not just the builtin web tools.
+        if (webToolBlocked(toolUse.name)) {
+          results.push({
+            tool_use_id: toolUse.id,
+            tool_name: toolUse.name,
+            content: `Tool '${toolUse.name}' is disabled in this session (ENABLE_WEBTOOLS). Work from local files and shell commands.`,
+            is_error: true,
+          });
+          continue;
+        }
         if (!isContextManagementTool && !isMcpManagementTool && !isMcpTool
             && !isToolAllowedByProfile(toolUse.name, (n) => toolFactory.getTool(n)?.discoveryTier, this.effectiveGuardProfile())) {
           results.push({
@@ -7370,6 +7403,14 @@ export class CortexOrchestrator {
 
       // Tool-profile dispatch gate (streaming-path mirror — see the batch-path
       // comment): hidden-by-profile tools must not execute.
+      if (webToolBlocked(toolUse.name)) {
+        return {
+          tool_use_id: toolUse.id,
+          tool_name: toolUse.name,
+          content: `Tool '${toolUse.name}' is disabled in this session (ENABLE_WEBTOOLS). Work from local files and shell commands.`,
+          is_error: true,
+        };
+      }
       if (!isContextManagementTool && !isMcpManagementTool && !isMcpTool
           && !isToolAllowedByProfile(toolUse.name, (n) => toolFactory.getTool(n)?.discoveryTier, this.effectiveGuardProfile())) {
         return {

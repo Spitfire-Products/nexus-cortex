@@ -99,6 +99,7 @@ Set the keys for the providers you use; leave the rest blank. A model is only av
 | `XAI_API_MODE` | `messages` | xAI request surface: `messages` (CC-style) or `responses` (server-side tools). |
 | `OPENAI_API_MODE` | `chat/completions` | OpenAI request surface: `chat/completions` or `responses` (opt into hosted server-side tools). |
 | `ENABLE_DEFERRED_TOOL_LOADING` | `true` | Load only essential tools up front; discover the rest via `SearchTools` (~77% first-turn input-token cut). |
+| `ENABLE_WEBTOOLS` | `auto` | Web surface mode. `auto`: WebFetch on; WebSearch / Browse / browser-MCP / hosted search on only when a search-capable key is present (Gemini grounding, XAI, OpenAI). `true`: all on. `false`: all off — stripped from every tool surface and refused at dispatch. Bench arms pin `true`/`false` explicitly. |
 | `ENABLE_PTC` | `false` | Programmatic tool calling (compose tool calls in a script). |
 | `ENABLE_LOCAL_CODE_EXECUTION` | `false` | Allow local code-execution tooling. |
 

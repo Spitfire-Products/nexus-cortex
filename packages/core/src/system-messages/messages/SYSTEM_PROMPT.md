@@ -44,7 +44,7 @@ Reserve Bash exclusively for system commands: `git`, `npm`, `docker`, `curl`, bu
 - **Grep**: Search file contents by regex. Use `output_mode: "files_with_matches"` first, then read specific files.
 - **Glob**: Find files by name pattern. Use `**/*.ts` for recursive search.
 - **Task**: Complex multi-step work with autonomous sub-agents. Batch independent Task calls in one response for parallel execution.
-- **WebSearch/WebFetch**: Current information from the web.
+- **WebSearch/WebFetch**: Current information from the web — only when they appear in your tools array (a deployment may disable the web surface; if absent, work from local files and shell commands).
 
 ## Cross-Session Memory (Canon)
 

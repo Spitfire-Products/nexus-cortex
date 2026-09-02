@@ -44,6 +44,59 @@ const BASH_PLUS = new Set(['Bash', 'Read', 'Edit', 'Write', 'ReadImage', ...ALWA
  *  bash + str_replace_editor). The deepseek home-door candidate. */
 const BASH_EDIT = new Set(['Bash', 'Edit', 'ReadImage', ...ALWAYS_KEEP]);
 
+/** ENABLE_WEBTOOLS — the web surface: builtin WebSearch / WebFetch / Browse, the nexus-browser
+ *  MCP tools, and the provider-native hosted search tools (web_search / x_search).
+ *  Modes (shipped default = auto):
+ *    auto  — WebFetch stays ON (functional keyless via the helper-summarizer ladder); WebSearch,
+ *            Browse, MCP browser tools and hosted search turn ON only when a search-capable
+ *            credential is present (Gemini grounding / XAI / OpenAI keys). Keyless installs — the
+ *            wall-page + hallucination-pressure population (keyless A/B 2026-08-31) — get search
+ *            off with zero configuration; keyed installs get everything with zero configuration.
+ *    true  — everything on.   false — everything off.
+ *  Applied at this choke point (every tool surface), at the orchestrator assembly seam (MCP tools
+ *  join past the factory), at the hosted-search injection, and refused at dispatch — so a disabled
+ *  web tool is neither discoverable nor executable. 🔴 BENCH ARMS MUST PIN true/false EXPLICITLY:
+ *  keyed bench containers carry job tokens for every provider, so auto resolves ON there.
+ *  Resolved fresh per call (hot-toggleable). */
+const WEB_TOOLS = new Set([
+  'WebSearch', 'WebFetch', 'Browse',
+  // provider-native server-side search (XAI/OpenAI hosted tools, injected by the orchestrator)
+  'web_search', 'web_search_preview', 'x_search',
+]);
+const WEB_MCP_PREFIX = 'nexus-browser__';
+/** Credentials that make a real search backend usable (Gemini grounding, XAI/OpenAI hosted search). */
+export const WEB_SEARCH_CREDENTIAL_ENVS = ['GOOGLE_API_KEY', 'GEMINI_API_KEY', 'XAI_API_KEY', 'OPENAI_API_KEY'] as const;
+export type WebToolsMode = 'auto' | 'true' | 'false';
+export function isWebTool(name: string): boolean {
+  return WEB_TOOLS.has(name) || name.startsWith(WEB_MCP_PREFIX);
+}
+export function resolveWebToolsMode(env: NodeJS.ProcessEnv = process.env): WebToolsMode {
+  const v = (env.ENABLE_WEBTOOLS ?? '').trim().toLowerCase();
+  if (v === 'false' || v === '0' || v === 'no' || v === 'off') return 'false';
+  if (v === 'true' || v === '1' || v === 'yes' || v === 'on') return 'true';
+  return 'auto';
+}
+export function hasWebSearchCredential(env: NodeJS.ProcessEnv = process.env): boolean {
+  return WEB_SEARCH_CREDENTIAL_ENVS.some((k) => !!(env[k] ?? '').trim());
+}
+/** Is THIS web tool enabled under the active mode? Non-web tools are always true. */
+export function isWebToolEnabled(name: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!isWebTool(name)) return true;
+  const mode = resolveWebToolsMode(env);
+  if (mode === 'true') return true;
+  if (mode === 'false') return false;
+  if (name === 'WebFetch') return true; // auto: fetch is useful keyless (helper-summarizer ladder)
+  return hasWebSearchCredential(env);   // auto: search/browse/hosted search need a real backend
+}
+/** Dispatch/assembly face: true when the tool is a web tool that the active mode disables. */
+export function webToolBlocked(name: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  return isWebTool(name) && !isWebToolEnabled(name, env);
+}
+/** @deprecated mode-level view kept for callers that only need "is anything blocked"; prefer webToolBlocked. */
+export function resolveWebToolsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return resolveWebToolsMode(env) !== 'false';
+}
+
 export function resolveToolProfile(env: NodeJS.ProcessEnv = process.env): ToolProfileName {
   const raw = (env.CORTEX_TOOL_PROFILE ?? 'full').trim().toLowerCase();
   if (raw === 'lean' || raw === 'bash-only' || raw === 'bash-plus' || raw === 'bash-edit') return raw;
@@ -153,6 +206,7 @@ export function applyToolProfile<T extends { name: string; discoveryTier?: strin
   tools: T[],
   profile: ToolProfileName = resolveToolProfile(),
 ): T[] {
+  tools = tools.filter((t) => !webToolBlocked(t.name)); // ENABLE_WEBTOOLS (auto/true/false)
   if (profile === 'full') return tools;
   if (profile === 'bash-only') return tools.filter((t) => BASH_ONLY.has(t.name));
   if (profile === 'bash-plus') return tools.filter((t) => BASH_PLUS.has(t.name));
@@ -167,6 +221,7 @@ export function isToolAllowedByProfile(
   lookupTier: (name: string) => string | undefined,
   profile: ToolProfileName = resolveToolProfile(),
 ): boolean {
+  if (webToolBlocked(name)) return false; // ENABLE_WEBTOOLS: refused everywhere
   if (profile === 'full') return true;
   if (ALWAYS_KEEP.has(name)) return true;
   if (profile === 'bash-only') return BASH_ONLY.has(name);
