@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.91.1] - 2026-09-03
+
+### Fixed
+- Citation grounding tolerates a `$ cmd → output` command-echo wrapper on `verbatim_source` (the dominant EndTurn
+  rejection tax: the model annotated the source with its command, and the exact-substring check false-rejected an
+  output that was genuinely present). Fabrication is still caught; the `verbatim_source` schema now says OUTPUT ONLY.
+
+### Changed
+- The orient bare-box bootstrap directive is gated behind `CORTEX_ORIENT_BOOTSTRAP` (default off, A/B-able). Orient's
+  factual tooling line is always on; the directive ships dark because it is unproven (a bare-box torch task passed
+  with the tooling line alone).
+
 ## [4.91.0] - 2026-09-03
 
 ### Added

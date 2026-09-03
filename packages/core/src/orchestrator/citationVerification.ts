@@ -37,6 +37,22 @@ function normalize(s: string): string {
     .trim();
 }
 
+/** 4.91.1: models annotate a verbatim_source as `$ cmd → OUTPUT` / `cmd:\n OUTPUT` (the format the
+ *  requirements nudge teaches for verified_how bled into citations) — the raw tool output has no such
+ *  wrapper, so the exact-substring check false-rejects it. Return the candidate forms to try: the whole
+ *  string AND the tail after a leading shell-prompt-command-arrow (or a trailing `→`). Grounding still
+ *  requires the real OUTPUT to be present verbatim, so this tolerates annotation without admitting fabrication. */
+function sourceForms(src: string): string[] {
+  const forms = [src];
+  // strip a leading `$ ...→` or `> ...→` or `# ...→` command-echo prefix
+  const arrow = src.replace(/^[\s]*[$>#][^\n→]*(?:→|=>|->)\s*/, '');
+  if (arrow !== src && arrow.length >= MIN_SOURCE_LEN) forms.push(arrow);
+  // if there is an arrow anywhere, also try just the part after the LAST arrow (cmd → output)
+  const lastArrow = src.split(/→|=>|->/).pop()?.trim() ?? '';
+  if (lastArrow && lastArrow !== src && lastArrow.length >= MIN_SOURCE_LEN) forms.push(lastArrow);
+  return forms;
+}
+
 /**
  * @param citations  the EndTurn attestation's citation list
  * @param toolOutputs concatenated text of THIS turn's tool results
@@ -54,7 +70,8 @@ export function verifyCitationsGrounded(
   for (const c of citations) {
     const src = normalize(c?.verbatim_source ?? '');
     if (src.length < MIN_SOURCE_LEN) continue; // too short to verify meaningfully
-    if (!haystack.includes(src)) {
+    // grounded if the source — or its de-annotated form (raw output after a `$ cmd →` wrapper) — is present
+    if (!sourceForms(src).some((f) => haystack.includes(normalize(f)))) {
       ungrounded.push(c);
     }
   }

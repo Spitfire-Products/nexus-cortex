@@ -1058,7 +1058,7 @@ After EndTurn returns, act on your own self_review, then produce your final plai
             type: 'object',
             properties: {
               reference: { type: 'string', description: 'The claim/reference as it appears in your answer.' },
-              verbatim_source: { type: 'string', description: "The EXACT text copied from this turn's tool output that grounds it (a quoted code line, a URL from a fetched page) — character-for-character, like an edit old_string." }
+              verbatim_source: { type: 'string', description: "The EXACT raw output text copied from this turn's tool output that grounds it — character-for-character, OUTPUT ONLY. Do NOT wrap it in a command echo (no \"$ cmd → ...\"), no summary, no paraphrase: paste only the bytes the tool printed. The command that produced it belongs in verification[].command, not here." }
             },
             required: ['reference', 'verbatim_source']
           }

@@ -38,12 +38,15 @@ for b in file xxd strings ps pgrep free pdftotext tesseract gcc make git curl; d
   if command -v "$b" >/dev/null 2>&1; then HAVE="$HAVE $b"; else MISS="$MISS $b"; fi
 done
 echo "-- tooling:${TI:- (no python/node on PATH)} | have:${HAVE:- none} | missing:${MISS:- none}"
-[ -f requirements.txt ] && echo "-- python deps: requirements.txt ($(wc -l < requirements.txt | tr -d ' ') lines)"
-[ -f pyproject.toml ] && echo "-- python: pyproject.toml present"
-[ -f Cargo.toml ] && echo "-- rust: Cargo.toml present (cargo build / cargo test)"
-if [ -f Makefile ]; then
-  echo "-- make targets --"
-  sed -n 's/^\([A-Za-z0-9_.-][A-Za-z0-9_.-]*\):.*/  make \1/p' Makefile | head -8
+# Bare-box hint (2026-09-03, operator-simplified): a task container may ship WITHOUT the language, compiler,
+# package or library the objective needs — on purpose (the agent phase is bare; internet is usually allowed).
+# State the FACTS (package manager present, whether we are root) and ONE principled directive — no command
+# cookbook: the model bootstraps correctly on its own (pro solved a bare-box torch task with only this line).
+# Prescribing exact incantations is prompt mass that misdirects; observation + intent is enough.
+if [ "${CORTEX_ORIENT_BOOTSTRAP:-0}" = "1" ] && { ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1 || ! command -v cc >/dev/null 2>&1; }; then
+  PM=""; for m in apt-get apk dnf yum pacman zypper brew; do command -v "$m" >/dev/null 2>&1 && { PM="$m"; break; }; done
+  ROOT=$([ "$(id -u 2>/dev/null)" = "0" ] && echo yes || echo no)
+  echo "-- setup: this box may be missing a tool/language/library the task needs (pkg-mgr=${PM:-none}, root=$ROOT). If so, INSTALL what you need yourself following standard practice (the system package manager, or the language's own installer); install ONCE and reuse it, and prefer a fast cached installer for the language (uv for Python, bun for JS) — do not re-download a large dependency twice. Pin versions, then verify with a real run before finishing. An empty box is part of the task, not an error."
 fi
 if [ -f README.md ]; then
   echo "-- README head --"

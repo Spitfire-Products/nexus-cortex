@@ -79,3 +79,22 @@ describe('verifyCitationsGrounded', () => {
     expect(r.ungrounded.map((u) => u.reference)).toEqual(['fake']);
   });
 });
+
+describe('verifyCitationsGrounded — 4.91.1 command-echo tolerance', () => {
+  const out = 'total 4\n-rw-r--r-- 1 root root 4096 Aug 11 2025 trunc.db\nrank 1: BIC=197966.81 E=6 edges=[(R, M), (U, D)]';
+  it('accepts a verbatim_source annotated as "$ cmd → output" when the OUTPUT is present', () => {
+    const v = verifyCitationsGrounded(
+      [{ reference: 'db is 4096 bytes', verbatim_source: '$ ls -la /app/trunc.db → -rw-r--r-- 1 root root 4096 Aug 11 2025 trunc.db' }],
+      out,
+    );
+    expect(v.grounded).toBe(true);
+  });
+  it('accepts the raw output with no wrapper (unchanged behaviour)', () => {
+    const v = verifyCitationsGrounded([{ reference: 'x', verbatim_source: 'rank 1: BIC=197966.81 E=6 edges=[(R, M), (U, D)]' }], out);
+    expect(v.grounded).toBe(true);
+  });
+  it('STILL rejects a fabricated output that is not present even after de-annotation', () => {
+    const v = verifyCitationsGrounded([{ reference: 'x', verbatim_source: '$ cat /app/x → the answer is 42 and everything checks out' }], out);
+    expect(v.grounded).toBe(false);
+  });
+});
