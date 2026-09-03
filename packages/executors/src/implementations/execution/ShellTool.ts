@@ -796,7 +796,11 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
   }
 
   private resolveTimeoutMs(params: ShellToolParams): number {
-    return Math.min(params.timeout || ShellTool.DEFAULT_TIMEOUT_MS, ShellTool.MAX_TIMEOUT_MS);
+    // 4.90.1: the default deadline follows the canonical TOOL_TIMEOUT_MS lever (the orchestrator's
+    // outer cap already does) — a hardcoded 120s here fired first whenever the env raised the cap.
+    const envDefault = Number(process.env.TOOL_TIMEOUT_MS);
+    const dflt = Number.isFinite(envDefault) && envDefault > 0 ? envDefault : ShellTool.DEFAULT_TIMEOUT_MS;
+    return Math.min(params.timeout || dflt, ShellTool.MAX_TIMEOUT_MS);
   }
 
   /**

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.90.1] - 2026-09-03
+
+### Fixed
+- **`TOOL_TIMEOUT_MODE=auto` never promoted** in 4.90.0: the orchestrator's outer tool-abort fired at the same
+  instant as ShellTool's promote deadline and won, so long Bash calls were still cancelled. The outer cap now
+  fires 30s after the tool's own deadline, and ShellTool's default deadline follows `TOOL_TIMEOUT_MS`.
+- **`CORTEX_ENDTURN_REQUIREMENTS=strict` threw on `EndTurn({})`** (null requirements). Strict also now accepts
+  honestly condensed requirements (24-char verbatim window or ≥70% of the task's content tokens) and its
+  grounding nudge shows a concrete pasted-output example.
+
 ## [4.90.0] - 2026-09-02
 
 ### Added

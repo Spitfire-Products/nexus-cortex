@@ -145,12 +145,16 @@ import { MentorshipMiddleware } from '../middleware/MentorshipMiddleware.js';
 // PTC: Progressive tool loading for non-PTC providers
 import { ClientSideToolFilter } from '../tools/ClientSideToolFilter.js';
 import type {
+
   MiddlewareContext,
   MentorshipToolResult,
   PermissionPolicy,
   PermissionAuditEntry,
   ApprovalHandler
 } from '../middleware/contracts/MiddlewareContracts.js';
+
+/** Grace the orchestrator's outer tool-abort waits past the tool's own deadline (ShellTool promote/kill fires first; 4.90.1). */
+const OUTER_TIMEOUT_GRACE_MS = 30_000;
 
 /**
  * Orchestrator Configuration
@@ -2512,11 +2516,16 @@ export class CortexOrchestrator {
         }
 
         // Phase 2.5 Day 3: Execute tools with timeout support
+        // 🔴 4.90.1: this OUTER abort must not race ShellTool's own deadline — ShellTool promotes a
+        // still-running Bash to the background AT TOOL_TIMEOUT_MS (TOOL_TIMEOUT_MODE), and an outer
+        // abort at the same instant made the promote inert (v4 pro/train-fasttext: 22 "cancelled",
+        // 0 promotions). The outer timer is the last-resort cap for hung tools: it fires a grace
+        // period AFTER the tool's own deadline.
         const abortController = new AbortController();
         const timeoutId = setTimeout(() => {
-          console.warn(`[Orchestrator Phase 2.5] Tool execution timeout after ${TOOL_TIMEOUT_MS}ms`);
+          console.warn(`[Orchestrator Phase 2.5] Tool execution timeout after ${TOOL_TIMEOUT_MS + OUTER_TIMEOUT_GRACE_MS}ms`);
           abortController.abort();
-        }, TOOL_TIMEOUT_MS);
+        }, TOOL_TIMEOUT_MS + OUTER_TIMEOUT_GRACE_MS);
 
         // Track which tool_use_ids have been processed to avoid duplicates in error handler
         const processedToolUseIds = new Set<string>();
@@ -4578,14 +4587,15 @@ export class CortexOrchestrator {
         break;
       }
 
-      // Execute tools with timeout
+      // Execute tools with timeout (outer cap fires a grace period AFTER the tool's own deadline —
+      // see the non-stream site: ShellTool's promote-at-deadline must win the race; 4.90.1)
       const abortController = new AbortController();
       const timeoutId = setTimeout(() => {
         if (this.config.debug) {
-          console.warn(`[Orchestrator Streaming] Tool execution timeout after ${TOOL_TIMEOUT_MS}ms`);
+          console.warn(`[Orchestrator Streaming] Tool execution timeout after ${TOOL_TIMEOUT_MS + OUTER_TIMEOUT_GRACE_MS}ms`);
         }
         abortController.abort();
-      }, TOOL_TIMEOUT_MS);
+      }, TOOL_TIMEOUT_MS + OUTER_TIMEOUT_GRACE_MS);
 
       try {
         // Execute tools (reuse existing method)

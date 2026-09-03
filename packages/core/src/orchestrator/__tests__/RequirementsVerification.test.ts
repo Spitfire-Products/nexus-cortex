@@ -213,3 +213,27 @@ describe('verifyRequirements — STRICT mode (CORTEX_ENDTURN_REQUIREMENTS=strict
     expect(v.ok).toBe(true);
   });
 });
+
+describe('verifyRequirements — STRICT 4.90.1 regressions', () => {
+  const task = 'Design a gBlock. The gBlock must be stored in /app/gblock.txt containing only the sequence, with no empty lines and no header. Write the best move to /app/move.txt';
+  it('does NOT throw on EndTurn({}) (no requirements) under strict — v4 dna-insert crash', () => {
+    expect(() => verifyRequirements({ requirements: undefined, verification: [], userTaskText: 'hello there', turnUsedMutatingTool: false, strict: true, toolOutputs: '' })).not.toThrow();
+    const v = verifyRequirements({ requirements: null, verification: [], userTaskText: 'hello there', turnUsedMutatingTool: false, strict: true, toolOutputs: '' });
+    expect(v.ok).toBe(true);
+  });
+  it('accepts an honestly CONDENSED requirement that carries the task\'s own words (v4 protein-assembly)', () => {
+    const v = verifyRequirements({
+      requirements: [{ requirement: 'gBlock stored in /app/gblock.txt containing only the sequence, no empty lines', satisfied_by: 'x', verified_how: 'wc -l /app/gblock.txt → 1 /app/gblock.txt' }],
+      verification: ['wc'], userTaskText: task, turnUsedMutatingTool: true, strict: true, toolOutputs: '1 /app/gblock.txt\n',
+    });
+    expect(v.ok).toBe(true);
+  });
+  it('still rejects a requirement with none of the task\'s words', () => {
+    const v = verifyRequirements({
+      requirements: [{ requirement: 'the deliverable exists and looks reasonable overall', satisfied_by: 'x', verified_how: 'wc -l /app/gblock.txt → 1 /app/gblock.txt' }],
+      verification: ['wc'], userTaskText: task, turnUsedMutatingTool: true, strict: true, toolOutputs: '1 /app/gblock.txt\n',
+    });
+    expect(v.ok).toBe(false);
+    expect(v.nudge).toMatch(/paraphrases/);
+  });
+});

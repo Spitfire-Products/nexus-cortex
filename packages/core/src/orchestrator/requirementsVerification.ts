@@ -48,7 +48,15 @@ const norm = (s: string): string => s.toLowerCase().replace(/\s+/g, ' ').trim();
 function verbatimIn(needle: string, hay: string, minLen: number): boolean {
   const n = norm(needle); const h = norm(hay);
   if (n.length < minLen) return true; // too short to be a meaningful claim — do not block
-  return h.includes(n);
+  if (h.includes(n)) return true;
+  // 4.90.1 (v4 protein-assembly: 11 honest condensations rejected as "paraphrases"): accept a
+  // requirement that carries the task's own words even when condensed — any 24-char window of it
+  // present verbatim, OR ≥70% of its content tokens (≥4 chars) present in the task text.
+  if (windowGrounded(n, h, 24)) return true;
+  const toks = n.split(' ').filter((t) => t.length >= 4);
+  if (toks.length === 0) return true;
+  const hit = toks.filter((t) => h.includes(t)).length;
+  return hit / toks.length >= 0.7;
 }
 /** Does any window of `text` of `win` chars appear in `outputs`? (Stage-2-style grounding.) */
 function windowGrounded(text: string, outputs: string, win: number): boolean {
@@ -146,7 +154,8 @@ export function verifyRequirements(input: {
 
     // 4e (STRICT) — attestation backed by a run: requirements must be verbatim task clauses and
     // verified_how must be grounded in an executed check's OUTPUT this turn (not a claim).
-    if (input.strict) {
+    // 🔴 4.90.1: guarded on `reqs` — 4.90.0 threw `null.filter` on EndTurn({}) under strict (v4 flash/dna-insert ×4).
+    if (input.strict && reqs && reqs.length > 0) {
       const rows = reqs as RequirementRow[];
       const notVerbatim = rows.filter((r) => !verbatimIn(r.requirement, input.userTaskText || '', 12));
       if (notVerbatim.length > 0 && (input.userTaskText || '').trim().length > 0) {
@@ -167,7 +176,8 @@ export function verifyRequirements(input: {
           ok: false,
           nudge:
             `EndTurn REJECTED (requirements/strict) — ${ungrounded.length} verification(s) are claims, not runs: ${names}. ` +
-            '`verified_how` must quote the ACTUAL output of a check you executed THIS turn (copy the real result line). ' +
+            '`verified_how` must quote the ACTUAL output of a check you executed THIS turn — paste the real result line, e.g. ' +
+            '"$ ./cli_tool weights.json image.png → 2" (a sentence like "ran the tests, they passed" is a claim and will be rejected again). ' +
             'If you did not run it, run it now — against the task\'s stated constraint, not your own test — or mark it "UNVERIFIED". Then call EndTurn again.',
         };
       }
