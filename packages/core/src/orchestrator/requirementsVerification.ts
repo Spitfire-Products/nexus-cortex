@@ -169,7 +169,8 @@ export function verifyRequirements(input: {
         };
       }
       const outputs = input.toolOutputs || '';
-      const ungrounded = rows.filter((r) => !UNVERIFIED_RE.test(r.verified_how) && !windowGrounded(r.verified_how, outputs, 16));
+      // 12-char windows (4.91.0): the recommended `$ cmd → output` form grounds via the command run this turn.
+      const ungrounded = rows.filter((r) => !UNVERIFIED_RE.test(r.verified_how) && !windowGrounded(r.verified_how, outputs, 12));
       if (ungrounded.length > 0) {
         const names = ungrounded.slice(0, 3).map((r) => `"${r.requirement.slice(0, 60)}" ⇐ "${r.verified_how.slice(0, 60)}"`).join('; ');
         return {

@@ -47,6 +47,8 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   ENABLE_WEBTOOLS:                { tier: 'env' },
   VISION_HELPER_MODEL:            { tier: 'env' },
   TOOL_TIMEOUT_MODE:              { tier: 'env' },
+  VISION_HANDOFF_MAX:             { tier: 'env' },
+  CORTEX_SLICE_NUDGE:             { tier: 'env' },
   USE_EMOJI:                      { tier: 'env' },
   WEB_TOOLS_MODEL:                { tier: 'env' },
   TOOL_BUDGET_SOFT:               { tier: 'env' },

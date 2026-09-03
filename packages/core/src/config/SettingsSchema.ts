@@ -232,6 +232,12 @@ export interface EnvironmentVariables {
   /** Tool timeout policy: kill (legacy) | background (promote at deadline) | auto (background when headless) */
   TOOL_TIMEOUT_MODE?: string;
 
+  /** Per-turn cap on ReadImage→vision-helper hand-offs (0 = unlimited) */
+  VISION_HANDOFF_MAX?: string;
+
+  /** Slice-reader nudge: after 3 sed/head/tail slices of one file, remind to Read it once ('true'|'false') */
+  CORTEX_SLICE_NUDGE?: string;
+
   /** Enable local code execution for non-PTC models (node -e with tool globals) */
   ENABLE_LOCAL_CODE_EXECUTION?: string; // 'true' | 'false'
 
@@ -438,6 +444,8 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   ENABLE_WEBTOOLS: 'auto',
   VISION_HELPER_MODEL: 'deepseek-v4-flash-vision-exp',
   TOOL_TIMEOUT_MODE: 'auto',
+  VISION_HANDOFF_MAX: '8',
+  CORTEX_SLICE_NUDGE: 'true',
 
   // Model Router
   MODEL_ROUTER_ENABLED: 'false',
@@ -996,6 +1004,22 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     category: 'server_side_tools',
     choices: ['auto', 'kill', 'background'],
     default: 'auto'
+  },
+  {
+    key: 'VISION_HANDOFF_MAX',
+    displayName: 'Vision Hand-off Max',
+    description: 'Per-turn cap on ReadImage hand-offs to the vision helper (VISION_HELPER_MODEL). Past the cap, ReadImage returns a consolidate-your-reads reminder instead of another vision call. 0 = unlimited.',
+    type: 'number',
+    category: 'server_side_tools',
+    default: '8'
+  },
+  {
+    key: 'CORTEX_SLICE_NUDGE',
+    displayName: 'Slice-Reader Nudge',
+    description: 'After the third bash slice-read (sed -n N,Mp / head / tail) of the same file in a session, append a one-line reminder to read the file once with Read instead. Doctrine gap seen on both models in the v4 cell.',
+    type: 'boolean',
+    category: 'server_side_tools',
+    default: 'true'
   },
   {
     key: 'VISION_HELPER_MODEL',

@@ -1314,7 +1314,8 @@ ${context.content}
       'Describe this image in full detail. Transcribe ALL visible text exactly (character-for-character, preserving line order and layout); for boards, charts, tables or diagrams give exact structured readings (positions, values, labels).';
     const body = `A text-only agent loaded the image${context.filePath ? ` ${context.filePath}` : ''} and asks: "${ask}"
 
-Answer from the IMAGE ONLY. Be exact: transcribe text verbatim; give coordinates/positions/values precisely; state explicitly when something is unreadable or uncertain rather than guessing.`;
+Answer from the IMAGE ONLY. Be exact: transcribe text verbatim; give coordinates/positions/values precisely; state explicitly when something is unreadable or uncertain rather than guessing.
+If the image is a BOARD, GRID, TABLE or DIAGRAM: work cell by cell in row-major order (name each cell, e.g. a8…h1 or row/col), never guess a whole layout from a glance; if a cell is ambiguous say so for THAT cell. If it is a FIGURE with panels/labels: transcribe labels and arrows literally and describe each panel separately.`;
     const text = frameHelperPrompt(
       {
         surface: 'vision-handoff',

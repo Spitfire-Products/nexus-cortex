@@ -20,7 +20,6 @@ import type { CanonicalMessage, CanonicalTool } from '../adapters/FormatAdapter.
 // Phase 2.4: Server-Side Tools Support
 import { shouldUseServerSideTools, isServerSideToolsEnabled, modelSupportsServerSideTools, type ServerSideToolDetectionResult } from '../adapters/ServerSideToolDetection.js';
 import { shouldAutoInjectMcp } from './mcpAutoInjectPolicy.js';
-import { verifyCitationsGrounded } from './citationVerification.js';
 import { verifyCoordinates, deterministicCoordinateScore } from './coordinateVerification.js';
 import { buildRouterSample, appendJsonlRotating } from './cortexTrainingRecord.js';
 import { join as pathJoin } from 'path';
@@ -61,7 +60,8 @@ import type { AgentDefinition, SubAgentResult, ISubAgentEventEmitter } from './S
 
 // Phase 1: Tool Architecture Refactor - Unified Tool Registry
 import { toolFactory } from '../tools/ToolFactory.js';
-import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked, resolveVisionHelperModel } from '../tools/ToolProfile.js';
+import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked, resolveVisionHelperModel, resolveVisionHandoffMax, resolveSliceNudge } from '../tools/ToolProfile.js';
+import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
 import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
 import { ExactRepeatTracker } from '../training/loopLadder.js';
 
@@ -88,8 +88,6 @@ import { classifyToolOutcome } from '../training/toolOutcome.js';
 import { LoopLadder, formatLadderSignal } from '../training/loopLadder.js';
 import { shouldNudgeInaction, formatInactionNudge } from './inactionGuard.js';
 import { applyImageTtlForRequest } from './imageTtl.js';
-import { verifyRequirements, resolveEndTurnRequirementsMode, resolveEndTurnRequirementsStrict } from './requirementsVerification.js';
-import { verifyIntegrity, resolveEndTurnIntegrityMode } from './integrityVerification.js';
 import { detectSurrenderText, resolveSurrenderNudgeMode, SURRENDER_REMINDER } from './turnEndGuards.js';
 import { ModelRouterMatrix } from '../training/ModelRouterMatrix.js';
 import { classifyTask } from '../training/TaskClassifier.js';
@@ -1721,7 +1719,8 @@ export class CortexOrchestrator {
     // calls the EndTurn attestation tool. Steering is ignored by some
     // models (grok-4.3); a required tool call is not. Bounded so a model
     // that refuses cannot hang the turn (fallback: accept after N nudges).
-    let endTurnCalled = false;
+    const ev = new TurnEvidence(); // per-turn evidence for the EndTurn gates (shared module, 4.91.0)
+    this.visionHandoffsThisTurn = 0;
     let endTurnNudges = 0;
     let surrenderNudgeUsed = false; // item 13b: one execute-your-plan nudge per turn
     const END_TURN_MAX_NUDGES = 2;
@@ -1737,14 +1736,12 @@ export class CortexOrchestrator {
     // answer's line-number claims can be verified against what was actually
     // read this turn (verifyCoordinates). Stage-2-grounded citations are the
     // trusted baseline a coordinate must map to.
-    let lastEndTurnCitations: Array<{ reference: string; verbatim_source: string }> | undefined;
     // EFFORT TAIL one-shot (def-efdbb67fd8): the first EndTurn of this turn has
     // been bounced for a high-effort re-attestation cycle.
-    let effortTailBounced = false;
     let endTurnLastToolName: string | undefined; // for the cortex training record
     // R60: the ROUTING decision = the FIRST real tool called in response to the
     // user prompt, WITH ITS ACTUAL INPUT ARGS. Previously the router sample's
-    // selected_args_json was filled with turn-quality metadata (endTurnCalled/
+    // selected_args_json was filled with turn-quality metadata (ev.endTurnCalled/
     // nudges/violations/draftPreview) — fine-tunes on that corpus learned to
     // emit garbage args (proven by the v2p3 r9b pilot adapter).
     let routerFirstToolName: string | undefined;
@@ -1752,16 +1749,12 @@ export class CortexOrchestrator {
     // Scope: the gate ONLY arms when the turn actually used a (non-EndTurn)
     // tool. A pure-language turn has no tool-derived artifact to
     // misattribute, so forcing EndTurn there is pure overhead → bypass.
-    let turnUsedTools = false;
     // Drives the adaptive reminder (verification emphasis vs citation
     // emphasis) keyed to what the turn actually did.
-    let turnUsedMutatingTool = false; // Edit/Write/Bash/NotebookEdit
-    let turnUsedReadishTool = false; // Read/Grep/Glob
     // Stage 2: concatenated text of every (non-EndTurn) tool result the
     // model saw THIS turn — the haystack EndTurn citations are verified
     // against. A cited verbatim_source not found here is a regurgitated
     // prior, not an observation: the EndTurn call is rejected.
-    const thisTurnToolOutputs: string[] = [];
 
     // Loop detection: Track recent tool calls to detect repetitive loops
     const recentToolCalls: Array<{ name: string; inputHash: string }> = [];
@@ -1769,9 +1762,6 @@ export class CortexOrchestrator {
     // EndTurn Stage 5 (integrity): turn-level evidence accumulators — web
     // activity and mutating-tool inputs can land many batches before the
     // EndTurn call, so per-batch state is not enough.
-    const integrityWebQueries: string[] = [];
-    const integrityWebContent: string[] = [];
-    const integrityWriteInputs: string[] = [];
     // Unified Outcome Ladder (docs/UNIFIED_OUTCOME_LADDER.md): per-approach
     // FAILURE escalation — remind(2)→diversify(4)→break(6) over normalized
     // near-duplicate approaches. Complements isToolProgressStalled (which is
@@ -1786,6 +1776,7 @@ export class CortexOrchestrator {
     // Track tool call counts for diversity warning
     const toolCallCounts = new Map<string, number>();
 
+    let lastExecutedBatchUuid: string | null = null; // 4.90.3 re-execution guard (def-7f510b5635)
     while (toolCallIteration < MAX_TOOL_ITERATIONS) {
       try {
         // DEBUG: Log canonical message content structure for tool extraction
@@ -2143,14 +2134,14 @@ export class CortexOrchestrator {
           // Q1 proved the fabrication is intrinsic regurgitation — only a
           // deterministic reject closes it.
           let stage3Violations: Array<{ claim: string; line: number }> = [];
-          if (endTurnGateEnabled && turnUsedTools && endTurnCalled) {
+          if (endTurnGateEnabled && ev.usedTools && ev.endTurnCalled) {
             const draft = Array.isArray(currentAssistantCanonicalMessage.content)
               ? (currentAssistantCanonicalMessage.content as any[])
                   .filter((b: any) => b?.type === 'text')
                   .map((b: any) => b.text || '')
                   .join('\n')
               : String(currentAssistantCanonicalMessage.content ?? '');
-            const cv = verifyCoordinates(draft, thisTurnToolOutputs.join('\n'), lastEndTurnCitations);
+            const cv = verifyCoordinates(draft, ev.outputs.join('\n'), ev.lastCitations);
             if (!cv.ok) stage3Violations = cv.violations;
           }
 
@@ -2160,7 +2151,7 @@ export class CortexOrchestrator {
           // previously silent. Bank an event so the distiller can see
           // un-attested passes.
           const endTurnGateUnsatisfied =
-            endTurnGateEnabled && turnUsedTools && (!endTurnCalled || stage3Violations.length > 0);
+            endTurnGateEnabled && ev.usedTools && (!ev.endTurnCalled || stage3Violations.length > 0);
           // Item 13b (surrender guard): honest capitulation-with-a-plan — the
           // final text enumerates remaining steps instead of executing them.
           // One nudge per turn, own flag, shares the continuation plumbing.
@@ -2171,10 +2162,10 @@ export class CortexOrchestrator {
                 .join('\n')
             : String(currentAssistantCanonicalMessage.content ?? '');
           const surrenderUnsatisfied =
-            resolveSurrenderNudgeMode() && turnUsedTools && !surrenderNudgeUsed &&
+            resolveSurrenderNudgeMode() && ev.usedTools && !surrenderNudgeUsed &&
             detectSurrenderText(surrenderDraftText);
           if (endTurnGateUnsatisfied && endTurnNudges >= END_TURN_MAX_NUDGES) {
-            const fallbackReason = !endTurnCalled ? 'missing-EndTurn' : 'coordinate-violation';
+            const fallbackReason = !ev.endTurnCalled ? 'missing-EndTurn' : 'coordinate-violation';
             console.warn(
               `[Orchestrator] EndTurn gate FALLBACK-ACCEPT: ${fallbackReason} after ${endTurnNudges} nudges — turn ships un-attested.`,
             );
@@ -2205,7 +2196,7 @@ export class CortexOrchestrator {
             } else {
               endTurnNudges++;
             }
-            const gateReason = !endTurnCalled ? 'missing-EndTurn' : 'coordinate-violation';
+            const gateReason = !ev.endTurnCalled ? 'missing-EndTurn' : 'coordinate-violation';
             console.warn(
               `[Orchestrator] EndTurn gate: ${gateReason} ` +
               `(nudge ${endTurnNudges}/${END_TURN_MAX_NUDGES}, iteration=${toolCallIteration}` +
@@ -2229,24 +2220,10 @@ export class CortexOrchestrator {
 
             // Adaptive reminder: name what THIS turn actually did (specific
             // imperatives bind harder than generic boilerplate).
-            const citEmphasis = turnUsedReadishTool
-              ? ' You read code/files this turn: for EACH reference in your draft give the EXACT verbatim source you copied it from; if you cannot, DELETE that reference and quote the code instead of asserting a coordinate.'
-              : '';
-            const verEmphasis = turnUsedMutatingTool
-              ? ' You ran edit/write/bash this turn: in `verification` list every build/test/lint command you ACTUALLY ran with the real result line you saw — do not claim a check you did not run.'
-              : '';
             const endTurnReminderText = surrenderUnsatisfied
               ? SURRENDER_REMINDER
-              : !endTurnCalled
-              ? ('<system-reminder>You used tools this turn but have not called EndTurn. ' +
-                 'You MUST call EndTurn before any final answer. It is generative, not a checkbox: ' +
-                 'reconstruct `citations` (array of {reference, verbatim_source}), `verification` ' +
-                 '(array of {command, observed_result}), `summary`, `open_items`, and a skeptical ' +
-                 '`self_review` (what you did NOT check, what is assumed/possibly wrong, what one ' +
-                 'more tool call would verify).' +
-                 citEmphasis +
-                 verEmphasis +
-                 ' Call EndTurn now — do not produce a final answer until you have.</system-reminder>')
+              : !ev.endTurnCalled
+              ? buildMissingEndTurnReminder(ev)
               : ('<system-reminder>EndTurn REJECTED. Your drafted answer asserts line number(s) ' +
                  stage3Violations.map((v) => v.line).join(', ') +
                  ' that are NOT backed by any citation whose verbatim_source actually sits at that ' +
@@ -2365,7 +2342,7 @@ export class CortexOrchestrator {
           // IS the deterministic verdict — the slot the nexus schema reserves
           // ("alignment scorer / CHALLENGE-graded review") but leaves empty.
           // Fail-safe: training telemetry must never break a turn.
-          if (turnUsedTools) {
+          if (ev.usedTools) {
             try {
               const draftText = Array.isArray(currentAssistantCanonicalMessage.content)
                 ? (currentAssistantCanonicalMessage.content as any[])
@@ -2378,8 +2355,8 @@ export class CortexOrchestrator {
               // line-number claims that correspond to a real line in this
               // turn's cat -n reads (not a flat 0). With the ReadFileTool
               // root-cause fix the model transcribes real numbers → ~1.0.
-              const outcomeScore = !endTurnCalled
-                ? deterministicCoordinateScore(draftText, thisTurnToolOutputs.join('\n'))
+              const outcomeScore = !ev.endTurnCalled
+                ? deterministicCoordinateScore(draftText, ev.outputs.join('\n'))
                 : stage3Violations.length > 0
                   ? 0.3
                   : endTurnNudges > 0
@@ -2435,6 +2412,7 @@ export class CortexOrchestrator {
 
         // Track these tool uses for the response
         allExecutedToolUses.push(...toolUseBlocks);
+        ev.noteToolUses(toolUseBlocks); // per-turn evidence (shared with the streaming loop — endTurnGates.ts)
 
         // Track per-tool call counts for diversity warning
         for (const tu of toolUseBlocks) {
@@ -2443,21 +2421,24 @@ export class CortexOrchestrator {
           // verify against this turn's tool output (set post-execution
           // below). A non-EndTurn tool arms the gate + records category.
           if (tu.name !== 'EndTurn') {
-            turnUsedTools = true;
             endTurnLastToolName = tu.name; // last real tool — for cortex record
             if (routerFirstToolName === undefined) {
               routerFirstToolName = tu.name; // the routing decision (R60)
               routerFirstToolArgs = (tu as any).input ?? {};
             }
-            if (['Edit', 'Write', 'Bash', 'NotebookEdit'].includes(tu.name)) {
-              turnUsedMutatingTool = true;
-            }
-            if (['Read', 'Grep', 'Glob'].includes(tu.name)) {
-              turnUsedReadishTool = true;
-            }
           }
         }
 
+        // 4.90.3 (def-7f510b5635): a batch that ALREADY EXECUTED must never run again. When an exception
+        // escapes after execution (gate/lens/banking path), the catch below emits error tool_results but
+        // the loop re-enters with the SAME assistant message — re-running its tools (real side effects)
+        // until the error cap (v4 flash/dna-insert: 1000 iterations). Leave the loop instead; the
+        // post-loop synthesis (R29a) gives the model one call to answer over the error results.
+        if (lastExecutedBatchUuid !== null && currentAssistantCanonicalMessage.uuid === lastExecutedBatchUuid) {
+          console.error(`[Orchestrator Phase 2.5] Tool batch ${lastExecutedBatchUuid} already executed — an exception escaped after execution; NOT re-running the batch (leaving the tool loop).`);
+          break;
+        }
+        lastExecutedBatchUuid = currentAssistantCanonicalMessage.uuid ?? null;
         toolCallIteration++;
 
         if (this.config.debug) {
@@ -2471,24 +2452,6 @@ export class CortexOrchestrator {
           const toolSignature = { name: toolUse.name, inputHash };
 
           recentToolCalls.push(toolSignature);
-
-          // Stage-5 evidence accumulation (cheap, always-on; verdicts only
-          // computed at the gate when CORTEX_ENDTURN_INTEGRITY is armed).
-          if (toolUse.name === 'WebSearch') {
-            const q = (toolUse.input as any)?.query;
-            if (typeof q === 'string' && q) integrityWebQueries.push(q);
-          } else if (toolUse.name === 'Browse') {
-            // Browse renders full pages — the richest retrieval channel; its
-            // task text rides the query checks and triggers attestation.
-            const t = (toolUse.input as any)?.task;
-            if (typeof t === 'string' && t) integrityWebQueries.push(t);
-          } else if (toolUse.name === 'Write') {
-            const c = (toolUse.input as any)?.content;
-            if (typeof c === 'string' && c) integrityWriteInputs.push(c);
-          } else if (toolUse.name === 'Edit') {
-            const ns = (toolUse.input as any)?.new_string;
-            if (typeof ns === 'string' && ns) integrityWriteInputs.push(ns);
-          }
 
           // CONSECUTIVE byte-identical repeats only (2026-08-26 fix — the old
           // whole-turn occurrence count killed legitimate scattered repeats,
@@ -2532,6 +2495,7 @@ export class CortexOrchestrator {
 
         try {
           const toolResults = await this.handleToolCalls(toolUseBlocks, abortController.signal, structuredOutputState);
+          this.testPostExecThrow(); // test-only fault injection for the re-execution guard (inert in prod)
           clearTimeout(timeoutId);
 
           // Unified Outcome Ladder: observe each result's TRUE outcome (exit
@@ -2639,150 +2603,9 @@ export class CortexOrchestrator {
           // ungrounded verbatim_source is a regurgitated prior, not an
           // observation → reject the EndTurn (mutate its result into an
           // error the model must act on) and leave the gate unsatisfied.
-          for (const tr of toolResults) {
-            if (tr.tool_name === 'EndTurn' || tr.is_error) continue;
-            const txt = typeof tr.content === 'string' ? tr.content : JSON.stringify(tr.content);
-            if (txt) thisTurnToolOutputs.push(txt);
-            if ((tr.tool_name === 'WebSearch' || tr.tool_name === 'WebFetch' || tr.tool_name === 'Browse') && txt) {
-              integrityWebContent.push(txt);
-            }
-          }
-          // 4.90.2: the whole EndTurn gate block is exception-safe. A throw here (4.90.0 strict
-          // null.filter) escaped to the tool-loop catch, which RE-RUNS the already-executed batch
-          // without a model call (v4 flash/dna-insert: 1000 iterations, 4 identical results) —
-          // a gate bug must never re-execute tools; it becomes an is_error EndTurn result instead.
-          try {
-          for (const tr of toolResults) {
-            if (tr.tool_name !== 'EndTurn') continue;
-            const etUse = toolUseBlocks.find((t: any) => t.name === 'EndTurn');
-            // EFFORT TAIL (def-efdbb67fd8, finish-discipline half): the FIRST
-            // EndTurn is the model's own "I'm done" declaration — generated at
-            // body effort. Bounce it ONCE ("verify at depth") and arm the effort
-            // pulse so the re-attestation cycle runs elevated: structure forces
-            // the check (the gate), effort funds it (the pulse). One-shot per
-            // turn; skipped when a thrash pulse is already active (chain already
-            // elevated). Rides the same is_error rejection channel as Stages
-            // 2/4/5; liveness bounded by the gate's existing fallback-accept.
-            // Requires CORTEX_ENDTURN_GATE (EndTurn must be offered). Ship dark.
-            if (
-              process.env.CORTEX_EFFORT_TAIL === 'true' &&
-              !effortTailBounced &&
-              this.effortPulseRemaining <= 0
-            ) {
-              effortTailBounced = true;
-              const tailTurns = Math.max(1, parseInt(process.env.CORTEX_EFFORT_TAIL_TURNS || '2', 10) || 2);
-              this.effortPulseRemaining = tailTurns;
-              // Mechanism-engagement evidence (bench adjudication rule): bank the
-              // tail-fired fact — the fd cell (2026-09-02) had to read engagement
-              // from session text because the tail armed the counter silently.
-              const tailStore = this.getDecisionStore();
-              if (tailStore) {
-                void tailStore.recordEvent({
-                  sessionId: this.currentSessionId ?? 'unknown',
-                  kind: 'effort_pulse',
-                  toolName: 'EndTurn',
-                  detail: { trigger: 'tail', cumFailures: 0, turns: tailTurns, level: process.env.CORTEX_EFFORT_PULSE_LEVEL || 'high' },
-                }).catch(() => {});
-              }
-              tr.is_error = true;
-              tr.content =
-                'Before finishing: verify at depth. Re-read the original task statement; ' +
-                're-open and check each requirement against the ACTUAL files/outputs you produced this turn ' +
-                '(do not rely on memory of them); fix anything that does not match; then call EndTurn again ' +
-                'with the verified attestation.';
-              if (this.config.debug) {
-                console.log(`[EffortTail] first EndTurn bounced — re-attestation at elevated effort (${this.effortPulseRemaining} continuation(s))`);
-              }
-              continue;
-            }
-            const cits = (etUse?.input as any)?.citations;
-            lastEndTurnCitations = Array.isArray(cits) ? cits : undefined; // Stage 3 baseline
-            const verdict = verifyCitationsGrounded(cits, thisTurnToolOutputs.join('\n'));
-            if (verdict.grounded) {
-              // Stage 4 (backlog item 1, CORTEX_ENDTURN_REQUIREMENTS): verify
-              // the requirements attestation — the wrong-artifact weapon.
-              // Stage 2 verifies citations; nothing before this forced
-              // re-reading the TASK. Rides the same nudge budget: a Stage-4
-              // reject leaves the gate unsatisfied so the bounded
-              // fallback-accept still guarantees liveness.
-              if (resolveEndTurnRequirementsMode()) {
-                const s4 = verifyRequirements({
-                  requirements: (etUse?.input as any)?.requirements,
-                  verification: (etUse?.input as any)?.verification,
-                  userTaskText: this.lastRealUserText(),
-                  turnUsedMutatingTool,
-                  strict: resolveEndTurnRequirementsStrict(process.env),
-                  toolOutputs: thisTurnToolOutputs.join('\n'),
-                });
-                if (s4.ok) {
-                  endTurnCalled = true;
-                } else {
-                  tr.is_error = true;
-                  tr.content = s4.nudge!;
-                  console.warn('[Orchestrator] Stage4: EndTurn rejected — requirements attestation unsatisfied.');
-                }
-              } else {
-                endTurnCalled = true;
-              }
-              // Stage 5 (item 12 layer 4, CORTEX_ENDTURN_INTEGRITY): mechanical
-              // task-integrity checks — web-content transplant into artifacts +
-              // solution-seeking queries. Flags ALWAYS bank as integrity_flag
-              // events (the distiller lens reads them); the nudge rides the
-              // same bounded budget, fallback-accept preserves liveness.
-              if (endTurnCalled && resolveEndTurnIntegrityMode()) {
-                const s5 = verifyIntegrity({
-                  webQueries: integrityWebQueries,
-                  webContent: integrityWebContent,
-                  writeInputs: integrityWriteInputs,
-                  userTaskText: this.lastRealUserText(),
-                  sourcesAttestation: (etUse?.input as any)?.sources,
-                });
-                if (s5.flags.length > 0) {
-                  const store = this.getDecisionStore();
-                  if (store) {
-                    for (const f of s5.flags) {
-                      void store.recordEvent({
-                        sessionId: this.currentSessionId ?? 'unknown',
-                        kind: 'integrity_flag',
-                        detail: { check: f.check, detail: f.detail },
-                      }).catch(() => {});
-                    }
-                  }
-                }
-                if (!s5.ok) {
-                  endTurnCalled = false;
-                  tr.is_error = true;
-                  tr.content = s5.nudge!;
-                  console.warn(`[Orchestrator] Stage5: EndTurn rejected — ${s5.flags.length} integrity flag(s).`);
-                }
-              }
-            } else {
-              const bad = verdict.ungrounded
-                .map(u => ` - "${u.reference}" — not found in this turn's tool output: ${String(u.verbatim_source).slice(0, 120)}`)
-                .join('\n');
-              tr.is_error = true;
-              tr.content =
-                `EndTurn REJECTED — these citations are not grounded in anything you read this turn:\n${bad}\n\n` +
-                `A quote or coordinate you did not transcribe from this turn's tool output is a fabrication (a regurgitated guess), exactly like a non-matching edit old_string. ` +
-                `Either RE-READ the exact region and copy the real text, or DELETE that reference from your answer (quote only code you can ground), then call EndTurn again. ` +
-                `Grounding is per-TURN: if the line you want to cite is not in THIS turn's tool output (you read it earlier, or it is a file you wrote), RE-RUN the command that displays it now (cat/grep/sed the file, run the test) and copy the line from THAT output — do not resubmit the same citations.`;
-              console.warn(`[Orchestrator] Stage2: EndTurn rejected — ${verdict.ungrounded.length} ungrounded citation(s).`);
-            }
-          }
-          } catch (gateErr: any) {
-            const msg = String(gateErr?.message ?? gateErr).slice(0, 200);
-            console.error(`[Orchestrator] EndTurn gate evaluation threw (converted to an error result, batch NOT re-run): ${msg}`);
-            for (const tr of toolResults) {
-              if (tr.tool_name !== 'EndTurn') continue;
-              tr.is_error = true;
-              tr.content =
-                `EndTurn gate evaluation failed internally (${msg}). This is a harness fault, not your attestation. ` +
-                'Call EndTurn again with well-formed arrays: citations [{reference, verbatim_source}], verification [{command, observed_result}], requirements [{requirement, satisfied_by, verified_how}].';
-            }
-          }
-
-          // Item 7: scrub ReadImage payloads from metadata BEFORE persist;
-          // the images inject as a user message after the results land.
+          ev.noteToolResults(toolResults);
+          // Stages 2/4/5 + effort tail — ONE implementation shared with the streaming loop (endTurnGates.ts, 4.91.0).
+          evaluateEndTurnGates(ev, toolResults, toolUseBlocks, this.gateDeps());
           const pendingImages = this.collectPendingImages(
             toolResults,
             (effectiveModel as { vision?: boolean }).vision === true,
@@ -3376,7 +3199,7 @@ export class CortexOrchestrator {
       // Item 13a: the R29a path structurally bypasses the EndTurn gate (it
       // runs post-loop with tools suppressed). When the gate was armed and
       // owed an attestation, make the un-attested pass VISIBLE.
-      if (endTurnGateEnabled && turnUsedTools && !endTurnCalled) {
+      if (endTurnGateEnabled && ev.usedTools && !ev.endTurnCalled) {
         const store = this.getDecisionStore();
         if (store) {
           void store.recordEvent({
@@ -4257,7 +4080,24 @@ export class CortexOrchestrator {
     // loop detection, the consecutive-error breaker, and MAX_TOOL_ITERATIONS.
     const TOOL_BUDGET_HARD = TOOL_BUDGET_SOFT > 0 ? TOOL_BUDGET_SOFT * 2 : Infinity; // force-synthesis cap
 
+    let lastExecutedBatchUuid: string | null = null; // 4.90.3 re-execution guard (def-7f510b5635)
+    const ev = new TurnEvidence(); // 4.91.0: per-turn evidence for the EndTurn gates (streaming)
+    this.visionHandoffsThisTurn = 0;
+    let streamEndTurnNudges = 0;
+    let pendingGateRequest = false; // Stage-1: a reminder was appended; run one continuation with NO tool batch
+    const streamEndTurnGateEnabled = process.env.CORTEX_ENDTURN_GATE === 'true';
     while (hasToolUse && toolCallIteration < MAX_TOOL_ITERATIONS) {
+      const gateReRequest = pendingGateRequest; pendingGateRequest = false;
+      // 4.90.3 (def-7f510b5635): a batch that ALREADY EXECUTED must never run again. When an exception
+      // escapes after execution (gate/lens/banking path), the catch below emits error tool_results but
+      // the loop re-enters with the SAME assistant message — re-running its tools (real side effects)
+      // until the error cap (v4 flash/dna-insert: 1000 iterations). Leave the loop instead; the
+      // post-loop synthesis (R29a) gives the model one call to answer over the error results.
+      if (!gateReRequest && lastExecutedBatchUuid !== null && currentAssistantCanonicalMessage.uuid === lastExecutedBatchUuid) {
+        console.error(`[Orchestrator Streaming] Tool batch ${lastExecutedBatchUuid} already executed — an exception escaped after execution; NOT re-running the batch (leaving the tool loop).`);
+        break;
+      }
+      lastExecutedBatchUuid = currentAssistantCanonicalMessage.uuid ?? null;
       toolCallIteration++;
 
       // Extract tool use blocks from current message
@@ -4268,8 +4108,9 @@ export class CortexOrchestrator {
           name: block.toolUse.name,
           input: block.toolUse.input
         }));
+      ev.noteToolUses(toolUseBlocks);
 
-      if (toolUseBlocks.length === 0) {
+      if (toolUseBlocks.length === 0 && !gateReRequest) {
         // R32 (streaming R18b parity): detect empty/thinking-only responses.
         // sendMessage retries ONCE inside the loop with tools preserved.
         const hasVisibleText = hasVisibleAssistantText(currentAssistantCanonicalMessage.content);
@@ -4617,7 +4458,11 @@ export class CortexOrchestrator {
       try {
         // Execute tools (reuse existing method)
         const toolResults = await this.handleToolCalls(toolUseBlocks, abortController.signal, structuredOutputState);
+        this.testPostExecThrow(); // test-only fault injection for the re-execution guard (inert in prod)
         clearTimeout(timeoutId);
+        // 4.91.0: EndTurn gates for STREAMING (were sendMessage-only) — same evidence + evaluation.
+        ev.noteToolResults(toolResults);
+        evaluateEndTurnGates(ev, toolResults, toolUseBlocks, this.gateDeps());
 
         // Unified Outcome Ladder (streaming parity with sendMessage).
         ladderSignal = null;
@@ -5134,6 +4979,30 @@ export class CortexOrchestrator {
             input: block.toolUse.input
           }));
         hasToolUse = continuationToolUses.length > 0;
+        // 4.91.0 Stage-1 for STREAMING: tools were used but no valid EndTurn yet → append the reminder and
+        // run ONE more continuation with no tool batch (pendingGateRequest bypasses the empty-batch break
+        // and the re-execution guard). Two nudges, then fallback-accept (parity with sendMessage).
+        if (!hasToolUse && streamEndTurnGateEnabled && ev.usedTools && !ev.endTurnCalled) {
+          if (streamEndTurnNudges < 2) {
+            streamEndTurnNudges++;
+            const reminderMsg: Message = {
+              uuid: uuidv4(),
+              timestamp: new Date().toISOString(),
+              type: 'user',
+              message: { role: 'user', content: [{ type: 'text', text: buildMissingEndTurnReminder(ev) }] },
+              timeline: { sessionId: this.currentSessionId, conversationId: this.currentConversationId, turnNumber: this.turnNumber + 1 },
+              model: { id: effectiveModel.id, provider: effectiveModel.provider, apiPattern: effectiveModel.api.pattern },
+            } as any;
+            this.messageHistory.push(reminderMsg);
+            await this.historyStore.appendMessage(this.currentSessionId, reminderMsg);
+            console.warn(`[Orchestrator Streaming] EndTurn gate: missing-EndTurn (nudge ${streamEndTurnNudges}/2, iteration=${toolCallIteration}) — re-requesting.`);
+            pendingGateRequest = true;
+            hasToolUse = true;
+          } else {
+            console.warn('[Orchestrator Streaming] EndTurn gate FALLBACK-ACCEPT: missing-EndTurn after 2 nudges — turn ships un-attested.');
+            this.gateDeps().recordEvent('endturn_gate_fallback', { reason: 'missing-EndTurn', nudges: streamEndTurnNudges, iteration: toolCallIteration, streaming: true });
+          }
+        }
 
         // Stop if too many errors
         if (totalToolErrors >= MAX_CONSECUTIVE_ERRORS) {
@@ -8216,15 +8085,70 @@ export class CortexOrchestrator {
 
   /** Resolve queued ReadImage hand-offs through the helper middleware: the vision helper's TEXT
    *  replaces the tool_result content. Failures degrade to the pre-hand-off guidance (bash OCR). */
+  /** Per-turn ReadImage→vision-helper hand-off count (VISION_HANDOFF_MAX); reset at the start of each turn. */
+  private visionHandoffsThisTurn = 0;
+  /** Per-session bash slice-read counts per file (CORTEX_SLICE_NUDGE). */
+  private sliceReads = new Map<string, number>();
+
+  /** Dependencies the shared EndTurn gates need from the orchestrator (endTurnGates.ts). */
+  private gateDeps() {
+    return {
+      userTaskText: this.lastRealUserText(),
+      env: process.env,
+      debug: this.config.debug,
+      recordEvent: (kind: string, detail: Record<string, unknown>, toolName?: string) => {
+        const store = this.getDecisionStore();
+        if (!store) return;
+        void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind, toolName, detail } as any).catch(() => {});
+      },
+      effortTail: { remaining: () => this.effortPulseRemaining, arm: (turns: number) => { this.effortPulseRemaining = turns; } },
+    };
+  }
+
+  /** Test-only fault injection: CORTEX_TEST_POST_EXEC_THROW=once throws exactly once right after a tool
+   *  batch executed, to prove the loop never re-runs an executed batch (def-7f510b5635). Inert otherwise. */
+  private testPostExecThrow(): void {
+    if (process.env.CORTEX_TEST_POST_EXEC_THROW === 'once') {
+      process.env.CORTEX_TEST_POST_EXEC_THROW = 'fired';
+      throw new Error('CORTEX_TEST_POST_EXEC_THROW: synthetic post-execution fault');
+    }
+  }
+
+  /** CORTEX_SLICE_NUDGE: after the 3rd bash slice-read of the same file, append a one-line Read reminder. */
+  private applySliceNudge(toolUse: { name: string; input: any }, result: { content: any; is_error?: boolean }): void {
+    if (toolUse.name !== 'Bash' || result.is_error || !resolveSliceNudge(process.env)) return;
+    const cmd = String(toolUse.input?.command ?? '');
+    const m = cmd.match(/(?:sed\s+-n\s+['"]?\d+\s*,\s*\d+\s*p['"]?|head\s+-n?\s*\d+|tail\s+-n?\s*\d+)\s+([^\s;|&>]+)/);
+    if (!m) return;
+    const file = m[1]!;
+    const n = (this.sliceReads.get(file) ?? 0) + 1;
+    this.sliceReads.set(file, n);
+    if (n !== 3) return;
+    if (typeof result.content === 'string') {
+      result.content += `\n\n<system-reminder>You have now read ${file} in ${n} bash slices. Read it ONCE with the Read tool (offset/limit for long files) instead of repeated sed/head/tail slices — slicing loses context and burns turns.</system-reminder>`;
+    }
+    this.gateDeps().recordEvent('steering_injected', { kind: 'slice_read', file, count: n }, 'Bash');
+  }
+
   private async applyVisionHandoffs(): Promise<void> {
     const queue = this.pendingVisionHandoffs; this.pendingVisionHandoffs = [];
+    const max = resolveVisionHandoffMax(process.env);
     for (const h of queue) {
       const modelId = resolveVisionHelperModel(process.env) || 'deepseek-v4-flash-vision-exp';
+      if (max > 0 && this.visionHandoffsThisTurn >= max) {
+        h.tr.is_error = false;
+        h.tr.content =
+          `[ReadImage → vision budget] This turn has already used ${this.visionHandoffsThisTurn} vision reads (VISION_HANDOFF_MAX=${max}); this read was NOT sent. ` +
+          'Consolidate: tile the regions you still need into ONE labeled montage and ask one focused question, or switch to a non-visual approach (parse the source data directly).';
+        this.gateDeps().recordEvent('vision_handoff_capped', { max, used: this.visionHandoffsThisTurn, filePath: h.filePath }, 'ReadImage');
+        continue;
+      }
       try {
         const t0 = Date.now();
         const text = await this.helperMiddleware.describeImage({
           mediaType: h.payload.mediaType, base64: h.payload.base64, prompt: h.prompt, filePath: h.filePath, helperModelId: modelId,
         });
+        this.visionHandoffsThisTurn++;
         h.tr.is_error = false;
         h.tr.content =
           `[ReadImage → vision helper ${modelId}${h.filePath ? ` on ${h.filePath}` : ''}]\n` +
@@ -8519,6 +8443,7 @@ export class CortexOrchestrator {
     toolUse: { id: string; name: string; input: any },
     result: { tool_use_id: string; tool_name: string; content: string; is_error?: boolean; metadata?: any },
   ): Promise<typeof result> {
+    this.applySliceNudge(toolUse, result); // universal post-execution hook: every path funnels through processToolTraining
     const store = this.getDecisionStore();
     if (!store) return result;
     // TOOL_TIMEOUT_MODE engagement evidence: a promoted-to-background tool call.

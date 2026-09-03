@@ -103,6 +103,21 @@ export function resolveWebToolsEnabled(env: NodeJS.ProcessEnv = process.env): bo
  *  an image payload (item 7's safety intent holds). Default deepseek-v4-flash-vision-exp (same
  *  key as the DeepSeek apprentice/elder); 'false'|'off'|'none' disables → ReadImage is offered
  *  only to vision-capable primaries (the pre-hand-off behavior). */
+/** VISION_HANDOFF_MAX (4.91.0): per-turn cap on ReadImage→vision-helper hand-offs (default 8; 0 = unlimited).
+ *  v4 gcode-to-text: 14 (flash) / 34 (pro) slice reads burned the whole task budget without converging. */
+export function resolveVisionHandoffMax(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = (env.VISION_HANDOFF_MAX ?? '').trim();
+  if (raw === '') return 8;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 8;
+}
+
+/** CORTEX_SLICE_NUDGE (4.91.0): after the 3rd bash slice-read (sed -n / head / tail) of the SAME file in a
+ *  session, append a one-line reminder to read it once with Read. Default on; 'false' disables. */
+export function resolveSliceNudge(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.CORTEX_SLICE_NUDGE ?? '').trim().toLowerCase() !== 'false';
+}
+
 export function resolveVisionHelperModel(env: NodeJS.ProcessEnv = process.env): string | null {
   const raw = (env.VISION_HELPER_MODEL ?? '').trim();
   const v = raw.toLowerCase();

@@ -25,6 +25,7 @@ const INTERNAL = new Set([
   'CORTEX_SUBAGENT',            // marks a spawned sub-agent process
   'CORTEX_AGENT_MODE',          // agent-mode child bootstrap flag
   'CORTEX_ARM_STRATEGY',        // autoresearch arm label stamped per worker
+  'CORTEX_TEST_POST_EXEC_THROW', // test-only fault injection for the tool-loop re-execution guard (reexecutionGuard.integration.test); never a user lever
 ]);
 
 function* walk(dir) {

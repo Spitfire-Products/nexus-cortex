@@ -85,6 +85,8 @@ const GROUPS: Array<{ group: string; levers: LeverSpec[] }> = [
       { key: 'CORTEX_TOOL_ANCHOR', what: 'Turn-1 tool narrowing (bash-edit = Bash+Edit only on turn 1)', codeDefault: '(card decides)', kind: 'value' },
       { key: 'TOOL_TIMEOUT_MODE', what: 'Bash deadline policy: auto = promote to background in headless sessions (kill in interactive); background/kill force', codeDefault: 'auto', kind: 'value' },
       { key: 'VISION_HELPER_MODEL', what: 'vision hand-off: text-only primaries keep ReadImage; the image + question go to this helper card via the helper middleware and text comes back (false = vision primaries only)', codeDefault: 'deepseek-v4-flash-vision-exp', kind: 'value' },
+      { key: 'VISION_HANDOFF_MAX', what: 'per-turn cap on ReadImage→vision-helper hand-offs; past it ReadImage returns a consolidate reminder (0 = unlimited)', codeDefault: '8', kind: 'value' },
+      { key: 'CORTEX_SLICE_NUDGE', what: 'after 3 bash slice-reads of one file, remind to Read it once', codeDefault: 'true', kind: 'flag-not-false' },
       { key: 'ENABLE_WEBTOOLS', what: 'web surface mode: auto = WebFetch on, search/browse/hosted-search on iff a search key is present; true = all on; false = all off (benches pin explicitly)', codeDefault: 'auto', kind: 'value' },
       { key: 'ENABLE_DEFERRED_TOOL_LOADING', what: '16 curated tools offered; the rest discoverable via SearchTools', codeDefault: 'true (settings default)', kind: 'flag-not-false' },
       { key: 'CORTEX_LIFT_NUDGE', what: 'One-line signpost after the turn-1 lift pointing at SearchTools/AskForAdvice', codeDefault: 'false (cards set true)', kind: 'flag-true' },

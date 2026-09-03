@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.91.0] - 2026-09-03
+
+### Added
+- **EndTurn gates on the streaming path.** Stages 2/4/5, the effort tail and the Stage-1 missing-EndTurn nudge now
+  run for streaming clients too, from one shared, exception-safe implementation (`endTurnGates.ts`).
+- **`VISION_HANDOFF_MAX`** (default 8): per-turn cap on ReadImage→vision-helper hand-offs; a capped read returns a
+  consolidate-into-one-montage reminder and banks a `vision_handoff_capped` event.
+- **`CORTEX_SLICE_NUDGE`** (default on): after the third bash slice-read of the same file, a one-line reminder to read
+  it once with Read (`slice_read` steering event).
+
+### Fixed
+- The tool loops never re-execute an already-run batch when an exception escapes after execution (both loops;
+  regression test through the real loop).
+- Citation grounding accepts text the model authored this turn (Write/Edit content); strict `verified_how` accepts a
+  command that actually ran this turn.
+
+### Changed
+- Vision helper framing transcribes boards, grids, tables and figures cell by cell / panel by panel.
+
 ## [4.90.2] - 2026-09-03
 
 ### Fixed
