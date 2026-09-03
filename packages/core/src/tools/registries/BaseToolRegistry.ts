@@ -126,7 +126,9 @@ GUIDANCE:
 - Available when the active model supports image input OR a vision helper is configured (VISION_HELPER_MODEL).
 - Format is detected from file content (magic bytes), not the extension.
 - Large images: the provider downscales (~800x800) — no need to resize first unless over the 32 MiB limit.
-- Unsupported formats (BMP/TIFF/PDF): convert first (e.g. Bash + Python PIL), then ReadImage.`,
+- Unsupported formats (BMP/TIFF/PDF): convert first (e.g. Bash + Python PIL), then ReadImage.
+- Each call is a full vision round-trip (~30-60s). Ask ONE focused question per call via \`prompt\`; do NOT slice a figure into dozens of reads.
+- Boards, grids, tables, diagrams: a whole-image read is unreliable — crop or tile it into LABELED cells (e.g. a contact sheet with the cell name drawn on each) and ask per cell, row-major.`,
     schema: {
       type: 'object',
       properties: {
@@ -1041,7 +1043,7 @@ Use plan mode for tasks with genuine ambiguity — multiple reasonable architect
 -   description: 'REQUIRED under the integrity gate whenever web tools were used this turn: one row per access — what you looked up, why, and how it informed work you executed yourself. { accessed, purpose, used_for }.',
 -   items: { type: 'object', properties: { accessed: { type: 'string' }, purpose: { type: 'string' }, used_for: { type: 'string' } } }
 - },
-- requirements: re-read the ORIGINAL task statement and list each requirement it states, with what in your artifact satisfies it and the command/observation that proves it (or the literal "UNVERIFIED"). Finishing without checking the artifact against the stated task is the most common failed answer.
+- requirements: re-read the ORIGINAL task statement and list each requirement it states, with what in your artifact satisfies it and the command/observation that proves it (or the literal "UNVERIFIED"). Copy each requirement in the task's OWN words (not a paraphrase) and make verified_how a PASTED output line, e.g. {requirement: "write the answer to /app/move.txt", satisfied_by: "/app/move.txt written", verified_how: "$ cat /app/move.txt → Nf3"} — a sentence like "ran it and it worked" is rejected. Finishing without checking the artifact against the stated task is the most common failed answer.
 - self_review: re-read your draft as a skeptical reviewer — what you did NOT check, what is assumed/possibly wrong, what one more tool call would verify. This pass exists to catch your own mistakes before they ship.
 - summary / open_items: what you delivered and any gaps — do not hide them.
 

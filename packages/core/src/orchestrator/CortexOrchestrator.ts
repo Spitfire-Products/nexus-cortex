@@ -2647,6 +2647,11 @@ export class CortexOrchestrator {
               integrityWebContent.push(txt);
             }
           }
+          // 4.90.2: the whole EndTurn gate block is exception-safe. A throw here (4.90.0 strict
+          // null.filter) escaped to the tool-loop catch, which RE-RUNS the already-executed batch
+          // without a model call (v4 flash/dna-insert: 1000 iterations, 4 identical results) —
+          // a gate bug must never re-execute tools; it becomes an is_error EndTurn result instead.
+          try {
           for (const tr of toolResults) {
             if (tr.tool_name !== 'EndTurn') continue;
             const etUse = toolUseBlocks.find((t: any) => t.name === 'EndTurn');
@@ -2759,8 +2764,20 @@ export class CortexOrchestrator {
               tr.content =
                 `EndTurn REJECTED — these citations are not grounded in anything you read this turn:\n${bad}\n\n` +
                 `A quote or coordinate you did not transcribe from this turn's tool output is a fabrication (a regurgitated guess), exactly like a non-matching edit old_string. ` +
-                `Either RE-READ the exact region and copy the real text, or DELETE that reference from your answer (quote only code you can ground), then call EndTurn again.`;
+                `Either RE-READ the exact region and copy the real text, or DELETE that reference from your answer (quote only code you can ground), then call EndTurn again. ` +
+                `Grounding is per-TURN: if the line you want to cite is not in THIS turn's tool output (you read it earlier, or it is a file you wrote), RE-RUN the command that displays it now (cat/grep/sed the file, run the test) and copy the line from THAT output — do not resubmit the same citations.`;
               console.warn(`[Orchestrator] Stage2: EndTurn rejected — ${verdict.ungrounded.length} ungrounded citation(s).`);
+            }
+          }
+          } catch (gateErr: any) {
+            const msg = String(gateErr?.message ?? gateErr).slice(0, 200);
+            console.error(`[Orchestrator] EndTurn gate evaluation threw (converted to an error result, batch NOT re-run): ${msg}`);
+            for (const tr of toolResults) {
+              if (tr.tool_name !== 'EndTurn') continue;
+              tr.is_error = true;
+              tr.content =
+                `EndTurn gate evaluation failed internally (${msg}). This is a harness fault, not your attestation. ` +
+                'Call EndTurn again with well-formed arrays: citations [{reference, verbatim_source}], verification [{command, observed_result}], requirements [{requirement, satisfied_by, verified_how}].';
             }
           }
 

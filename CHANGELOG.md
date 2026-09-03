@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.90.2] - 2026-09-03
+
+### Fixed
+- EndTurn gate evaluation is exception-safe: a gate fault becomes an error EndTurn result instead of escaping to the
+  tool loop, which re-executed the already-run batch without a model call.
+
+### Changed
+- Stage-2 citation nudge explains per-turn grounding and asks the model to re-run the displaying command for a fresh
+  verbatim line; EndTurn description carries a worked requirements example; ReadImage guidance adds read discipline
+  (one focused question per call; tile boards and grids into labeled cells).
+
 ## [4.90.1] - 2026-09-03
 
 ### Fixed
