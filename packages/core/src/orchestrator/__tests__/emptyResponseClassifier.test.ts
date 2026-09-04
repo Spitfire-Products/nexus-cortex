@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { classifyEmptyResponse, emptyResponseNudge } from '../emptyResponseClassifier.js';
+import { classifyEmptyResponse, emptyResponseNudge, nudgeForbidsTools } from '../emptyResponseClassifier.js';
 
 describe('classifyEmptyResponse', () => {
   it('not_empty when visible text is present', () => {
@@ -45,5 +45,33 @@ describe('classifyEmptyResponse', () => {
   it('nudge is tailored per kind', () => {
     expect(emptyResponseNudge('reasoning_only').toLowerCase()).toContain('reasoning');
     expect(emptyResponseNudge('no_visible_content').toLowerCase()).toContain('no content');
+  });
+
+  // D-E (2026-09-04): max_tokens truncation must be distinguished from "done reasoning".
+  it('D-E: reasoning cut off by max_tokens is truncated, not reasoning_only', () => {
+    const c = classifyEmptyResponse([{ type: 'thinking', thinking: 'a very long unfinished thought...' }], 'max_tokens');
+    expect(c.kind).toBe('truncated');
+    expect(c.hadReasoning).toBe(true);
+  });
+
+  it('D-E: length/model_length/max_output_tokens also map to truncated (provider dialects)', () => {
+    for (const sr of ['length', 'max_output_tokens', 'model_length', 'MAX_TOKENS']) {
+      expect(classifyEmptyResponse([{ type: 'thinking', thinking: 'x' }], sr).kind).toBe('truncated');
+    }
+  });
+
+  it('D-E: a normal stop reason (end_turn) still classifies reasoning_only', () => {
+    expect(classifyEmptyResponse([{ type: 'thinking', thinking: 'x' }], 'end_turn').kind).toBe('reasoning_only');
+    expect(classifyEmptyResponse([{ type: 'thinking', thinking: 'x' }]).kind).toBe('reasoning_only'); // no stopReason
+  });
+
+  it('D-E: visible text with max_tokens is still not_empty (partial answer is usable)', () => {
+    expect(classifyEmptyResponse([{ type: 'text', text: 'partial answer' }], 'max_tokens').kind).toBe('not_empty');
+  });
+
+  it('D-E: the truncated nudge says continue and does NOT forbid tools', () => {
+    expect(emptyResponseNudge('truncated').toLowerCase()).toContain('continue');
+    expect(nudgeForbidsTools('truncated')).toBe(false);
+    expect(nudgeForbidsTools('reasoning_only')).toBe(true);
   });
 });

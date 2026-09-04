@@ -24,6 +24,18 @@ import {
   MENTOR_REFRAME_SYSTEM,
   MENTOR_INTERVIEW_SYSTEM,
 } from '../training/mentorConsult.js';
+import {
+  PLANNER_SYSTEM,
+  buildPlannerUserPrompt,
+  resolveLiftPlanConfig,
+  type LiftPlanContext,
+} from '../training/liftPlanner.js';
+import {
+  RESOLVER_SYSTEM,
+  buildResolverUserPrompt,
+  resolveEndTurnResolverConfig,
+  type EndTurnResolverContext,
+} from '../training/endTurnResolver.js';
 import { ModelConfig, ModelRegistry } from '../models/ModelConfig.interface.js';
 import {
   HelperModelMiddlewareRegistry,
@@ -1253,7 +1265,15 @@ Produce the FULL updated CORTEX.md. Rules, in priority order:
     helperModelId?: string,
   ): Promise<string> {
     const modelId = helperModelId || 'deepseek-v4-flash';
-    const helperConfig = this.getHelperModelConfig(modelId);
+    let helperConfig = this.getHelperModelConfig(modelId);
+    // Optional per-call reasoning-effort override (e.g. 'max' for the lift planner). Only applies
+    // when the model's reasoning is toggleable; clone so the shared registry config is not mutated.
+    if (spec.effort && (helperConfig as any).reasoning?.toggleable) {
+      helperConfig = {
+        ...helperConfig,
+        reasoning: { ...(helperConfig as any).reasoning, effort: spec.effort },
+      } as ModelConfig;
+    }
     const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
     const prompt = frameHelperPrompt(spec, body);
     const messages: HelperCanonicalMessage[] = [{ role: 'user', content: prompt }];
@@ -1403,6 +1423,81 @@ Give concise, actionable guidance in plain text with these labeled parts:
         outputBudgetTokens: 400,
       },
       body,
+      context.helperModelId,
+    );
+  }
+
+  /**
+   * generateTaskPlan (LIFT_MENTOR_PLANNER_EXPERIMENT_SPEC §2.2) — the mentor-as-bounded-planner
+   * payload. Sibling of generateMentorHint: ONE single-shot generateGuidance call (no tool loop —
+   * none exists in this middleware; v1 is single-shot, bounded by the output budget, NOT a token
+   * cap which would truncate DeepSeek mid-thought). Fed the task + the agent's first observation at
+   * the lift; returns a criteria-anchored numbered plan (or a RETIRE plan). Max reasoning is the
+   * helper card's default; the helper is normally the elder (deepseek-v4-pro).
+   */
+  async generateTaskPlan(context: {
+    task: string;
+    observations: string;
+    envReport?: string;
+    helperModelId?: string;
+  }): Promise<string> {
+    const ctx: LiftPlanContext = {
+      task: context.task,
+      observations: context.observations,
+      envReport: context.envReport,
+    };
+    const body = buildPlannerUserPrompt(ctx);
+    const cfg = resolveLiftPlanConfig();
+    return this.generateGuidance(
+      {
+        surface: 'lift-plan',
+        persona: PLANNER_SYSTEM,
+        task:
+          'Produce the criteria-anchored numbered plan (or a RETIRE plan). Do not write the full ' +
+          'solution.',
+        outputBudgetTokens: cfg.outputBudgetTokens,
+        // Max reasoning: the pro card ships 'medium', but a bounded single-shot planner can't grind,
+        // and max produced markedly better plans in the eval. Needs a large budget (see cfg) so the
+        // reasoning doesn't consume the whole output and leave an empty answer.
+        effort: cfg.effort,
+      },
+      body,
+      context.helperModelId,
+    );
+  }
+
+  /**
+   * evaluateEndTurn (endTurnResolver) — the mentor-as-EndTurn-judge. Single-shot generateGuidance
+   * call (like generateTaskPlan): given the task + env report + work product + the junior's attestation,
+   * returns the judge's verdict text ("VERDICT: MEETS" or "VERDICT: GAP" + fix plan). The orchestrator
+   * parses it with parseResolverVerdict. Max reasoning is the design intent (a bounded single-shot judge
+   * cannot grind); the big output budget avoids the reasoning-eats-the-answer truncation.
+   */
+  async evaluateEndTurn(context: {
+    task: string;
+    envReport?: string;
+    workProduct: string;
+    attestation?: string;
+    helperModelId?: string;
+  }): Promise<string> {
+    const ctx: EndTurnResolverContext = {
+      task: context.task,
+      envReport: context.envReport,
+      workProduct: context.workProduct,
+      attestation: context.attestation,
+    };
+    const cfg = resolveEndTurnResolverConfig();
+    return this.generateGuidance(
+      {
+        surface: 'endturn-resolver',
+        persona: RESOLVER_SYSTEM,
+        task:
+          'Adjudicate whether the work product meets the task requirements. First line VERDICT: MEETS|GAP; ' +
+          'if GAP, a terse numbered fix plan.',
+        outputBudgetTokens: cfg.outputBudgetTokens,
+        effort: cfg.effort,
+      },
+      buildResolverUserPrompt(ctx),
       context.helperModelId,
     );
   }

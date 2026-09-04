@@ -264,6 +264,24 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
       }
     }
 
+    // D-F (2026-09-04): formatAgentListing() advertises `general-purpose` as "always available", but
+    // loadAgent had no builtin for it and no general-purpose.md ships — so Task({ subagent_type:
+    // 'general-purpose' }) threw on a stock container (models default to this Claude-Code name and had
+    // to fail once to learn otherwise). Provide the builtin IN CODE so the always-available claim is
+    // backed by the resolver, independent of whether CORTEX_ROOT / any .md file is present.
+    if (agentType === 'general-purpose' || agentType === 'general') {
+      return {
+        name: 'general-purpose',
+        description: 'Complex multi-step tasks, code generation, research — any task.',
+        tools: undefined, // all tools
+        systemPrompt:
+          'You are a general-purpose agent. Complete the assigned task end-to-end: investigate as needed, ' +
+          'use any available tools, and return a clear, complete result. Verify your work before finishing.',
+        location: 'builtin',
+        filePath: '<builtin>',
+      };
+    }
+
     // Agent not found - list available agents
     const available = this.agentsCache
       ? Array.from(this.agentsCache.keys()).sort()

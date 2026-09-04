@@ -777,3 +777,48 @@ model). Given finding 3, (a) for sandboxed bench containers costs nothing securi
 backtick hole doesn't already give away; a real injection defense would need a semantic
 validator covering all three substitution spellings plus quoting context, or should live in
 the permissions plane where modes can govern it.
+
+## REPL-INDEPENDENT CONTINUITY — worker-cron keepalive (the unbuilt half of def-2332d425c8)
+
+**Status: QUEUED (post-k=5; owner-gated worker deploy). Banked 2026-09-03 (operator: "bank it in the backlog").**
+
+**Problem.** Item 9 (bench-lease registry) made bench COST repl-independent but NOT CONTINUITY. The
+ONLY keepalive is the repl-side watchdog tick (`tb2-relaunch` → inbound request resets CF
+`sleepAfter:20m`). A repl outage >20min idle-SUSPENDS lanes (proven 2026-09-03: 25/32 lanes stalled
+during a repl restart; internal supervisor CPU does NOT reset sleepAfter — it is inbound-request-driven).
+Guardian re-arm + resume-from-store lose no data/cost, only WALL-TIME. def-2332d425c8's original decision
+was "worker-cron keep-alive + TTL-destroy"; item 9 shipped only the destroy half.
+
+**Root cause / mechanism (grounded, `nexus-terminal/workers/nexus-cortex/src/index.ts`).**
+`benchSweep` (217-233) ONLY destroys expired leases; the worker deliberately never pings a live DO
+(index.ts:834 "a DO request would reset sleepAfter"). The pieces to build it already exist: the cron
+already runs `*/5 * * * *` (wrangler.jsonc — 4× margin on 20min); the `ncxbench:` leases already store
+every live `doName` (and lease presence = the has-work signal, released on complete); `sandboxAdmin(env,
+doName, path, body)` reaches any DO via the `SANDBOX` service binding with NO admin token.
+
+**Fix (~5 lines).** In the existing `scheduled()` sweep: for each LIVE lease (`now < expiresAt`), send a
+lightweight touch (`sandboxAdmin(env, lease.doName, '/health', {})`) to reset its sleepAfter; expired →
+destroy (unchanged). Only leased (= has-work) lanes get pinged, so finished lanes still sleep. Bounded
+waste: if the repl is dead when a lane finishes, its lease lingers ≤TTL (90min) keeping it warm — zero it
+by also checking the store done-set, or accept the bound.
+
+**Alternatives (the clock is free; the authenticated per-DO fan-out is the work).**
+- **CF worker cron (free, KEEPALIVE-only):** the ~5-line fix above. Prevents sleep but CANNOT run the full
+  tb2-relaunch placement/boot logic (that's repl-side python) → it keeps live DOs warm but cannot RESURRECT a
+  dead lane's supervisor.
+- 🔴 **Replit Scheduled Deployments (paid, FULL RELAUNCH, repl-independent) — the strongest candidate, initially
+  under-rated (2026-09-03, operator caught the ungrounded dismissal).** Runs in a SEPARATE deployment env
+  (1vCPU/2GiB, up to 11h/job, no concurrency cap) INDEPENDENT of the crash-prone workspace VM, on a natural-language
+  cron. Because it runs OUR python, it can run the ENTIRE `tb2-relaunch.py` (keepalive + relaunch dead lanes +
+  renew leases) off-VM — a more COMPLETE continuity layer than the keepalive-only CF cron. UNKNOWNS to verify at
+  build: does the deployment env carry the repo + secrets (admin/HF/DeepSeek) + egress to the CF worker; billing is
+  Replit compute-credits/run (cheap for short jobs). Docs: docs.replit.com/cloud-services/deployments/scheduled-deployments.
+- **Replit Routines (Agent-scheduling, paid, POOR fit for a tick):** schedules the Replit AI AGENT to repeat work
+  in a Conversation, Power/Max Mode BUDGET PER RUN. Drives the AI (non-deterministic, credits/run) — absurd as a
+  frequent keepalive. POSSIBLE as a LOW-frequency repl-independent HEALER (fire the Agent to run the pm-wake-loop
+  drill) IF a Routine wakes a dead workspace (UNVERIFIED) — but pricey per fire. Docs: docs.replit.com/updates/2026/08/21.
+- **Container self-ping** (robust, zero external dep, auto-stops at COMPLETE — needs token-in-container + unverified
+  "container resets its OWN sleepAfter"); **browser-SPA tick / UptimeRobot / home-cron** (fragile clocks, each still
+  needs the worker to own the fan-out); **market-websocket tick** (solves timing, already free; not the fan-out).
+**Leading design: Replit Scheduled Deployment running tb2-relaunch (full off-VM relaunch) OR the CF cron keepalive
+(free, sleep-prevention only) — or both layered.** Verify the touch/relaunch path before shipping; NOT a mid-run deploy.

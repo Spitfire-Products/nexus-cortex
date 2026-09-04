@@ -78,7 +78,12 @@ export function isTaskShaped(userText: string): boolean {
   );
 }
 
-const UNVERIFIED_RE = /^\s*unverified\s*$/i;
+// 4.92 (strict-bug audit 2026-09-04): match "UNVERIFIED" AND "UNVERIFIED (reason)" — the honest way to
+// admit non-verification. The old bare-word-only regex (`/^\s*unverified\s*$/i`) treated
+// `verified_how: "UNVERIFIED (no hidden tests in sandbox)"` as a CLAIM, so strict 4e rejected it as
+// "claims, not runs" → an unwinnable loop (seen in merge-diff-arc-agi, custom-memory-heap-crash). `\b`
+// after the word accepts a trailing reason/paren/colon while still rejecting `unverifiedX`.
+const UNVERIFIED_RE = /^\s*unverified\b/i;
 
 /**
  * Stage 4: verify the `requirements` attestation. Caller gates on
@@ -169,8 +174,20 @@ export function verifyRequirements(input: {
         };
       }
       const outputs = input.toolOutputs || '';
-      // 12-char windows (4.91.0): the recommended `$ cmd → output` form grounds via the command run this turn.
-      const ungrounded = rows.filter((r) => !UNVERIFIED_RE.test(r.verified_how) && !windowGrounded(r.verified_how, outputs, 12));
+      const nout = norm(outputs);
+      // 4.92 (D-C, verified 2026-09-04): the 12-char window alone (4.91.0) cannot ground a SHORT
+      // command→output claim like `$ ls /app → "run.py"` — the connective scaffold ($ → quotes) breaks
+      // every 12-char window even when the command AND its output are both present verbatim in the corpus
+      // (reproduced: windowGrounded('$ ls /app -> "run.py"','ls /app\nrun.py',12) === false), producing
+      // unwinnable rejection loops (cancel-async-tasks ×3). Mirror verbatimIn's fallback (line ~56): accept
+      // when ≥70% of the claim's content tokens (≥4 chars, scaffold stripped) appear in the outputs.
+      const howGrounded = (how: string): boolean => {
+        if (windowGrounded(how, outputs, 12)) return true;
+        const toks = norm(how).replace(/->|→|[$"'>]/g, ' ').split(' ').filter((t) => t.length >= 4);
+        if (toks.length === 0) return false;
+        return toks.filter((t) => nout.includes(t)).length / toks.length >= 0.7;
+      };
+      const ungrounded = rows.filter((r) => !UNVERIFIED_RE.test(r.verified_how) && !howGrounded(r.verified_how));
       if (ungrounded.length > 0) {
         const names = ungrounded.slice(0, 3).map((r) => `"${r.requirement.slice(0, 60)}" ⇐ "${r.verified_how.slice(0, 60)}"`).join('; ');
         return {

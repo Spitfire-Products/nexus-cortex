@@ -105,6 +105,22 @@ describe('verifyRequirements — Stage 4 table', () => {
     expect(v.ok).toBe(false);
   });
 
+  it('STRICT: treats "UNVERIFIED (reason)" as unverified (4c way-out), not a claim (4e loop) — strict-audit fix', () => {
+    const v = verifyRequirements({
+      requirements: [{ ...cleanRow, verified_how: 'UNVERIFIED (no hidden tests in the sandbox)' }],
+      verification: [],
+      userTaskText: task,
+      turnUsedMutatingTool: false,
+      strict: true,
+      toolOutputs: '',
+    });
+    expect(v.ok).toBe(false);
+    // The correct rejection is the UNVERIFIED nudge (offers a way out — move to open_items),
+    // NOT strict 4e "claims, not runs" (which loops, since the model already admitted it couldn't verify).
+    expect(v.nudge).toMatch(/UNVERIFIED/);
+    expect(v.nudge).not.toMatch(/claims, not runs/);
+  });
+
   it('REJECTS mutating turn with empty verification (ran no checks)', () => {
     const v = verifyRequirements({
       requirements: [cleanRow],
@@ -194,6 +210,28 @@ describe('verifyRequirements — STRICT mode (CORTEX_ENDTURN_REQUIREMENTS=strict
       verification: ['ls'], userTaskText: task, turnUsedMutatingTool: true, strict: true, toolOutputs: outputs,
     });
     expect(v.ok).toBe(true);
+  });
+
+  it('D-C fix: strict ACCEPTS a short command→output claim whose scaffold breaks the 12-char window', () => {
+    // Repro of the verified D-C bug: `$ ls /app → "run.py"` — command + output BOTH present in the
+    // corpus but split by the `$ → "` scaffold, so no 12-char window matches. The content-token
+    // fallback (≥70% of ≥4-char tokens present) must ground it. Was an unwinnable rejection loop.
+    const t = 'Write the function to /app/run.py and print the result';
+    const v = verifyRequirements({
+      requirements: [{ requirement: 'Write the function to /app/run.py', satisfied_by: 'main.py', verified_how: '$ ls /app → "run.py"' }],
+      verification: ['ls /app'], userTaskText: t, turnUsedMutatingTool: true, strict: true, toolOutputs: 'ls /app\nrun.py\n',
+    });
+    expect(v.ok).toBe(true);
+  });
+
+  it('D-C guard: the fallback does NOT over-accept a claim whose tokens are absent from the output', () => {
+    const v = verifyRequirements({
+      requirements: [okRow],
+      verification: ['pytest'], userTaskText: task, turnUsedMutatingTool: true, strict: true,
+      toolOutputs: 'ls /app\nrun.py\n', // okRow.verified_how mentions out.fasta — not in this output
+    });
+    expect(v.ok).toBe(false);
+    expect(v.nudge).toMatch(/claims, not runs/);
   });
 
   it('strict still lets UNVERIFIED rows fall through to the 4c nudge (not the grounding check)', () => {

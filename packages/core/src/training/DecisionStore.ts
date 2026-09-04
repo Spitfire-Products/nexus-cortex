@@ -65,6 +65,9 @@ export type SteeringEventKind =
   | 'endturn_gate_fallback'
   | 'inaction_nudge'
   | 'effort_pulse' // def-efdbb67fd8: think-harder ablation arm fired (mechanism-engagement evidence)
+  | 'time_budget_break' // #2 (2026-09-04): the per-turn wall-clock deadline forced synthesis (mechanism-engagement evidence)
+  | 'lift_plan' // LIFT_MENTOR_PLANNER: bounded mentor-planner fired at the lift (mechanism-engagement evidence; detail carries {planChars, retire, criteriaStated})
+  | 'endturn_resolver' // endTurnResolver: mentor-as-EndTurn-judge fired at finish (detail carries {meets, planChars, rejects})
   // Item 10: doctrine-curation provenance (helper-curated CORTEX.md refresh
   // at session-start/lift boundaries; timeout = fail-open to previous doc).
   | 'doctrine_curation'

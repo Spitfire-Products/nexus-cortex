@@ -26,6 +26,10 @@ export interface HelperFrameSpec {
   outputBudgetTokens: number;
   /** Include the grounding rule (default true). */
   grounding?: boolean;
+  /** Optional reasoning-effort override for this call (e.g. 'max' for the lift planner). When set
+   *  and the helper model's reasoning is toggleable, generateGuidance runs at this effort instead
+   *  of the card default. */
+  effort?: string;
 }
 
 /** The uniform grounding rule every helper surface carries unless opted out. */

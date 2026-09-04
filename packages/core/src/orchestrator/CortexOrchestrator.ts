@@ -24,6 +24,10 @@ import { verifyCoordinates, deterministicCoordinateScore } from './coordinateVer
 import { buildRouterSample, appendJsonlRotating } from './cortexTrainingRecord.js';
 import { join as pathJoin } from 'path';
 import { existsSync } from 'fs';
+import { execSync } from 'node:child_process';
+import { ENV_RECON_COMMAND, resolveLiftPlanConfig } from '../training/liftPlanner.js';
+import { resolveEndTurnResolverConfig, parseResolverVerdict } from '../training/endTurnResolver.js';
+import { isTaskShaped } from './requirementsVerification.js';
 import { type ServerSideToolMetadata, extractServerSideMetadata, XAIServerSideTools, OpenAIServerSideTools, toCanonicalTool } from '../tools/ServerSideTools.js';
 
 // Message types
@@ -60,8 +64,10 @@ import type { AgentDefinition, SubAgentResult, ISubAgentEventEmitter } from './S
 
 // Phase 1: Tool Architecture Refactor - Unified Tool Registry
 import { toolFactory } from '../tools/ToolFactory.js';
-import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked, resolveVisionHelperModel, resolveVisionHandoffMax, resolveSliceNudge } from '../tools/ToolProfile.js';
+import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveLiftPlan, resolveEndTurnResolver, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked, resolveVisionHelperModel, resolveVisionHandoffMax, resolveSliceNudge } from '../tools/ToolProfile.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
+import { resolveOuterToolDeadlineMs } from './outerToolTimeout.js';
+import { resolveTurnDeadlineMs, timeBudgetState, timeBudgetWarnNudge } from './timeBudget.js';
 import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
 import { ExactRepeatTracker } from '../training/loopLadder.js';
 
@@ -124,7 +130,7 @@ import { InitCortexContext, MemoryWrite, MemoryRecall } from '../tools/context-m
 import { ContextBudgetManager } from '../conversation/ContextBudgetManager.js';
 import { pruneAgedToolResults } from '../conversation/ToolResultPruner.js';
 import { detectTailRepetition, tailLoopGuardEnabled } from './tailRepetitionDetector.js';
-import { classifyEmptyResponse, emptyResponseNudge } from './emptyResponseClassifier.js';
+import { classifyEmptyResponse, emptyResponseNudge, nudgeForbidsTools } from './emptyResponseClassifier.js';
 
 // Phase 2.5: Tool Execution Integration
 import type { ExecutorRegistry } from '@nexus-cortex/types';
@@ -265,6 +271,10 @@ export interface OrchestratorConfig {
     toolTimeoutMs?: number;
     /** Maximum identical tool call repetitions before detecting loop */
     maxLoopRepetitions?: number;
+    /** #2 (2026-09-04): per-turn WALL-CLOCK deadline in ms. 0/undefined = disabled (env
+     *  CORTEX_TURN_DEADLINE_MS is the fallback). The bench adapter sets ~90% of the task's
+     *  own budget so the harness converges before the external timeout kills it. */
+    turnDeadlineMs?: number;
   };
 
   /** Enable Anthropic Programmatic Tool Calling (PTC) — server-side code execution sandbox. */
@@ -571,6 +581,9 @@ export class CortexOrchestrator {
    *  exactly once, at the anchor-lift boundary. One-shot per orchestrator. */
   private deferredCorpusDelivered = false;
   private liftNudgeDelivered = false; // A′ proposal-1: lift-boundary SearchTools/AskForAdvice nudge, one-shot
+  private liftPlanDelivered = false; // LIFT_MENTOR_PLANNER: bounded mentor-planner at the lift, one-shot
+  private cachedEnvReport?: string;  // ENV_RECON_COMMAND output, gathered once, shared by lift-planner + endturn-resolver
+  private endTurnResolverRejects = 0; // endTurnResolver: GAP vetoes so far this task (bounded by maxRejects → fallback-accept)
   private effectiveDeferredLoading = true; // per-turn resolved deferred-loading (card > env > settings); set at assembly
 
   /**
@@ -734,6 +747,191 @@ export class CortexOrchestrator {
       }
     } catch (e: any) {
       console.warn(`[Anchor] lift nudge delivery failed (continuing without): ${e?.message ?? e}`);
+    }
+  }
+
+  /**
+   * LIFT_MENTOR_PLANNER (spec §2) — at the anchor-lift boundary, when CORTEX_LIFT_PLAN is armed, a
+   * bounded max-reasoning mentor plans the task ONCE (adversarial analysis + confirm the REAL grader
+   * criteria + a criteria-anchored step plan, or a RETIRE plan) and the plan is appended as a
+   * system-reminder to the just-recorded first tool_result. The narrow-door model resumes with the
+   * plan in front of it, never having issued a planning call (forced tool_choice is dead on DeepSeek
+   * once history holds a prior tool_call; orchestrator-direct-invoke + system-reminder delivery is
+   * the path that provably works — same pattern as the CORTEX_MENTOR_AUTO consult). One-shot per
+   * orchestrator; bounded by a timeout + the helper's output budget (NOT a token cap, which would
+   * truncate DeepSeek mid-thought). Fail-open: on timeout/error the model just proceeds. Mirrors
+   * deliverDeferredCorpusAtLift + ensureDoctrineFresh. No-op unless CORTEX_LIFT_PLAN truthy. */
+  private async deliverLiftPlanAtLift(model: ModelConfig): Promise<void> {
+    if (this.liftPlanDelivered) return;
+    if (!resolveLiftPlan(process.env, (model as { liftPlan?: boolean }).liftPlan)) return;
+    // 🔴 INTERACTIVE GATE (operator caveat 2026-09-04): the planner adds a ~30-60s silent pause at
+    // the lift (pro @ max reasoning). In a headless/one-shot/bench session (autoApproveActions=true)
+    // there is no human watching — fine. In an interactive TUI a silent pause reads as a frozen UI,
+    // so the planner is SUPPRESSED there UNLESS a thinking-indicator is wired and opted in via
+    // CORTEX_LIFT_PLAN_INTERACTIVE=true. (autoApproveActions = !(stdin.isTTY && stdout.isTTY).)
+    if (!this.approvalMode.autoApproveActions && process.env.CORTEX_LIFT_PLAN_INTERACTIVE !== 'true') {
+      return; // interactive session, no thinking-indicator opt-in → do not fire (do not consume one-shot)
+    }
+    this.liftPlanDelivered = true; // one-shot even if the call fails (never re-fire mid-task)
+    if (!this.helperMiddleware?.generateTaskPlan) return;
+    const store = this.getDecisionStore();
+    const sessionId = this.currentSessionId ?? 'unknown';
+    try {
+      const lastMsg = this.messageHistory[this.messageHistory.length - 1] as any;
+      // Same shape guard as the corpus/nudge deliveries: only when the last message is the first
+      // tool_result — that IS the environment observation the planner reasons from.
+      if (lastMsg?.message?.content?.[0]?.type !== 'tool_result') return;
+      const observations = (lastMsg.message.content as any[])
+        .filter((b) => b?.type === 'tool_result')
+        .map((b) => (typeof b.content === 'string' ? b.content : JSON.stringify(b.content)))
+        .join('\n')
+        .slice(0, 4000);
+      // v1.1 (2026-09-04): gather a GUARANTEED environment report so the planner steers installs +
+      // Bash timeouts from the box's REAL resources (tooling/packages/disk/tests) — not just whatever
+      // the model's first action happened to observe. Bounded + fail-open (partial stdout on
+      // timeout/non-zero is still useful; empty on total failure → plan from observations alone).
+      const envReport = this.gatherEnvReport();
+      const timeoutMs = parseInt(process.env.CORTEX_LIFT_PLAN_TIMEOUT_MS ?? '90000', 10);
+      const plan = await withTimeout(
+        this.helperMiddleware.generateTaskPlan({
+          task: this.lastRealUserText(),
+          observations,
+          envReport,
+          helperModelId: this.config.reactiveMentorship?.helperModelId,
+        }),
+        timeoutMs,
+      );
+      if (!plan || !plan.trim()) {
+        if (store) void store.recordEvent({
+          sessionId, kind: 'lift_plan', detail: { fired: true, planChars: 0, empty: true },
+        }).catch(() => {});
+        return; // fail-open: proceed without a plan
+      }
+      const retire = /\bRETIRE\b/i.test(plan);
+      const criteriaStated = /criteri|grader|test\.sh|expected|verify/i.test(plan);
+      lastMsg.message.content.push({
+        type: 'text',
+        text:
+          `<system-reminder>\nA senior engineer prepared this PLAN OF ATTACK for the task — follow it. ` +
+          `It is anchored to the REAL success criteria (what the task's own grader checks), NOT your own ` +
+          `tests. Your own tests are a means, never the finish line.\n\n${plan}\n</system-reminder>`,
+      });
+      if (store) void store.recordEvent({
+        sessionId,
+        kind: 'lift_plan',
+        detail: { fired: true, planChars: plan.length, retire, criteriaStated },
+      }).catch(() => {});
+      if (this.config.debug) {
+        console.log(`[LiftPlan] plan delivered at lift (${plan.length} chars, retire=${retire}, criteria=${criteriaStated})`);
+      }
+    } catch (e: any) {
+      if (store) void store.recordEvent({
+        sessionId, kind: 'lift_plan', detail: { fired: true, error: String(e?.message ?? e).slice(0, 120) },
+      }).catch(() => {});
+      if (this.config.debug) console.warn(`[LiftPlan] delivery failed (continuing without): ${e?.message ?? e}`);
+    }
+  }
+
+  /** Bounded read-only environment recon (ENV_RECON_COMMAND), gathered ONCE and cached — shared by the
+   *  lift planner and the EndTurn resolver. Fail-open: partial stdout on timeout/non-zero, else empty. */
+  private gatherEnvReport(): string {
+    if (this.cachedEnvReport !== undefined) return this.cachedEnvReport;
+    let r = '';
+    try {
+      r = String(
+        execSync(ENV_RECON_COMMAND, {
+          cwd: this.config.projectPath || process.cwd(),
+          timeout: resolveLiftPlanConfig().reconTimeoutMs,
+          encoding: 'utf8',
+          maxBuffer: 512 * 1024,
+          stdio: ['ignore', 'pipe', 'ignore'],
+          shell: '/bin/sh',
+        }),
+      ).slice(0, 6000);
+    } catch (re: any) {
+      r = String(re?.stdout ?? '').slice(0, 6000);
+    }
+    this.cachedEnvReport = r;
+    return r;
+  }
+
+  /** The most recent assistant message's text (the draft/work product the model just produced). */
+  private lastAssistantText(): string {
+    for (let i = this.messageHistory.length - 1; i >= 0; i--) {
+      const m: any = this.messageHistory[i];
+      if (m?.message?.role !== 'assistant') continue;
+      const c = m.message.content;
+      if (typeof c === 'string') return c;
+      if (Array.isArray(c)) return c.filter((b: any) => b?.type === 'text').map((b: any) => b.text || '').join('\n');
+      return '';
+    }
+    return '';
+  }
+
+  /**
+   * endTurnResolver (operator design 2026-09-04) — the mentor-as-EndTurn-judge, the finish-side twin of
+   * deliverLiftPlanAtLift. Runs AFTER evaluateEndTurnGates: only when the mechanical gate ACCEPTED the
+   * EndTurn (ev.endTurnCalled === true). A bounded max-reasoning mentor adjudicates "does the work product
+   * meet the task's real requirements?" — MEETS leaves the finish accepted; GAP VETOES it (ev.endTurnCalled
+   * = false) and mutates the EndTurn tool_result into the mentor's fix plan (same channel the gate uses), so
+   * the narrow-door model executes a plan instead of reasoning its way out of a mechanical rejection.
+   * Bounded by CORTEX_ENDTURN_RESOLVER_MAX_REJECTS then fallback-accepts (liveness). No-op when the resolver
+   * is unarmed → byte-identical. Fail-open on any error → leaves the finish accepted.
+   */
+  private async adjudicateEndTurn(
+    ev: TurnEvidence,
+    toolResults: Array<{ tool_name: string; tool_use_id: string; content?: unknown; is_error?: boolean }>,
+    toolUses: Array<{ id: string; name: string; input?: unknown }>,
+    model: ModelConfig,
+  ): Promise<void> {
+    if (!resolveEndTurnResolver(process.env, (model as { endTurnResolver?: boolean }).endTurnResolver)) return;
+    if (ev.endTurnCalled !== true) return; // gate rejected (or no EndTurn) — the resolver only vetoes PASSES
+    if (!this.helperMiddleware?.evaluateEndTurn) return;
+    const task = this.lastRealUserText();
+    if (!isTaskShaped(task)) return; // only adjudicate real work tasks
+    const cfg = resolveEndTurnResolverConfig();
+    if (this.endTurnResolverRejects >= cfg.maxRejects) return; // fallback-accept: liveness beats loops
+    const et = toolResults.find((tr) => tr.tool_name === 'EndTurn');
+    if (!et) return;
+    const store = this.getDecisionStore();
+    const sessionId = this.currentSessionId ?? 'unknown';
+    try {
+      const etInput = toolUses.find((t) => t.id === et.tool_use_id || t.name === 'EndTurn')?.input ?? {};
+      const outputs = ((ev as { outputs?: string[] }).outputs ?? []).join('\n').slice(0, 4000);
+      const workProduct = `${this.lastAssistantText()}\n\n--- checks / tool outputs this task ---\n${outputs}`.slice(0, 8000);
+      const attestation = JSON.stringify(etInput).slice(0, 2000);
+      const timeoutMs = parseInt(process.env.CORTEX_ENDTURN_RESOLVER_TIMEOUT_MS ?? '90000', 10);
+      const text = await withTimeout(
+        this.helperMiddleware.evaluateEndTurn({
+          task,
+          envReport: this.gatherEnvReport(),
+          workProduct,
+          attestation,
+          helperModelId: this.config.reactiveMentorship?.helperModelId,
+        }),
+        timeoutMs,
+      );
+      const verdict = parseResolverVerdict(text ?? ''); // withTimeout → null on timeout; fail-open to MEETS
+      if (store) void store.recordEvent({
+        sessionId,
+        kind: 'endturn_resolver',
+        toolName: 'EndTurn',
+        detail: { meets: verdict.meets, planChars: verdict.plan.length, rejects: this.endTurnResolverRejects, parsed: verdict.parsed },
+      }).catch(() => {});
+      if (!verdict.meets && verdict.plan) {
+        this.endTurnResolverRejects += 1;
+        ev.endTurnCalled = false; // VETO the finish
+        et.is_error = true;
+        et.content =
+          `EndTurn HELD (finish review) — the work does not yet meet the task's requirements. Fix plan:\n\n` +
+          `${verdict.plan}\n\nDo this, verify against the task's own criteria (not your own tests), then call EndTurn again.`;
+        if (this.config.debug) console.warn(`[EndTurnResolver] GAP — vetoed finish (${verdict.plan.length}-char plan, reject ${this.endTurnResolverRejects}/${cfg.maxRejects})`);
+      } else if (this.config.debug) {
+        console.log(`[EndTurnResolver] MEETS — finish confirmed (parsed=${verdict.parsed})`);
+      }
+    } catch (e: any) {
+      if (store) void store.recordEvent({ sessionId, kind: 'endturn_resolver', detail: { error: String(e?.message ?? e).slice(0, 120) } }).catch(() => {});
+      // fail-open: leave the finish accepted
     }
   }
 
@@ -1705,6 +1903,10 @@ export class CortexOrchestrator {
     // (no reminders, no force-synthesis cap). Runaway protection then rests on
     // loop detection, the consecutive-error breaker, and MAX_TOOL_ITERATIONS.
     const TOOL_BUDGET_HARD = TOOL_BUDGET_SOFT > 0 ? TOOL_BUDGET_SOFT * 2 : Infinity; // force-synthesis cap
+    // #2 (2026-09-04): per-turn wall-clock budget (opt-in — 0 disables, no behaviour change when unset).
+    const TURN_DEADLINE_MS = loopDefaults.turnDeadlineMs;
+    const loopStartMs = Date.now();
+    let timeWarnFired = false;
 
     let totalToolErrors = 0;
 
@@ -1833,7 +2035,9 @@ export class CortexOrchestrator {
             // no_visible_content (nothing at all) for observability + a nudge
             // tailored to the failure shape. Does NOT change the one-bounded-retry
             // decision — only the log + nudge text.
-            const emptyClass = classifyEmptyResponse(currentAssistantCanonicalMessage.content);
+            // D-E (2026-09-04): pass stopReason so a max_tokens truncation is classified 'truncated'
+            // (continue), not 'reasoning_only' (which demands a final answer and just re-truncates).
+            const emptyClass = classifyEmptyResponse(currentAssistantCanonicalMessage.content, convertedResponse.stopReason);
             console.warn(
               `[Orchestrator] Empty response detected (${emptyClass.kind}, hadReasoning=${emptyClass.hadReasoning}, iteration=${toolCallIteration}). ` +
               `Retrying once with explicit completion prompt.`,
@@ -1877,7 +2081,7 @@ export class CortexOrchestrator {
                 role: 'user',
                 content: [{
                   type: 'text',
-                  text: `<system-reminder>${emptyResponseNudge(emptyClass.kind)} Do not call any more tools.</system-reminder>`,
+                  text: `<system-reminder>${emptyResponseNudge(emptyClass.kind)}${nudgeForbidsTools(emptyClass.kind) ? ' Do not call any more tools.' : ''}</system-reminder>`,
                 }],
               },
               timeline: {
@@ -2485,10 +2689,13 @@ export class CortexOrchestrator {
         // 0 promotions). The outer timer is the last-resort cap for hung tools: it fires a grace
         // period AFTER the tool's own deadline.
         const abortController = new AbortController();
+        // D-A (2026-09-04): outer cap must sit ABOVE the model's REQUESTED Bash timeout, not a static
+        // ~150s, or a legit `Bash({ timeout: 250000 })` is killed before ShellTool's own promote-at-deadline.
+        const outerDeadlineMs = resolveOuterToolDeadlineMs(toolUseBlocks, TOOL_TIMEOUT_MS, OUTER_TIMEOUT_GRACE_MS);
         const timeoutId = setTimeout(() => {
-          console.warn(`[Orchestrator Phase 2.5] Tool execution timeout after ${TOOL_TIMEOUT_MS + OUTER_TIMEOUT_GRACE_MS}ms`);
+          console.warn(`[Orchestrator Phase 2.5] Tool execution timeout after ${outerDeadlineMs}ms`);
           abortController.abort();
-        }, TOOL_TIMEOUT_MS + OUTER_TIMEOUT_GRACE_MS);
+        }, outerDeadlineMs);
 
         // Track which tool_use_ids have been processed to avoid duplicates in error handler
         const processedToolUseIds = new Set<string>();
@@ -2606,6 +2813,7 @@ export class CortexOrchestrator {
           ev.noteToolResults(toolResults);
           // Stages 2/4/5 + effort tail — ONE implementation shared with the streaming loop (endTurnGates.ts, 4.91.0).
           evaluateEndTurnGates(ev, toolResults, toolUseBlocks, this.gateDeps());
+          await this.adjudicateEndTurn(ev, toolResults, toolUseBlocks, effectiveModel); // endTurnResolver (dark unless CORTEX_ENDTURN_RESOLVER)
           const pendingImages = this.collectPendingImages(
             toolResults,
             (effectiveModel as { vision?: boolean }).vision === true,
@@ -2763,8 +2971,14 @@ export class CortexOrchestrator {
       const progressStalled = isToolProgressStalled(recentToolCalls);
       const budgetSignal = computeToolBudgetSignal(effectiveToolBudgetCount, TOOL_BUDGET_SOFT, progressStalled);
       const diversityWarning = this.getDiversityWarning(toolCallCounts);
-      if (budgetSignal || diversityWarning || ladderSignal) {
-        const signals = [budgetSignal, diversityWarning, ladderSignal].filter(Boolean).join('\n');
+      // #2: one-shot wall-clock warning at 90% of the deadline — tell the model to converge + EndTurn.
+      let timeSignal: string | null = null;
+      if (!timeWarnFired && timeBudgetState(Date.now() - loopStartMs, TURN_DEADLINE_MS) === 'warn') {
+        timeSignal = timeBudgetWarnNudge(Date.now() - loopStartMs, TURN_DEADLINE_MS);
+        timeWarnFired = true;
+      }
+      if (budgetSignal || diversityWarning || ladderSignal || timeSignal) {
+        const signals = [budgetSignal, diversityWarning, ladderSignal, timeSignal].filter(Boolean).join('\n');
         const lastMsg = this.messageHistory[this.messageHistory.length - 1] as any;
         if (lastMsg?.message?.content?.[0]?.type === 'tool_result') {
           const block = lastMsg.message.content[0];
@@ -2781,6 +2995,7 @@ export class CortexOrchestrator {
               budgetSignal ? 'budget' : null,
               diversityWarning ? 'diversity' : null,
               ladderSignal ? 'ladder' : null,
+              timeSignal ? 'time' : null,
             ].filter(Boolean);
             void store
               .recordEvent({
@@ -2819,6 +3034,24 @@ export class CortexOrchestrator {
           `(${effectiveToolBudgetCount} >= ${TOOL_BUDGET_HARD}; iterations=${toolCallIteration}, calls=${recentToolCalls.length}; ` +
           `recent calls cycling). Forcing synthesis.`,
         );
+        break;
+      }
+
+      // #2 (2026-09-04) wall-clock break — UNCONDITIONAL (unlike R29b's progress-gate): a grinder
+      // making novel-but-non-converging calls never trips the count/stall guards but burns to
+      // MAX_TOOL_ITERATIONS (the loop-killed 24.8M-token tasks that drove the run's real cost). The
+      // 90% warn above gave the model its chance; break now → post-loop R29a synthesis yields a
+      // best-effort answer instead of a zero-deliverable timeout.
+      if (timeBudgetState(Date.now() - loopStartMs, TURN_DEADLINE_MS) === 'break') {
+        console.warn(`[Orchestrator] #2: turn wall-clock deadline reached (${TURN_DEADLINE_MS}ms) — forcing synthesis.`);
+        const store = this.getDecisionStore();
+        if (store) {
+          void store.recordEvent({
+            sessionId: this.currentSessionId ?? 'unknown',
+            kind: 'time_budget_break',
+            detail: { deadlineMs: TURN_DEADLINE_MS, elapsedMs: Date.now() - loopStartMs, iteration: toolCallIteration },
+          }).catch(() => {});
+        }
         break;
       }
 
@@ -2878,6 +3111,7 @@ export class CortexOrchestrator {
         // full tool catalog (no-op unless CORTEX_PROMPT_MASS=defer).
         await this.deliverDeferredCorpusAtLift(effectiveModel);
         this.deliverLiftNudge(allTools, effectiveModel); // A′ proposal-1: SearchTools/AskForAdvice signpost at lift
+        await this.deliverLiftPlanAtLift(effectiveModel); // LIFT_MENTOR_PLANNER: bounded mentor-planner at lift (dark unless CORTEX_LIFT_PLAN)
         if (this.config.debug) console.log('[Anchor] lifted at first tool_result boundary — session profile applies');
       }
 
@@ -4086,6 +4320,10 @@ export class CortexOrchestrator {
     let streamEndTurnNudges = 0;
     let pendingGateRequest = false; // Stage-1: a reminder was appended; run one continuation with NO tool batch
     const streamEndTurnGateEnabled = process.env.CORTEX_ENDTURN_GATE === 'true';
+    // #2 (2026-09-04): per-turn wall-clock budget (opt-in — 0 disables; streaming parity with non-stream).
+    const TURN_DEADLINE_MS = loopDefaults.turnDeadlineMs;
+    const loopStartMs = Date.now();
+    let timeWarnFired = false;
     while (hasToolUse && toolCallIteration < MAX_TOOL_ITERATIONS) {
       const gateReRequest = pendingGateRequest; pendingGateRequest = false;
       // 4.90.3 (def-7f510b5635): a batch that ALREADY EXECUTED must never run again. When an exception
@@ -4448,12 +4686,14 @@ export class CortexOrchestrator {
       // Execute tools with timeout (outer cap fires a grace period AFTER the tool's own deadline —
       // see the non-stream site: ShellTool's promote-at-deadline must win the race; 4.90.1)
       const abortController = new AbortController();
+      // D-A (2026-09-04): outer cap sits above the requested Bash timeout (see the non-stream site).
+      const outerDeadlineMs = resolveOuterToolDeadlineMs(toolUseBlocks, TOOL_TIMEOUT_MS, OUTER_TIMEOUT_GRACE_MS);
       const timeoutId = setTimeout(() => {
         if (this.config.debug) {
-          console.warn(`[Orchestrator Streaming] Tool execution timeout after ${TOOL_TIMEOUT_MS + OUTER_TIMEOUT_GRACE_MS}ms`);
+          console.warn(`[Orchestrator Streaming] Tool execution timeout after ${outerDeadlineMs}ms`);
         }
         abortController.abort();
-      }, TOOL_TIMEOUT_MS + OUTER_TIMEOUT_GRACE_MS);
+      }, outerDeadlineMs);
 
       try {
         // Execute tools (reuse existing method)
@@ -4463,6 +4703,7 @@ export class CortexOrchestrator {
         // 4.91.0: EndTurn gates for STREAMING (were sendMessage-only) — same evidence + evaluation.
         ev.noteToolResults(toolResults);
         evaluateEndTurnGates(ev, toolResults, toolUseBlocks, this.gateDeps());
+        await this.adjudicateEndTurn(ev, toolResults, toolUseBlocks, effectiveModel); // endTurnResolver (dark unless CORTEX_ENDTURN_RESOLVER)
 
         // Unified Outcome Ladder (streaming parity with sendMessage).
         ladderSignal = null;
@@ -4673,8 +4914,14 @@ export class CortexOrchestrator {
         const progressStalled = isToolProgressStalled(allToolCalls);
         const budgetSignal = computeToolBudgetSignal(effectiveToolBudgetCount, TOOL_BUDGET_SOFT, progressStalled);
         const diversityWarning = this.getDiversityWarning(toolCallCounts);
-        if (budgetSignal || diversityWarning || ladderSignal) {
-          const signals = [budgetSignal, diversityWarning, ladderSignal].filter(Boolean).join('\n');
+        // #2: one-shot wall-clock warning at 90% of the deadline (streaming parity).
+        let timeSignal: string | null = null;
+        if (!timeWarnFired && timeBudgetState(Date.now() - loopStartMs, TURN_DEADLINE_MS) === 'warn') {
+          timeSignal = timeBudgetWarnNudge(Date.now() - loopStartMs, TURN_DEADLINE_MS);
+          timeWarnFired = true;
+        }
+        if (budgetSignal || diversityWarning || ladderSignal || timeSignal) {
+          const signals = [budgetSignal, diversityWarning, ladderSignal, timeSignal].filter(Boolean).join('\n');
           const lastMsg = this.messageHistory[this.messageHistory.length - 1] as any;
           if (lastMsg?.message?.content?.[0]?.type === 'tool_result') {
             const block = lastMsg.message.content[0];
@@ -4727,6 +4974,23 @@ export class CortexOrchestrator {
           break;
         }
 
+        // #2 (2026-09-04) wall-clock break — UNCONDITIONAL (streaming parity; the 90% warn above gave
+        // the model its chance). A grinder making novel-but-non-converging calls never trips the
+        // count/stall guards but burns to MAX_TOOL_ITERATIONS → post-loop synthesis yields best-effort.
+        if (timeBudgetState(Date.now() - loopStartMs, TURN_DEADLINE_MS) === 'break') {
+          console.warn(`[Orchestrator Streaming] #2: turn wall-clock deadline reached (${TURN_DEADLINE_MS}ms) — forcing synthesis.`);
+          const store = this.getDecisionStore();
+          if (store) {
+            void store.recordEvent({
+              sessionId: this.currentSessionId ?? 'unknown',
+              kind: 'time_budget_break',
+              detail: { deadlineMs: TURN_DEADLINE_MS, elapsedMs: Date.now() - loopStartMs, iteration: toolCallIteration, streaming: true },
+            }).catch(() => {});
+          }
+          hasToolUse = false;
+          break;
+        }
+
         // Interleaved thinking: inject subtle reflection between tool iterations
         if (this.shouldUseInterleavedThinking() && this.helperMiddleware && toolCallIteration > 1) {
           try {
@@ -4773,6 +5037,7 @@ export class CortexOrchestrator {
           // P6 deferral: same one-shot corpus delivery as the sendMessage path.
           await this.deliverDeferredCorpusAtLift(effectiveModel);
           this.deliverLiftNudge(allTools, effectiveModel); // A′ proposal-1: SearchTools/AskForAdvice signpost at lift
+        await this.deliverLiftPlanAtLift(effectiveModel); // LIFT_MENTOR_PLANNER: bounded mentor-planner at lift (dark unless CORTEX_LIFT_PLAN)
           if (this.config.debug) console.log('[Anchor] lifted at first tool_result boundary — session profile applies');
         }
 
@@ -5499,6 +5764,7 @@ export class CortexOrchestrator {
     toolBudgetSoft: number;
     toolTimeoutMs: number;
     maxLoopRepetitions: number;
+    turnDeadlineMs: number;
   } {
     const softRaw = this.config.loopControl?.toolBudgetSoft;
     return {
@@ -5513,6 +5779,8 @@ export class CortexOrchestrator {
       toolBudgetSoft: Number.isFinite(softRaw) && (softRaw as number) >= 0 ? (softRaw as number) : 400,
       toolTimeoutMs: this.config.loopControl?.toolTimeoutMs ?? 120000,
       maxLoopRepetitions: this.config.loopControl?.maxLoopRepetitions ?? 5,
+      // #2 wall-clock deadline: opt-in (0 = disabled), env CORTEX_TURN_DEADLINE_MS is the fallback.
+      turnDeadlineMs: resolveTurnDeadlineMs(this.config.loopControl?.turnDeadlineMs),
     };
   }
 

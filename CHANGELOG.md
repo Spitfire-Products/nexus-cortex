@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.92.0] - 2026-09-04
+
+### Added
+- **Lift mentor-planner** (`CORTEX_LIFT_PLAN`, default off): at the turn-1 lift boundary a bounded
+  max-reasoning mentor plans the task — adversarial prompt analysis, confirms the real grader criteria
+  (not the model's own tests), and emits a step plan or a RETIRE plan. A guaranteed read-only environment
+  report (tooling / installed packages / resources / test files) drives task-specific install steering
+  (uv/bun for missing packages, beyond bare boxes) and per-step Bash-timeout steering. Injected as a
+  system-reminder to the action model; suppressed in interactive TUIs. Tuning:
+  `CORTEX_LIFT_PLAN_{EFFORT,BUDGET_TOKENS,TIMEOUT_MS,RECON_TIMEOUT_MS,INTERACTIVE}`.
+- **EndTurn resolver** (`CORTEX_ENDTURN_RESOLVER`, default off): at EndTurn a bounded mentor adjudicates
+  whether the work product meets the task's requirements — MEETS finishes, GAP vetoes with a fix plan,
+  bounded by `CORTEX_ENDTURN_RESOLVER_MAX_REJECTS` then fallback-accepts.
+- **Wall-clock turn break** (`CORTEX_TURN_DEADLINE_MS`, opt-in; 0 = off): forces synthesis at ~90% of the
+  task budget so a stuck agent stops before the iteration wall.
+
+### Fixed
+- Strict requirements: an honest `verified_how: "UNVERIFIED (reason)"` is no longer rejected as a claim;
+  short `verified_how` grounding gained a content-token fallback.
+- `max_tokens` truncation is no longer misclassified as a reasoning-only turn.
+- The outer tool-abort now honors the model's requested Bash timeout (up to 600000ms).
+- Task dispatch has a builtin `general-purpose` agent fallback.
+
 ## [4.91.1] - 2026-09-03
 
 ### Fixed
@@ -77,6 +100,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   legitimate unit of work; the old value was a latent self-cut on 1-3.3h headless tasks).
 - `.env.example` lever ledger updated with the c3 / p3 / timeout-audit verdicts; `CORTEX_IDLE_TIMEOUT`
   documented as dead (no code reads it).
+
+## [4.89.0] - 2026-09-02
+
+### Added
+- **`ENABLE_WEBTOOLS` web-surface switch** (`auto` | `true` | `false`, default `auto`): WebFetch is always on;
+  WebSearch, Browse, the hosted browser MCP and hosted search turn on only when a search key is present.
+- The effort tail now banks an `effort_pulse{trigger: tail}` engagement event on EndTurn.
+
+### Changed
+- The system prompt's web-tool guidance is availability-conditional — it only appears when web tools are enabled.
+
+## [4.88.3] - 2026-09-01
+
+### Added
+- `effort_pulse` engagement event (harvestable from the decision store) and **`CORTEX_EFFORT_TAIL`** (dark,
+  live-validated) — a final effort nudge on the turn's tail.
+
+## [4.88.2] - 2026-09-01
+
+### Added
+- **`CORTEX_EFFORT_PULSE`** ablation arm (dark, live-validated) — a mid-turn "think harder" pulse.
+
+### Fixed
+- DeepSeek `reasoning.toggleable` now passes reasoning effort through per request.
+
+## [4.88.1] - 2026-09-01
+
+### Added
+- **`CORTEX_MENTOR_TEMPLATE`** ablation instrument (dark) — a fixed self-interrogation variant of the mentor hint.
+
+### Fixed
+- Reasoning-replay documentation correction.
+
+## [4.88.0] - 2026-09-01
+
+### Added
+- **Unified-outcome masked-failure classifier** — detects turns that report success while the underlying work failed.
+- **Mentor auto-consult** (dark) — the harness can consult the stronger mentor without a model request.
+- **`/health/config`** endpoint reporting the resolved effective configuration.
+- Canon partial and scoped sync.
+
+### Fixed
+- SearchTools and WebFetch fixes; environment-seed enforcement on first run.
+
+## [4.87.1] - 2026-08-30
+
+### Changed
+- Reverted the DeepSeek reasoning effort from `max` back to `medium` — `max` over-deliberates with no pass gain in the
+  sampling A/B. The `top_p=0.95` recipe and mechanism fixes are kept.
+
+## [4.87.0] - 2026-08-30
+
+### Added
+- **DeepSeek sampling recipe** — `top_p=0.95` + reasoning effort `max`, made card-canonical (the harness had been
+  deleting `top_p` for DeepSeek reasoning requests).
+
+## [4.86.0] - 2026-08-29
+
+### Added
+- **AskForAdvice v2 forced-choice** (`CORTEX_MENTOR_FORCE`, default off) — shipped dark, with 5 DeepSeek wiring fixes.
+
+## [4.85.0] - 2026-08-29
+
+### Added
+- **Per-model card config** (TB2.1 bundle): `liftNudge`, `headlessDropAskUser` and `deferredToolLoading` resolve
+  card > env > default on `ModelConfig`; deferred-loading is wired to a per-turn effective value.
+- `$()`-guard auto-lift under auto-approve (`ExecutorConfig.allowCommandSubstitution`).
+
+## [4.84.0] - 2026-08-29
+
+### Added
+- **`CORTEX_LIFT_NUDGE`** (default off) — a lift-boundary SearchTools/AskForAdvice signpost that feeds
+  `getDeferredToolNames`.
+- **`CORTEX_HEADLESS_DROP_ASKUSER`** (default off) — drops AskUserQuestion in non-interactive oneshot runs.
+
+## [4.83.0] - 2026-08-28
+
+### Changed
+- **Optimal harness config promoted to canonical defaults** (`.env.example`, `DEFAULT_SETTINGS` and
+  `SETTINGS_METADATA` synced).
+- AskForAdvice promoted to the essential tool tier; v2 forced `tool_choice` plumbing added.
+- `bootstrapEnv` seeds a dual-`.env` on first run.
+
+## [4.82.0] - 2026-08-28
+
+### Added
+- **AskForAdvice v1** (gated off) — a weak model consults a stronger mentor for a hint when it is stuck.
+
+## [4.81.0] - 2026-08-28
+
+### Added
+- `approachHash` cross-turn lens for the varied-retry loop class (minor-variation retries collapse into one bucket).
+
+## [4.80.0] - 2026-08-27
+
+### Added
+- Helper reasoning-disable — a DeepSeek dual-mode toggle; single-key DeepSeek helper (defaults off).
+
+### Changed
+- All 7 mentorship generators migrated to the item-11a frame.
+
+### Fixed
+- Compaction-rewrap fix.
+
+## [4.79.0] - 2026-08-27
+
+### Changed
+- TUI markdown-renderer unification — completed turns keep the streamed layout — plus GFM table rendering.
+
+## [4.78.0] - 2026-08-26
+
+### Fixed
+- **`$()` guard fixes** (item 15): `$(( ))` arithmetic is now exempt (a substring false positive), a sandbox
+  allowance lever (`CORTEX_ALLOW_CMD_SUBSTITUTION`, default off) lifts the check for sandboxed profiles, and the
+  denial text teaches the accepted alternative instead of dead-ending the loop.
 
 ## [4.77.0] - 2026-08-26
 

@@ -192,6 +192,25 @@ export function resolveLiftNudge(
   const e = boolEnv(env.CORTEX_LIFT_NUDGE ?? '');
   return e === null ? false : e; // global env baseline, else default
 }
+/** CORTEX_LIFT_PLAN — lift-boundary bounded mentor-planner (spec). card > env > false. Ship dark. */
+export function resolveLiftPlan(
+  env: NodeJS.ProcessEnv = process.env,
+  cardLiftPlan?: boolean | null,
+): boolean {
+  if (typeof cardLiftPlan === 'boolean') return cardLiftPlan; // per-model card wins
+  const e = boolEnv(env.CORTEX_LIFT_PLAN ?? '');
+  return e === null ? false : e; // global env baseline, else default (off)
+}
+/** CORTEX_ENDTURN_RESOLVER — mentor-as-EndTurn-judge (does work meet requirements? yes/no + fix plan).
+ *  card > env > false. Ship dark. */
+export function resolveEndTurnResolver(
+  env: NodeJS.ProcessEnv = process.env,
+  cardResolver?: boolean | null,
+): boolean {
+  if (typeof cardResolver === 'boolean') return cardResolver; // per-model card wins
+  const e = boolEnv(env.CORTEX_ENDTURN_RESOLVER ?? '');
+  return e === null ? false : e; // global env baseline, else default (off)
+}
 /** CORTEX_HEADLESS_DROP_ASKUSER — drop AskUserQuestion in non-interactive sessions. card > env > false. */
 export function resolveHeadlessDropAskUser(
   env: NodeJS.ProcessEnv = process.env,
