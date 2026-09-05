@@ -822,3 +822,49 @@ by also checking the store done-set, or accept the bound.
   needs the worker to own the fan-out); **market-websocket tick** (solves timing, already free; not the fan-out).
 **Leading design: Replit Scheduled Deployment running tb2-relaunch (full off-VM relaunch) OR the CF cron keepalive
 (free, sleep-prevention only) — or both layered.** Verify the touch/relaunch path before shipping; NOT a mid-run deploy.
+
+## STEERING-EVENT CONTENT IS UNBANKED — lift_plan / endturn_resolver record METADATA, not the plan/verdict TEXT (2026-09-05, resolver-AB)
+**Evidence.** The resolver-AB run (`.bench/resolver-ab/`) banks per-task `decisions.jsonl` events, but the mentor-steering
+events carry only counters: `lift_plan.detail = {fired, planChars, retire, criteriaStated}`; `endturn_resolver.detail =
+{meets, planChars, rejects, parsed}`. The actual **plan prose** (adversarial analysis + criteria + step plan) and the
+**resolver verdict/fix-plan text** are injected as post-record system-reminders, which the session trajectory is blind to
+(the known "records don't capture post-persist injections" trap). Consequence: plan QUALITY is unanalyzable, and outcome
+CAUSATION can't be attributed (we could see the resolver fired GAP×2 on sqlite-with-gcov and the task flipped 0→1, but
+NOT read WHAT it told the model; and we could NOT read the retire plan to judge whether a `retire=True` was well-reasoned).
+**Fix.** Bank the content on the event (same pattern as the `effective_config` capture added this session): put the plan
+text + verdict + fix-plan on `lift_plan`/`endturn_resolver`/`steering_injected` events (or a sibling `steering_content`
+sidecar keyed by sessionId+ts), truncated to a sane cap. Then the distiller can score plan quality, and A/B adjudication
+can attribute a flip to the specific steering the model received — closing the mechanism-engagement loop from "it fired"
+to "here is what it said and here is the turn it changed." Touchpoints: the DecisionStore steering-event writers +
+whatever emits the metadata-only `detail` today. Verification rung: a live seeded run whose banked event carries the
+plan text verbatim.
+
+## THE `retire` SIGNAL IS INERT — the narrow-door action model ignores "retire" and grinds to the budget wall (2026-09-05, resolver-AB)
+**Evidence.** `make-mips-interpreter`: lift planner returned `retire=True` in resoff (and `retire=False` in reson — pro
+mentor nondeterminism on the same task/config). The resoff model did NOT retire: it ran 119 tool iterations / 132 tool
+calls / **budget_frac 1.002** (ground to the FULL budget wall) and failed. So the `retire` recommendation had ZERO effect
+on behavior — the model ignored it and burned the whole budget. (reson finished at budget_frac 0.837 and passed — the
+flip was grind-timeout nondeterminism, NOT the retire and NOT the resolver, which was silent there.)
+**Why it matters.** If `retire` is meant to SAVE budget on genuinely-hopeless tasks (its whole point — quarantine
+overthinking, don't grind a lost cause to the wall), it must actually SHORT-CIRCUIT the loop (e.g. a bounded graceful
+finish / early-exit path when the planner retires with high confidence), not be a plan line the action model discards.
+As-is it's a no-op: neither harmful (model ignores it) nor helpful (no budget saved). Design tension: a false-retire that
+DID short-circuit would be an own-goal (a wrongly-abandoned task), so any teeth on `retire` needs a confidence gate +
+the mechanism-engagement evidence to tune it — which itself needs the plan-text banking above. Sequence the two: bank
+the content first, then decide whether `retire` earns teeth.
+
+## THE ENDTURN RESOLVER SKIPS `endturn_gate_fallback` FINISHES — a backwards coverage gap (2026-09-05, resolver-AB)
+**Evidence.** Resolver firing census over 11 reson tasks: fired on 8/11 (12 fires; GAP×5 tasks, MEETS×3). The 3
+non-fires: `make-mips-interpreter` and `circuit-fibsqrt` BOTH finished via `endturn_gate_fallback:1` and the resolver
+never fired on them; `bn-fit-modify` finished fast/clean (budget_frac 0.13, no gate event). So the resolver fires after
+a NORMAL gate acceptance (`ev.endTurnCalled===true`) but the streaming gate's **fallback-accept path bypasses it**.
+**Why it's backwards.** The fallback-accept is reached only after the mechanical gate nudged → re-requested → gave up
+and accepted anyway — i.e. exactly the finishes the gate was LEAST comfortable with. Those are the finishes that most
+deserve the resolver's does-this-meet-requirements adjudication, and they're precisely the ones it skips. (make-mips
+then ground to budget_frac 1.002 and failed; a resolver GAP there might have redirected the grind.)
+**Fix.** Invoke `adjudicateEndTurn` on the fallback-accept branch too (the streaming loop's fallback path in
+`endTurnGates.ts` / the :4706 site), not only on the primary accept. Guard against double-fire (fallback already
+consumed the nudge budget) and respect `..._MAX_REJECTS` so a fallback→resolver→GAP loop stays bounded. Verification:
+a live seeded run where a task that previously hit `endturn_gate_fallback` now shows an `endturn_resolver` event.
+Cross-ref: the three-execution-paths lesson (4.91.0 DELTA — a hook that looks wired can be silently dead on one path;
+prove it with a live event, not tsc).

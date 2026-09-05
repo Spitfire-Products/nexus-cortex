@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.93.0] - 2026-09-05
+
+### Added
+- **Steering observability**: `endturn_resolver` and `lift_plan` decision events now bank the mentor's
+  actual TEXT and per-call latency, not just counts. `endturn_resolver.detail` gains `planText`
+  (the fix plan), `workProductSample` (what it judged), `attestation` (the model's finish claim),
+  `latencyMs`, `rawLen`; `lift_plan.detail` gains `planText` + `latencyMs`. The plan/verdict prose is
+  injected as a post-record system-reminder (invisible in the session trajectory), so banking it on the
+  decision event is the only way to score mentor JUDGMENT QUALITY — was a GAP warranted, was the fix plan
+  good, did it judge the right artifact. Additive; no behavior change.
+
 ## [4.92.0] - 2026-09-04
 
 ### Added

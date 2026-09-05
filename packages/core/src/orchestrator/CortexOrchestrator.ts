@@ -792,6 +792,7 @@ export class CortexOrchestrator {
       // timeout/non-zero is still useful; empty on total failure → plan from observations alone).
       const envReport = this.gatherEnvReport();
       const timeoutMs = parseInt(process.env.CORTEX_LIFT_PLAN_TIMEOUT_MS ?? '90000', 10);
+      const t0 = Date.now();
       const plan = await withTimeout(
         this.helperMiddleware.generateTaskPlan({
           task: this.lastRealUserText(),
@@ -801,6 +802,7 @@ export class CortexOrchestrator {
         }),
         timeoutMs,
       );
+      const latencyMs = Date.now() - t0;
       if (!plan || !plan.trim()) {
         if (store) void store.recordEvent({
           sessionId, kind: 'lift_plan', detail: { fired: true, planChars: 0, empty: true },
@@ -819,7 +821,9 @@ export class CortexOrchestrator {
       if (store) void store.recordEvent({
         sessionId,
         kind: 'lift_plan',
-        detail: { fired: true, planChars: plan.length, retire, criteriaStated },
+        // OBSERVABILITY (resolver-AB follow-up): bank the plan TEXT + latency, not just counts —
+        // so a k=5 run can score plan QUALITY (and read the reasoning behind a RETIRE).
+        detail: { fired: true, planChars: plan.length, retire, criteriaStated, latencyMs, planText: plan.slice(0, 4000) },
       }).catch(() => {});
       if (this.config.debug) {
         console.log(`[LiftPlan] plan delivered at lift (${plan.length} chars, retire=${retire}, criteria=${criteriaStated})`);
@@ -901,6 +905,7 @@ export class CortexOrchestrator {
       const workProduct = `${this.lastAssistantText()}\n\n--- checks / tool outputs this task ---\n${outputs}`.slice(0, 8000);
       const attestation = JSON.stringify(etInput).slice(0, 2000);
       const timeoutMs = parseInt(process.env.CORTEX_ENDTURN_RESOLVER_TIMEOUT_MS ?? '90000', 10);
+      const t0 = Date.now();
       const text = await withTimeout(
         this.helperMiddleware.evaluateEndTurn({
           task,
@@ -911,12 +916,23 @@ export class CortexOrchestrator {
         }),
         timeoutMs,
       );
+      const latencyMs = Date.now() - t0;
       const verdict = parseResolverVerdict(text ?? ''); // withTimeout → null on timeout; fail-open to MEETS
+      // OBSERVABILITY (resolver-AB follow-up, 2026-09-05): bank the TEXT the resolver produced +
+      // what it judged, not just counts — so a k=5 run can score the resolver's JUDGMENT QUALITY
+      // (was the GAP warranted? was the fix plan good? did it judge the right artifact?) and not
+      // merely that it fired. Bounded caps keep the decisions row sane. See HARNESS_IMPROVEMENT_BACKLOG.
       if (store) void store.recordEvent({
         sessionId,
         kind: 'endturn_resolver',
         toolName: 'EndTurn',
-        detail: { meets: verdict.meets, planChars: verdict.plan.length, rejects: this.endTurnResolverRejects, parsed: verdict.parsed },
+        detail: {
+          meets: verdict.meets, planChars: verdict.plan.length, rejects: this.endTurnResolverRejects, parsed: verdict.parsed,
+          latencyMs, rawLen: (text ?? '').length,
+          planText: verdict.plan.slice(0, 4000),
+          workProductSample: workProduct.slice(0, 1500),
+          attestation: attestation.slice(0, 800),
+        },
       }).catch(() => {});
       if (!verdict.meets && verdict.plan) {
         this.endTurnResolverRejects += 1;
