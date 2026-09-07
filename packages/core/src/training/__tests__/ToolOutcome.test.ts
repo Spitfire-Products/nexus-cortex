@@ -126,6 +126,32 @@ describe('approachHash (normalized near-duplicate collisions)', () => {
   });
 });
 
+describe('classifyToolOutcome — bare probe exit-1 is INFORMATION, not failure (2026-09-07 census fix)', () => {
+  it("ok: bare grep with no match (exit 1) is not a failure", () => {
+    const o = classifyToolOutcome('Bash', { command: 'grep -c GGTCTC /tmp/x.txt' }, res({ content: '0', metadata: { exitCode: 1 } }));
+    expect(o.status).toBe('ok');
+    expect(o.family).toBeUndefined();
+  });
+  it("ok: bare test/[ false condition (exit 1)", () => {
+    expect(classifyToolOutcome('Bash', { command: 'test -f /nope' }, res({ metadata: { exitCode: 1 } })).status).toBe('ok');
+    expect(classifyToolOutcome('Bash', { command: '[ -d /nope ]' }, res({ metadata: { exitCode: 1 } })).status).toBe('ok');
+  });
+  it("ok: bare diff/cmp that differ (exit 1)", () => {
+    expect(classifyToolOutcome('Bash', { command: 'diff a b' }, res({ metadata: { exitCode: 1 } })).status).toBe('ok');
+  });
+  it("failed: probe exit >=2 is a REAL error (bad regex / unreadable file)", () => {
+    const o = classifyToolOutcome('Bash', { command: 'grep -E "[" /tmp/x.txt' }, res({ content: 'grep: invalid regex', metadata: { exitCode: 2 } }));
+    expect(o.status).toBe('failed');
+  });
+  it("failed: a CHAINED probe (&&/||) stays failed — exit-1 may carry a real downstream failure", () => {
+    expect(classifyToolOutcome('Bash', { command: 'grep foo f && make' }, res({ metadata: { exitCode: 1 } })).status).toBe('failed');
+    expect(classifyToolOutcome('Bash', { command: 'test -f x || exit 1' }, res({ metadata: { exitCode: 1 } })).status).toBe('failed');
+  });
+  it("failed: a NON-probe command exit 1 is unchanged", () => {
+    expect(classifyToolOutcome('Bash', { command: 'python3 build.py' }, res({ content: 'Command failed with exit code 1', metadata: { exitCode: 1 } })).status).toBe('failed');
+  });
+});
+
 describe('classifyToolOutcome on reminder-augmented content (loop-level reuse)', () => {
   it('ignores a prepended <system-reminder> block when classifying family', () => {
     const augmented =

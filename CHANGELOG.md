@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.95.0] - 2026-09-07
+
+### Added
+- **Loop-tool-block** (`CORTEX_LOOP_TOOL_BLOCK`, default off): a hard intervention for the dominant
+  retry-loop failure class. When the loop ladder detects a non-converging same-approach loop, the looping
+  tool's *executor* is disabled for one turn — the tool stays in the tool list (the prompt cache is not
+  busted), but calling it returns an append-only redirect error steering to the complementary tools
+  (Bash → Read/Write/Edit, Edit → Read/Bash). It replaces a soft nudge the model can ignore with a
+  structural block. Ships dark.
+- **Loop-exit planner** (the loop-block's escalation, tuned by `CORTEX_LOOP_TOOL_BLOCK_{EFFORT,BUDGET_TOKENS,
+  TIMEOUT_MS}`): after two blocks fail to break the loop, a bounded max-reasoning mentor (the fourth sibling
+  of the EndTurn-resolver family) reads the last few looping calls and their outputs and returns REPLAN
+  (a concrete different approach) or RETIRE (stop, record best-effort). It is invoked directly by the
+  orchestrator and delivered as the redirect — not a tool the model has to call.
+
+### Changed
+- **Resolver abstention is now on by default** (`CORTEX_ENDTURN_RESOLVER_ABSTAIN=true`, part of the reson
+  standard): the RETIRE verdict that stops the resolver re-rejecting a structurally-unclosable finish. An
+  exploratory cell showed equal pass at ~30% lower cost with the mechanism firing on exactly the doomed
+  reject-loops; promoted to a default to be confirmed — not gated — by the next k=5 run.
+
+### Fixed
+- **A bare probe command's exit-1 is no longer misread as a failure.** `grep`/`test`/`[`/`diff`/`cmp` used
+  as a check exit 1 to mean "no match / false / differs" — information, not an error. The tool-outcome
+  classifier now treats a bare probe (first token, no `&&`/`||` chain) exiting exactly 1 as success (exit
+  ≥2 stays a real error; chained commands are untouched), so an exit-1 probe no longer pollutes the failure
+  guards. Grounded in an 11k-call bash-construct census.
+
 ## [4.94.0] - 2026-09-07
 
 ### Added

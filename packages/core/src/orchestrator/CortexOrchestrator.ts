@@ -94,6 +94,8 @@ import { resolveThrashState, resolveThrashConfig } from '../training/thrashDetec
 import { classifyErrorFamily } from '../training/errorFamily.js';
 import { classifyToolOutcome } from '../training/toolOutcome.js';
 import { LoopLadder, formatLadderSignal } from '../training/loopLadder.js';
+import { decideLoopBlock, isLoopBlockTrigger } from './loopToolBlock.js';
+import { resolveLoopExitConfig, parseLoopExitVerdict } from '../training/loopExitPlanner.js';
 import { shouldNudgeInaction, formatInactionNudge } from './inactionGuard.js';
 import { applyImageTtlForRequest } from './imageTtl.js';
 import { detectSurrenderText, resolveSurrenderNudgeMode, SURRENDER_REMINDER } from './turnEndGuards.js';
@@ -583,6 +585,15 @@ export class CortexOrchestrator {
    *  exactly once, at the anchor-lift boundary. One-shot per orchestrator. */
   private deferredCorpusDelivered = false;
   private liftNudgeDelivered = false; // A′ proposal-1: lift-boundary SearchTools/AskForAdvice nudge, one-shot
+  // CORTEX_LOOP_TOOL_BLOCK (hard loop intervention): when the ladder flags a
+  // non-converging same-approach loop, disable the looping tool's EXECUTOR for
+  // ONE turn (tools list unchanged → cache-safe); a call to it returns an
+  // append-only redirect error. `loopBlockTool` is armed for the NEXT turn;
+  // `loopBlockCounts` tracks blocks per tool (escalate to a mentor consult after
+  // 2); `loopBlockEscalate` requests the direct-invoke consult.
+  private loopBlockTool: string | null = null;
+  private readonly loopBlockCounts = new Map<string, number>();
+  private loopBlockEscalate = false;
   private liftPlanDelivered = false; // LIFT_MENTOR_PLANNER: bounded mentor-planner at the lift, one-shot
   private cachedEnvReport?: string;  // ENV_RECON_COMMAND output, gathered once, shared by lift-planner + endturn-resolver
   private endTurnResolverRejects = 0; // endTurnResolver: GAP vetoes so far this task (bounded by maxRejects → fallback-accept)
@@ -872,6 +883,44 @@ export class CortexOrchestrator {
       return '';
     }
     return '';
+  }
+
+  /**
+   * The last `n` tool calls of `toolName` (each input paired with its result output), oldest→newest.
+   * Fed to the loop-exit mentor so it sees the ACTUAL looping calls + their failing outputs — the
+   * concrete thing to redirect — not just the model's reasoning prose. The tool being blocked right
+   * now is not yet in history, so this returns the PRIOR (looping) calls of that tool.
+   */
+  private recentToolCalls(toolName: string, n: number): string {
+    const resultById = new Map<string, string>();
+    for (const m of this.messageHistory as any[]) {
+      const c = m?.message?.content;
+      if (!Array.isArray(c)) continue;
+      for (const b of c) {
+        if (b?.type !== 'tool_result') continue;
+        const rc = typeof b.content === 'string'
+          ? b.content
+          : Array.isArray(b.content)
+            ? b.content.filter((x: any) => x?.type === 'text').map((x: any) => x.text || '').join('\n')
+            : '';
+        resultById.set(b.tool_use_id, rc);
+      }
+    }
+    const calls: string[] = [];
+    for (let i = this.messageHistory.length - 1; i >= 0 && calls.length < n; i--) {
+      const m: any = this.messageHistory[i];
+      if (m?.message?.role !== 'assistant') continue;
+      const c = m.message.content;
+      if (!Array.isArray(c)) continue;
+      for (let j = c.length - 1; j >= 0 && calls.length < n; j--) {
+        const b = c[j];
+        if (b?.type !== 'tool_use' || b.name !== toolName) continue;
+        const input = JSON.stringify(b.input ?? {}).slice(0, 500);
+        const result = (resultById.get(b.id) ?? '(no result captured)').slice(0, 500);
+        calls.push(`call: ${input}\n  → result: ${result}`);
+      }
+    }
+    return calls.reverse().join('\n');
   }
 
   /**
@@ -2825,6 +2874,7 @@ export class CortexOrchestrator {
               if (input === undefined) continue;
               const outcome = classifyToolOutcome(tr.tool_name, input, tr);
               const ladder = loopLadder.observe(tr.tool_name, outcome);
+              this.armLoopBlock(tr.tool_name, ladder.action);
               const sig = formatLadderSignal(tr.tool_name, ladder);
               if (sig) ladderSignal = sig;
               if (ladder.action === 'break') ladderBreak = sig;
@@ -4845,6 +4895,7 @@ export class CortexOrchestrator {
             if (input === undefined) continue;
             const outcome = classifyToolOutcome(tr.tool_name, input, tr);
             const ladder = loopLadder.observe(tr.tool_name, outcome);
+            this.armLoopBlock(tr.tool_name, ladder.action);
             const sig = formatLadderSignal(tr.tool_name, ladder);
             if (sig) ladderSignal = sig;
             if (ladder.action === 'break') ladderBreak = sig;
@@ -7124,6 +7175,14 @@ export class CortexOrchestrator {
           console.log(`[Orchestrator Phase 2.5] Executing tool: ${toolUse.name}`);
         }
 
+        // CORTEX_LOOP_TOOL_BLOCK: if this tool's executor is loop-disabled this
+        // turn, return the append-only redirect error instead of running it.
+        const loopBlocked = await this.maybeBlockLoopingTool(toolUse);
+        if (loopBlocked) {
+          results.push(await this.processToolTraining(toolUse, loopBlocked));
+          continue;
+        }
+
         // Context management tools (CORTEX.md generation + two-tier memory)
         const contextManagementToolNames = [
           'InitCortexContext',
@@ -7672,6 +7731,10 @@ export class CortexOrchestrator {
       if (this.config.debug) {
         console.log(`[Orchestrator] Executing single tool: ${toolUse.name}`);
       }
+
+      // CORTEX_LOOP_TOOL_BLOCK: executor-gate for the parallel/single path.
+      const loopBlocked = await this.maybeBlockLoopingTool(toolUse);
+      if (loopBlocked) return loopBlocked;
 
       // Context management tools
       const contextManagementToolNames = ['InitCortexContext'];
@@ -8851,6 +8914,99 @@ export class CortexOrchestrator {
       }).catch(() => {});
     }
     return { success: true, llmContent: hint, metadata: { source: 'mentor-consult', rung, helperModel: this.config.reactiveMentorship?.helperModelId } };
+  }
+
+  /** CORTEX_LOOP_TOOL_BLOCK — arm the hard intervention when the ladder flags a
+   *  non-converging same-approach loop (diversify/break). If this tool has
+   *  already been blocked twice, request a mentor escalation instead of a 3rd
+   *  block. Called from the turn loop where the ladder result is computed. */
+  private armLoopBlock(toolName: string, ladderAction: string | undefined): void {
+    if ((process.env.CORTEX_LOOP_TOOL_BLOCK ?? '').trim().toLowerCase() !== 'true') return;
+    if (!isLoopBlockTrigger(ladderAction)) return;
+    if (this.loopBlockEscalate) return; // already pending
+    const prior = this.loopBlockCounts.get(toolName) ?? 0;
+    const decision = decideLoopBlock(toolName, prior);
+    if (decision.action === 'escalate') {
+      // Arm the tool AND the escalation flag: the next call to this tool
+      // triggers a mentor consult (delivered as the redirect) instead of a 3rd
+      // generic block.
+      this.loopBlockTool = toolName;
+      this.loopBlockEscalate = true;
+      if (this.config.debug) console.log(`[LoopBlock] ${toolName} looped past ${prior} blocks → next call escalates to mentor consult`);
+    } else if (decision.action === 'block') {
+      this.loopBlockTool = toolName;
+      this.loopBlockCounts.set(toolName, prior + 1);
+      if (this.config.debug) console.log(`[LoopBlock] arming block #${prior + 1} on ${toolName} for next turn`);
+    }
+  }
+
+  /** Executor-gate: if a tool is loop-blocked THIS turn, return an append-only
+   *  redirect error tool_result INSTEAD of executing it (the tools list is
+   *  unchanged → prompt cache is not busted). One-shot: the block clears on use
+   *  so the tool is available again next turn. Returns null when not blocked. */
+  private async maybeBlockLoopingTool(
+    toolUse: { id: string; name: string; input: any },
+  ): Promise<{ tool_use_id: string; tool_name: string; content: string; is_error: boolean; metadata?: any } | null> {
+    if (!this.loopBlockTool || this.loopBlockTool !== toolUse.name) return null;
+    this.loopBlockTool = null; // one turn only
+    const store = this.getDecisionStore();
+
+    // Escalation: 2 blocks did not break the loop → deliver a mentor plan
+    // directly as the redirect (orchestrator-direct-invoke, NOT forced
+    // tool_choice which is unreliable on DeepSeek once history holds a tool_call).
+    if (this.loopBlockEscalate) {
+      this.loopBlockEscalate = false;
+      // Escalation = the mentor-as-loop-exit-planner (bounded pro-max, sibling of the EndTurn
+      // resolver). ORCHESTRATOR-DIRECT-INVOKE — the orchestrator calls evaluateLoopExit itself and
+      // delivers the verdict as this redirect; it is NOT a tool the low-compliance model must reach
+      // for (forced tool_choice is dead on DeepSeek mid-history — the MENTOR_AUTO pattern).
+      let plan = '';
+      let verdict: 'REPLAN' | 'RETIRE' | 'UNKNOWN' = 'UNKNOWN';
+      try {
+        if (this.helperMiddleware?.evaluateLoopExit) {
+          const cfg = resolveLoopExitConfig();
+          const text = await withTimeout(
+            this.helperMiddleware.evaluateLoopExit({
+              task: this.lastRealUserText(),
+              envReport: this.gatherEnvReport(),
+              loopingTool: toolUse.name,
+              recentAttempts: this.recentToolCalls(toolUse.name, 4) || this.lastAssistantText().slice(0, 2000),
+              outputBudgetTokens: cfg.outputBudgetTokens,
+              effort: cfg.effort,
+              helperModelId: this.config.reactiveMentorship?.helperModelId,
+            }),
+            cfg.timeoutMs,
+          );
+          plan = String(text ?? '');
+          verdict = parseLoopExitVerdict(plan);
+        }
+      } catch { /* fail-open */ }
+      const content = plan
+        ? `Tool "${toolUse.name}" is DISABLED: repeated loop interventions have not broken the pattern. A senior engineer reviewed your situation and gave this exit plan:\n\n${plan}\n\nFollow this instead of retrying "${toolUse.name}".`
+        : `Tool "${toolUse.name}" is DISABLED: repeated loop interventions have not broken this pattern. Stop retrying "${toolUse.name}", re-read the task requirements, and take a fundamentally different approach.`;
+      if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'loop_tool_block', toolName: toolUse.name, detail: { escalated: true, consulted: !!plan, verdict } }).catch(() => {});
+      if (this.config.debug) console.log(`[LoopBlock] ESCALATED ${toolUse.name} → exit-planner (${plan ? verdict + ' plan delivered' : 'fail-open'})`);
+      return { tool_use_id: toolUse.id, tool_name: toolUse.name, content, is_error: true, metadata: { loopToolBlock: true, escalated: true, verdict } };
+    }
+
+    const prior = (this.loopBlockCounts.get(toolUse.name) ?? 1) - 1;
+    const decision = decideLoopBlock(toolUse.name, prior);
+    if (store) {
+      void store.recordEvent({
+        sessionId: this.currentSessionId ?? 'unknown',
+        kind: 'loop_tool_block',
+        toolName: toolUse.name,
+        detail: { blockNumber: prior + 1, redirectTools: decision.redirectTools },
+      }).catch(() => {});
+    }
+    if (this.config.debug) console.log(`[LoopBlock] redirected ${toolUse.name} → ${decision.redirectTools.join(',')}`);
+    return {
+      tool_use_id: toolUse.id,
+      tool_name: toolUse.name,
+      content: decision.message,
+      is_error: true,
+      metadata: { loopToolBlock: true, redirectTools: decision.redirectTools },
+    };
   }
 
   private async processToolTraining(

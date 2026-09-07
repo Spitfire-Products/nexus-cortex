@@ -47,6 +47,10 @@ const GROUPS: Array<{ group: string; levers: LeverSpec[] }> = [
     group: 'Guards (the protection stack — see CONFIG_AUDIT_2026-08-31)',
     levers: [
       { key: 'CORTEX_NEARDUP_BREAKER', what: 'Detects "same approach retried with small tweaks" and forces a strategy change (targets the retry-loop class)', codeDefault: 'false', kind: 'flag-true' },
+      { key: 'CORTEX_LOOP_TOOL_BLOCK', what: 'On a detected loop, disables the looping tool\'s EXECUTOR for one turn (cache-safe; tools list unchanged) and returns a redirect error steering to the complementary tools; escalates after 2 blocks to a bounded pro-max exit-planner mentor (REPLAN|RETIRE)', codeDefault: 'false', kind: 'flag-true' },
+      { key: 'CORTEX_LOOP_TOOL_BLOCK_EFFORT', what: 'Reasoning effort for the loop-block escalation exit-planner mentor (bounded single-shot; max by design — a bounded planner cannot grind)', codeDefault: 'max', kind: 'value' },
+      { key: 'CORTEX_LOOP_TOOL_BLOCK_BUDGET_TOKENS', what: 'Output-token budget for the exit-planner mentor (big enough that reasoning does not eat the plan on DeepSeek)', codeDefault: '4000', kind: 'value' },
+      { key: 'CORTEX_LOOP_TOOL_BLOCK_TIMEOUT_MS', what: 'withTimeout cap on the exit-planner mentor call (fail-open to the generic redirect on timeout)', codeDefault: '90000', kind: 'value' },
       { key: 'CORTEX_POLL_GUARD', what: 'After 4 identical status checks: "stop polling, background it"', codeDefault: 'false', kind: 'flag-true' },
       { key: 'CORTEX_SURRENDER_NUDGE', what: 'Catches "here is what remains to do" endings: "execute your plan, do not describe it"', codeDefault: 'false', kind: 'flag-true' },
       { key: 'CORTEX_TASK_INTEGRITY', what: 'Anti-reward-hack framing line in the system prompt', codeDefault: 'false', kind: 'flag-true' },

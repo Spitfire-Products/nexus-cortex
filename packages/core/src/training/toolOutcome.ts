@@ -60,6 +60,29 @@ const MASKED_FAILURE_SIGNATURES = [
   /^[^\n]*: Segmentation fault\b/m,
 ];
 
+/** PROBE commands whose exit code 1 means INFORMATION ("no match" / "differs" /
+ *  "condition false" / "absent"), NOT a failure. exit>=2 IS a real error (bad
+ *  regex, unreadable file) and stays 'failed'. Verified against 11k banked Bash
+ *  calls (2026-09-07 census): models write `&&`-coupled bash 52% of the time vs
+ *  `if/then/fi` 1.2%, and bare probes exit-1 in ~0.3% of calls; classifying that
+ *  as 'failed' pollutes the failure semantics every guard consumes. NARROW by
+ *  design (same discipline as MASKED_FAILURE_SIGNATURES): ONLY a BARE probe with
+ *  NO `&&`/`||` chain — a gated chain's exit could carry a real downstream
+ *  failure, so those stay 'failed'. */
+const PROBE_COMMANDS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'test', '[', '[[', 'diff', 'cmp']);
+function isBareProbeInfoExit(toolName: string, input: unknown, exit: number): boolean {
+  if (toolName !== 'Bash' && toolName !== 'Shell') return false;
+  if (exit !== 1) return false; // exit>=2 = real probe error; keep 'failed'
+  const cmd = String(
+    (input && typeof input === 'object' ? ((input as any).command ?? (input as any).cmd) : input) ?? '',
+  ).trim();
+  if (!cmd) return false;
+  if (/&&|\|\|/.test(cmd)) return false; // a gated chain — exit-1 may carry a real downstream failure
+  // First token = the command. Set membership (not a regex prefix) so `grepfoo`
+  // does not match and `[` (the test builtin, a non-word char) does.
+  return PROBE_COMMANDS.has(cmd.split(/\s+/)[0] ?? '');
+}
+
 /** Normalize an input's text the way errorFamily normalizes error snippets:
  *  quoted strings, hex ids, paths, and digit runs collapse so "retry with a
  *  tweaked flag/version/path" lands on the same approach bucket. */
@@ -111,8 +134,14 @@ export function classifyToolOutcome(
   } else {
     const exit = result.metadata?.exitCode;
     if (typeof exit === 'number' && exit !== 0) {
-      // Non-zero exit is the primary, unambiguous failure signal.
-      status = 'failed';
+      if (isBareProbeInfoExit(toolName, input, exit)) {
+        // Bare probe exit-1 (grep/test/[/diff/cmp with no match / false / differ,
+        // no chain) = INFORMATION, not a failure — do not feed the failure guards.
+        status = 'ok';
+      } else {
+        // Non-zero exit is the primary, unambiguous failure signal.
+        status = 'failed';
+      }
     } else if (FAILURE_SIGNATURES.some((re) => re.test(content))) {
       // ShellTool's own failure marker present — trust it even when the overall
       // exit is 0 (a pipe/wrapper reset it). Zero false-positive (our text).

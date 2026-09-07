@@ -41,6 +41,11 @@ import {
   buildDeadlineExitPrompt,
   type DeadlineExitContext,
 } from '../training/deadlineExitMentor.js';
+import {
+  LOOP_EXIT_SYSTEM,
+  buildLoopExitPrompt,
+  type LoopExitContext,
+} from '../training/loopExitPlanner.js';
 import { ModelConfig, ModelRegistry } from '../models/ModelConfig.interface.js';
 import {
   HelperModelMiddlewareRegistry,
@@ -1543,6 +1548,44 @@ Give concise, actionable guidance in plain text with these labeled parts:
         effort: context.effort,
       },
       buildDeadlineExitPrompt(ctx),
+      context.helperModelId,
+    );
+  }
+
+  /**
+   * evaluateLoopExit (loopExitPlanner) — the mentor-as-loop-exit-planner. The 4th bounded pro-max
+   * sibling: when CORTEX_LOOP_TOOL_BLOCK has fired twice on the same tool without breaking the loop,
+   * the orchestrator direct-invokes THIS (not a tool the low-compliance model must reach for) and
+   * delivers the verdict as the block's redirect. Single-shot generateGuidance; max reasoning + big
+   * budget by design (a bounded planner cannot grind; avoids DeepSeek reasoning-eats-the-answer).
+   */
+  async evaluateLoopExit(context: {
+    task: string;
+    envReport?: string;
+    loopingTool: string;
+    recentAttempts?: string;
+    outputBudgetTokens: number;
+    effort: string;
+    helperModelId?: string;
+  }): Promise<string> {
+    const ctx: LoopExitContext = {
+      task: context.task,
+      envReport: context.envReport,
+      loopingTool: context.loopingTool,
+      recentAttempts: context.recentAttempts,
+    };
+    return this.generateGuidance(
+      {
+        surface: 'loop-exit-planner',
+        persona: LOOP_EXIT_SYSTEM.replace('{{TOOL}}', context.loopingTool),
+        task:
+          'The junior is stuck in a non-converging loop on the tool above, blocked twice. First line ' +
+          'VERDICT: REPLAN|RETIRE; if REPLAN a terse numbered plan of concrete DIFFERENT steps each with ' +
+          'its check; if RETIRE one line why it is unclosable + tell it to record best-effort and stop.',
+        outputBudgetTokens: context.outputBudgetTokens,
+        effort: context.effort,
+      },
+      buildLoopExitPrompt(ctx),
       context.helperModelId,
     );
   }
