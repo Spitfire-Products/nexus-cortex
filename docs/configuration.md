@@ -2,7 +2,9 @@
 
 Every Nexus Cortex setting is an environment variable, read from `.env` (or the process environment) at startup.
 
-> **Canonical sources:** [`.env.example`](../.env.example) is the annotated template, and `packages/core/src/config/SettingsSchema.ts` is the schema (defaults + valid choices). This page mirrors them for browsing — if anything here disagrees, those win.
+> **Canonical sources:** the dev repo's `.env` (the MASTER, annotated with per-lever `[LEDGER]` notes) is generated into the shipped `.env.defaults` (read live as the default layer), and `packages/core/src/config/SettingsSchema.ts` is the schema (types + the hardcoded floor). This page mirrors them for browsing — if anything here disagrees, those win.
+>
+> **How config resolves (highest → lowest):** your `~/.cortex/.env` (keys + overrides) → the environment → the shipped `.env.defaults` → the hardcoded floor. You only set a lever in `~/.cortex/.env` (via `cortex config set` or by editing it) to DIVERGE from the shipped default; everything else you leave alone updates automatically on upgrade.
 
 Per-launch overrides win — e.g. `DEFAULT_MODEL_ID=grok-4.3 PORT=4100 node packages/server/dist/index.js`. Booleans are the literal strings `true`/`false`. Only API keys are required; every other variable has a proven-optimal default.
 
@@ -27,7 +29,7 @@ Set the keys for the providers you use; leave the rest blank. A model is only av
 | `MOONSHOT_API_KEY` | — | Moonshot AI (Kimi) — `moonshot-*` / `kimi-*` models. |
 | `ZHIPU_API_KEY` | — | Zhipu AI (GLM) — `glm-*` models. |
 | `HUGGINGFACE_API_KEY` | — | Reserved for Hugging Face Inference (`HUGGINGFACE_TOKEN` also accepted; cards exist but are not registered in the default build yet). |
-| `ANTHROPIC_AUTH_METHOD` | `auto` | `auto` (oauth→key) \| `oauth` \| `api-key`. `.env.example` ships `api-key`; use `oauth` with a Claude.ai Max subscription. |
+| `ANTHROPIC_AUTH_METHOD` | `auto` | `auto` (oauth→key) \| `oauth` \| `api-key`. the shipped default is `api-key`; use `oauth` with a Claude.ai Max subscription. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | — | OAuth token override (alternative to `~/.claude/.credentials.json`). |
 
 #### Model selection
@@ -56,7 +58,7 @@ Set the keys for the providers you use; leave the rest blank. A model is only av
 | `MENTORSHIP_ERROR_THRESHOLD` | `medium` | Minimum severity to trigger: `low` \| `medium` \| `high`. |
 | `MENTORSHIP_KEYWORDS_ENABLED` | `false` | React to `@ultrathink` / `@analyze` / `@rethink`. |
 | `MENTORSHIP_CUSTOM_KEYWORDS` | — | Comma-separated extra trigger keywords. |
-| `MENTORSHIP_HELPER_MODEL` | `deepseek-v4-flash` | Model used for mentorship, overriding `HELPER_MODEL_ID` (`.env.example` ships a Cloudflare Gemma override). |
+| `MENTORSHIP_HELPER_MODEL` | `deepseek-v4-flash` | Model used for mentorship, overriding `HELPER_MODEL_ID`. |
 | `MENTORSHIP_TURN_BASED_ENABLED` | `false` | Periodic review every N turns. |
 | `MENTORSHIP_TURN_INTERVAL` | `10` | Turns between periodic reviews (1–50). |
 | `MENTORSHIP_INTERLEAVED_THINKING` | `false` | Inject thinking for non-reasoning models. |

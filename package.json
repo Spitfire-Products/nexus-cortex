@@ -1,6 +1,6 @@
 {
   "name": "nexus-cortex-monorepo",
-  "version": "4.93.0",
+  "version": "4.94.0",
   "private": true,
   "license": "Apache-2.0",
   "workspaces": [
@@ -19,7 +19,9 @@
     "version-packages": "changeset version",
     "release": "npm run build && changeset publish",
     "lint": "eslint packages/*/src",
-    "check:env-docs": "node scripts/check-env-docs.mjs"
+    "check:env-docs": "node scripts/check-env-docs.mjs",
+    "sync:env": "node scripts/sync-env-defaults.mjs",
+    "check:env-sync": "node scripts/sync-env-defaults.mjs --check"
   },
   "devDependencies": {
     "@types/html-to-text": "^9.0.4",

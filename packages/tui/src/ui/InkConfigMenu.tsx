@@ -14,17 +14,14 @@ import { render, Box, Text, useInput } from 'ink';
 import {
   SETTINGS_METADATA,
   type SettingMetadata,
-  type EnvironmentVariables,
   SettingsLoader,
   SettingsWriter,
-  DEFAULT_SETTINGS,
+  setGlobalSetting,
+  getGlobalConfigDir,
+  getShippedDefault,
   getRuntimeConfigEntry,
   isLiveToggleable,
 } from '@nexus-cortex/core';
-
-const API_KEY_FIELDS = SETTINGS_METADATA
-  .filter(s => s.category === 'api_keys')
-  .map(s => s.key);
 import { Colors } from '@nexus-cortex/cli/dist/themes/colors.js';
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -103,7 +100,9 @@ interface ConfigMenuProps {
   onUpdateRuntimeConfig?: (updates: Record<string, unknown>) => void;
 }
 
-const ConfigMenu: React.FC<ConfigMenuProps> = ({ onClose, projectPath, onUpdateRuntimeConfig }) => {
+// projectPath is accepted for API compatibility but no longer used — harness config is
+// GLOBAL (~/.cortex/.env), read/written regardless of the invoking directory.
+const ConfigMenu: React.FC<ConfigMenuProps> = ({ onClose, onUpdateRuntimeConfig }) => {
   const flatList = buildFlatList();
   const selectableIndices = flatList.map((item, i) => item.type === 'setting' ? i : -1).filter(i => i >= 0);
 
@@ -115,9 +114,13 @@ const ConfigMenu: React.FC<ConfigMenuProps> = ({ onClose, projectPath, onUpdateR
   const [resetConfirm, setResetConfirm] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
 
-  // Stable instances: rebuilt-per-render objects defeat useCallback dependency checks.
-  const loader = useMemo(() => new SettingsLoader(projectPath), [projectPath]);
-  const writer = useMemo(() => new SettingsWriter(projectPath), [projectPath]);
+  // Harness config is GLOBAL (~/.cortex/.env), identical from any directory — read and
+  // write it, not a cwd/project .env. Stable instances: rebuilt-per-render objects defeat
+  // useCallback dependency checks.
+  const loader = useMemo(() => new SettingsLoader(getGlobalConfigDir()), []);
+  // Keys the user has overridden in ~/.cortex/.env (recomputed after each change) — used
+  // to mark rows as "override" vs flowing from the shipped default.
+  const overrideKeys = useMemo(() => new Set(loader.getOverriddenKeys()), [loader, refreshKey]);
 
   const termHeight = process.stdout.rows || 30;
   const maxVisible = Math.max(5, termHeight - 8);
@@ -127,7 +130,10 @@ const ConfigMenu: React.FC<ConfigMenuProps> = ({ onClose, projectPath, onUpdateR
   const currentSetting = currentItem?.setting;
 
   const applyChange = useCallback((setting: SettingMetadata, newValue: string) => {
-    writer.update({ [setting.key]: newValue } as any);
+    // Sparse override to the GLOBAL ~/.cortex/.env (surgical — one line, preserving the
+    // rest). Only levers the user deliberately changes are stored; everything else keeps
+    // flowing from the shipped .env.defaults and updates on upgrade.
+    setGlobalSetting(setting.key as any, newValue);
     process.env[setting.key] = newValue;
 
     const entry = getRuntimeConfigEntry(setting.key);
@@ -136,33 +142,46 @@ const ConfigMenu: React.FC<ConfigMenuProps> = ({ onClose, projectPath, onUpdateR
     }
 
     setRefreshKey(k => k + 1);
-  }, [writer, onUpdateRuntimeConfig]);
+  }, [onUpdateRuntimeConfig]);
 
   const doReset = useCallback(() => {
-    // Preserve API keys; reset everything else to benchmark-proven defaults.
-    const preserved: Partial<EnvironmentVariables> = {};
-    for (const key of API_KEY_FIELDS) {
-      const val = process.env[key] || loader.get(key as any);
-      if (val) preserved[key as keyof EnvironmentVariables] = val;
-    }
+    // Reset = REMOVE the user's lever override lines (API keys preserved) so every lever
+    // falls back to the shipped default and rejoins the upgrade flow.
+    new SettingsWriter(getGlobalConfigDir()).backup();
+    const results = loader.resetAllToDefaults();
+    const removed = Object.keys(results);
 
-    const resetEnv: Partial<EnvironmentVariables> = { ...DEFAULT_SETTINGS, ...preserved };
-
-    writer.backup();
-    writer.write(resetEnv);
-
-    for (const [key, val] of Object.entries(resetEnv)) {
-      process.env[key] = val as string;
+    // Live-apply: restore each removed lever to its shipped default from .env.defaults.
+    for (const key of removed) {
+      const def = getShippedDefault(key as any);
+      process.env[key] = def;
       const entry = getRuntimeConfigEntry(key);
       if (entry?.tier === 'config' && entry.mapper && onUpdateRuntimeConfig) {
-        onUpdateRuntimeConfig(entry.mapper(val as string));
+        onUpdateRuntimeConfig(entry.mapper(def));
       }
     }
 
-    const preservedCount = Object.keys(preserved).length;
-    setStatusMsg(`[OK] Reset to optimal defaults (${preservedCount} API keys preserved, backup saved)`);
+    setStatusMsg(`[OK] ${removed.length} override${removed.length === 1 ? '' : 's'} removed — levers now follow the latest shipped defaults (API keys preserved)`);
     setRefreshKey(k => k + 1);
-  }, [writer, loader, onUpdateRuntimeConfig]);
+  }, [loader, onUpdateRuntimeConfig]);
+
+  const resetOne = useCallback(() => {
+    if (!currentSetting || currentSetting.secret) return;
+    if (!overrideKeys.has(currentSetting.key)) {
+      setStatusMsg(`${currentSetting.displayName} is already at the shipped default`);
+      return;
+    }
+    // Remove just this override → the lever falls back to the latest shipped default.
+    loader.remove(currentSetting.key as any);
+    const def = getShippedDefault(currentSetting.key as any);
+    process.env[currentSetting.key] = def;
+    const entry = getRuntimeConfigEntry(currentSetting.key);
+    if (entry?.tier === 'config' && entry.mapper && onUpdateRuntimeConfig) {
+      onUpdateRuntimeConfig(entry.mapper(def));
+    }
+    setStatusMsg(`[OK] ${currentSetting.displayName} reset to shipped default (${def})`);
+    setRefreshKey(k => k + 1);
+  }, [currentSetting, overrideKeys, loader, onUpdateRuntimeConfig]);
 
   const toggleOrCycle = useCallback(() => {
     if (!currentSetting) return;
@@ -226,6 +245,11 @@ const ConfigMenu: React.FC<ConfigMenuProps> = ({ onClose, projectPath, onUpdateR
     if (input === 'r' || input === 'R') {
       setResetConfirm(true);
       setStatusMsg('');
+      return;
+    }
+
+    if (input === 'd' || input === 'D') {
+      resetOne();
       return;
     }
 
@@ -319,6 +343,11 @@ const ConfigMenu: React.FC<ConfigMenuProps> = ({ onClose, projectPath, onUpdateR
                 {display}
               </Text>
             </Box>
+            <Box width={3}>
+              <Text color={Colors.AccentCyan}>
+                {overrideKeys.has(s.key) && !s.secret ? '●' : ' '}
+              </Text>
+            </Box>
             <Text color={live ? Colors.AccentGreen : Colors.Gray} dimColor={!live}>
               {live ? 'live' : 'restart'}
             </Text>
@@ -348,13 +377,13 @@ const ConfigMenu: React.FC<ConfigMenuProps> = ({ onClose, projectPath, onUpdateR
       <Box marginTop={1}>
         {resetConfirm ? (
           <Text color={Colors.AccentYellow}>
-            Reset ALL settings to optimal defaults? API keys preserved, backup saved. (y/N)
+            Reset ALL levers to the latest shipped defaults? API keys preserved, backup saved. (y/N)
           </Text>
         ) : (
           <Text dimColor>
             {editMode
               ? 'Type value, Enter to save, ESC to cancel'
-              : 'Arrows navigate · Space/Enter toggle · r reset defaults · ESC/q close'}
+              : 'Arrows · Space/Enter toggle · d reset one · r reset all · ● = your override · ESC/q close'}
           </Text>
         )}
       </Box>

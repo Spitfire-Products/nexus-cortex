@@ -9,7 +9,7 @@
 import { Router, Request, Response } from 'express';
 import {
   SettingsLoader,
-  SettingsWriter,
+  setGlobalSetting,
   SETTINGS_METADATA,
   getRuntimeConfigEntry,
   isLiveToggleable,
@@ -64,8 +64,9 @@ configRouter.put('/config/:key', (req: Request, res: Response) => {
       return;
     }
 
-    const writer = new SettingsWriter(getProjectPath());
-    writer.update({ [key]: String(value) } as any);
+    // Harness config is GLOBAL: write a single sparse override to ~/.cortex/.env (not a
+    // full-file regen at PROJECT_PATH, which would re-freeze every lever).
+    setGlobalSetting(key as any, String(value));
     process.env[key] = String(value);
 
     const entry = getRuntimeConfigEntry(key);

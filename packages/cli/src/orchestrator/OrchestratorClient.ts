@@ -13,17 +13,16 @@
 import { existsSync, readFileSync, realpathSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { Agent } from 'undici';
 import type { CortexOrchestrator, SubAgentEventCallback } from '@nexus-cortex/core';
+import { getLongTimeoutDispatcher } from '../utils/lazyDispatcher.js';
 
 // Non-streaming server turns send headers only at completion; node fetch's
 // undici defaults (headersTimeout 300s) kill slow local-model turns as bare
-// "fetch failed" (see CortexClient.ts / harnessProcess.ts — same class).
+// "fetch failed" (see CortexClient.ts / harnessProcess.ts — same class). The
+// long-timeout dispatcher is loaded LAZILY (getLongTimeoutDispatcher) — a
+// module-scope `import 'undici'` poisons the process global fetch and breaks
+// DIRECT mode entirely (see utils/lazyDispatcher.ts).
 const CLIENT_FETCH_TIMEOUT_MS = parseInt(process.env.CORTEX_CLIENT_FETCH_TIMEOUT_MS || '900000', 10);
-const longTimeoutAgent = new Agent({
-  headersTimeout: CLIENT_FETCH_TIMEOUT_MS,
-  bodyTimeout: CLIENT_FETCH_TIMEOUT_MS,
-});
 
 // Get installation root from this file's location
 // Use realpathSync to resolve symlinks (important for npm link)
@@ -355,7 +354,7 @@ export class OrchestratorClient {
         ...options
       }),
       // @ts-expect-error undici dispatcher option (node fetch honors it)
-      dispatcher: longTimeoutAgent,
+      dispatcher: await getLongTimeoutDispatcher(CLIENT_FETCH_TIMEOUT_MS),
       signal: AbortSignal.timeout(CLIENT_FETCH_TIMEOUT_MS),
     });
 
@@ -1237,12 +1236,11 @@ export class OrchestratorClient {
    */
   async setConfig(key: string, value: string): Promise<void> {
     if (this.mode === 'direct' && this.orchestrator) {
-      // Use SettingsWriter from core library
-      const { SettingsWriter } = await import('@nexus-cortex/core');
-      const projectPath = this.options.projectPath || OrchestratorClient.findProjectRoot(process.cwd());
-      const writer = new SettingsWriter(projectPath);
-
-      writer.update({ [key]: value } as any);
+      // Harness config is GLOBAL: write a single sparse override to ~/.cortex/.env
+      // (surgical), not a full-file regen at the project/install root (which would
+      // re-freeze every lever and break upgrade propagation).
+      const { setGlobalSetting } = await import('@nexus-cortex/core');
+      setGlobalSetting(key as any, value);
 
       // Apply to process.env so env-read-per-turn vars take immediate effect
       process.env[key] = value;

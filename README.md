@@ -16,6 +16,8 @@ Run it three ways: **as a library** (`import { CortexOrchestrator }`), **as a he
 
 > **Release 1 is the headless harness** — `core`, `executors`, `server`, `cli`. The interactive React/Ink terminal UIs (`@nexus-cortex/tui`) land in Release 2.
 
+> **Driving it from your own agent harness?** Cortex is built to run as an autonomous **sub-agent** that another agent configures and prompts headlessly — often more precisely than a human at a UI can. The bundled **[`cortex-subagent`](.cortex/skills/cortex-subagent/SKILL.md)** skill is the operational formula: the three headless entry points, the config levers worth setting, how to write a self-contained autonomous brief, budgets, and orchestrator-side verification.
+
 ## Quick Start
 
 ```bash
@@ -59,7 +61,7 @@ cortex agent --cwd ./my-project "add a --version flag to the CLI and run the tes
 | Task | Command |
 |------|---------|
 | Set a key | `cortex config set KEY value`  (or edit `~/.cortex/.env`) |
-| Create the config file now | `cortex config init`  (`--force` refreshes the template, keeps your values) |
+| Create the config file now | `cortex config init`  (keys-only; `--force` adds any missing provider-key slots) |
 | Run a one-shot agent | `cortex agent "…"`  (auto-approves tools, fresh session, self-stops on idle) |
 | Generate project context (`CORTEX.md`) | `cortex init` |
 | Add an MCP server | `cortex mcp init` then `cortex mcp enable <name>`  (the browser already works zero-config) |
@@ -102,6 +104,7 @@ These folders are created for you on first run, each with a short README. Agent 
 | **[Authentication](docs/authentication.md)** | Provider API keys and Claude OAuth setup |
 | **[Configuration](docs/configuration.md)** | Every environment variable, annotated |
 | **[Embed the library](docs/user-guide.md#install)** | Use `@nexus-cortex/core` directly in your own code |
+| **[Drive as a subagent](.cortex/skills/cortex-subagent/SKILL.md)** | Run cortex headlessly as an autonomous sub-agent from your own agent harness — entry points, config levers, autonomous prompting, budgets, verification |
 | **[Changelog](CHANGELOG.md)** | Release history |
 
 ## Contributing

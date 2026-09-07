@@ -12,17 +12,15 @@ import { spawn } from 'node:child_process';
 import * as net from 'node:net';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { Agent } from 'undici';
 import type { HarnessRunner, HarnessRunResult } from '@nexus-cortex/core';
+import { getLongTimeoutDispatcher } from '../../utils/lazyDispatcher.js';
 
 // undici's default headersTimeout (300s) kills graded runs against slow arms —
 // small self-hosted models routinely take 6-7 min per multi-tool task. Give the
-// bench its own long-timeout dispatcher (override: CORTEX_BENCH_FETCH_TIMEOUT_MS).
+// bench its own long-timeout dispatcher (override: CORTEX_BENCH_FETCH_TIMEOUT_MS),
+// loaded LAZILY (getLongTimeoutDispatcher) — a module-scope `import 'undici'`
+// poisons the process global fetch and breaks DIRECT mode (utils/lazyDispatcher.ts).
 const BENCH_FETCH_TIMEOUT_MS = parseInt(process.env.CORTEX_BENCH_FETCH_TIMEOUT_MS || '900000', 10);
-const benchDispatcher = new Agent({
-  headersTimeout: BENCH_FETCH_TIMEOUT_MS,
-  bodyTimeout: BENCH_FETCH_TIMEOUT_MS,
-});
 
 /** HarnessRunner that drives a running cortex server's /v1/messages endpoint. */
 export function serverRunner(serverUrl: string, model: string | undefined): HarnessRunner {
@@ -35,7 +33,7 @@ export function serverRunner(serverUrl: string, model: string | undefined): Harn
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: useModel, messages: [{ role: 'user', content: prompt }] }),
         // @ts-expect-error dispatcher is undici's fetch extension, absent from lib.dom types
-        dispatcher: benchDispatcher,
+        dispatcher: await getLongTimeoutDispatcher(BENCH_FETCH_TIMEOUT_MS),
         signal: AbortSignal.timeout(BENCH_FETCH_TIMEOUT_MS),
       });
       if (!resp.ok) throw new Error(`server ${resp.status}: ${(await resp.text()).slice(0, 200)}`);

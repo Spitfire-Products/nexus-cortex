@@ -31,11 +31,16 @@ import {
   type LiftPlanContext,
 } from '../training/liftPlanner.js';
 import {
-  RESOLVER_SYSTEM,
+  resolverSystemPrompt,
   buildResolverUserPrompt,
   resolveEndTurnResolverConfig,
   type EndTurnResolverContext,
 } from '../training/endTurnResolver.js';
+import {
+  DEADLINE_EXIT_SYSTEM,
+  buildDeadlineExitPrompt,
+  type DeadlineExitContext,
+} from '../training/deadlineExitMentor.js';
 import { ModelConfig, ModelRegistry } from '../models/ModelConfig.interface.js';
 import {
   HelperModelMiddlewareRegistry,
@@ -1490,14 +1495,54 @@ Give concise, actionable guidance in plain text with these labeled parts:
     return this.generateGuidance(
       {
         surface: 'endturn-resolver',
-        persona: RESOLVER_SYSTEM,
-        task:
-          'Adjudicate whether the work product meets the task requirements. First line VERDICT: MEETS|GAP; ' +
-          'if GAP, a terse numbered fix plan.',
+        persona: resolverSystemPrompt(cfg.abstain),
+        task: cfg.abstain
+          ? 'Adjudicate whether the work product meets the task requirements. First line VERDICT: MEETS|GAP|RETIRE; ' +
+            'if GAP, a terse numbered fix plan; if RETIRE, one line on why it is unclosable.'
+          : 'Adjudicate whether the work product meets the task requirements. First line VERDICT: MEETS|GAP; ' +
+            'if GAP, a terse numbered fix plan.',
         outputBudgetTokens: cfg.outputBudgetTokens,
         effort: cfg.effort,
       },
-      buildResolverUserPrompt(ctx),
+      buildResolverUserPrompt(ctx, cfg.abstain),
+      context.helperModelId,
+    );
+  }
+
+  /**
+   * evaluateDeadlineExit (deadlineExitMentor) — the mentor-as-deadline-checkpoint. Single-shot
+   * generateGuidance like evaluateEndTurn, but the budget/timeout are RESIDUAL-SCALED by the caller
+   * (the orchestrator computes them via deadlineExitCallBudget so the checkpoint can't eat the
+   * residual it is trying to preserve). Returns the verdict text; the orchestrator parses it.
+   */
+  async evaluateDeadlineExit(context: {
+    task: string;
+    envReport?: string;
+    workProduct: string;
+    remainingBudget: string;
+    recentProgress?: string;
+    outputBudgetTokens: number;
+    effort: string;
+    helperModelId?: string;
+  }): Promise<string> {
+    const ctx: DeadlineExitContext = {
+      task: context.task,
+      envReport: context.envReport,
+      workProduct: context.workProduct,
+      remainingBudget: context.remainingBudget,
+      recentProgress: context.recentProgress,
+    };
+    return this.generateGuidance(
+      {
+        surface: 'deadline-exit-mentor',
+        persona: DEADLINE_EXIT_SYSTEM,
+        task:
+          'Checkpoint the turn near its deadline. First line VERDICT: CONTINUE|FINISH|ACTION|RETIRE; ' +
+          'if ACTION the single step + its check, if RETIRE one line why, if FINISH one confirming clause.',
+        outputBudgetTokens: context.outputBudgetTokens,
+        effort: context.effort,
+      },
+      buildDeadlineExitPrompt(ctx),
       context.helperModelId,
     );
   }

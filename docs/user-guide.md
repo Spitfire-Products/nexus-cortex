@@ -60,7 +60,7 @@ found anywhere, cortex creates `~/.cortex/.env`, prints what to add, and stops â
 | Task | Command |
 |------|---------|
 | Set a key | `cortex config set KEY value` (or edit `~/.cortex/.env`) |
-| Create the config file now | `cortex config init` (`--force` refreshes the template, keeps values) |
+| Create the config file now | `cortex config init` (keys-only; `--force` adds missing provider-key slots) |
 | Generate project `CORTEX.md` | `cortex init` |
 | Add an MCP server | `cortex mcp init` â†’ `cortex mcp enable <name>` (the browser is zero-config) |
 | Stop the background server | `cortex --shutdown` |
@@ -255,7 +255,7 @@ code changes take effect without losing session state. Pair it with `SERVER_IDLE
 | `CORTEX_MODE` | `persistent` | `stateless` for clean per-request sessions; `server` for HTTP-client mode |
 | `ENABLE_DASHBOARD` | `false` | Master switch for the sandbox/tmux web dashboard (binds `DASHBOARD_PORT`, default 4001) |
 
-Every variable is documented in [Configuration](configuration.md) and in `.env.example`. Run
+Every variable is documented in [Configuration](configuration.md); `cortex config list` shows the live set with your effective values. Run
 `cortex-server --help` for the server's own summary.
 
 ## Development

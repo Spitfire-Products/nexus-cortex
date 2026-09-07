@@ -3,7 +3,7 @@
  * Env-docs drift check (R65, 2026-08-18).
  *
  * Every `process.env.CORTEX_*` / `process.env.CANON_*` read in packages/[*]/src
- * must have a corresponding entry (active or commented) in .env.example, OR be
+ * must have a corresponding entry (active or commented) in .env.defaults, OR be
  * on the INTERNAL allowlist below (vars the harness sets for its own child
  * processes — not user configuration).
  *
@@ -51,7 +51,7 @@ for (const pkg of pkgs) {
   }
 }
 
-const example = readFileSync(join(ROOT, '.env.example'), 'utf8');
+const example = readFileSync(join(ROOT, '.env.defaults'), 'utf8');
 const documented = new Set(
   [...example.matchAll(/^#?\s*([A-Z][A-Z0-9_]+)=/gm)].map((m) => m[1])
 );
@@ -61,9 +61,9 @@ const missing = [...reads.keys()]
   .sort();
 
 if (missing.length) {
-  console.error('[check-env-docs] FAIL — env reads with no .env.example entry:');
+  console.error('[check-env-docs] FAIL — env reads with no .env.defaults entry:');
   for (const v of missing) console.error(`  ${v}  (first read: ${reads.get(v)})`);
-  console.error('\nDocument each in .env.example (a commented "#VAR=" line counts),');
+  console.error('\nDocument each in .env.defaults (a commented "#VAR=" line counts),');
   console.error('or add to the INTERNAL allowlist in scripts/check-env-docs.mjs with a justification.');
   process.exit(1);
 }

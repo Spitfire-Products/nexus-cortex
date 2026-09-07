@@ -13,8 +13,7 @@ import type {
   MenuValidationResult
 } from '../ui/menu-types.js';
 import { createStandardActions } from '../ui/menu-types.js';
-import { SettingsLoader } from './SettingsLoader.js';
-import { SettingsWriter } from './SettingsWriter.js';
+import { SettingsLoader, setGlobalSetting } from './SettingsLoader.js';
 import { SETTINGS_METADATA, DEFAULT_SETTINGS, type SettingMetadata } from './SettingsSchema.js';
 
 /**
@@ -67,11 +66,11 @@ const ENV_KEY_MAP: Record<string, keyof MentorshipConfig> = Object.entries(CONFI
  */
 export class MentorshipConfigService implements ConfigService<MentorshipConfig> {
   private loader: SettingsLoader;
-  private writer: SettingsWriter;
 
   constructor(projectPath: string = process.cwd()) {
+    // Reads use the given projectPath (effective config); writes go to the GLOBAL
+    // ~/.cortex/.env surgically via setGlobalSetting (see setConfig).
     this.loader = new SettingsLoader(projectPath);
-    this.writer = new SettingsWriter(projectPath);
   }
 
   /**
@@ -114,7 +113,13 @@ export class MentorshipConfigService implements ConfigService<MentorshipConfig> 
       }
     }
 
-    this.writer.update(updates as any);
+    // Harness config is GLOBAL + sparse: write each changed key surgically to
+    // ~/.cortex/.env (not a full-file regen at cwd, which would re-freeze every lever
+    // and break upgrade propagation).
+    for (const [envKey, val] of Object.entries(updates)) {
+      setGlobalSetting(envKey as any, val);
+      process.env[envKey] = val;
+    }
     this.loader.reload();
   }
 

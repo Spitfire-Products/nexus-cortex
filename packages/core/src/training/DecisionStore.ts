@@ -68,6 +68,8 @@ export type SteeringEventKind =
   | 'time_budget_break' // #2 (2026-09-04): the per-turn wall-clock deadline forced synthesis (mechanism-engagement evidence)
   | 'lift_plan' // LIFT_MENTOR_PLANNER: bounded mentor-planner fired at the lift (mechanism-engagement evidence; detail carries {planChars, retire, criteriaStated})
   | 'endturn_resolver' // endTurnResolver: mentor-as-EndTurn-judge fired at finish (detail carries {meets, planChars, rejects})
+  | 'deadline_exit_mentor' // deadlineExitMentor: mentor-as-deadline-checkpoint at the warn rung (detail carries {decision: continue|finish|action|retire})
+  | 'deadline_exit_break' // deadlineExitMentor decided FINISH/RETIRE → the tool loop broke early for a clean synthesis exit
   // Item 10: doctrine-curation provenance (helper-curated CORTEX.md refresh
   // at session-start/lift boundaries; timeout = fail-open to previous doc).
   | 'doctrine_curation'

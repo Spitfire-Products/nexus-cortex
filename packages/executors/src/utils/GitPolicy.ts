@@ -11,11 +11,11 @@
  *  - The repo/action allow-list is opt-in defense-in-depth. Unset GIT_ALLOWED_REPOS means
  *    "allow all" so existing single-user setups keep working after an upgrade;
  *    multi-tenant/shared deployments set it to restrict. (No startup warning — the
- *    trade-off is documented in .env.example so the TUI/CLI don't print noise on launch.)
+ *    trade-off is documented in .env.defaults so the TUI/CLI don't print noise on launch.)
  *  - The auth token is exposed to gh/git ONLY through the subprocess environment
  *    (GH_TOKEN / GITHUB_TOKEN). It is never interpolated into argv or a clone URL.
  *
- * Env vars (see SettingsSchema.ts / .env.example):
+ * Env vars (see SettingsSchema.ts / .env.defaults):
  *  - GIT_ALLOWED_REPOS    comma list of owner/repo, supports `owner/*` and `*`. Default `*`.
  *  - GIT_ALLOWED_ACTIONS  comma list of actions. Default: all actions allowed.
  *  - GIT_AUTH_TOKEN       token for gh/git, injected into the subprocess env only.
@@ -76,7 +76,7 @@ export class GitPolicy {
     const reposRaw = (cfg.allowedRepos ?? '').trim();
     if (reposRaw === '' || reposRaw === '*') {
       // Unset / `*` = all repos permitted. The trade-off (and how to restrict it) is
-      // documented in `.env.example` under GIT_ALLOWED_REPOS — no startup warning so the
+      // documented in `.env.defaults` under GIT_ALLOWED_REPOS — no startup warning so the
       // TUI/CLI don't print noise on every launch.
       this.repoPatterns = ['*'];
     } else {

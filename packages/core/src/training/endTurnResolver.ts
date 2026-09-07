@@ -17,9 +17,13 @@ export interface EndTurnResolverConfig {
   effort: string;
   /** Max GAP verdicts that reject-and-replan before the gate fallback-accepts (liveness beats loops). */
   maxRejects: number;
+  /** ABSTENTION (CORTEX_ENDTURN_RESOLVER_ABSTAIN): offer the judge a RETIRE verdict for a
+   *  structurally-hopeless finish and HONOR it (accept + stop) instead of burning the reject
+   *  cycles on a task the junior can't fix. Dark by default (A/B-able). */
+  abstain: boolean;
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2 };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, abstain: false };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
@@ -29,6 +33,7 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
     outputBudgetTokens: Number.isInteger(n) && n > 0 ? n : DEFAULTS.outputBudgetTokens,
     effort: e || DEFAULTS.effort,
     maxRejects: Number.isInteger(m) && m >= 0 ? m : DEFAULTS.maxRejects,
+    abstain: (env.CORTEX_ENDTURN_RESOLVER_ABSTAIN ?? '').trim().toLowerCase() === 'true',
   };
 }
 
@@ -51,6 +56,20 @@ export const RESOLVER_SYSTEM =
   'cannot be verified in this box, say so and tell the junior to note it in open_items and finish. Be ' +
   'terse and concrete; do not rewrite the whole solution.';
 
+/** Appended to the persona when abstention is enabled — offers the conservative RETIRE verdict. */
+export const RESOLVER_ABSTAIN_CLAUSE =
+  '\n\nA THIRD verdict is available: `VERDICT: RETIRE`. Use it ONLY when the work does not meet requirements ' +
+  'AND the gap is structurally UNCLOSABLE by this junior in the remaining budget — a fundamentally wrong ' +
+  'approach it keeps repeating, a missing capability/dependency that cannot be obtained in this box, or an ' +
+  'impossible / self-contradictory requirement. RETIRE ends the task as-is instead of dispatching another ' +
+  'doomed fix cycle. 🔴 When in doubt between GAP and RETIRE, choose GAP — only RETIRE when you are CONFIDENT ' +
+  'that more attempts cannot help. After `VERDICT: RETIRE`, give ONE short line naming why it is unclosable.';
+
+/** The persona for the judge. With `abstain`, the RETIRE option is offered. */
+export function resolverSystemPrompt(abstain = false): string {
+  return abstain ? RESOLVER_SYSTEM + RESOLVER_ABSTAIN_CLAUSE : RESOLVER_SYSTEM;
+}
+
 export interface EndTurnResolverContext {
   /** The task statement the junior received. */
   task: string;
@@ -63,7 +82,7 @@ export interface EndTurnResolverContext {
 }
 
 /** Build the user prompt for the judge. Bounded slices keep the call cheap and cache-stable. */
-export function buildResolverUserPrompt(ctx: EndTurnResolverContext): string {
+export function buildResolverUserPrompt(ctx: EndTurnResolverContext, abstain = false): string {
   const parts: string[] = [];
   parts.push(`TASK:\n${(ctx.task || '').trim().slice(0, 2500)}`);
   const env = (ctx.envReport || '').trim();
@@ -72,17 +91,23 @@ export function buildResolverUserPrompt(ctx: EndTurnResolverContext): string {
   const att = (ctx.attestation || '').trim();
   if (att) parts.push(`THE JUNIOR'S OWN ATTESTATION (treat as a claim to VERIFY, not as truth):\n${att.slice(0, 2000)}`);
   parts.push(
-    'Adjudicate now. First line: `VERDICT: MEETS` or `VERDICT: GAP`. If GAP, add the numbered fix plan ' +
-      'anchored to the TASK\'s real criteria.',
+    abstain
+      ? 'Adjudicate now. First line: `VERDICT: MEETS`, `VERDICT: GAP`, or `VERDICT: RETIRE`. If GAP, add the ' +
+          'numbered fix plan anchored to the TASK\'s real criteria; if RETIRE, one line on why it is unclosable.'
+      : 'Adjudicate now. First line: `VERDICT: MEETS` or `VERDICT: GAP`. If GAP, add the numbered fix plan ' +
+          'anchored to the TASK\'s real criteria.',
   );
   return parts.join('\n\n');
 }
 
 export interface ResolverVerdict {
-  /** true = MEETS (finish); false = GAP (reject + fix plan). Defaults to MEETS on an unparseable/empty
+  /** true = MEETS (finish); false = GAP or RETIRE. Defaults to MEETS on an unparseable/empty
    *  response (fail-open: never trap the junior on a broken judge call — liveness beats purity). */
   meets: boolean;
-  /** The fix plan (GAP only). */
+  /** RETIRE = the finish does not meet requirements AND is structurally unclosable → abstain (accept
+   *  + stop the reject loop) when CORTEX_ENDTURN_RESOLVER_ABSTAIN is on. Never true for MEETS/GAP. */
+  retire: boolean;
+  /** GAP: the fix plan. RETIRE: the one-line reason it is unclosable. */
   plan: string;
   /** Whether the verdict line was actually found (else it fell back to fail-open MEETS). */
   parsed: boolean;
@@ -91,12 +116,14 @@ export interface ResolverVerdict {
 /** Parse the judge's response. Fail-open to MEETS when the verdict line is absent/empty. */
 export function parseResolverVerdict(text: string): ResolverVerdict {
   const t = (text || '').trim();
-  if (!t) return { meets: true, plan: '', parsed: false };
-  const m = t.match(/VERDICT:\s*(MEETS|GAP)/i);
-  if (!m) return { meets: true, plan: '', parsed: false }; // no clear verdict → do not block the finish
-  const meets = m[1]!.toUpperCase() === 'MEETS';
-  // The plan is everything after the verdict line.
+  if (!t) return { meets: true, retire: false, plan: '', parsed: false };
+  const m = t.match(/VERDICT:\s*(MEETS|GAP|RETIRE)/i);
+  if (!m) return { meets: true, retire: false, plan: '', parsed: false }; // no clear verdict → do not block the finish
+  const verdict = m[1]!.toUpperCase();
+  const meets = verdict === 'MEETS';
+  const retire = verdict === 'RETIRE';
+  // The plan (GAP) / reason (RETIRE) is everything after the verdict line.
   const idx = t.indexOf(m[0]);
   const plan = t.slice(idx + m[0].length).trim();
-  return { meets, plan, parsed: true };
+  return { meets, retire, plan, parsed: true };
 }

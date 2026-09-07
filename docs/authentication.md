@@ -9,7 +9,7 @@ provider key to start. Pick whichever fits:
 cortex config set DEEPSEEK_API_KEY sk-...     # writes ~/.cortex/.env
 
 # …or open ~/.cortex/.env and fill in a key by hand
-#   (run `cortex config init` to create it now; every supported key is listed, blank)
+#   (run `cortex config init` to create it now — keys-only; every supported key listed, blank)
 
 # …or export it / use your platform's secrets store — the environment wins over the file
 export DEEPSEEK_API_KEY=sk-...
@@ -25,7 +25,7 @@ creates `~/.cortex/.env`, tells you what to add, and stops (no half-started serv
 
 ## Provider API keys
 
-Set the variables for the providers you use (the full annotated list is in `.env.example`):
+Set the variables for the providers you use (`cortex config list` shows every supported key):
 
 | Variable | Provider |
 |----------|----------|
@@ -36,7 +36,7 @@ Set the variables for the providers you use (the full annotated list is in `.env
 | `DEEPSEEK_API_KEY` | DeepSeek |
 
 Other providers (Cloudflare Workers AI, Zhipu/GLM, Qwen, Moonshot/Kimi, MiniMax, Mercury)
-use the same pattern — see `.env.example`. Run `cortex models list` for the live set.
+use the same pattern. Run `cortex models list` for the live set.
 
 ## Claude: API key *or* OAuth
 

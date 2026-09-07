@@ -665,7 +665,7 @@ you know the install.
    */
   private static isImportantFile(fileName: string, parentPath: string): boolean {
     // Always show package.json, tsconfig.json, README.md, .env files
-    if (['package.json', 'tsconfig.json', 'README.md', '.env', '.env.example', '.gitignore'].includes(fileName)) return true;
+    if (['package.json', 'tsconfig.json', 'README.md', '.env', '.env.defaults', '.gitignore'].includes(fileName)) return true;
 
     // Show main entry points
     if (fileName === 'index.ts' || fileName === 'index.js') return true;

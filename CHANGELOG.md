@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.94.0] - 2026-09-07
+
+### Added
+- **Resolver abstention** (`CORTEX_ENDTURN_RESOLVER_ABSTAIN`, default off): the EndTurn resolver gains a
+  RETIRE verdict for a structurally-unclosable finish. Instead of burning a max-reasoning mentor
+  re-rejecting a doomed finish over and over (k=5 saw 7–8 rejects / 0–1 passes on hopeless tasks), it
+  accepts and stops the reject cycle. Confidence-gated in the prompt (when in doubt → GAP). Ships dark.
+- **Deadline-exit mentor** (`CORTEX_DEADLINE_EXIT_MENTOR`, default off): at the per-turn deadline WARN rung
+  (with residual budget remaining), a bounded, residual-scaled mentor decides CONTINUE / FINISH / ACTION /
+  RETIRE — so a late win is not truncated (24% of passes finish in the last fifth) and a stuck run ends
+  cleanly. Tuning: `CORTEX_DEADLINE_EXIT_MENTOR_{EFFORT,BUDGET_TOKENS,TIMEOUT_MS,RESIDUAL_FRAC}`. Ships dark.
+- **Static action effort** (`CORTEX_ACTION_EFFORT`): sets the primary/action model's reasoning effort when a
+  request doesn't specify one (overrides the card default, but not an explicit request param or the effort
+  pulse). Mentor effort levers are unaffected.
+
+### Changed
+- **Config contract**: harness defaults now ship in a generated, read-live `.env.defaults` mirror of the
+  master `.env` — no more copying a full lever template into each user's `~/.cortex/.env`. New installs seed
+  a keys-only user file; `/config` writes global + sparse overrides; a reset removes the override line
+  (falling back to the shipped default); an upgrade ships new defaults with nothing to regenerate on the user
+  side. A `# LOCAL-ONLY` section runs personal overrides locally and is stripped from the shipped mirror.
+- `CORTEX_LIFT_NUDGE` and `CORTEX_HEADLESS_DROP_ASKUSER` env baselines are now on. They already ran on for
+  DeepSeek via the model cards; the flip extends them to un-carded providers (a one-line discovery signpost;
+  dropping the AskUserQuestion stall-trap in headless).
+
+### Fixed
+- **Direct-mode TUI produced no output** (fuzzycortex): a module-scope `import 'undici'` in the CLI (undici
+  v7) poisoned the process's global `fetch` (Node's built-in undici v5) via the shared global-dispatcher
+  symbol, so every in-process LLM request was rejected with `invalid content-length header`. undici is now
+  loaded lazily, only for the server/bench HTTP paths that actually need the long-timeout dispatcher.
+- **fuzzycortex dropped the answer text**: a non-reasoning `content_block_delta` (how DeepSeek/OpenAI stream
+  the reply) was not rendered by the CHALK REPL; it now mirrors the Ink UI's handling.
+- **neoncortex leaked `<system-reminder>` scaffolding into the chat**: lift-boundary reminders appended to
+  history for the model surfaced in the history view; the display/export accessor now strips them (the
+  model request is unchanged — reminders still steer the model).
+
 ## [4.93.0] - 2026-09-05
 
 ### Added

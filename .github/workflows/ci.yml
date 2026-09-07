@@ -54,6 +54,8 @@ jobs:
         run: npm run lint
       - run: node scripts/check-env-docs.mjs
       - run: npm run build
+      - name: .env.defaults per-package copies match the root canonical (drift guard)
+        run: node scripts/sync-env-defaults.mjs --check
       - name: Doc counts up to date (build auto-refreshes them; fail if the commit was stale)
         run: |
           if ! git diff --quiet -- README.md; then

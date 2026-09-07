@@ -15,6 +15,11 @@ fi
 # Ensure we're in the root directory
 cd "$(dirname "$0")/.."
 
+# Sync every per-package .env.defaults from the single root canonical BEFORE building,
+# on ONE trigger, so no copy can silently lag (the 2026-09-06 GATE=false drift: copies
+# synced on different triggers with no guard). See scripts/sync-env-defaults.mjs.
+node scripts/sync-env-defaults.mjs
+
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "NEXUS CORTEX BUILD SYSTEM"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

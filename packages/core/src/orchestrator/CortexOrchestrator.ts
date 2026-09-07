@@ -20,6 +20,7 @@ import type { CanonicalMessage, CanonicalTool } from '../adapters/FormatAdapter.
 // Phase 2.4: Server-Side Tools Support
 import { shouldUseServerSideTools, isServerSideToolsEnabled, modelSupportsServerSideTools, type ServerSideToolDetectionResult } from '../adapters/ServerSideToolDetection.js';
 import { shouldAutoInjectMcp } from './mcpAutoInjectPolicy.js';
+import { sanitizeHistoryForDisplay } from './displayHistorySanitizer.js';
 import { verifyCoordinates, deterministicCoordinateScore } from './coordinateVerification.js';
 import { buildRouterSample, appendJsonlRotating } from './cortexTrainingRecord.js';
 import { join as pathJoin } from 'path';
@@ -27,6 +28,7 @@ import { existsSync } from 'fs';
 import { execSync } from 'node:child_process';
 import { ENV_RECON_COMMAND, resolveLiftPlanConfig } from '../training/liftPlanner.js';
 import { resolveEndTurnResolverConfig, parseResolverVerdict } from '../training/endTurnResolver.js';
+import { resolveDeadlineExitConfig, deadlineExitCallBudget, parseDeadlineExitVerdict } from '../training/deadlineExitMentor.js';
 import { isTaskShaped } from './requirementsVerification.js';
 import { type ServerSideToolMetadata, extractServerSideMetadata, XAIServerSideTools, OpenAIServerSideTools, toCanonicalTool } from '../tools/ServerSideTools.js';
 
@@ -927,14 +929,20 @@ export class CortexOrchestrator {
         kind: 'endturn_resolver',
         toolName: 'EndTurn',
         detail: {
-          meets: verdict.meets, planChars: verdict.plan.length, rejects: this.endTurnResolverRejects, parsed: verdict.parsed,
+          meets: verdict.meets, retire: verdict.retire, abstained: verdict.retire && cfg.abstain,
+          planChars: verdict.plan.length, rejects: this.endTurnResolverRejects, parsed: verdict.parsed,
           latencyMs, rawLen: (text ?? '').length,
           planText: verdict.plan.slice(0, 4000),
           workProductSample: workProduct.slice(0, 1500),
           attestation: attestation.slice(0, 800),
         },
       }).catch(() => {});
-      if (!verdict.meets && verdict.plan) {
+      if (verdict.retire && cfg.abstain) {
+        // ABSTENTION — the finish is structurally unclosable; accept it and STOP the reject
+        // loop (no veto, no reject increment) instead of burning more pro@max cycles on a task
+        // the junior can't fix. The finish stands (ev.endTurnCalled stays true).
+        if (this.config.debug) console.warn(`[EndTurnResolver] RETIRE — abstained (unclosable): ${verdict.plan.slice(0, 160)}`);
+      } else if (!verdict.meets && verdict.plan) {
         this.endTurnResolverRejects += 1;
         ev.endTurnCalled = false; // VETO the finish
         et.is_error = true;
@@ -949,6 +957,79 @@ export class CortexOrchestrator {
       if (store) void store.recordEvent({ sessionId, kind: 'endturn_resolver', detail: { error: String(e?.message ?? e).slice(0, 120) } }).catch(() => {});
       // fail-open: leave the finish accepted
     }
+  }
+
+  /**
+   * deadlineExitCheckpoint — the mentor-as-deadline-checkpoint at the WARN rung (~0.9 of the
+   * per-turn deadline, where residual still exists). Returns null when disabled/not-applicable
+   * (caller uses its normal warn nudge). Otherwise a bounded, residual-scaled mentor call decides:
+   *   shouldBreak=true  → FINISH or RETIRE: end the loop now (post-loop synthesis; resolver bypassed
+   *                        via abnormal-exit) — a clean finish or a clean retirement instead of
+   *                        grinding the residual.
+   *   shouldBreak=false → CONTINUE (signal='' → normal nudge) or ACTION (signal=the one directed step).
+   * Dark by default (CORTEX_DEADLINE_EXIT_MENTOR); fail-safe to null on any error (never truncate
+   * a turn on a broken checkpoint call).
+   */
+  private async deadlineExitCheckpoint(
+    task: string,
+    workProduct: string,
+    remainingMs: number,
+  ): Promise<{ shouldBreak: boolean; signal: string } | null> {
+    const cfg = resolveDeadlineExitConfig();
+    if (!cfg.enabled) return null;
+    if (!this.helperMiddleware?.evaluateDeadlineExit) return null;
+    if (!isTaskShaped(task)) return null;
+    const { timeoutMs, outputBudgetTokens } = deadlineExitCallBudget(cfg, remainingMs);
+    const store = this.getDecisionStore();
+    const sessionId = this.currentSessionId ?? 'unknown';
+    try {
+      const t0 = Date.now();
+      const text = await withTimeout(
+        this.helperMiddleware.evaluateDeadlineExit({
+          task,
+          envReport: this.gatherEnvReport(),
+          workProduct,
+          remainingBudget: `~${Math.max(0, Math.round(remainingMs / 1000))}s of budget left`,
+          outputBudgetTokens,
+          effort: cfg.effort,
+          helperModelId: this.config.reactiveMentorship?.helperModelId,
+        }),
+        timeoutMs,
+      );
+      const v = parseDeadlineExitVerdict(text ?? '');
+      if (store) void store.recordEvent({
+        sessionId,
+        kind: 'deadline_exit_mentor',
+        detail: {
+          decision: v.decision, parsed: v.parsed, remainingMs, latencyMs: Date.now() - t0,
+          detailText: v.detail.slice(0, 2000), workProductSample: workProduct.slice(0, 1200),
+        },
+      }).catch(() => {});
+      switch (v.decision) {
+        case 'finish':
+          if (this.config.debug) console.warn(`[DeadlineExit] FINISH — mentor confirms criteria met; ending turn`);
+          return { shouldBreak: true, signal: '' };
+        case 'retire':
+          if (this.config.debug) console.warn(`[DeadlineExit] RETIRE — unclosable in residual (${v.detail.slice(0, 120)}); ending turn`);
+          return { shouldBreak: true, signal: '' };
+        case 'action':
+          return { shouldBreak: false, signal: `Time is short — a reviewer says ONE action closes the gap:\n${v.detail}\nDo exactly that, verify it against the task's real criteria, then finish.` };
+        default:
+          return { shouldBreak: false, signal: '' }; // CONTINUE → caller uses the normal warn nudge
+      }
+    } catch (e: any) {
+      if (store) void store.recordEvent({ sessionId, kind: 'deadline_exit_mentor', detail: { error: String(e?.message ?? e).slice(0, 120) } }).catch(() => {});
+      return null; // fail-safe: fall back to the normal warn nudge
+    }
+  }
+
+  /** Build the bounded work-product snapshot for the deadline checkpoint (latest answer + recent tool outputs). */
+  private buildDeadlineWorkProduct(toolResults: Array<{ tool_name: string; content?: unknown; is_error?: boolean }>): string {
+    const outs = toolResults
+      .slice(-6)
+      .map((r) => `[${r.tool_name}${r.is_error ? ' ERR' : ''}] ${(typeof r.content === 'string' ? r.content : JSON.stringify(r.content ?? '')).slice(0, 500)}`)
+      .join('\n');
+    return `${this.lastAssistantText()}\n\n--- recent tool outputs ---\n${outs}`.slice(0, 8000);
   }
 
   /** Narrow `tools` to the anchor profile while the anchor is armed; no-op
@@ -1910,6 +1991,16 @@ export class CortexOrchestrator {
 
     // Loop control settings — single source of truth via getLoopControlConfig()
     const loopDefaults = this.getLoopControlConfig();
+    // CORTEX_ACTION_EFFORT: static reasoning effort for the PRIMARY (action) model — fills the
+    // request param when unset (`??=`), so it overrides the model card's default but NOT an
+    // explicit request param or the dynamic effort-pulse (both still win). Mentor calls
+    // (lift-plan / endturn-resolver / deadline-exit) use their own *_EFFORT and are unaffected.
+    // Enables the pro-track "wide effort delta" A/B (pro@low action + pro@max mentors).
+    const __actionEffort = (process.env.CORTEX_ACTION_EFFORT || '').trim();
+    if (__actionEffort) {
+      options.parameters = options.parameters || {};
+      (options.parameters as { reasoningEffort?: string }).reasoningEffort ??= __actionEffort;
+    }
     const MAX_TOOL_ITERATIONS = loopDefaults.maxToolIterations;
     const TOOL_TIMEOUT_MS = loopDefaults.toolTimeoutMs;
     const MAX_CONSECUTIVE_ERRORS = loopDefaults.maxConsecutiveErrors;
@@ -2988,10 +3079,23 @@ export class CortexOrchestrator {
       const budgetSignal = computeToolBudgetSignal(effectiveToolBudgetCount, TOOL_BUDGET_SOFT, progressStalled);
       const diversityWarning = this.getDiversityWarning(toolCallCounts);
       // #2: one-shot wall-clock warning at 90% of the deadline — tell the model to converge + EndTurn.
+      // DARK deadline-exit-mentor (CORTEX_DEADLINE_EXIT_MENTOR): at the warn rung, a bounded mentor
+      // may decide FINISH/RETIRE (end now, cleanly) or ACTION (one directed step) instead of the dumb
+      // "wrap up" nudge; null/CONTINUE falls back to the normal nudge. Hard-floor break below stays.
       let timeSignal: string | null = null;
       if (!timeWarnFired && timeBudgetState(Date.now() - loopStartMs, TURN_DEADLINE_MS) === 'warn') {
-        timeSignal = timeBudgetWarnNudge(Date.now() - loopStartMs, TURN_DEADLINE_MS);
         timeWarnFired = true;
+        const de = await this.deadlineExitCheckpoint(
+          this.lastRealUserText(),
+          this.buildDeadlineWorkProduct(toolResults),
+          TURN_DEADLINE_MS - (Date.now() - loopStartMs),
+        );
+        if (de?.shouldBreak) {
+          const dstore = this.getDecisionStore();
+          if (dstore) void dstore.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'deadline_exit_break', detail: { iteration: toolCallIteration } }).catch(() => {});
+          break; // mentor-directed clean exit → post-loop synthesis (resolver bypassed via abnormal-exit)
+        }
+        timeSignal = de?.signal || timeBudgetWarnNudge(Date.now() - loopStartMs, TURN_DEADLINE_MS);
       }
       if (budgetSignal || diversityWarning || ladderSignal || timeSignal) {
         const signals = [budgetSignal, diversityWarning, ladderSignal, timeSignal].filter(Boolean).join('\n');
@@ -4320,6 +4424,16 @@ export class CortexOrchestrator {
 
     // Loop control settings — single source of truth via getLoopControlConfig()
     const loopDefaults = this.getLoopControlConfig();
+    // CORTEX_ACTION_EFFORT: static reasoning effort for the PRIMARY (action) model — fills the
+    // request param when unset (`??=`), so it overrides the model card's default but NOT an
+    // explicit request param or the dynamic effort-pulse (both still win). Mentor calls
+    // (lift-plan / endturn-resolver / deadline-exit) use their own *_EFFORT and are unaffected.
+    // Enables the pro-track "wide effort delta" A/B (pro@low action + pro@max mentors).
+    const __actionEffort = (process.env.CORTEX_ACTION_EFFORT || '').trim();
+    if (__actionEffort) {
+      options.parameters = options.parameters || {};
+      (options.parameters as { reasoningEffort?: string }).reasoningEffort ??= __actionEffort;
+    }
     const MAX_TOOL_ITERATIONS = loopDefaults.maxToolIterations;
     const MAX_CONSECUTIVE_ERRORS = loopDefaults.maxConsecutiveErrors;
     const MAX_LOOP_REPETITIONS = loopDefaults.maxLoopRepetitions;
@@ -4930,11 +5044,22 @@ export class CortexOrchestrator {
         const progressStalled = isToolProgressStalled(allToolCalls);
         const budgetSignal = computeToolBudgetSignal(effectiveToolBudgetCount, TOOL_BUDGET_SOFT, progressStalled);
         const diversityWarning = this.getDiversityWarning(toolCallCounts);
-        // #2: one-shot wall-clock warning at 90% of the deadline (streaming parity).
+        // #2: one-shot wall-clock warning at 90% of the deadline (streaming parity). DARK
+        // deadline-exit-mentor may FINISH/RETIRE (end cleanly) or ACTION (one step) here.
         let timeSignal: string | null = null;
         if (!timeWarnFired && timeBudgetState(Date.now() - loopStartMs, TURN_DEADLINE_MS) === 'warn') {
-          timeSignal = timeBudgetWarnNudge(Date.now() - loopStartMs, TURN_DEADLINE_MS);
           timeWarnFired = true;
+          const de = await this.deadlineExitCheckpoint(
+            this.lastRealUserText(),
+            this.buildDeadlineWorkProduct(toolResults),
+            TURN_DEADLINE_MS - (Date.now() - loopStartMs),
+          );
+          if (de?.shouldBreak) {
+            const dstore = this.getDecisionStore();
+            if (dstore) void dstore.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'deadline_exit_break', detail: { iteration: toolCallIteration } }).catch(() => {});
+            break; // mentor-directed clean exit → post-loop synthesis (resolver bypassed via abnormal-exit)
+          }
+          timeSignal = de?.signal || timeBudgetWarnNudge(Date.now() - loopStartMs, TURN_DEADLINE_MS);
         }
         if (budgetSignal || diversityWarning || ladderSignal || timeSignal) {
           const signals = [budgetSignal, diversityWarning, ladderSignal, timeSignal].filter(Boolean).join('\n');
@@ -5966,7 +6091,12 @@ export class CortexOrchestrator {
         });
       });
     }
-    return [...this.messageHistory];
+    // Strip model-only <system-reminder> scaffolding (lift-nudge / deferred
+    // corpus / lift-plan append these onto history messages) — this accessor
+    // feeds the TUI history view + session export, never the model request, so
+    // the reminders must not surface to a human. Returns sanitized copies; the
+    // model-facing messageHistory objects are untouched. See displayHistorySanitizer.
+    return sanitizeHistoryForDisplay([...this.messageHistory]);
   }
 
   /**

@@ -25,7 +25,7 @@
 import { spawn, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
-import { existsSync, readFileSync, realpathSync, mkdirSync, openSync, writeFileSync, copyFileSync } from 'fs';
+import { existsSync, readFileSync, realpathSync, mkdirSync, openSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { createRequire } from 'module';
 import { Agent as UndiciAgent } from 'undici';
@@ -421,13 +421,12 @@ function hasAnyApiKey() {
 // A blank-value config template — mirrors the project's own .env: every key declared but
 // EMPTY, so the loader falls through to the environment/secrets store. NEVER put a non-empty
 // placeholder here — it would override a real secret in process.env.
-const BLANK_ENV_TEMPLATE = `# Nexus Cortex configuration.
-# Blank values are read from your environment / secrets store (a value set in the
-# environment wins when the line below is left blank). Fill a key here for local use,
-# or leave blank and inject it via your secrets store. Run "cortex config init --force"
-# for the full, commented template.
-
-DEFAULT_MODEL_ID=deepseek-v4-pro
+const BLANK_ENV_TEMPLATE = `# Nexus Cortex — your keys & overrides
+# Put a provider API key here (or inject it via your environment / secrets store — a
+# value set in the environment wins when the line below is left blank). Harness DEFAULTS
+# are NOT in this file: they ship in the package (.env.defaults) and are read live, so
+# upgrades bring new defaults with nothing to regenerate. Set a lever here only to
+# DIVERGE from the shipped default.
 
 ANTHROPIC_API_KEY=
 OPENAI_API_KEY=
@@ -460,13 +459,11 @@ async function ensureKeysOrExit() {
   if (!existsSync(envPath)) {
     try {
       mkdirSync(dir, { recursive: true });
-      // Prefer the shipped .env.example (the full, canonical blank-value template) and
-      // copy it to ~/.cortex/.env — i.e. .env.example becomes .env, no codegen. Fall back
-      // to the minimal inline template only if the example isn't found in the install.
-      const example = [join(CLI_PKG_ROOT, '.env.example'), join(MONOREPO_ROOT, '.env.example')]
-        .find((p) => existsSync(p));
-      if (example) copyFileSync(example, envPath);
-      else writeFileSync(envPath, BLANK_ENV_TEMPLATE);
+      // Seed a KEYS-ONLY ~/.cortex/.env (bootstrapEnv normally does this already; this is
+      // the fallback for the no-key preflight). Harness defaults are NOT copied here — they
+      // ship in .env.defaults and are read live, so the user's file stays sparse and an
+      // upgrade propagates new defaults with nothing to regenerate.
+      writeFileSync(envPath, BLANK_ENV_TEMPLATE);
       seeded = true;
     } catch { /* read-only home — still print guidance below */ }
   }

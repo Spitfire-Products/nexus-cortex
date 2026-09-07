@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   RESOLVER_SYSTEM,
+  resolverSystemPrompt,
   buildResolverUserPrompt,
   resolveEndTurnResolverConfig,
   parseResolverVerdict,
@@ -62,5 +63,39 @@ describe('endTurnResolver — parseResolverVerdict', () => {
   });
   it('is case-insensitive on the verdict token', () => {
     expect(parseResolverVerdict('verdict: gap\nfix it').meets).toBe(false);
+  });
+  it('MEETS and GAP are never retire', () => {
+    expect(parseResolverVerdict('VERDICT: MEETS').retire).toBe(false);
+    expect(parseResolverVerdict('VERDICT: GAP\nfix').retire).toBe(false);
+  });
+});
+
+describe('endTurnResolver — ABSTENTION (RETIRE verdict)', () => {
+  it('abstain defaults OFF; honors CORTEX_ENDTURN_RESOLVER_ABSTAIN=true', () => {
+    expect(resolveEndTurnResolverConfig({} as NodeJS.ProcessEnv).abstain).toBe(false);
+    expect(resolveEndTurnResolverConfig({ CORTEX_ENDTURN_RESOLVER_ABSTAIN: 'true' } as any).abstain).toBe(true);
+    expect(resolveEndTurnResolverConfig({ CORTEX_ENDTURN_RESOLVER_ABSTAIN: 'false' } as any).abstain).toBe(false);
+  });
+  it('resolverSystemPrompt offers RETIRE only when abstain is on (conservative: when in doubt, GAP)', () => {
+    expect(resolverSystemPrompt(false)).toBe(RESOLVER_SYSTEM);
+    expect(resolverSystemPrompt(false)).not.toMatch(/VERDICT: RETIRE/);
+    const on = resolverSystemPrompt(true);
+    expect(on).toMatch(/VERDICT: RETIRE/);
+    expect(on).toMatch(/when in doubt.*choose GAP/i);
+    expect(on).toMatch(/unclosable/i);
+  });
+  it('buildResolverUserPrompt mentions RETIRE only when abstain is on', () => {
+    expect(buildResolverUserPrompt({ task: 't', workProduct: 'w' }, false)).not.toContain('RETIRE');
+    expect(buildResolverUserPrompt({ task: 't', workProduct: 'w' }, true)).toContain('RETIRE');
+  });
+  it('parseResolverVerdict parses RETIRE (not-meets, retire, reason after the line)', () => {
+    const v = parseResolverVerdict('VERDICT: RETIRE\nmissing gcc toolchain cannot be installed in this box');
+    expect(v.meets).toBe(false);
+    expect(v.retire).toBe(true);
+    expect(v.parsed).toBe(true);
+    expect(v.plan).toContain('gcc toolchain');
+  });
+  it('RETIRE is case-insensitive', () => {
+    expect(parseResolverVerdict('verdict: retire\nhopeless').retire).toBe(true);
   });
 });

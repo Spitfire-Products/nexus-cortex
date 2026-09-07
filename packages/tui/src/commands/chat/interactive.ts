@@ -1896,6 +1896,13 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
         if (chunk.type === 'content_block_delta') {
           const data = chunk.data as any;
 
+          // Tool-input JSON streaming — never display as answer text
+          // (mirror neoncortex useCortexStream: input_json_delta is skipped).
+          const cbDeltaType = data?.delta?.type || data?.type;
+          if (cbDeltaType === 'input_json_delta') {
+            continue;
+          }
+
           if (data.reasoning === true) {
             if (!thinkingCleared) {
               persistentInput.clearThinking();
@@ -1915,6 +1922,11 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
             }
             continue;
           }
+          // A non-reasoning content_block_delta carries ANSWER text — this is
+          // how deepseek/OpenAI stream the reply. Fall through to the text
+          // renderer below by NOT continuing here, mirroring neoncortex's
+          // `else if (!data?.reasoning && chunk.delta)` answer branch. Without
+          // this, the answer was silently dropped (no output after thinking).
         }
 
         // Extended thinking blocks (Gemini <thinking>, Claude <thinking>)
@@ -1938,8 +1950,10 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
           continue;
         }
 
-        // Regular text content (may include mentorship thinking)
-        if (chunk.type === 'text_delta') {
+        // Regular text content (may include mentorship thinking).
+        // Also handles non-reasoning content_block_delta (deepseek/OpenAI
+        // answer text), which fell through the block above without `continue`.
+        if (chunk.type === 'text_delta' || chunk.type === 'content_block_delta') {
           // Clear thinking indicator on first content
           if (!thinkingCleared && chunk.delta) {
             persistentInput.clearThinking();

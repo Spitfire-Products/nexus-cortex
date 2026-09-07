@@ -77,14 +77,14 @@ if (existsSync(memorySeed)) {
   copied++;
 }
 
-// Vendor the blank-value .env.example into the package root. The `cortex` first-run
-// preflight copies it to ~/.cortex/.env (.env.example becomes .env — no codegen, no
-// postinstall). All keys are blank so a value in the environment/secrets store wins.
-const rootEnvExample = resolve(pkgDir, '..', '..', '.env.example');
+// Vendor the .env.defaults into the package root so bootstrapEnv finds it no matter
+// which bin booted (coreOwnRoot/packageRoot resolver). Read LIVE as the shipped default
+// layer — never copied into the user .env. Keys in it are blank (secrets never ship).
+const rootEnvExample = resolve(pkgDir, '..', '..', '.env.defaults');
 if (existsSync(rootEnvExample)) {
-  copyFileSync(rootEnvExample, join(pkgDir, '.env.example'));
+  copyFileSync(rootEnvExample, join(pkgDir, '.env.defaults'));
   copied++;
-  console.log(`[copy-pkg-cortex-scaffold] vendored .env.example into ${pkgDir}`);
+  console.log(`[copy-pkg-cortex-scaffold] vendored .env.defaults into ${pkgDir}`);
 }
 
 if (copied === 0) {

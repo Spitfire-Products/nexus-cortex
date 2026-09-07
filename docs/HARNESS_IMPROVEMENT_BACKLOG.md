@@ -823,6 +823,25 @@ by also checking the store done-set, or accept the bound.
 **Leading design: Replit Scheduled Deployment running tb2-relaunch (full off-VM relaunch) OR the CF cron keepalive
 (free, sleep-prevention only) — or both layered.** Verify the touch/relaunch path before shipping; NOT a mid-run deploy.
 
+**🟢 TWO VERIFIED CANDIDATE IMPLEMENTATIONS of the CF-cron keepalive exist (2026-09-05, local-harness A/B capability test).**
+Built by the LOCAL nexus-cortex harness (deepseek flash vs pro, under the bench reson config, off the Anthropic budget — the
+dogfooding capability test) and orchestrator-verified. Both edit `benchSweep`'s live-lease branch (index.ts ~227) to touch the DO
+before `continue`:
+```ts
+if (now < lease.expiresAt) {
+  await sandboxAdmin(env, lease.doName, '/health', {});  // reset sleepAfter on still-leased lanes
+  out.live++; continue;
+}
+```
+`/health` IS a real DO route (index.ts:276); the expired→`/admin/destroy` branch is untouched in both. BOTH pass `tsc --noEmit`.
+- **flash (+13 lines):** the above PLUS a `touched` counter (extends the `benchSweep` return type + accumulator, surfaced via the
+  existing `/admin/bench/sweep` route) PLUS refreshes 2 now-contradicting comments (the line-834 "NOT probe" note + the `scheduled()`
+  docstring). **Preferred** — an observable keepalive is easier to trust in prod. Wall 467s.
+- **pro (+4 lines):** the minimal touch only (no counter, no type change). Tightest diff. Wall 418s.
+- Local work products (regeneratable, NOT committed — `.bench` is local): `/home/runner/workspace/.bench/local-ab/arm-{flash,pro}/nexus-cortex/src/index.ts` + each `FIX_NOTES.md`.
+- **2 deficiency datapoints from the run:** (i) **deepseek-v4-pro fetch-failed 1 of 2 runs** (flash 0/1) — a pro-path transport reliability wobble in the local harness; (ii) the harness agents **could not run their own `tsc`** (git/npm in the nested monorepo copy timed out) → they fell back to inspection — a self-verification friction worth smoothing.
+- NOT applied/deployed (worker deploy is owner-gated). To ship: apply flash's version to the real `nexus-terminal/workers/nexus-cortex/src/index.ts`, review, deploy via `.github/workflows/deploy-workers.yml`.
+
 ## STEERING-EVENT CONTENT IS UNBANKED — lift_plan / endturn_resolver record METADATA, not the plan/verdict TEXT (2026-09-05, resolver-AB)
 **Evidence.** The resolver-AB run (`.bench/resolver-ab/`) banks per-task `decisions.jsonl` events, but the mentor-steering
 events carry only counters: `lift_plan.detail = {fired, planChars, retire, criteriaStated}`; `endturn_resolver.detail =
@@ -868,3 +887,151 @@ consumed the nudge budget) and respect `..._MAX_REJECTS` so a fallback→resolve
 a live seeded run where a task that previously hit `endturn_gate_fallback` now shows an `endturn_resolver` event.
 Cross-ref: the three-execution-paths lesson (4.91.0 DELTA — a hook that looks wired can be silently dead on one path;
 prove it with a live event, not tsc).
+
+## EXPERIMENT (candidate, GATED on resolver-k5 post-adjudication) — deadline-triggered exit-mentor: turn `CORTEX_TURN_DEADLINE_MS` from a dumb "finish now" nudge into a mentor-directed exit (2026-09-05, operator-raised)
+**Status.** NOT built. A v2 idea for the `#2` wall-clock deadline lever, to spec ONLY after the resolver-k5 adjudication data
+is analyzed (it sizes the population this affects). Recorded so it isn't lost.
+**Today's mechanism (verified).** The supervisor sets `CORTEX_TURN_DEADLINE_MS = 0.9 × task_budget` (`tb2-durable-supervisor.py:164`).
+At the `break` rung (`CortexOrchestrator.ts:3061` non-streaming, `:4996` streaming; state from `timeBudget.ts`) the loop logs
+"#2: turn wall-clock deadline reached — forcing synthesis" and tells the MODEL to wrap up. That self-wrap then (if the gate
+accepts) hits the EndTurn resolver (pro@max) — a two-step tail on the last 10% of budget.
+**Data motivation (resolver-k5, ~68/110 rows).** (a) The current order OVERRUNS: deadline-bound tasks bank `budget_frac`>1.0
+(schemelike 1.14, circuit 1.12, make-mips 1.05) — model-wrap THEN resolver pushes total wall-clock past budget. (b)
+`filter-js-from-html`: resolver keeps pushing a hopeless task (+68% cost vs control, still 0/n) — no "retire/abstain" exit. (c)
+~22% of attempts hit the deadline (concentrated: make-mips, schemelike, circuit, install-windows).
+**The idea.** At the deadline, instead of directing the MODEL to wrap, invoke a **mentor-as-deadline-exit-planner** (a THIRD
+mentor invocation, distinct from lift-plan and endturn-resolver): input `{current work-product, remaining budget}` → output one
+of {already-meets-criteria → finish now + attestation; X% short → the ONE minimal action worth the residual → do Y then finish;
+unsolvable in residual → **retire cleanly**}. The retire branch also kills the filter-js over-spend.
+**🔴 The operator's "move it up to 80–85%" refinement — and why a FLAT move is wrong.** Moving the force-synthesis trigger earlier
+gives the exit-mentor more residual, BUT resolver-k5 shows **11/46 passing rows (24%) finish at ≥0.80 of budget** — they solve
+in the last fifth. `schemelike` passes at frac 0.81/0.86/0.96/0.96/0.98/1.03/1.14 (a 100%-pass task that solves LATE, several
+PAST the 0.9 deadline and still passing); also circuit (0.92,1.12), sqlite-db-truncate (0.90,1.03), make-mips (0.96, its only win).
+A flat 0.80–0.85 deadline would truncate ~a quarter of current WINS. **So make the deadline SMART, don't slide the number:** promote
+the existing `warn` rung (~0.82) into the exit-mentor CHECKPOINT that DECIDES on-track (closing in like schemelike → hands off,
+let it run) vs stuck (grinding like filter-js → direct exit/retire NOW), and keep `break` (~0.92) as the hard floor. Two-tier reuses
+the existing warn/break machinery; the residual-budget worry self-solves (mentor only seizes the remainder when it judges the task stuck).
+**Constraints.** (1) The exit-mentor's own budget must be RESIDUAL-scaled, not its default (`..._BUDGET_TOKENS=4000, TIMEOUT_MS=90000`
+could eat the entire 90s residual of a 900s task). (2) A mentor-directed finish must BYPASS the normal EndTurn resolver (no double
+pro@max pay). (3) Value is GATED on the mentor's assessment quality — if it can't tell "schemelike closing in" from "filter-js
+grinding", an early checkpoint HURTS (kills schemelike). That's the same exit-planner-output-quality question the k5 adjudication measures.
+**Spec shape to A/B.** `checkpoint@0.82 (mentor decides) + hard floor@0.92` vs the current flat `0.90`, measured on the 0.80–1.0
+finishing population, on BOTH pass-rate and the `budget_frac>1.0` overrun. Own arm — do NOT fold blind into the resolver A/B.
+**Two observability gaps this surfaced (fix regardless).** (i) `CORTEX_TURN_DEADLINE_MS` is NOT in `effectiveConfig.ts`'s reported
+list → the config-certify gate can't see/certify this central lever and it's absent from banked `effective_config`. Add it.
+(ii) The supervisor's `rec["budget_frac"]`/`rec["agent_budget_s"]` aren't populating in banked rows (the `if bmap` path) — had to
+recompute from `tb2-budgets.json`; fix so deadline-binding is visible per row.
+
+## FINDING — context is APPEND-ONLY (cache ~99% to peak); it reached ~321K only because the task ENDED at the deadline, not from curation; compaction never fires (2026-09-05, resolver-k5; CORRECTED)
+**What.** On the longest-context task in resolver-k5 (`make-mips-interpreter__r4`, arm on, **166 turns**), the trajectory's per-call
+usage shows **peak single-request context = 321,066 tokens** (turn 165). NO compaction/summarize event fired (trajectory record types
+are only `user`/`assistant`/`file-history-snapshot`; the 5 "compact/summarize" string hits are false positives — model reasoning
+about the MIPS task + the deadline force-synthesis "summarize your findings" prompt).
+**The 31M red herring.** The banked `inputTokens`=30.9M is the CUMULATIVE SUM across 166 turns (each turn re-sends the growing
+convo), i.e. token THROUGHPUT — NOT a single context. Compaction triggers on a SINGLE request nearing the window, not on cumulative
+throughput. Peak 321K on a **1M-token model = ~32% of window** → never near a compaction threshold → never fires.
+**🔴 CORRECTION (an earlier version of this entry claimed a "curation-held plateau" — that mechanism was WRONG; the cache data disproves it).**
+Per-turn cache hit rate is **~99–100% all the way to the 321K peak** (turn 165: cacheRead 320,896 / uncached 170 = 99.9%; aggregate
+99.0%; total uncached across the whole task = 301K of 31M). A 99.9% hit at 321K PROVES the 320,896-token prefix was byte-identical to
+the prior request → **no old content was rewritten**. So the context is **APPEND-ONLY**: it grows monotonically (turn1 3,876 →
+turn165 321,066), decelerating (1,911→1,717→1,266 tok/turn as late turns emit smaller outputs), and it stopped at 321K **because the
+task ENDED at the 0.9 deadline (turn 166 = force-synthesis)** — NOT because anything capped it. A longer task would keep climbing.
+Curation (BashOutput tail-truncation Item 14; `file-history-snapshot` pointers) shapes what gets APPENDED before it enters context;
+it does NOT re-edit committed history, which is exactly why the cacheable prefix stays intact. The harness does NOT "trim-to-a-plateau."
+**The one cache-buster = the exit turn.** Turn 166 (deadline force-synthesis) builds a FRESH, reduced 163,634-token prompt at **0.2%
+hit** (163K uncached) — it does not reuse the cached prefix. So the force-synthesis pays one full ~163K uncached call. Minor cost, but
+a real argument that the mentor-directed exit (see the deadline-exit-mentor experiment above) should be prompt-efficient, not a fresh rebuild.
+**🔴 Implication for small-context arms.** The 321K peak is harmless only because the model is 1M. A 128K-context model as a bench arm
+would EXCEED 321K mid-task → forced compaction/truncation → a confound (and capability hit) the 1M runs never see, AND likely a cache
+collapse if compaction rewrites the prefix. Re-check context + cache behavior BEFORE promoting any smaller-context model to an arm; the
+"no compaction / 99% cache" result does NOT transfer.
+
+## EXPERIMENT+REFACTOR (operator-approved 2026-09-05) — move the effort-by-ROLE profile into the model card (action vs mentor), env levers demoted to overrides
+
+**Status.** QUEUED. Card SCHEMA change to the published package (owner-gated). The *values* are A/B-gated (validate-then-bake); the *refactor* (making the card the source of truth) can land once the schema + resolution are agreed.
+
+**The insight (operator).** The mentor/lift/resolver levers exist to keep the primary in its NARROW-DOOR ACTION frame and not devolve to overthinking; the deliberation is quarantined to the max-reasoning junctures. That action-executor-at-reduced-effort + mentor-at-max split is a per-MODEL property → it belongs in the card, not scattered across per-surface env.
+
+**Current split is half card / half env (grounded).**
+- Primary/action effort = card-based: `card.reasoning.effort` (deepseek flash & pro both `'medium'`), resolved in `APIClient.ts:849-857` with precedence **request-param > card > default**.
+- Mentor-lever efforts = env-ONLY, card-UNAWARE: `liftPlanner.ts:43` reads `env.CORTEX_LIFT_PLAN_EFFORT`; `endTurnResolver.ts:26` reads `env.CORTEX_ENDTURN_RESOLVER_EFFORT`; each falls back to its own `max`. Neither consults the card.
+- So the *action-vs-mentor relationship* can't be expressed per-model in one place, and every surface must re-declare `CORTEX_*_EFFORT`.
+
+**The change.**
+1. Card schema — add a role profile under `reasoning`:
+   ```ts
+   reasoning: {
+     supported: true,
+     effort: 'medium',            // keep = legacy/base fallback
+     effortByRole: {              // NEW — canonical per-model split
+       action: 'medium',          // narrow-door executor
+       mentor: 'max',             // lift-planner / endturn-resolver / ask-advice junctures
+     },
+   }
+   ```
+2. Resolution — primary reads `effortByRole.action ?? effort`; `liftPlanner`/`endTurnResolver` gain a card fallback: `env.CORTEX_*_EFFORT > card.reasoning.effortByRole.mentor > 'max'` (mirrors the primary's request > card > default). Env stays as a per-run OVERRIDE, not the source of truth.
+
+**Baseline ratified (operator 2026-09-05): flash `action:medium` + mentor(pro) `max` stays as-is — "a good fit currently."** The refactor makes that split CANONICAL (card-owned) rather than the current card+env split; it does NOT change flash's effective config. Precedent for card-as-home: the `medium`-revert comment already lives in the cards (deepseek-v4-flash.ts:42 / -pro.ts:51 — "reverted from 'max': max over-deliberated on solvable tasks, 35min/93 iters on circuit-fibsqrt, no pass-rate gain").
+
+**What it unlocks (the pro variant).** Once role-effort is card-owned, flash and pro can carry DIFFERENT action efforts without per-surface env — e.g. pro `action:'low'` (candidate) while flash stays `medium`, both keeping `mentor:'max'`. **🔴 validate-then-bake:** the pro action effort (`low` vs `medium`) is UNTESTED (the 2026-08-30 A/B was max-vs-medium, not medium-vs-low; low has a "floor risk" — too low and the executor loses in-loop tool micro-reasoning). Do NOT bake a pro `action:'low'` into the card until the **pro effort-placement A/B** confirms it (`pro@low-action+pro@max-mentor` vs `pro@medium-action+pro@max-mentor` vs `pro@max-everywhere`). Effort is API-settable per-request (probed 2026-09-01), so the A/B is cleanly buildable via the existing `*_EFFORT` levers before the card change.
+
+**Cross-ref:** the pro-track effort-placement experiment (to spec post flash-k5 adjudication); `CORTEX_EFFORT_PULSE`/`EFFORT_TAIL` are the complementary DYNAMIC effort dimension (escalate on introspective/tail turns) — the card role-profile is the STATIC base they modulate.
+
+## BENCH-RIG BUGS (2 found during resolver-k5 tail, 2026-09-06) — the harbor-bench supervisor + watchdog stall on tail completion
+
+These are the harbor-bench RIG (`scripts/tb2-durable-supervisor.py` + the k5 watchdogs), NOT nexus-cortex core — but they cost hours on the resolver-k5 tail and left it at 108/110. Logged per Operating-Rule-1 deficiency-mining.
+
+**BUG 1 — supervisor tail-completion: `remaining` compares slice to GLOBAL done, exits prematurely.**
+On resume, the durable supervisor logs `"N tasks, <global_done> done, -<M> remaining"` and when global_done exceeds its slice size, `remaining` goes NEGATIVE and it exits treating the shard as complete — EVEN IF a task in ITS OWN slice is undone. Evidence: `k5on8fix` placed for shard-8 (holding the 2 undone r5 tasks) logged `"3 tasks, 53 done, -50 remaining"` and exited having run NOTHING → no container, no rows. This is why the last 2 could never be re-driven by a shard relaunch. **Fix:** compute `remaining` against the shard's OWN slice done-set (`slice_tasks − banked(slice_tasks)`), not `slice_size − global_done`. Until fixed, tail tasks must be re-run by DIRECT task id, not shard relaunch.
+
+**BUG 2 — watchdog reap cadence (~12 min) < task runtime, so a shard once in the "complete-but-short" loop never lands a long task.**
+Once a shard is flagged COMPLETE-but-REMOTE-SHORT (e.g. a crash left it short), the watchdog reaps+remaps it every ~12 min. A fresh lane cold-starts (~7 min) then runs the task, but the next ~12-min tick reaps it BEFORE a ~22–39 min task (e.g. install-windows-3.11, measured 1352–2326s) can finish → the task NEVER completes → perpetual loop. Tasks that finished (r1–r4) only did so because their shards ran uninterrupted and never entered the loop; it is NOT a general long-task problem. **Fix:** reap interval must exceed the slice's longest expected runtime (read the per-task budget from `tb2-budgets.json` and set the watchdog patience to ≥ max(slice budgets), or don't reap a lane that is actively producing tool-call progress).
+
+**Corollary process note (self-inflicted, 2026-09-05→06):** destroying lanes by BLIND ROSTER NAME instantiates DOs that weren't live (a DO request creates it) → spiked the fleet 4→30. Enumerate ACTUAL live instances via `wrangler containers list` / the CF API and destroy only those; NEVER loop the roster blind. (Also in harbor-bench skill.)
+
+## DEFICIENCY — resolver ABSTENTION gap: over-fires on HOPELESS tasks (resolver-k5 event evidence, 2026-09-06)
+Second v2 axis alongside the fallback-coverage gap. From the k=5 decisions.jsonl: the resolver keeps rejecting finishes on tasks the model CANNOT solve — filter-js-from-html (fired 9, **rej 7**, 0/5 pass) and pytorch-model-cli (fired 10, **rej 8**, 1/5 pass) — burning pro@max EndTurn calls for zero pass conversion. Minor reject-overhead also on saturated-pass tasks (circuit-fibsqrt rej 7, sqlite-db-truncate rej 5 — both 5/5 on AND off, so the rejects add cost without pass benefit). **Fix:** give the resolver a "unsolvable-in-remaining-budget → retire/abstain" verdict so it stops re-rejecting a hopeless finish (ties directly to the deadline-exit-mentor experiment's retire branch). NOTE: verdict TEXT quality is already high (specific correct requirement catches) — the entire resolver v2 is a GATING problem (when it fires: coverage + abstention), not an output-quality problem.
+
+## 🔴 CORRECTION (2026-09-06, resolver-k5 decisions.jsonl) — the "fallback-coverage gap" was MIS-PREMISED; the real resolver gaps are abnormal-exit + abstention
+Grounded check of the actual fallback reasons (not the AB's inference):
+- **circuit-fibsqrt: the resolver DOES fire** (2 events/rep; r3 also has a `coordinate-violation`). NOT a coverage gap. So the AB's "circuit finished via fallback, resolver never fired" was wrong.
+- **make-mips: ALL 5 reps hit `abnormal-exit-bypass`** (CortexOrchestrator.ts:3441-3458 — abnormal loop exit: loop-detection/max-iters/consecutive-errors/deadline force-synthesis), NOT `endturn_gate_fallback`. The gate+resolver are bypassed because the model NEVER cleanly finished. There is no declared EndTurn to adjudicate, and make-mips is genuinely hard (2/5 even on-arm) — the resolver structurally cannot rescue a task that never finishes.
+
+**Therefore the originally-scoped fix (invoke adjudicateEndTurn on the endturn_gate_fallback branch) is REJECTED — it wouldn't cover make-mips (wrong bypass path) and circuit is already covered.** The two REAL, worthwhile resolver-behavior fixes are:
+1. **ABSTENTION** (higher value, lower risk) — the resolver over-rejects HOPELESS tasks (filter-js 7 rej/0 pass; pytorch 8 rej/1 pass). Add a "unsolvable-in-budget → retire/abstain" verdict so it stops burning pro@max re-rejecting doomed finishes. Simple verdict-type addition to endTurnResolver.ts.
+2. **ABNORMAL-EXIT ADJUDICATION** (make-mips's actual bypass) — only meaningful as part of the deadline-exit-mentor experiment (adjudicate a force-synthesis exit WITH remaining budget); a loop-detection/max-iters exit is unrescuable. Do NOT bolt a naive resolver call onto the abnormal-exit post-loop point — that's the deadline-exit-mentor's job, gated on remaining budget.
+
+**Held for operator decision** (premise changed): the effort should go to (1) ABSTENTION, not the mis-premised fallback branch. Map-before-assert on the actual decisions.jsonl caught this before a wrong change shipped to the published core.
+
+## READY-TO-RUN SPEC — pro-track effort-placement A/B (prepared 2026-09-06, launch operator-gated)
+Tests the operator's hypothesis: pro@LOW-action + pro@MAX-mentor is a more efficient pairing than pro@medium (wider action↔mentor effort delta; concentrate deliberation at the junctures).
+
+**Needs ONE small core change first (build+test, then publish):** add `CORTEX_ACTION_EFFORT` env lever that sets the PRIMARY model's `options.parameters.reasoningEffort` (APIClient already honors request-param > card > default at APIClient.ts:852, so a request-param override is all that's needed). No existing primary-effort env lever (verified). Precedence: `CORTEX_ACTION_EFFORT` (new) > card.reasoning.effort > default. Keep the mentor levers as-is (`CORTEX_LIFT_PLAN_EFFORT=max`, `CORTEX_ENDTURN_RESOLVER_EFFORT=max` — already env-controlled).
+
+**Arms (primary = deepseek-v4-pro, reson config as the new standard baseline):**
+1. `CORTEX_ACTION_EFFORT=low` + mentor@max — the operator's hypothesis (wide delta, cheap decisive executor).
+2. `CORTEX_ACTION_EFFORT=medium` + mentor@max — the direct medium→low test the flash A/B never ran (card default is medium).
+3. `CORTEX_ACTION_EFFORT=max` (or LIFT/RESOLVER also max = "max everywhere") — the naive port the card comment predicts LOSES (max over-deliberated: 35min/93 iters on circuit-fibsqrt).
+
+**Measure (not just pass-rate):** pass-rate, **cost-per-PASS** (not per-run), and **thrash-rate / mentor-invocation-count** (to catch the inversion where low-executor thrashes more → more expensive mentor calls). Hypothesis: min cost-per-pass at `low` with pass-rate ≥ medium and no thrash blow-up. Falsifiable: if pass drops or thrash spikes, medium is the floor.
+
+**Validation cell:** small wide fanout, the same 11-task subset ×3 reps/arm (or a control-pass-rate-mid-range subset recomputed for PRO's baseline — do NOT reuse flash's difficulty map). Budget ~$0.12/task × 33/arm × 3 arms ≈ $12; well within the $177.79 DeepSeek balance. Apply ALL tonight's durability lessons: patient lanes for the long tasks (reap interval ≥ max slice runtime — BENCH-BUG-2), no blind roster-destroy (BENCH-BUG corollary), wrangler for state, store-only monitor, direct-task-id re-run for tail (BENCH-BUG-1).
+
+**Why validated-before-baked:** the winning `CORTEX_ACTION_EFFORT` value then becomes the pro card's `effortByRole.action` (the effort-by-role card refactor item) — validate-then-bake.
+
+## 🔴 OPEN ISSUE — config does NOT propagate to EXISTING users' .env on upgrade (2026-09-06, operator-raised; design-decision-gated)
+**Grounded current behavior:**
+- `bootstrapEnv` seeds `~/.cortex/.env` + `<pkg>/.env` ONLY WHEN MISSING (`if (!fs.existsSync(target)) copyFileSync(examplePath, target)`, SettingsLoader.ts:130-132). An existing user's .env is NEVER re-touched on upgrade.
+- The shipped `.env.example` carries REAL VALUES (GATE=true, RESOLVER=true, LIFT=true — my 2026-09-06 reson edit), so the seeded .env is a snapshot of defaults AT INSTALL TIME.
+- `DEFAULT_SETTINGS` code defaults are the OLD values (`CORTEX_ENDTURN_GATE: 'false'` at SettingsSchema.ts:466) — NOT updated to reson.
+- NO version stamp / migration anywhere in config (verified).
+- Resolution order (SettingsLoader.ts:~463): `env(.env) || process.env || DEFAULT_SETTINGS`.
+
+**Consequence:** reson reaches FRESH installs only. Existing user: (a) changed default GATE false→true → FROZEN (their .env has false); (b) a NEW lever we add → absent from their .env → falls to the OLD code default → silent old behavior.
+
+**The robust fix (3 parts, ratify order/scope with operator first — changes the published config contract):**
+1. **Move shipped-recommended values into CODE (`DEFAULT_SETTINGS` = reson).** Behavior ships with the package VERSION, not frozen in the user's file. A lever ABSENT from a user's .env → resolves to the updated code default → every non-overriding user gets it on upgrade (new AND existing). SMALLEST, highest-leverage — do first.
+2. **Ship `.env.example` as a COMMENTED documentation template** (`#VAR=default  # what`) instead of live values. Seeded .env has commented levers → users fall through to code defaults; UNCOMMENTING is the override. (The scaffold's own comment already claims "blank so env wins" — copy-pkg-cortex-scaffold.mjs:81 — but the file ships live values, so the intent is unrealized.)
+3. **Version-stamped migration on first-run-after-upgrade:** ADD new keys (commented) to the user's .env so new levers are documented; for a CHANGED default, update the user's value ONLY IF it still equals the OLD default (unchanged), else preserve (they customized) — the only safe way to distinguish "has old default" from "deliberately set".
+
+**🔴 TENSION to resolve:** the reson standard currently lives in `.env.example` VALUES (my edits) but SHOULD live in `DEFAULT_SETTINGS` to actually propagate. Re-decide where it lives as part of this fix. My `.env.example` reson edits are correct for the CURRENT (fresh-install-only) model; they do NOT solve propagation.

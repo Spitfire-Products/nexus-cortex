@@ -195,7 +195,7 @@ export async function createOrchestrator(
   config: OrchestratorConfig,
   middlewareConfig: MiddlewareConfig = {}
 ): Promise<CortexOrchestrator> {
-  // 🔴 LIBRARY-LEVEL ENV BOOTSTRAP (operator directive: the .env.example→.env seed
+  // 🔴 LIBRARY-LEVEL ENV BOOTSTRAP (operator directive: the shipped .env.defaults read-live layer
   // + load must happen "no matter how the library or published npm package is
   // invoked"). Entry-point bins historically had to call bootstrapEnv() themselves
   // and THREE never did (the main `cortex` bin, canon, meta) while two that did had
