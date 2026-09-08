@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.96.1] - 2026-09-08
+
+First published release carrying the 4.96.0 content — the 4.96.0 tag failed to publish (a release
+doc-lint gate rejected an undocumented env var, below), so its changes ship here.
+
+### Added
+- **DeepSeek V4.1 Flash beta model card** (`deepseek-v4.1-flash-expires-on-0910`). Probe-verified: the
+  alias resolves and is a superset of `deepseek-v4-flash` — flash speed **plus** reasoning, OpenAI-format
+  tool-calls, and **vision** (image input). Straight model-id swap on the same adapter + tool-call parser.
+  Beta constraints: expires **2026-09-10** (the alias name is literal) and is limited to ~20 concurrent
+  requests.
+- **Empty-turn continue** (`CORTEX_EMPTY_TURN_CONTINUE`, default off): when the EndTurn gate would fire its
+  terminal "you stopped — write your answer, do not call tools" reminder on a **reasoning-only** turn that
+  still has budget remaining, the model instead gets a bounded (×3) "continue with tools" nudge. Prevents a
+  build being cut one turn short when the model thought but had not yet emitted its next tool call. Flag off
+  = byte-identical behavior.
+
+### Fixed
+- **Release publish gate**: `CORTEX_EMPTY_TURN_CONTINUE` is now documented in `.env.defaults`, satisfying
+  the `check-env-docs` CI gate that blocked the 4.96.0 publish.
+
 ## [4.95.0] - 2026-09-07
 
 ### Added
