@@ -1035,3 +1035,152 @@ Tests the operator's hypothesis: pro@LOW-action + pro@MAX-mentor is a more effic
 3. **Version-stamped migration on first-run-after-upgrade:** ADD new keys (commented) to the user's .env so new levers are documented; for a CHANGED default, update the user's value ONLY IF it still equals the OLD default (unchanged), else preserve (they customized) — the only safe way to distinguish "has old default" from "deliberately set".
 
 **🔴 TENSION to resolve:** the reson standard currently lives in `.env.example` VALUES (my edits) but SHOULD live in `DEFAULT_SETTINGS` to actually propagate. Re-decide where it lives as part of this fix. My `.env.example` reson edits are correct for the CURRENT (fresh-install-only) model; they do NOT solve propagation.
+
+## HB-PLACEMENT — the bench PLACEMENT BRIDGE is the fanout bottleneck (2026-09-07, operator-approved to open)
+**Symptom:** k5v2 7-arm (SHARD_N=55, 1-task/lane, ~300 lanes) spent ~2h in FANOUT before real work began;
+running-instance count wobbled 16→117 through the transition (completion-drain during a slow serial fanout,
+NOT churn — done kept advancing). The bottleneck is the placement plane, not compute or any rate limit
+(host logs 0× 429/402; 1 exc / 98 banked rows; ZERO empty-session zero-token rows).
+
+**Root — 3 compounding components:**
+1. **Serialization** — one armer loops ~300 `tb2-relaunch` calls, 1-2 at a time.
+2. **Per-placement latency (~25s/lane)** — each `tick` BLOCKS on a `/debug/exec` round-trip + supervisor
+   boot + a verify read (the blocking verify is the cost).
+3. **Bridge wedging** — `/debug/exec` wedges under concurrent hits (`bridge wedged or cap saturated`,
+   42/300 ≈ 14%). Root: concurrent new-session execs each cold-start a fresh DO and CF throttles concurrent
+   container STARTS → the synchronous exec stalls. The admin debug shell is not a mass-placement API.
+
+**Fixes (impact÷effort):**
+- **RIG, low effort — next run, no worker change:** ① ASYNC PLACE/VERIFY SPLIT in `scripts/tb2-relaunch.py`
+  (PLACE = fire the detached-supervisor exec + return ~2s; VERIFY = separate store-read pass off the critical
+  path — supervisor is durable, so fire-and-forget is safe; the watchdog re-places any that didn't take;
+  ~25s→~2s/lane). ② BOUNDED-PARALLEL PLACEMENT in the armer (`xargs -P N` / per-arm placement worker; ~20
+  in-flight with ① → ~30s total fanout vs ~2h). ⑤ SHARD_N≈18-20 (~3 tasks/lane = ⅓ the placements — the
+  tasks-per-lane law's UNDER-loaded edge: 1-task/lane is churn-optimal but placement-pessimal; sweet spot ≈3).
+  ⑥ 🔴 **HEAL-PATH FIX (rearm-all.sh):** on a mid-run watchdog death, `rearm-all.sh` must **arm the dead
+  watchdogs directly** (they drive only NOT-DONE lanes), NOT re-fire the armer — a re-fired armer replays the
+  ENTIRE serial fanout, re-placing already-done lanes as 75s no-op cold-starts (~4.5h, ~$32/hr wasted, starves
+  the not-done tail until fanout completes). k5v2 2026-09-07: flash flatlined 93+min this way. Alternatively
+  gate the fanout to skip done lanes on a re-fire (done-set check). Diagnostic + live fix = harbor-bench DELTA 2026-09-07c.
+- **WORKER, medium — the real wedge fix (deploy-gated):** `POST /admin/bench/launch` on nexus-cortex-sandbox
+  taking a LIST of `{session,repo,task,config}`; the worker places server-side at a CONTROLLED rate (paces DO
+  cold-starts so the bridge never wedges) + returns immediately; client declares intent once, worker
+  reconciles desired→actual (extend the existing lease-KV + warden cron, harbor-bench DELTA 09-03). Removes
+  the serial loop AND the self-wedge.
+- **WORKER+IMAGE, high — warm pool + pinned repin (deploy-gated; kills cold-start):** pre-booted DO pool with
+  nexus-cortex installed; ASSIGN a task instead of cold-starting per lane. Reuses the SHIPPED update lifecycle
+  `packages/cli/src/lifecycle/updateCheck.ts`: `CORTEX_UPDATE_POLICY` (off/warn/error/force/auto),
+  `runUpdate()` = `npm install -g nexus-cortex@latest`, startup check ≤ hourly TTL, `cortex update` = thin
+  wrapper, `error` policy → **exit 75 (EX_TEMPFAIL)** = a first-class "stale pin, update+relaunch me"
+  orchestrator signal. On a WARM container `npm i -g nexus-cortex@<pin>` is SECONDS (cached deps) vs cold
+  ~7min → reuse-not-destroy + pinned repin = fast path, no new mechanism. 🔴 NOT `force` (installs @latest →
+  mid-run bump) — use policy=off + the adapter's pinned `npm i -g nexus-cortex@$TB2_HARNESS`, or add a `pin`
+  mode that repins to TB2_HARNESS. Erases the cold-start $ premium (harbor-bench CF-billing analysis).
+
+**🔴 REALITY-CHECK on ④ (grounded 2026-09-07 — corrects the naive "bake a warm image" instinct):**
+- The SANDBOX image is ALREADY warm: `nexus-terminal/workers/nexus-cortex-sandbox/Dockerfile:61` bakes
+  `npm i -g nexus-cortex@4.93.0` (+ tui/claude-code/canon, node, and the npm cache — no `npm cache clean`).
+  So rebuilding a "warmer" sandbox image buys ≈nothing; at most bump the baked version so a near-pin delta is
+  smaller (can't bake a FUTURE pin).
+- The ~7min cold-start is **TWO-container**: the sandbox LANE (our image, baked warm, booted once/lane) vs
+  each **per-task `alexgshaw/<task>` container** spun up inside DinD, where the adapter's `install()` runs
+  node20 + `npm i -g nexus-cortex@<pin>` **FRESH** — an image WE DON'T CONTROL. A warm sandbox image or the
+  running pool warms the LANE, NOT that per-task install. This is the load-bearing correction: ④'s warmth
+  helps lane boot, not the dominant per-task setup.
+- **TARGETED FIX (adapter work, NOT an image rebuild):** MOUNT the sandbox's warm npm cache (+ node) into
+  each task container so the per-task `npm i nexus-cortex@<pin>` hits a populated cache → seconds. ORDER OF
+  WORK: (1) profile where the ~7min actually goes (sandbox boot vs task-container install); (2) if it's the
+  task-container install → cache-mount into task containers; (3) running pool warms the lane (necessary, not
+  sufficient alone).
+- **BUILD NOTE (Replit-safe):** the sandbox image is built by `wrangler containers build --push` (manual
+  dispatch, CI runner with docker), pushed to CF's managed registry, tag pinned in wrangler.jsonc. NEVER
+  build on Replit — no docker daemon + storage-quota crash. Replit only edits the Dockerfile + bumps the tag
+  + triggers the deploy pipeline. (Exact CI workflow trigger still to be confirmed — build METHOD grounded
+  from the wrangler.jsonc comment; the workflow file wasn't in the dev repo.)
+
+**Owner-gate:** ①②⑤ = rig, do freely next run. ③④ = nexus-cortex-sandbox worker/image changes (deploy-gated).
+**Cross-ref:** harbor-bench SKILL DELTA 2026-09-07b (same fixes, run-side framing).
+
+## HB-ENDTURN-TERMINAL — the EndTurn gate's "you stopped" reminder is TERMINAL and kills mid-recon builds (2026-09-08, k5v2 failure-mine)
+**🔴 HIGH VALUE — shipped-baseline behavior depressing EVERY DeepSeek run, not an experimental lever.** The
+single dominant, fixable cause of DeepSeek early give-ups on hard tasks.
+**Grounded mechanism:** when the EndTurn gate is on (`CORTEX_ENDTURN_GATE`, part of the shipped reson standard),
+`CortexOrchestrator.ts:3625` (non-stream) + `:5594` (stream) fire, on the condition
+`endTurnGateEnabled && ev.usedTools && !ev.endTurnCalled`, a system-reminder ending with **"Do NOT call any
+tools."** On a hard task MID-RECON, the model emits a no-tool-call turn (it's THINKING, not finishing) → the
+gate reads it as "stopped" → the TERMINAL "Do NOT call any tools" clause **forbids recovery** → the agent
+honestly reports it never built the artifact, one turn short. The model is NOT giving up; the harness stops it.
+**Evidence (k5v2 failure-trajectory mine + primary verification):** the reminder fired in **10 of 36** flash
+failure sessions, **present across all loop-block-OFF arms** (ctl 1, dl 3, elo 2; lb 4) → NOT the loop-block
+lever (`loop_tool_block` fired 0× this run; different, non-terminal code path — `loopToolBlock.ts`). Failure
+signature: clean reward-0, budget_frac **0.24-0.31** (gave up at ~25% budget), honest non-completion text
+("I was stopped before I was able to create…"). Passing tasks (pytorch-model-cli 5/5 ctl) hit the reminder
+**0×** and committed to building early.
+**FIX DIRECTION (verify the full loop before implementing — I verified the TRIGGER, not the downstream):** make
+the reminder **NON-TERMINAL when budget remains AND no required artifact exists yet** — "continue working, you
+have budget" instead of "Do NOT call any tools." Keep it terminal only near end-of-budget or when an artifact
+exists to attest against. **KEEP the beneficial half** of the gate (the reject-continue on empty/unverified
+attestation, `endturn_resolver`, which fired usefully 25-27×/arm). 🔴 Implementer must first map the full gate
+loop (END_TURN_MAX_NUDGES, force-final logic, the R29a-bypass note at `:3600`, and BOTH the :3625 non-stream and
+:5594 stream sites) — the trigger is grounded, the surrounding nudge/force-final logic is not yet.
+**Owner-gate:** shipped-config behavior change → operator-gated; ride the next release train with a live
+before/after on the hard-task give-up set (filter-js short runs, configure-git, schemelike, bn-fit give-ups).
+
+### IMPLEMENTATION SPEC (2026-09-08, grounded end-to-end by reading; reuses the existing D-E `truncated` carve-out)
+**Root (verified file:line):** `assistantTextPresence.ts:11` — a thinking-only turn (reasoning, no text, no
+tool_use) → `hasVisibleAssistantText=false`. `emptyResponseClassifier.ts:51-55` classifies it `reasoning_only`
+(when `stopReason ∉ TRUNCATION_STOP`), whose nudge (`:67`) is "write your complete final answer now" and whose
+`nudgeForbidsTools` (`:75`) returns TRUE. The classifier is **budget-blind** → it can't tell "reasoned to a
+final answer, forgot to surface it" (exhausted → force answer, correct) from "reasoned about the next action
+mid-recon" (has budget → should continue, BROKEN). Fires at 4 sites: in-loop retry `CortexOrchestrator.ts:2187`
+(non-stream) / `:4535` (stream) — SOFT (text-forbids; tools still passed `:2265`); post-loop R29a `:3597`/`:5580`
+— HARD (tools `[]` `:3653`, hardcoded terminal reminder `:3625`). Observed give-ups hit R29a (text matched).
+
+**FIX — 3 components, mirrors the D-E `truncated` carve-out:**
+1. **`emptyResponseClassifier.ts` (pure):** add param `loopHasBudget?: boolean` + kind `'reasoning_only_active'`.
+   In the final branch: `hadReasoning && !truncated && loopHasBudget===true` → `reasoning_only_active`.
+   `emptyResponseNudge('reasoning_only_active')` = "You produced reasoning but took no action and gave no final
+   answer, and you still have budget. Continue now — take your next concrete action (call a tool), or give your
+   complete verified final answer only if actually finished." `nudgeForbidsTools` → false (join `truncated`:
+   `return kind!=='truncated' && kind!=='reasoning_only_active'`).
+2. **In-loop retry (`:2187`/`:4535`):** pass `loopHasBudget` into `classifyEmptyResponse` (`:2196`/`:4544`).
+   Replace the single-shot `emptyResponseRetryUsed` guard FOR THE CONTINUE-KINDS ONLY with a bounded counter
+   `emptyContinueCount` (cap 3): `truncated`/`reasoning_only_active` consume from it (loop keeps going);
+   `reasoning_only`/`no_visible_content` keep the one-shot force-answer. Exhausted counter → terminal path
+   (bounds any empty-turn loop). Tools already passed at `:2265` — nudge text now says "continue."
+3. **R29a (`:3597`/`:5580`):** classify first; if kind ∈ {`truncated`,`reasoning_only_active`} → push the
+   continue nudge as a user turn and `continue` back into the loop WITH `toolsToUse` (re-entry, NOT the `[]`
+   synthesis), guarded by `emptyContinueCount`. Else (`reasoning_only` exhausted / `no_visible_content`) → keep
+   R29a EXACTLY as-is (terminal tools-suppressed synthesis — the case it was built for).
+
+**`loopHasBudget` signal (both loops have it):** `(Date.now()-loopStartMs) < 0.6*effectiveTurnDeadlineMs &&
+toolCallIteration < 0.6*effectiveMaxIterations`. `loopStartMs`+`TURN_DEADLINE_MS` = DELTA 09-05c (`:1924`/`:4341`);
+`toolCallIteration` in scope (logged `:2198`). 0.6 = "clearly mid-task," conservative.
+
+**Gate:** `CORTEX_EMPTY_TURN_CONTINUE` (default false → dark → A/B → default true); add to `effectiveConfig.ts`.
+When false, byte-identical to today (new kind never selected).
+
+**Validate (before default-on):** (1) unit — classifier: reasoning_only+budget→active+forbid=false; +truncated
+still wins; +!budget still reasoning_only. (2) LIVE SEEDED (mechanism-fire proof) — local cortex-server,
+deepseek, inject a reasoning-only turn at iter ~5 → assert continue nudge + tools kept + next action taken;
+contrast near-deadline → still force-synthesizes. (3) A/B on the give-up subset before/after. 🔴 REGRESSION
+GUARD: a genuine 30+-call exhaustion task MUST still force-synthesize (not loop) — include one in the cell.
+
+**Do NOT change:** the exhaustion path (R29a terminal synth at real budget-spend); the `truncated` D-E carve-out;
+the DSML parser (that's HB-DSML-PARSE, sacred surface, separate). **Touchpoints:** `emptyResponseClassifier.ts` +
+`CortexOrchestrator.ts` `:2187`,`:2196`,`:3597`,`:4535`,`:4544`,`:5580` + `effectiveConfig.ts` + classifier tests
++ one seeded integration test. ~5 edited functions, one new pure branch, one flag.
+
+## HB-DSML-PARSE — DeepSeek DSML tool-call dialect occasionally leaks unparsed → dropped turn (2026-09-08, rare)
+**Lower priority (1/36 sessions) but real; compounds HB-ENDTURN-TERMINAL.** In one k5v2 failure session
+(`filter-js-from-html` ctl r1) the model emitted a tool call in DeepSeek's DSML dialect
+(`<｜｜DSML｜｜tool_calls｜｜invoke name="Bash">…`) that the parser failed to extract, so it landed as PLAIN
+assistant text → the turn read as "empty" → tripped the terminal "you stopped" reminder (HB-ENDTURN-TERMINAL).
+Tool-call parse lands at `APIClient.ts:1079` (`if (parsed.toolCalls.length) message.tool_calls = parsed.toolCalls`).
+**FIX:** harden the DeepSeek/ChatCompletions tool-call parser to recover the DSML dialect (or, minimally, detect
+leaked DSML markup in assistant text and re-request the turn rather than treat it as a stop).
+🔴 **This touches the SACRED tool-call parsing surface** ([[feedback_xai_interleaved_sacred]]) — repeatedly
+broken by AI sessions. Do NOT touch without: (a) before/after canary probes on the deepseek + xai tool-call
+round-trip, (b) explicit operator approval. Frequency is low, so this is not urgent — HB-ENDTURN-TERMINAL's
+non-terminal-reminder fix already neutralizes most of its impact (a recovered-vs-dropped turn both survive if
+the reminder stops forbidding tools).

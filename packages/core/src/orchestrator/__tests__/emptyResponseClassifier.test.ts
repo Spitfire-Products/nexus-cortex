@@ -74,4 +74,39 @@ describe('classifyEmptyResponse', () => {
     expect(nudgeForbidsTools('truncated')).toBe(false);
     expect(nudgeForbidsTools('reasoning_only')).toBe(true);
   });
+
+  // HB-ENDTURN-TERMINAL (2026-09-08): a reasoning-only turn WITH budget is mid-recon (continue), not
+  // a finished-but-unsurfaced answer. Mirrors the D-E truncated carve-out.
+  it('HB-ENDTURN: reasoning_only + loopHasBudget → reasoning_only_active', () => {
+    const c = classifyEmptyResponse([{ type: 'thinking', thinking: 'planning next step...' }], undefined, true);
+    expect(c.kind).toBe('reasoning_only_active');
+    expect(c.hadReasoning).toBe(true);
+  });
+
+  it('HB-ENDTURN: reasoning_only + loopHasBudget=false → reasoning_only (unchanged, exhausted)', () => {
+    expect(classifyEmptyResponse([{ type: 'thinking', thinking: 'x' }], undefined, false).kind).toBe('reasoning_only');
+  });
+
+  it('HB-ENDTURN: loopHasBudget undefined is byte-identical to before (reasoning_only)', () => {
+    expect(classifyEmptyResponse([{ type: 'thinking', thinking: 'x' }]).kind).toBe('reasoning_only');
+  });
+
+  it('HB-ENDTURN: truncation still wins over reasoning_only_active (stopReason priority)', () => {
+    expect(classifyEmptyResponse([{ type: 'thinking', thinking: 'x' }], 'max_tokens', true).kind).toBe('truncated');
+  });
+
+  it('HB-ENDTURN: no_visible_content is NOT promoted by budget (needs reasoning)', () => {
+    expect(classifyEmptyResponse([], undefined, true).kind).toBe('no_visible_content');
+  });
+
+  it('HB-ENDTURN: not_empty (text/tool present) ignores budget', () => {
+    expect(classifyEmptyResponse([{ type: 'text', text: 'answer' }], undefined, true).kind).toBe('not_empty');
+  });
+
+  it('HB-ENDTURN: reasoning_only_active nudge says continue + does NOT forbid tools', () => {
+    const n = emptyResponseNudge('reasoning_only_active').toLowerCase();
+    expect(n).toContain('continue');
+    expect(n).toContain('budget');
+    expect(nudgeForbidsTools('reasoning_only_active')).toBe(false);
+  });
 });

@@ -14,7 +14,12 @@
 
 import { hasVisibleAssistantText } from './assistantTextPresence.js';
 
-export type EmptyResponseKind = 'not_empty' | 'reasoning_only' | 'no_visible_content' | 'truncated';
+export type EmptyResponseKind =
+  | 'not_empty'
+  | 'reasoning_only'
+  | 'reasoning_only_active'
+  | 'no_visible_content'
+  | 'truncated';
 
 /** Provider stop/finish reasons that mean the output was CUT OFF by the token limit (not "done"). */
 const TRUNCATION_STOP = new Set(['max_tokens', 'length', 'max_output_tokens', 'model_length']);
@@ -31,7 +36,21 @@ function blocks(content: unknown): any[] {
   return Array.isArray(content) ? content : [];
 }
 
-export function classifyEmptyResponse(content: unknown, stopReason?: string): EmptyResponseClassification {
+/**
+ * @param loopHasBudget — HB-ENDTURN-TERMINAL (2026-09-08): the tool loop still has budget/iterations
+ *   left (computed by the orchestrator; gated behind CORTEX_EMPTY_TURN_CONTINUE). A reasoning-only turn
+ *   that ISN'T truncated is AMBIGUOUS: "reasoned to a final answer, forgot to surface it" (exhausted →
+ *   force the answer, no tools) vs "reasoned about the NEXT action mid-recon" (has budget → CONTINUE with
+ *   tools). The budget-blind classifier previously routed BOTH to `reasoning_only` (write-your-answer +
+ *   forbid tools), which forced premature terminal surrender on DeepSeek mid-recon builds. With budget
+ *   remaining we split it into `reasoning_only_active` (continue-with-tools), mirroring the D-E `truncated`
+ *   carve-out. When loopHasBudget is undefined/false the behavior is byte-identical to before.
+ */
+export function classifyEmptyResponse(
+  content: unknown,
+  stopReason?: string,
+  loopHasBudget?: boolean,
+): EmptyResponseClassification {
   const bs = blocks(content);
   const hadReasoning = bs.some(
     (b) => b?.type === 'thinking' || b?.type === 'redacted_thinking',
@@ -48,21 +67,27 @@ export function classifyEmptyResponse(content: unknown, stopReason?: string): Em
   if (stopReason && TRUNCATION_STOP.has(stopReason.trim().toLowerCase())) {
     return { kind: 'truncated', hadReasoning, hadToolUse };
   }
-  return {
-    kind: hadReasoning ? 'reasoning_only' : 'no_visible_content',
-    hadReasoning,
-    hadToolUse,
-  };
+  if (hadReasoning) {
+    // HB-ENDTURN-TERMINAL: with budget remaining this is a mid-recon reasoning turn (continue), not a
+    // finished-but-unsurfaced answer. Only when budget is spent do we demand the final answer (no tools).
+    return { kind: loopHasBudget ? 'reasoning_only_active' : 'reasoning_only', hadReasoning, hadToolUse };
+  }
+  return { kind: 'no_visible_content', hadReasoning, hadToolUse };
 }
 
 /**
  * Nudge tailored to the empty-response kind. `reasoning_only` means the model
  * did the thinking but never surfaced the answer — tell it exactly that;
- * `no_visible_content` gets the generic completion prompt.
+ * `reasoning_only_active` (budget remaining) means it was thinking about its
+ * NEXT action — tell it to continue; `no_visible_content` gets the generic
+ * completion prompt.
  */
 export function emptyResponseNudge(kind: EmptyResponseKind): string {
   if (kind === 'truncated') {
     return 'Your previous response was cut off by the output token limit before you finished — it was NOT complete. Continue from where you stopped and finish concisely; do not restart from the beginning.';
+  }
+  if (kind === 'reasoning_only_active') {
+    return 'You produced reasoning but took no action and gave no final answer, and you still have budget remaining. Continue the task now — take your next concrete action (call a tool), or give your complete, verified final answer only if you are actually finished.';
   }
   if (kind === 'reasoning_only') {
     return 'You produced reasoning but no visible answer. Write out your complete final answer now, in plain text, based on that reasoning.';
@@ -71,7 +96,8 @@ export function emptyResponseNudge(kind: EmptyResponseKind): string {
 }
 
 /** D-E: a truncated turn was cut off — it should be allowed to CONTINUE (incl. tools), not be told
- * "do not call any more tools" (which the reasoning_only/no_content path appends). */
+ * "do not call any more tools" (which the reasoning_only/no_content path appends).
+ * HB-ENDTURN-TERMINAL: `reasoning_only_active` (mid-recon, budget remaining) is likewise a CONTINUE. */
 export function nudgeForbidsTools(kind: EmptyResponseKind): boolean {
-  return kind !== 'truncated';
+  return kind !== 'truncated' && kind !== 'reasoning_only_active';
 }

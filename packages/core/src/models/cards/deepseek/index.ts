@@ -22,4 +22,5 @@
 
 export { deepseekV4Pro } from './deepseek-v4-pro.js';
 export { deepseekV4Flash } from './deepseek-v4-flash.js';
+export { deepseekV41Flash } from './deepseek-v4-1-flash.js'; // BETA, expires 2026-09-10
 export { deepseekV4FlashVisionExp } from './deepseek-v4-flash-vision-exp.js';

@@ -2069,6 +2069,12 @@ export class CortexOrchestrator {
     // Round 18b: track whether we've already retried on empty response so
     // we don't loop forever. See empty-detection block below.
     let emptyResponseRetryUsed = false;
+    // HB-ENDTURN-TERMINAL (2026-09-08): dark-lever gate + a SEPARATE bounded counter for the
+    // continue-kinds (truncated / reasoning_only_active). Those re-enter the loop with tools rather
+    // than burning the one-shot force-answer budget; capped so an empty-turn loop still terminates.
+    const EMPTY_TURN_CONTINUE = loopDefaults.emptyTurnContinue;
+    const EMPTY_CONTINUE_MAX = 3;
+    let emptyContinueCount = 0;
     // Inaction guard (backlog item 2 — the ladder's inverse): single-nudge
     // bound for the actless-verbose retry. Default OFF via env.
     let inactionNudgeUsed = false;
@@ -2184,16 +2190,27 @@ export class CortexOrchestrator {
           // after its final tool call. Nudging it for "no text" would burn an
           // extra round-trip (observed with haiku in the structured-output
           // canary). The structured result IS the deliverable, so skip R18b.
-          if (!hasVisibleText && !emptyResponseRetryUsed && !structuredOutputState?.result) {
-            emptyResponseRetryUsed = true;
-            // Typed empty-response classification (grok-build port): distinguish
-            // reasoning_only (model reasoned but never answered) from
-            // no_visible_content (nothing at all) for observability + a nudge
-            // tailored to the failure shape. Does NOT change the one-bounded-retry
-            // decision — only the log + nudge text.
-            // D-E (2026-09-04): pass stopReason so a max_tokens truncation is classified 'truncated'
-            // (continue), not 'reasoning_only' (which demands a final answer and just re-truncates).
-            const emptyClass = classifyEmptyResponse(currentAssistantCanonicalMessage.content, convertedResponse.stopReason);
+          // HB-ENDTURN-TERMINAL (2026-09-08): classify FIRST so retry policy keys on the kind.
+          // loopHasBudget (dark-gated by CORTEX_EMPTY_TURN_CONTINUE) splits a reasoning-only empty turn
+          // into reasoning_only_active (mid-recon → continue-with-tools, bounded) vs reasoning_only
+          // (exhausted → force the answer, one-shot). Flag off → loopHasBudget false → byte-identical
+          // to the prior one-shot guard.
+          const loopHasBudget = EMPTY_TURN_CONTINUE
+            && (TURN_DEADLINE_MS <= 0 || (Date.now() - loopStartMs) < 0.6 * TURN_DEADLINE_MS)
+            && toolCallIteration < 0.6 * MAX_TOOL_ITERATIONS;
+          // Typed empty-response classification (grok-build port): reasoning_only vs no_visible_content
+          // for observability + a tailored nudge. D-E: stopReason distinguishes a max_tokens truncation
+          // ('truncated' → continue) from a demand-final-answer.
+          const emptyClass = (!hasVisibleText && !structuredOutputState?.result)
+            ? classifyEmptyResponse(currentAssistantCanonicalMessage.content, convertedResponse.stopReason, loopHasBudget)
+            : null;
+          const isEmptyContinueKind = EMPTY_TURN_CONTINUE && !!emptyClass
+            && (emptyClass.kind === 'truncated' || emptyClass.kind === 'reasoning_only_active');
+          const canRetryEmpty = isEmptyContinueKind
+            ? emptyContinueCount < EMPTY_CONTINUE_MAX
+            : !emptyResponseRetryUsed;
+          if (emptyClass && canRetryEmpty) {
+            if (isEmptyContinueKind) { emptyContinueCount++; } else { emptyResponseRetryUsed = true; }
             console.warn(
               `[Orchestrator] Empty response detected (${emptyClass.kind}, hadReasoning=${emptyClass.hadReasoning}, iteration=${toolCallIteration}). ` +
               `Retrying once with explicit completion prompt.`,
@@ -4504,6 +4521,10 @@ export class CortexOrchestrator {
     const TURN_DEADLINE_MS = loopDefaults.turnDeadlineMs;
     const loopStartMs = Date.now();
     let timeWarnFired = false;
+    // HB-ENDTURN-TERMINAL (2026-09-08): dark gate + bounded continue-counter (streaming parity).
+    const EMPTY_TURN_CONTINUE = loopDefaults.emptyTurnContinue;
+    const EMPTY_CONTINUE_MAX = 3;
+    let emptyContinueCount = 0;
     while (hasToolUse && toolCallIteration < MAX_TOOL_ITERATIONS) {
       const gateReRequest = pendingGateRequest; pendingGateRequest = false;
       // 4.90.3 (def-7f510b5635): a batch that ALREADY EXECUTED must never run again. When an exception
@@ -4532,11 +4553,25 @@ export class CortexOrchestrator {
         // R32 (streaming R18b parity): detect empty/thinking-only responses.
         // sendMessage retries ONCE inside the loop with tools preserved.
         const hasVisibleText = hasVisibleAssistantText(currentAssistantCanonicalMessage.content);
-        if (!hasVisibleText && !emptyResponseRetryUsed) {
-          emptyResponseRetryUsed = true;
+        // HB-ENDTURN-TERMINAL (2026-09-08): classify-first + bounded continue (streaming parity with
+        // sendMessage). Flag off → loopHasBudget false → reasoning_only_active never selected → the
+        // guard reduces to the prior `!hasVisibleText && !emptyResponseRetryUsed` one-shot.
+        const loopHasBudget = EMPTY_TURN_CONTINUE
+          && (TURN_DEADLINE_MS <= 0 || (Date.now() - loopStartMs) < 0.6 * TURN_DEADLINE_MS)
+          && toolCallIteration < 0.6 * MAX_TOOL_ITERATIONS;
+        const emptyClass = !hasVisibleText
+          ? classifyEmptyResponse(currentAssistantCanonicalMessage.content, undefined, loopHasBudget)
+          : null;
+        const isEmptyContinueKind = EMPTY_TURN_CONTINUE && !!emptyClass
+          && (emptyClass.kind === 'truncated' || emptyClass.kind === 'reasoning_only_active');
+        const canRetryEmpty = isEmptyContinueKind
+          ? emptyContinueCount < EMPTY_CONTINUE_MAX
+          : !emptyResponseRetryUsed;
+        if (emptyClass && canRetryEmpty) {
+          if (isEmptyContinueKind) { emptyContinueCount++; } else { emptyResponseRetryUsed = true; }
           console.warn(
-            `[Orchestrator Streaming] R32/R18b: Empty response (no tool_use, no text, iteration=${toolCallIteration}). ` +
-            `Retrying once with tools preserved.`,
+            `[Orchestrator Streaming] R32/R18b: Empty response (${emptyClass.kind}, iteration=${toolCallIteration}). ` +
+            `Retrying with tools preserved.`,
           );
 
           // R26 repair: ensure the empty assistant turn has content (xAI hard-400s on empty)
@@ -4563,7 +4598,7 @@ export class CortexOrchestrator {
               role: 'user',
               content: [{
                 type: 'text',
-                text: '<system-reminder>Your previous response had no visible text. Please provide your final answer in plain text now — summarize your findings or complete the requested task. Do not call any more tools.</system-reminder>',
+                text: `<system-reminder>${emptyResponseNudge(emptyClass.kind)}${nudgeForbidsTools(emptyClass.kind) ? ' Do not call any more tools.' : ''}</system-reminder>`,
               }],
             },
             timeline: {
@@ -5436,6 +5471,33 @@ export class CortexOrchestrator {
             input: block.toolUse.input
           }));
         hasToolUse = continuationToolUses.length > 0;
+        // HB-ENDTURN-TERMINAL (2026-09-08): the streaming loop exits on a no-tool turn, so a reasoning-only
+        // continuation WITH budget would otherwise fall to the terminal R29a synth. Instead keep the loop
+        // alive with the CONTINUE nudge (mid-recon), reusing the EndTurn gate's pendingGateRequest re-request
+        // (bypasses the empty-batch break + re-execution guard). Bounded by emptyContinueCount. Runs BEFORE
+        // the EndTurn gate so a mid-recon reasoning turn continues instead of being treated as a finish.
+        if (!hasToolUse && EMPTY_TURN_CONTINUE && emptyContinueCount < EMPTY_CONTINUE_MAX
+            && !hasVisibleAssistantText(continuationAssistantCanonicalMessage.content)) {
+          const budget = (TURN_DEADLINE_MS <= 0 || (Date.now() - loopStartMs) < 0.6 * TURN_DEADLINE_MS)
+            && toolCallIteration < 0.6 * MAX_TOOL_ITERATIONS;
+          const c = classifyEmptyResponse(continuationAssistantCanonicalMessage.content, undefined, budget);
+          if (c.kind === 'reasoning_only_active' || c.kind === 'truncated') {
+            emptyContinueCount++;
+            const contMsg: Message = {
+              uuid: uuidv4(),
+              timestamp: new Date().toISOString(),
+              type: 'user',
+              message: { role: 'user', content: [{ type: 'text', text: `<system-reminder>${emptyResponseNudge(c.kind)}</system-reminder>` }] },
+              timeline: { sessionId: this.currentSessionId, conversationId: this.currentConversationId, turnNumber: this.turnNumber + 1 },
+              model: { id: effectiveModel.id, provider: effectiveModel.provider, apiPattern: effectiveModel.api.pattern },
+            } as any;
+            this.messageHistory.push(contMsg);
+            await this.historyStore.appendMessage(this.currentSessionId, contMsg);
+            console.warn(`[Orchestrator Streaming] HB-ENDTURN continue (${c.kind}, iteration=${toolCallIteration}) — re-requesting with tools.`);
+            pendingGateRequest = true;
+            hasToolUse = true;
+          }
+        }
         // 4.91.0 Stage-1 for STREAMING: tools were used but no valid EndTurn yet → append the reminder and
         // run ONE more continuation with no tool batch (pendingGateRequest bypasses the empty-batch break
         // and the re-execution guard). Two nudges, then fallback-accept (parity with sendMessage).
@@ -5957,6 +6019,7 @@ export class CortexOrchestrator {
     toolTimeoutMs: number;
     maxLoopRepetitions: number;
     turnDeadlineMs: number;
+    emptyTurnContinue: boolean;
   } {
     const softRaw = this.config.loopControl?.toolBudgetSoft;
     return {
@@ -5973,6 +6036,10 @@ export class CortexOrchestrator {
       maxLoopRepetitions: this.config.loopControl?.maxLoopRepetitions ?? 5,
       // #2 wall-clock deadline: opt-in (0 = disabled), env CORTEX_TURN_DEADLINE_MS is the fallback.
       turnDeadlineMs: resolveTurnDeadlineMs(this.config.loopControl?.turnDeadlineMs),
+      // HB-ENDTURN-TERMINAL (2026-09-08, dark by default): when true, a reasoning-only empty turn WITH
+      // budget remaining is treated as mid-recon (continue-with-tools) instead of forced terminal
+      // surrender. Read as a dark lever (direct env), off = byte-identical to prior behavior.
+      emptyTurnContinue: process.env.CORTEX_EMPTY_TURN_CONTINUE === 'true',
     };
   }
 

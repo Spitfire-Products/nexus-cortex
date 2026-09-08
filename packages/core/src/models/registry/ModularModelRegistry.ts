@@ -90,6 +90,7 @@ export class ModularModelRegistry implements ModelRegistry {
       // already rejected by the live API as of 2026-05-13.)
       deepseekModels.deepseekV4Pro,
       deepseekModels.deepseekV4Flash,
+      deepseekModels.deepseekV41Flash, // BETA, expires 2026-09-10 (probe-verified 2026-09-08)
       deepseekModels.deepseekV4FlashVisionExp,
 
       // Anthropic models
