@@ -36,7 +36,7 @@ export const deepseekV41Flash: ModelConfig = createDeepSeekModelConfig({
     supported: true,
     toggleable: true,          // effort API-settable (probe 2026-09-08: reasoning_content present @ effort=high)
     format: 'reasoning_content',
-    effort: 'medium',          // V4-family default; medium accepted (coerced) — bench arms override per-run
+    effort: 'medium',          // V4-family default. 🔴 DeepSeek reasoning_effort ladder = {low, high, max} ONLY (API docs, 2026-09-09): 'medium' is ACCEPTED but COERCED → 'high' server-side (so this default effectively runs HIGH). bench arms override per-run (v4.1 cells run action=low).
     extractionMethod: 'separate_field',
     pattern: 'interleaved'
   }

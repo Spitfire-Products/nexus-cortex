@@ -56,6 +56,44 @@ Validated: 14 unit + orchestrator e2e 26/26 + tsc clean + a **real-trajectory re
 gcode/make-mips/circuit source files, all command-keyword false-positives excluded). **Owed:** A/B on the
 slice-heavy source pop before default-on. Full spec + evidence: **`docs/HB-SLICE-BLOCK-SPEC.md`**.
 
+## HB-HELPER-VISION — vision-capable general helper + image passthrough on the overflow paths (BUILT 2026-09-09)
+
+Two coupled changes, both shipping on the next train:
+1. **Vision-capable general helper default.** `HELPER_MODEL_ID` = `deepseek-v4-flash-vision-exp` (was `deepseek-v4-flash`).
+   Same cost ($0.14/$0.28), near-identical text (bench-arm parity), + vision — so ONE helper card serves compaction,
+   web-fetch summary, error guidance AND the ReadImage/`describeImage` hand-off (`VISION_HELPER_MODEL` can later collapse
+   into it). Mentor roles unaffected (`MENTORSHIP_HELPER_MODEL`=pro overrides `HELPER_MODEL_ID`). `.env` + generated `.env.defaults`.
+2. **Image passthrough on the two overflow paths.** Before this, compaction DROPPED `{type:'image'}` blocks
+   (`renderBlock`'s `return ''`) and tool-result summarization `JSON.stringify`'d them into a base64 text blob — visual info
+   lost, base64 bloat. Fix: `helperImageBlocks.ts` (pure, normalizes canonical/anthropic/openai image shapes; 11 unit tests)
+   + `HelperModelMiddleware.describeAndReplaceImages` (describe each image via the existing `describeImage`, which ALWAYS
+   resolves a vision card independent of `HELPER_MODEL_ID` → replace the block with one line of text; marker fallback on
+   error). Wired at the compaction choke point (`compactHistoryViaHelper` → covers history + combined overflow) and in
+   `handleToolResultOverflow` (describe BEFORE stringify); `renderBlock` safety-net marker so images are never silently
+   dropped again. Purely additive (same array ref when no image → common path byte-identical). tsc clean; 11 new + 29 + 17
+   existing helper tests pass. NOTE: images in the harness normally ride `tr.metadata.imagePayload` (consumed+deleted by
+   `collectPendingImages` before history reuse), so the live trigger is a vision-primary session whose injected image
+   user-messages (`injectImageUserMessage`) survive into an overflow.
+
+## HB-WEBFETCH-VISION — page screenshot → vision helper, via a lazy-loaded internal browser module (IDEA, logged 2026-09-09)
+
+Evaluated 2026-09-09 (Explore agent, grounded): **web_search gains nothing** (returns text snippets/URLs; a SERP
+screenshot adds nothing over the structured list). **web_fetch gains real capability ONLY if a screenshot is added** —
+today every path returns text (Gemini urlContext, provider-native, and the `fetch()`+`html-to-text` fallback: no JS
+execution, no rendering), and `summarizeWebContent` embeds the page as plain text, so the vision helper alone is INERT
+(nothing in the web path is ever an image). A rendered screenshot fed to the vision helper (via a `describeImage`-style
+call) WOULD help JS/SPA pages (the `fetch`-only fallback gets little), layout/table/chart pages that flatten badly through
+`html-to-text` (`img` is `format:'skip'`), and visual-only/anti-bot renders.
+- **Cost:** a headless browser per fetch + render time + image tokens + a ~30–60s vision round-trip.
+- **Build vehicle (operator, 2026-09-09): an INTERNAL version of the browser MCP as a LAZY-LOADED harness module, spun up
+  on demand.** Playwright screenshot managers ALREADY exist in `packages/executors/.../addon/`
+  (`HybridScreenshotManager`/`ScreenStream`/`KeyframeDetector`) but are scoped to the sandbox/artifact visual-feedback
+  pipeline (screenshotting the harness's OWN UI) and NOT wired to arbitrary URLs — a driver-abstraction port
+  (CF-Worker | local-Playwright driver, optional dep ~300MB Chromium) is the decoupled nexus-browser-as-library idea.
+  Lazy-load only when a page needs rendering, so the ~300MB dep + browser boot cost is paid on request, not by default.
+- **Cheaper existing escalation:** `browseEscalationDirective` (WebFetch) + web_search `mode:'interactive'` already hand
+  JS-heavy work to a nexus-browser subagent. So this is a want, not a need — logged, not scheduled.
+
 ## Item 1 — EndTurn gate: `requirements` attestation extension
 
 **Gate as-built (analyzed 2026-08-25; BaseToolRegistry.ts:970, orchestrator ~1515-1870):**

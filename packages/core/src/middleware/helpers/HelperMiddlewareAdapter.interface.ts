@@ -259,6 +259,13 @@ export abstract class BaseHelperAdapter implements HelperMiddlewareAdapter {
         return raw ? `result${flag}: ${raw.slice(0, 200)}` : `result${flag}: (empty)`;
       }
       if (block.type === 'thinking') return ''; // reasoning volume, not evidence
+      if (block.type === 'image' || block.type === 'image_url') {
+        // Safety net: images are normally described upstream (HelperModelMiddleware.describeAndReplaceImages)
+        // before reaching this flatten. If one slips through, emit a type marker instead of DROPPING it
+        // (the old `return ''`) — never stringify base64 here.
+        const mt = block?.image?.mediaType || block?.source?.media_type || 'image';
+        return `[image: ${mt}]`;
+      }
       return '';
     };
     return messages

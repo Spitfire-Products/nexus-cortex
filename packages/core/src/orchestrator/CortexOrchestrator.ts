@@ -1533,8 +1533,9 @@ export class CortexOrchestrator {
     }
 
     // R42: Slash command announcement — list available commands so the model can
-    // suggest them to users when relevant. First turn only.
-    if (this.turnNumber === 0) {
+    // suggest them to users when relevant. First turn only. Gated by CORTEX_SLASH_COMMAND_HINT
+    // (default on; set false to drop it — e.g. headless/bench, where there is no user to suggest to).
+    if (this.turnNumber === 0 && process.env.CORTEX_SLASH_COMMAND_HINT !== 'false') {
       const commands = slashCommandRegistry.getAllCommands();
       if (commands.length > 0) {
         const categoryGroups = new Map<string, string[]>();
@@ -4090,8 +4091,8 @@ export class CortexOrchestrator {
       }
     }
 
-    // R42: Slash command announcement (same as sendMessage path)
-    if (this.turnNumber === 0) {
+    // R42: Slash command announcement (same as sendMessage path). Gated by CORTEX_SLASH_COMMAND_HINT.
+    if (this.turnNumber === 0 && process.env.CORTEX_SLASH_COMMAND_HINT !== 'false') {
       const commands = slashCommandRegistry.getAllCommands();
       if (commands.length > 0) {
         const categoryGroups = new Map<string, string[]>();

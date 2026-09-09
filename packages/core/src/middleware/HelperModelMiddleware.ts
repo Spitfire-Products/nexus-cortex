@@ -19,6 +19,7 @@
 
 import { frameHelperPrompt, type HelperFrameSpec } from './helpers/helperFrame.js';
 import { resolveVisionHelperModel } from '../tools/ToolProfile.js';
+import { hasImageBlocks, extractImages, replaceImageBlocks, markerFor } from './helpers/helperImageBlocks.js';
 import {
   buildMentorUserPrompt,
   MENTOR_REFRAME_SYSTEM,
@@ -449,7 +450,14 @@ export class HelperModelMiddleware {
 
       // Check if this is a tool result message
       if (msg.role === 'tool' || msg.type === 'tool_result') {
-        const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+        // Image passthrough (2026-09-09): describe {type:'image'} blocks to text BEFORE stringify,
+        // so a screenshot / ReadImage tool result becomes a readable line instead of a base64 blob
+        // the text summarizer would choke on (and it shrinks the message). No-op without an image.
+        if (hasImageBlocks(msg.content)) {
+          modifiedMessages[i] = { ...msg, content: await this.describeAndReplaceImages(msg.content) };
+        }
+        const cur = modifiedMessages[i];
+        const content = typeof cur.content === 'string' ? cur.content : JSON.stringify(cur.content);
         const estimatedTokens = content.length / 4;
 
         // If tool result is large (>2000 tokens), summarize it
@@ -464,10 +472,10 @@ export class HelperModelMiddleware {
 
             // Replace with summarized version
             modifiedMessages[i] = {
-              ...msg,
+              ...cur,
               content: result.summary,
               metadata: {
-                ...msg.metadata,
+                ...cur.metadata,
                 summarized: true,
                 originalTokens: result.originalTokens,
                 summaryTokens: result.summaryTokens
@@ -637,8 +645,14 @@ export class HelperModelMiddleware {
   ): Promise<CompactionResult> {
     console.log(` Compacting ${messages.length} messages via ${helperConfig.id}...`);
 
+    // Image passthrough (2026-09-09): describe {type:'image'} blocks to text so vision info
+    // survives compaction instead of being silently dropped by the text flatten. No-op (same
+    // array reference) when the history carries no image. This is the single compaction choke
+    // point, so handleHistoryOverflow AND handleCombinedOverflow are both covered here.
+    const prepared = await this.prepareMessagesForHelper(messages);
+
     // Convert messages to HelperCanonicalMessage format
-    const canonicalMessages: HelperCanonicalMessage[] = messages.map(msg => ({
+    const canonicalMessages: HelperCanonicalMessage[] = prepared.map(msg => ({
       role: msg.role || 'user',
       content: msg.content || '',
       timestamp: msg.timestamp
@@ -1364,6 +1378,47 @@ If the image is a BOARD, GRID, TABLE or DIAGRAM: work cell by cell in row-major 
     }];
     const out = await adapter.generate(messages, helperConfig, 900);
     return (out || '').replace(/^```[a-z]*\n/, '').replace(/\n```\s*$/, '').trim();
+  }
+
+  /**
+   * IMAGE PASSTHROUGH for the overflow paths (2026-09-09): before this, compaction dropped
+   * {type:'image'} blocks (renderBlock's `return ''`) and tool-result summarization JSON.stringify'd
+   * them into a base64 text blob — the visual information was lost and the base64 bloated the summary.
+   * This DESCRIBES each image via the vision hand-off (describeImage always resolves a vision card,
+   * independent of HELPER_MODEL_ID) and REPLACES the image block with that one line of text, so the
+   * information survives compaction AND the context shrinks (base64 → a sentence). Fires only when
+   * `content` actually carries an image block (rare — overflow + a vision-primary session), and each
+   * describe is guarded: on any failure it falls back to a compact `[image: type]` marker so a helper
+   * hiccup can never break the overflow-recovery path. Returns `content` unchanged when it has none.
+   */
+  private async describeAndReplaceImages(content: unknown): Promise<unknown> {
+    if (!hasImageBlocks(content)) return content;
+    const images = extractImages(content);
+    const descriptions: string[] = [];
+    for (const img of images) {
+      try {
+        const text = await this.describeImage({ mediaType: img.mediaType, base64: img.data });
+        descriptions.push(text && text.trim() ? `[image (${img.mediaType}): ${text.trim()}]` : markerFor(img));
+      } catch (error) {
+        console.warn(` ⚠  describeAndReplaceImages: describe failed, using marker: ${(error as Error).message}`);
+        descriptions.push(markerFor(img));
+      }
+    }
+    return replaceImageBlocks(content, (img, i) => descriptions[i] ?? markerFor(img));
+  }
+
+  /** Map messages through describeAndReplaceImages, preserving message shape; only messages that
+   *  actually carry an image block are transformed. Returns the SAME array reference (no work)
+   *  when nothing in the batch has an image, so the common overflow path is byte-identical. */
+  private async prepareMessagesForHelper(messages: any[]): Promise<any[]> {
+    if (!Array.isArray(messages) || !messages.some(m => hasImageBlocks(m?.content))) return messages;
+    const out: any[] = [];
+    for (const msg of messages) {
+      out.push(hasImageBlocks(msg?.content)
+        ? { ...msg, content: await this.describeAndReplaceImages(msg.content) }
+        : msg);
+    }
+    return out;
   }
 
   async generateErrorGuidance(context: {
