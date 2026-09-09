@@ -66,7 +66,8 @@ import type { AgentDefinition, SubAgentResult, ISubAgentEventEmitter } from './S
 
 // Phase 1: Tool Architecture Refactor - Unified Tool Registry
 import { toolFactory } from '../tools/ToolFactory.js';
-import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveLiftPlan, resolveEndTurnResolver, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked, resolveVisionHelperModel, resolveVisionHandoffMax, resolveSliceNudge } from '../tools/ToolProfile.js';
+import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveLiftPlan, resolveEndTurnResolver, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked, resolveVisionHelperModel, resolveVisionHandoffMax, resolveSliceNudge, resolveSliceBlock, resolveSliceBlockAt, resolveSliceBlockMax } from '../tools/ToolProfile.js';
+import { sliceReadFile, decideSliceBlock } from './sliceBlock.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
 import { resolveOuterToolDeadlineMs } from './outerToolTimeout.js';
 import { resolveTurnDeadlineMs, timeBudgetState, timeBudgetWarnNudge } from './timeBudget.js';
@@ -7252,6 +7253,13 @@ export class CortexOrchestrator {
           continue;
         }
 
+        // CORTEX_SLICE_BLOCK: coercively block re-slicing a static file (force Read) — dark.
+        const sliceBlocked = this.maybeBlockSliceRead(toolUse);
+        if (sliceBlocked) {
+          results.push(await this.processToolTraining(toolUse, sliceBlocked));
+          continue;
+        }
+
         // Context management tools (CORTEX.md generation + two-tier memory)
         const contextManagementToolNames = [
           'InitCortexContext',
@@ -7804,6 +7812,10 @@ export class CortexOrchestrator {
       // CORTEX_LOOP_TOOL_BLOCK: executor-gate for the parallel/single path.
       const loopBlocked = await this.maybeBlockLoopingTool(toolUse);
       if (loopBlocked) return loopBlocked;
+
+      // CORTEX_SLICE_BLOCK: coercively block re-slicing a static file (force Read) — dark.
+      const sliceBlocked = this.maybeBlockSliceRead(toolUse);
+      if (sliceBlocked) return sliceBlocked;
 
       // Context management tools
       const contextManagementToolNames = ['InitCortexContext'];
@@ -8635,6 +8647,8 @@ export class CortexOrchestrator {
   private visionHandoffsThisTurn = 0;
   /** Per-session bash slice-read counts per file (CORTEX_SLICE_NUDGE). */
   private sliceReads = new Map<string, number>();
+  /** Per-session coercive-block counts per file (CORTEX_SLICE_BLOCK — HB-SLICE-BLOCK). */
+  private sliceBlockCounts = new Map<string, number>();
 
   /** Dependencies the shared EndTurn gates need from the orchestrator (endTurnGates.ts). */
   private gateDeps() {
@@ -8663,10 +8677,8 @@ export class CortexOrchestrator {
   /** CORTEX_SLICE_NUDGE: after the 3rd bash slice-read of the same file, append a one-line Read reminder. */
   private applySliceNudge(toolUse: { name: string; input: any }, result: { content: any; is_error?: boolean }): void {
     if (toolUse.name !== 'Bash' || result.is_error || !resolveSliceNudge(process.env)) return;
-    const cmd = String(toolUse.input?.command ?? '');
-    const m = cmd.match(/(?:sed\s+-n\s+['"]?\d+\s*,\s*\d+\s*p['"]?|head\s+-n?\s*\d+|tail\s+-n?\s*\d+)\s+([^\s;|&>]+)/);
-    if (!m) return;
-    const file = m[1]!;
+    const file = sliceReadFile(String(toolUse.input?.command ?? ''));
+    if (!file) return;
     const n = (this.sliceReads.get(file) ?? 0) + 1;
     this.sliceReads.set(file, n);
     if (n !== 3) return;
@@ -8674,6 +8686,38 @@ export class CortexOrchestrator {
       result.content += `\n\n<system-reminder>You have now read ${file} in ${n} bash slices. Read it ONCE with the Read tool (offset/limit for long files) instead of repeated sed/head/tail slices — slicing loses context and burns turns.</system-reminder>`;
     }
     this.gateDeps().recordEvent('steering_injected', { kind: 'slice_read', file, count: n }, 'Bash');
+  }
+
+  /**
+   * CORTEX_SLICE_BLOCK (HB-SLICE-BLOCK) — the coercive escalation of the ignored slice-nudge.
+   * PRE-EXECUTION gate (sibling of maybeBlockLoopingTool): if the model is calling Bash to slice-read
+   * a STATIC/source file it has already sliced >= CORTEX_SLICE_BLOCK_AT times, do NOT run the slice —
+   * return an append-only redirect error steering it to Read (bounded to CORTEX_SLICE_BLOCK_MAX blocks
+   * per file). Append-mostly logs are exempt (legit re-tailing). Dark by default. Evidence: full-sample
+   * mining showed the soft nudge is ignored ~80% of re-tested cases (docs/HB-SLICE-BLOCK-SPEC.md).
+   */
+  private maybeBlockSliceRead(
+    toolUse: { id: string; name: string; input: any },
+  ): { tool_use_id: string; tool_name: string; content: string; is_error: boolean; metadata?: any } | null {
+    if (toolUse.name !== 'Bash' || !resolveSliceBlock(process.env)) return null;
+    const file = sliceReadFile(String(toolUse.input?.command ?? ''));
+    if (!file) return null;
+    const priorSlices = this.sliceReads.get(file) ?? 0;
+    const priorBlocks = this.sliceBlockCounts.get(file) ?? 0;
+    const decision = decideSliceBlock(
+      file, priorSlices, priorBlocks,
+      resolveSliceBlockAt(process.env), resolveSliceBlockMax(process.env),
+    );
+    if (decision.action !== 'block') return null;
+    this.sliceBlockCounts.set(file, priorBlocks + 1);
+    const store = this.getDecisionStore();
+    if (store) void store.recordEvent({
+      sessionId: this.currentSessionId ?? 'unknown',
+      kind: 'slice_block', toolName: 'Bash',
+      detail: { file, priorSlices, blockNumber: priorBlocks + 1 },
+    }).catch(() => {});
+    if (this.config.debug) console.log(`[SliceBlock] blocked slice-read of ${file} (${priorSlices} prior slices, block #${priorBlocks + 1})`);
+    return { tool_use_id: toolUse.id, tool_name: toolUse.name, content: decision.message, is_error: true, metadata: { sliceBlock: true, file } };
   }
 
   private async applyVisionHandoffs(): Promise<void> {

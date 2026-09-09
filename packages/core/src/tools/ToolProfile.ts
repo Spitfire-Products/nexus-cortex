@@ -118,6 +118,21 @@ export function resolveSliceNudge(env: NodeJS.ProcessEnv = process.env): boolean
   return (env.CORTEX_SLICE_NUDGE ?? '').trim().toLowerCase() !== 'false';
 }
 
+/** CORTEX_SLICE_BLOCK (HB-SLICE-BLOCK): the coercive escalation of the ignored slice-nudge — after
+ *  CORTEX_SLICE_BLOCK_AT slices of a STATIC/source file, BLOCK further slice-reads of it (force Read),
+ *  bounded to CORTEX_SLICE_BLOCK_MAX blocks/file. Ships DARK (default OFF); only 'true' enables. */
+export function resolveSliceBlock(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.CORTEX_SLICE_BLOCK ?? '').trim().toLowerCase() === 'true';
+}
+export function resolveSliceBlockAt(env: NodeJS.ProcessEnv = process.env): number {
+  const n = parseInt((env.CORTEX_SLICE_BLOCK_AT ?? '').trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : 5; // SLICE_BLOCK_AT_DEFAULT (canonical: sliceBlock.ts)
+}
+export function resolveSliceBlockMax(env: NodeJS.ProcessEnv = process.env): number {
+  const n = parseInt((env.CORTEX_SLICE_BLOCK_MAX ?? '').trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : 2; // SLICE_BLOCK_MAX_DEFAULT (canonical: sliceBlock.ts)
+}
+
 export function resolveVisionHelperModel(env: NodeJS.ProcessEnv = process.env): string | null {
   const raw = (env.VISION_HELPER_MODEL ?? '').trim();
   const v = raw.toLowerCase();

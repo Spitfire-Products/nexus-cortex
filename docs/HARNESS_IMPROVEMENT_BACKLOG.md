@@ -39,6 +39,23 @@ own guard — plus config-plane items the data decided:
 
 ---
 
+## HB-SLICE-BLOCK — coercive escalation of the ignored slice-nudge (BUILT + tested, DARK 2026-09-09)
+
+Deficiency: `CORTEX_SLICE_NUDGE` (reson, ON) fires ONE reminder at the 3rd bash slice-read of a file then goes
+silent; full-sample compliance mining (k5 @4.91.1, **66 nudge-fires**) proves it is **IGNORED ~80% of re-tested
+cases** (93% of ignored files are NEVER `Read`; harm concentrates in a 39% deep-grinder tail, up to 23 extra
+slices of one file). Re-firing the ignored channel is not supported by the data; a coercive block is.
+
+Fix (built, dark behind `CORTEX_SLICE_BLOCK`, sibling of `loopToolBlock`): a pre-execution gate
+`maybeBlockSliceRead` that, after `CORTEX_SLICE_BLOCK_AT` (5) slices of a STATIC/source file, refuses to run
+further slice-reads of it (append-only redirect → force `Read`), bounded to `CORTEX_SLICE_BLOCK_MAX` (2)/file.
+Scoped: append-mostly logs exempt (legit re-tailing) + path-like gate (never blocks `echo`/`python3` the shared
+slice-regex over-captures from pipelines). Banks `slice_block`. Files: `sliceBlock.ts` (14 unit tests) +
+`CortexOrchestrator` (2 executor sites) + `ToolProfile`/`effectiveConfig`/`.env`/`DecisionStore`.
+Validated: 14 unit + orchestrator e2e 26/26 + tsc clean + a **real-trajectory replay** (fires correctly on
+gcode/make-mips/circuit source files, all command-keyword false-positives excluded). **Owed:** A/B on the
+slice-heavy source pop before default-on. Full spec + evidence: **`docs/HB-SLICE-BLOCK-SPEC.md`**.
+
 ## Item 1 — EndTurn gate: `requirements` attestation extension
 
 **Gate as-built (analyzed 2026-08-25; BaseToolRegistry.ts:970, orchestrator ~1515-1870):**

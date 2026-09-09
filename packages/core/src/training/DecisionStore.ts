@@ -87,6 +87,7 @@ export type SteeringEventKind =
   | 'mentor_consult'
   // HB-DSML-PARSE (2026-09-09): the DeepSeek DSML tool-call recovery fired — a tool call that leaked
   // into assistant TEXT was recovered into a real tool_use (detail carries {count, tools}).
+  | 'slice_block' // CORTEX_SLICE_BLOCK: a re-slice of a static file was coercively blocked (force Read); detail {file, priorSlices, blockNumber}
   | 'dsml_recovered';
 
 export interface SteeringEventInput {
