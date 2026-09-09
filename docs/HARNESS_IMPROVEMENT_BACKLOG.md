@@ -889,7 +889,17 @@ Cross-ref: the three-execution-paths lesson (4.91.0 DELTA — a hook that looks 
 prove it with a live event, not tsc).
 
 ## EXPERIMENT (candidate, GATED on resolver-k5 post-adjudication) — deadline-triggered exit-mentor: turn `CORTEX_TURN_DEADLINE_MS` from a dumb "finish now" nudge into a mentor-directed exit (2026-09-05, operator-raised)
-**Status.** NOT built. A v2 idea for the `#2` wall-clock deadline lever, to spec ONLY after the resolver-k5 adjudication data
+**Status. ✅ BUILT + shipped DARK (verified in-code 2026-09-09 — the "NOT built" below is STALE).** The full smart-deadline
+form is live: `training/deadlineExitMentor.ts` (checkpoint verdicts CONTINUE/FINISH/ACTION/RETIRE, residual-scaled budget,
+fail-safe to CONTINUE) + orchestrator integration (`deadlineExitCheckpoint` fires at the WARN rung `:3154`; FINISH/RETIRE →
+`shouldBreak` → post-loop synthesis with the resolver bypassed via abnormal exit; ACTION injects the step; the unconditional
+hard-floor break stays at `:3233`) + `CORTEX_TURN_DEADLINE_MS`/`CORTEX_DEADLINE_EXIT_MENTOR` BOTH reported in `effectiveConfig.ts`
+(the observability gap noted below is also closed). 🔴 STILL OPEN = ONLY the **valid efficacy run**: k5v2 fired it 0× because
+its subset failed by early give-up (budget_frac 0.24-0.31) and never reached the warn rung — run it on the ≥0.80 budget_frac
+FINISHING population (schemelike, make-mips, install-windows, filter-js, pytorch). No code re-target is required; it's a
+population + lever-on run. (Optional cosmetic tuning: warnFrac 0.9→0.911 to hit exactly 0.82; leave unless the A/B motivates it.)
+
+**[HISTORICAL — pre-build spec, kept for trace]** NOT built. A v2 idea for the `#2` wall-clock deadline lever, to spec ONLY after the resolver-k5 adjudication data
 is analyzed (it sizes the population this affects). Recorded so it isn't lost.
 **Today's mechanism (verified).** The supervisor sets `CORTEX_TURN_DEADLINE_MS = 0.9 × task_budget` (`tb2-durable-supervisor.py:164`).
 At the `break` rung (`CortexOrchestrator.ts:3061` non-streaming, `:4996` streaming; state from `timeBudget.ts`) the loop logs
@@ -1184,3 +1194,54 @@ broken by AI sessions. Do NOT touch without: (a) before/after canary probes on t
 round-trip, (b) explicit operator approval. Frequency is low, so this is not urgent — HB-ENDTURN-TERMINAL's
 non-terminal-reminder fix already neutralizes most of its impact (a recovered-vs-dropped turn both survive if
 the reminder stops forbidding tools).
+
+**✅ STATUS: BUILT 2026-09-09 (release-gated).** `packages/core/src/orchestrator/dsmlRecovery.ts` (isolated
+module: `looksLikeLeakedDsml` + `recoverDsmlToolCalls`) + a PURELY-ADDITIVE hook in the DeepSeek non-stream
+`chunks()` generator (`APIClient.ts:358` — NOT `:1079`, which was a stale/HF-space ref): fires ONLY when the
+structured `tool_calls` field is empty AND the DSML markup is present, so the normal structured path is never
+touched. 5 unit tests green (real captured format: single/multiple invokes + malformed-tag fallback + never
+fabricates), tsc-clean. 🔴 ROOT CAUSE CONFIRMED (operator question 2026-09-09) = a **reasoning-MODEL artifact,
+NOT a gateway malformation**: the gateway sends correct OpenAI `type:function` tools and our prompts teach NO XML
+tool format; reasoning models (xAI grok, DeepSeek) intermittently emit tool calls as XML/markup TEXT in content —
+already documented + partly handled by `ChatCompletionsAPIAdapter.sanitizeXmlContaminatedInput` (the
+argument-pollution sibling). DSML is the fully-leaked-into-content DeepSeek variant. Pending: canary probes
+(deepseek+xai round-trip, confirm normal path unaffected) + release.
+
+---
+
+## FUTURE FIXES QUEUE (2026-09-09 — deferred items surfaced this session)
+
+**Harness code:**
+- **HB-DSML-PARSE unify + generalize** (follow-up to the above). The DSML content-level recovery
+  (`dsmlRecovery.ts`) and the argument-level XML repair (`ChatCompletionsAPIAdapter.sanitizeXmlContaminatedInput`)
+  are the SAME model behavior at two layers (content-leak vs argument-pollution) across two providers (DeepSeek
+  DSML + xAI grok `<xai:function_call>`). Unify into ONE "leaked-XML-tool-call recovery" covering: both leak
+  layers, both providers (my recovery is DeepSeek-only; xAI's fully-leaked variant is uncaught), and the STREAMING
+  path (I hooked only the non-stream `chunks()` generator; a streamed DSML leak would still drop). Sacred surface
+  → same canary-probe discipline.
+- **`CORTEX_ENDTURN_REQUIREMENTS=strict`** — BLOCKED on 3 code bugs (D-B empty-`{}` truncation, `UNVERIFIED
+  (reason)` regex, D-D loop-escalation exemption; session-resume-2026-09-04). Fix them, then the strict-vs-relaxed
+  A/B; the fix was assessed "iffy" — reassess ROI before investing.
+- **`CORTEX_DEADLINE_EXIT_MENTOR` re-target design** — the "smart deadline" checkpoint@0.82 + hard-floor@0.92 form
+  (existing experiment above), targeting the ≥0.80 budget_frac finishing population; needed before its efficacy run.
+
+**Bench / STDB durable control plane (the bench-runner spine, maincloud module `nexus-nexus-cortex`):**
+- **CF EGRESS billing** — the 4th CF dashboard metric (Egress GB) is NOT tracked; it is not uptime-derivable. Wire
+  the CF GraphQL **analytics API** (app-level) to capture egress + reconcile the per-run uptime-derived compute
+  metrics (mem/vcpu/disk resource-seconds) against the app-level dashboard totals. (Operator: "many billing
+  metrics; those 4 affect spend now — per-run tracking to judge aggregate cost across all surfaces.")
+- **Per-run `total_cost_usd` rollup** — aggregate spend across surfaces: `cost_usd` (DeepSeek tokens) +
+  `instance_cost_usd` (CF containers). Add the field (Option, `#[default]`, strictly at END) + monitor sets it.
+- **Verify CF per-metric RATES** — `cf_rate_mem_gib_sec`/`_vcpu_sec`/`_disk_gb_sec` code defaults are APPROXIMATE;
+  verify vs the CF Workers-Containers pricing page and set the config keys to the real rates (the resource-second
+  metrics are exact regardless; only the $ conversion depends on these).
+- **`rearm-all.sh` v2 hardening** — heal a mid-run watchdog death by arming the watchdogs DIRECTLY (or done-set-skip
+  on a re-fire), NEVER re-firing the armer (the 93-min no-op fanout / ~$50 trap, k5v2 postmortem). Rule documented;
+  the SCRIPT change is still "owed." Largely superseded by the STDB control plane, but the repl rig still uses it.
+- **Commit the STDB bench source + generated TS bindings** — the `nexus-nexus-cortex` bench module (bench.rs trio +
+  bench_scheduler + admin cache) was PUBLISHED to maincloud from the working tree but is UNCOMMITTED in git; the
+  regenerated `modules/database-ai/generated/*` bindings too. Commit both (workspace git, explicit pathspec).
+- **HB-PLACEMENT ④ warm container pool** — eliminate the ~7-min per-lane cold-start (per-task-container
+  `npm i nexus-cortex@pin`) via a warm pool / cache-mount into task containers (HB-PLACEMENT ④ above; deploy-gated).
+- **BENCHMARKS / BENCHRUNNER SPA windows** — the two visual command windows over the STDB control plane
+  (`HARNESS_BENCH_CONSOLIDATION_PLAN.md` Layer 3); deferred until the headless system is fully proven (operator).

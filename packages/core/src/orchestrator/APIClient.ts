@@ -12,6 +12,7 @@
 // SDKs, which can't take an explicit fetch) AND provides the standalone proxy fetch we pass
 // explicitly to every OpenAI/Anthropic client + raw provider fetch (deterministic routing).
 import { cortexProxyFetch } from './cortexProxyFetch.js';
+import { looksLikeLeakedDsml, recoverDsmlToolCalls } from './dsmlRecovery.js';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -356,6 +357,20 @@ export class APIClient {
     async function* chunks(): AsyncGenerator<StreamChunk, void, unknown> {
       const data = await finalMessage;
       const message = data?.choices?.[0]?.message ?? {};
+      // HB-DSML-PARSE (2026-09-09): DeepSeek occasionally emits a tool call as PLAIN TEXT in its DSML
+      // dialect (<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="X">…) instead of the structured tool_calls
+      // field → the turn reads "empty" and trips the terminal EndTurn reminder. Recover it ADDITIVELY:
+      // ONLY when the structured field is empty AND the markup is present, so the normal path is never
+      // touched. Sacred surface — gated by canary probes (deepseek + xai tool-call round-trip).
+      if (!(message.tool_calls?.length) && typeof message.content === 'string' && looksLikeLeakedDsml(message.content)) {
+        const rec = recoverDsmlToolCalls(message.content);
+        if (rec && rec.toolCalls.length) {
+          message.tool_calls = rec.toolCalls;
+          message.content = rec.cleanedContent || null;
+          if (data?.choices?.[0]) data.choices[0].finish_reason = 'tool_calls';
+          if (process.env.DEBUG === 'true') console.error('[HB-DSML-PARSE] recovered leaked DSML tool call(s):', rec.toolCalls.map((t: any) => t?.function?.name).join(','));
+        }
+      }
       yield { type: 'message_start', data };
       if (message.content) {
         yield { type: 'text_delta', delta: message.content, snapshot: message.content };

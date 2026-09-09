@@ -2036,6 +2036,7 @@ export class CortexOrchestrator {
     // Keep executing tools until model returns a text response
     let currentAssistantMessage = assistantMessage;
     let currentAssistantCanonicalMessage = assistantCanonicalMessage;
+    this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     let toolCallIteration = 0;
 
     // Loop control settings — single source of truth via getLoopControlConfig()
@@ -4410,6 +4411,7 @@ export class CortexOrchestrator {
     }
 
     let currentAssistantCanonicalMessage = convertedResponse.messages[0]!;
+    this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     const assistantMessageId = currentAssistantCanonicalMessage.uuid;
 
     const assistantMessage: Message = {
@@ -8813,6 +8815,31 @@ export class CortexOrchestrator {
       this.decisionStore = new DecisionStore(storePath);
     }
     return this.decisionStore;
+  }
+
+  /** HB-DSML-PARSE observability (2026-09-09): if the DeepSeek DSML tool-call recovery fired on this
+   *  response (recovered tool_use ids are prefixed `dsml_`), record ONE countable `dsml_recovered`
+   *  decision event so the bench data shows how often the leak occurred + that the fix is live.
+   *  Observability only — never throws into the turn. */
+  private recordDsmlRecovery(msg: any): void {
+    try {
+      const content = Array.isArray(msg?.content) ? msg.content : [];
+      const recovered = content.filter(
+        (b: any) => b?.type === 'tool_use' && typeof b?.toolUse?.id === 'string' && b.toolUse.id.startsWith('dsml_'),
+      );
+      if (recovered.length === 0) return;
+      const store = this.getDecisionStore();
+      if (store) {
+        void store
+          .recordEvent({
+            sessionId: this.currentSessionId ?? 'unknown',
+            kind: 'dsml_recovered',
+            detail: { count: recovered.length, tools: recovered.map((b: any) => b.toolUse?.name) },
+          })
+          .catch(() => {});
+      }
+      if (this.config.debug) console.log(`[HB-DSML-PARSE] dsml_recovered event (count=${recovered.length})`);
+    } catch { /* observability only */ }
   }
 
   private isRecordingEnabled(): boolean {

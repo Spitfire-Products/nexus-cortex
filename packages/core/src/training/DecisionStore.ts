@@ -84,7 +84,10 @@ export type SteeringEventKind =
   // reward-labeled thrash→ask→hint→follow trajectory that trains the apprentice's
   // self-refer + hint-follow behavior. detail carries {rung, trigger, hint (truncated),
   // helperModel}; the junior's subsequent tool rows join by sessionId + ts.
-  | 'mentor_consult';
+  | 'mentor_consult'
+  // HB-DSML-PARSE (2026-09-09): the DeepSeek DSML tool-call recovery fired — a tool call that leaked
+  // into assistant TEXT was recovered into a real tool_use (detail carries {count, tools}).
+  | 'dsml_recovered';
 
 export interface SteeringEventInput {
   sessionId: string;
