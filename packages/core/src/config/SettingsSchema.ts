@@ -111,6 +111,7 @@ export interface EnvironmentVariables {
   CORTEX_ASK_FOR_ADVICE?: string; // 'true' | 'false'
   CORTEX_MENTOR_CONSULT_REASONING?: string; // 'on' | 'none'
   CORTEX_MENTOR_TEMPERATURE?: string; // number as string, optional
+  CORTEX_MENTOR_REASONING_ALLOWANCE?: string; // integer tokens, optional (overrides the per-effort table)
 
   /** Enable turn-based periodic mentorship review */
   MENTORSHIP_TURN_BASED_ENABLED?: string; // 'true' | 'false'
@@ -407,6 +408,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_ASK_FOR_ADVICE: 'true',
   CORTEX_MENTOR_CONSULT_REASONING: 'none',
   CORTEX_MENTOR_TEMPERATURE: '',
+  CORTEX_MENTOR_REASONING_ALLOWANCE: '',
   MENTORSHIP_TURN_BASED_ENABLED: 'false',
   MENTORSHIP_TURN_INTERVAL: '10',
   MENTORSHIP_INTERLEAVED_THINKING: 'false',
@@ -800,6 +802,14 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_MENTOR_TEMPERATURE',
     displayName: 'Mentor Temperature',
     description: 'Optional sampling temperature for mentor calls (0-2). Empty = adapter default (0.7).',
+    type: 'string',
+    category: 'mentorship',
+    default: ''
+  },
+  {
+    key: 'CORTEX_MENTOR_REASONING_ALLOWANCE',
+    displayName: 'Mentor Reasoning Allowance',
+    description: 'Extra max_tokens granted to a thinking-on mentor call for its reasoning (DeepSeek counts reasoning inside max_tokens). Empty = per-effort table low 4000 / medium 8000 / high 12000 / max 24000.',
     type: 'string',
     category: 'mentorship',
     default: ''

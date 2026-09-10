@@ -1303,6 +1303,58 @@ against the session's full tool output with the gate's own normalizer:
 restores block matching). Audit replay: rescues ~60/84 (the 47% + the corpus gaps), still rejects every invented line.
 7 new unit tests. Standing metric for every finishing-population cell: `endturn_rejections/session`.
 
+### HB-PLACEMENT ⑥ — per-lane launch results (2026-09-10, cell-m-p3 field evidence)
+**Symptom:** `/admin/bench/launch` (worker) returns 200 for the batch even when `placeOne` exhausts its 4 exec retries on a
+lane ("exhausted → leave placing", no signal); the STDB module's `launch_lanes` only fails on a chunk-level HTTP error, so
+`[bench fanout] declaratively placed 32` / `[bench placement] re-placed 6` describe the CALL, not the containers. On
+cell-m-p3 five lanes (pro-high0..3, flash-max0) went through fanout + 2 placement re-fires with NO run-tagged
+`__run_config__` row (supervisor never booted) while 27 siblings booted in <2 min; a sixth (pro-low3) booted on its 2nd
+attempt. Diagnosis was only possible from the stores (no run_config row for the run tag) — the control plane itself had
+no idea. The P14 fresh-session remap at `place_attempts ≥ 2` is the eventual heal (~10-14 min lost per lane).
+**Fix:** (a) worker: the route returns `{ok, placed:[session…], failed:[{session, attempts, lastError}]}` (keep 200; the
+body carries the truth); (b) module `launch_lanes`/`fanout`/`placement`: parse the body; a `failed` lane gets
+`place_attempts+1` immediately and, on a `SandboxError`/500-class lastError, is remapped to a fresh session at once
+instead of waiting out the 600 s grace twice; (c) the same 4-retry exhaustion sets `supervisor_alive: Some(false)` so the
+tick does not treat the lane as booting. Also fold in DELTA 10g: the route now 400s on session names the worker would
+silently collapse (staged in tree, undeployed). Verification: a launch with one deliberately-invalid and one
+unreachable-DO lane must show both in `failed` and the module must log + act on them within one tick.
+**⑥b — the INSTANT-COMPLETE livelock (same run, 20:04Z):** a lane whose 1-task slice is ALREADY banked (rows from a prior
+`-pN` attempt) boots, banks `__run_config__`, prints COMPLETE and exits in seconds — before the 300 s tick ever probes it.
+It never beats, so placement treats it as "unbooted", re-fires it (600 s grace each), remaps it at ≥2, and finally gives
+up at PLACE_MAX_ATTEMPTS=5 → `dead` (pro-high2: 5 cold starts, ~$0.50 and 50 min of lane wall, for a task that was done
+before the run started). Reconcile's slice check only resolves `complete_pending` lanes (the ones that beat COMPLETE).
+**Fix (either):** (a) reconcile also checks `placing` lanes' slices against the store and marks them `complete` when every
+task in the slice is banked; or (b) the supervisor sleeps ≥ one tick period (≥300 s, or until a probe) after COMPLETE
+so the tick can bank the beat — (a) is cheaper and touch-free.
+
+## HB-MENTOR-BUDGET — thinking-ON mentor calls return EMPTY output because reasoning shares `max_tokens` (2026-09-10, cell-m pilot)
+**Evidence (cell-m-p3, 4.105.0, 32 sessions):** with `CORTEX_MENTOR_REASONING=on`, deepseek-v4-pro delivered 0/10 lift plans and
+1/8 resolver verdicts (blank after 50–75 s); deepseek-flash 3/10 plans, 2/9 verdicts. Thinking-OFF arms: 8/8 plans (≈5 KB),
+12/12 verdicts, 5–9 s. Every blank resolver fail-opened to `meets:true` (endTurnResolver.ts:132) → the EndTurn gate
+rubber-stamped every finish on the thinking-on arms. Ledger: `.cortex/bench/r-cell-m-2026-09-10.md`.
+**Mechanism (direct API call):** DeepSeek's `completion_tokens` INCLUDES `reasoning_tokens` (pro@high: 2045 = 1641 + ~400
+content) — reasoning and content share `max_tokens`. `ChatCompletionsAPIHelperAdapter.ts:395` sends `max_tokens =
+min(outputBudgetTokens=4000, limits.outputTokens)` for every mentor call and never reads `finish_reason`; on the real mentor
+prompts (6 KB delta + recon + outputs) high/max reasoning exhausts the cap → `finish_reason: length`, `content: ""`.
+**Fix:**
+1. Adapter: when `mentorRole.thinking`, send `max_tokens = outputBudgetTokens + reasoningAllowance(effort)` (low 4K / high 12K /
+   max 24K; bounded by `limits.outputTokens`), keep `outputBudgetTokens` as the CONTENT expectation only.
+2. Adapter: read `choices[0].finish_reason` + `usage.completion_tokens_details.reasoning_tokens`; on `length` with empty content
+   → return a structured `{text:'', truncated:true, reasoningTokens}` and let the mentor surfaces RETRY ONCE with thinking off
+   (the proven baseline) — never hand `''` up as a plan/verdict.
+3. Events: `lift_plan`/`endturn_resolver`/`deadline_exit_mentor`/`loop_tool_block` bank `truncated`, `reasoningTokens`,
+   `failOpen:true` when a blank verdict was accepted; effective-config report gains `CORTEX_MENTOR_REASONING_ALLOWANCE`.
+4. Resolver policy (operator call): keep fail-open-to-MEETS for liveness, but count `failOpen` in adjudication; or fail-open
+   to the ABSTAIN path when `abstain` is on.
+5. Loop-block: bank `blocksSoFar`/`escalateAt` on redirect events so "fired 12×, never escalated" is one field (cell-m: the
+   exit planner was never reached — 2 blocks max per tool, escalation needs >2).
+**Verification:** unit test on the adapter (finish_reason length + empty content → truncated + retry); live probe: a
+resolver prompt of ≥8K tokens at pro@max must return `parsed:true`; re-pilot flash-none vs flash-high (K=2) on the loop
+population; adjudicate on DELIVERY counts (`planChars>0`, `parsed:true`) not fire counts.
+**Third surface, same day:** `scripts/doctrine-mine.py` synthesis (deepseek-v4-pro, thinking on, max_tokens 10000) returned EMPTY content on the cell-m clusters and crashed on `json.loads('')`; thinking-off returned 5 valid edits first try. The labeler had already been switched to thinking-off on 2026-08-26 for the identical reason (its source comment) — the class was known and never generalized. Every DeepSeek thinking-on call in the codebase needs the allowance + finish_reason handling, not per-surface workarounds.
+**Rule promoted:** mechanism-engagement evidence = DELIVERY, not "fired": a mentor event with the right wire config and
+`planChars:0`/`rawLen:0` is a broken arm (second control with a stall), not a null result.
+
 ## BENCH-TOOLING — the distiller's `retry_loop` classifier over-fires on same-file edit iteration (2026-09-10)
 `scripts/tb2-distill.py` labelled 21/31 cell-d-k3 failures "repeated-identical-retry loop" from *near-identical call
 clusters*, but the clusters are `Edit:/app/vm.js` ×7–17, `Edit:/app/filter.py` ×4–21, `sed -n 'a,bp' file` paging and

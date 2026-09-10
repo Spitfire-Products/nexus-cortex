@@ -114,29 +114,32 @@ export function buildResolverUserPrompt(ctx: EndTurnResolverContext, abstain = f
 }
 
 export interface ResolverVerdict {
-  /** true = MEETS (finish); false = GAP or RETIRE. Defaults to MEETS on an unparseable/empty
-   *  response (fail-open: never trap the junior on a broken judge call — liveness beats purity). */
+  /** true = MEETS (finish); false = GAP, RETIRE or BLANK. A blank/unparseable response is NOT a MEETS: it is
+   *  `blank:true` and the orchestrator ABSTAINS (finish accepted, no veto, banked as a judge failure) — never
+   *  counted as a judgment (operator decision 2026-09-10 after the cell-m pilot's fail-open rubber-stamps). */
   meets: boolean;
   /** RETIRE = the finish does not meet requirements AND is structurally unclosable → abstain (accept
    *  + stop the reject loop) when CORTEX_ENDTURN_RESOLVER_ABSTAIN is on. Never true for MEETS/GAP. */
   retire: boolean;
   /** GAP: the fix plan. RETIRE: the one-line reason it is unclosable. */
   plan: string;
-  /** Whether the verdict line was actually found (else it fell back to fail-open MEETS). */
+  /** Whether the verdict line was actually found. */
   parsed: boolean;
+  /** The judge returned nothing usable (empty text or no VERDICT line) → the orchestrator abstains. */
+  blank: boolean;
 }
 
-/** Parse the judge's response. Fail-open to MEETS when the verdict line is absent/empty. */
+/** Parse the judge's response. Empty/verdict-less text → `blank` (ABSTAIN), never MEETS. */
 export function parseResolverVerdict(text: string): ResolverVerdict {
   const t = (text || '').trim();
-  if (!t) return { meets: true, retire: false, plan: '', parsed: false };
+  if (!t) return { meets: false, retire: false, plan: '', parsed: false, blank: true };
   const m = t.match(/VERDICT:\s*(MEETS|GAP|RETIRE)/i);
-  if (!m) return { meets: true, retire: false, plan: '', parsed: false }; // no clear verdict → do not block the finish
+  if (!m) return { meets: false, retire: false, plan: '', parsed: false, blank: true }; // no clear verdict → abstain, do not block
   const verdict = m[1]!.toUpperCase();
   const meets = verdict === 'MEETS';
   const retire = verdict === 'RETIRE';
   // The plan (GAP) / reason (RETIRE) is everything after the verdict line.
   const idx = t.indexOf(m[0]);
   const plan = t.slice(idx + m[0].length).trim();
-  return { meets, retire, plan, parsed: true };
+  return { meets, retire, plan, parsed: true, blank: false };
 }

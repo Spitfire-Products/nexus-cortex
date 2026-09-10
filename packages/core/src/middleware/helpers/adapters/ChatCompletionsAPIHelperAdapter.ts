@@ -30,6 +30,24 @@ interface ChatCompletionsMessage {
   content: string | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>;
 }
 
+import { reasoningAllowanceTokens } from '../../../training/mentorRole.js';
+
+/** What the last helper/mentor call actually carried and returned (HB-MENTOR-BUDGET observability). */
+export interface HelperCallMeta {
+  finishReason?: string;
+  contentChars: number;
+  reasoningTokens?: number;
+  completionTokens?: number;
+  maxTokensSent: number;
+  thinking: boolean;
+  /** empty content on a thinking-on call (finish_reason=length or all-reasoning) */
+  truncated: boolean;
+  /** the call was re-issued once with thinking disabled after a truncation */
+  retriedThinkingOff: boolean;
+  /** max_tokens on the thinking-off retry (the plain content cap) */
+  retryMaxTokensSent?: number;
+}
+
 interface ChatCompletionsRequest {
   model: string;
   messages: ChatCompletionsMessage[];
@@ -49,6 +67,7 @@ interface ChatCompletionsResponse {
     message: {
       role: 'assistant';
       content: string;
+      reasoning_content?: string;
     };
     finish_reason: string;
   }>;
@@ -56,6 +75,7 @@ interface ChatCompletionsResponse {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    completion_tokens_details?: { reasoning_tokens?: number };
   };
 }
 
@@ -349,9 +369,41 @@ export class ChatCompletionsAPIHelperAdapter extends BaseHelperAdapter {
       }
       return { role, content: parts };
     });
-    const response = await this.makeAPICall(helperConfig, chatMessages, maxTokens);
-    return response.choices[0]?.message.content || '';
+    const mentorRole = (helperConfig as unknown as { mentorRole?: { thinking: boolean; effort: string } }).mentorRole;
+    let response = await this.makeAPICall(helperConfig, chatMessages, maxTokens);
+    let content = response.choices[0]?.message.content || '';
+    const meta: HelperCallMeta = {
+      finishReason: response.choices[0]?.finish_reason,
+      contentChars: content.length,
+      reasoningTokens: response.usage?.completion_tokens_details?.reasoning_tokens,
+      completionTokens: response.usage?.completion_tokens,
+      maxTokensSent: this.lastMaxTokensSent,
+      thinking: !!mentorRole?.thinking,
+      truncated: false,
+      retriedThinkingOff: false,
+    };
+    // HB-MENTOR-BUDGET (2026-09-10): a thinking-on call that returns NO content spent its cap on reasoning
+    // (finish_reason=length, or every completion token was reasoning). Never hand '' up as a plan/verdict —
+    // re-issue ONCE with thinking disabled (the proven baseline) and record that it happened.
+    if (mentorRole?.thinking && !content.trim()) {
+      meta.truncated = true;
+      const offConfig = { ...helperConfig, mentorRole: { ...mentorRole, thinking: false } } as ModelConfig;
+      try {
+        response = await this.makeAPICall(offConfig, chatMessages, maxTokens);
+        content = response.choices[0]?.message.content || '';
+        meta.retriedThinkingOff = true;
+        meta.retryMaxTokensSent = this.lastMaxTokensSent;
+        meta.contentChars = content.length;
+        meta.finishReason = response.choices[0]?.finish_reason;
+      } catch { /* keep the empty result; the surfaces already fail-safe on '' */ }
+    }
+    this.lastCallMeta = meta;
+    return content;
   }
+
+  /** Observability: what the most recent call carried/returned (read by HelperModelMiddleware after a mentor call). */
+  public lastCallMeta?: HelperCallMeta;
+  private lastMaxTokensSent = 0;
 
   /**
    * Make real API call to Chat Completions endpoint
@@ -389,10 +441,16 @@ export class ChatCompletionsAPIHelperAdapter extends BaseHelperAdapter {
     // set by HelperModelMiddleware.generateGuidance from training/mentorRole.ts. Helper-role calls carry none.
     const mentorRole = (config as unknown as { mentorRole?: { thinking: boolean; effort: string; temperature?: number } }).mentorRole;
     // Build request body.
+    // HB-MENTOR-BUDGET: reasoning shares max_tokens on DeepSeek — a thinking-on mentor call gets the content
+    // budget PLUS a per-effort reasoning allowance (CORTEX_MENTOR_REASONING_ALLOWANCE overrides), capped by the card.
+    const wireMax = mentorRole?.thinking
+      ? Math.min(maxTokens + reasoningAllowanceTokens(mentorRole.effort), config.limits.outputTokens)
+      : Math.min(maxTokens, config.limits.outputTokens);
+    this.lastMaxTokensSent = wireMax;
     const requestBody: ChatCompletionsRequest = {
       model: config.id,
       messages,
-      max_tokens: Math.min(maxTokens, config.limits.outputTokens),
+      max_tokens: wireMax,
       temperature: mentorRole?.temperature ?? 0.7,
       // THINKING-MODE TOGGLE (DeepSeek dual-mode; validated 2026-08-27 + api-docs.deepseek.com/
       // guides/thinking_mode): helper configs set reasoning_effort:'none' to DISABLE thinking.

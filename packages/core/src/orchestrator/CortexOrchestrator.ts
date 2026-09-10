@@ -600,7 +600,11 @@ export class CortexOrchestrator {
   private liftPlanDelivered = false; // LIFT_MENTOR_PLANNER: bounded mentor-planner at the lift, one-shot
   /** MENTOR ROLE: what the wire carried for a mentor surface (banked on every mentor event; see mentorRole.ts). */
   private mentorWire(surface: 'lift-plan' | 'endturn-resolver' | 'deadline-exit-mentor' | 'loop-exit-planner' | 'mentor-consult', effort?: string, budget?: number) {
-    return describeMentorWire(resolveMentorRoleConfig(surface, process.env, { modelId: this.config.reactiveMentorship?.helperModelId, effort, outputBudgetTokens: budget }));
+    const wire = describeMentorWire(resolveMentorRoleConfig(surface, process.env, { modelId: this.config.reactiveMentorship?.helperModelId, effort, outputBudgetTokens: budget }));
+    // HB-MENTOR-BUDGET: the call meta (finishReason/contentChars/reasoningTokens/maxTokensSent/truncated/
+    // retriedThinkingOff) proves DELIVERY, not just the intended wire config — a blank mentor is visible per event.
+    const meta = (this.helperMiddleware as unknown as { lastMentorCallMeta?: Record<string, unknown> } | undefined)?.lastMentorCallMeta;
+    return meta ? { ...wire, ...meta } : wire;
   }
   private cachedEnvReport?: string;  // ENV_RECON_COMMAND output; cached for the lift planner, REFRESHED for the judges (HB-JUDGE-GROUNDING)
   private taskStartMs = 0;            // HB-JUDGE-GROUNDING: the user-turn start — the workspace delta is 'files changed since here'
@@ -992,7 +996,7 @@ export class CortexOrchestrator {
         timeoutMs,
       );
       const latencyMs = Date.now() - t0;
-      const verdict = parseResolverVerdict(text ?? ''); // withTimeout → null on timeout; fail-open to MEETS
+      const verdict = parseResolverVerdict(text ?? ''); // withTimeout → null on timeout; blank → ABSTAIN (below)
       // OBSERVABILITY (resolver-AB follow-up, 2026-09-05): bank the TEXT the resolver produced +
       // what it judged, not just counts — so a k=5 run can score the resolver's JUDGMENT QUALITY
       // (was the GAP warranted? was the fix plan good? did it judge the right artifact?) and not
@@ -1002,7 +1006,8 @@ export class CortexOrchestrator {
         kind: 'endturn_resolver',
         toolName: 'EndTurn',
         detail: {
-          meets: verdict.meets, retire: verdict.retire, abstained: verdict.retire && cfg.abstain,
+          meets: verdict.meets, retire: verdict.retire, abstained: (verdict.retire && cfg.abstain) || verdict.blank,
+          blank: verdict.blank, failOpen: verdict.blank,
           planChars: verdict.plan.length, rejects: this.endTurnResolverRejects, parsed: verdict.parsed,
           latencyMs, rawLen: (text ?? '').length,
           deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,
@@ -1012,7 +1017,12 @@ export class CortexOrchestrator {
           attestation: attestation.slice(0, 800),
         },
       }).catch(() => {});
-      if (verdict.retire && cfg.abstain) {
+      if (verdict.blank) {
+        // BLANK → ABSTAIN (operator decision 2026-09-10, cell-m pilot): the judge returned nothing (empty
+        // content / no verdict line / timeout). That is a judge FAILURE, not a judgment — the finish stands, no
+        // veto, no reject increment, and the event says so (abstained + blank + failOpen) instead of counting as MEETS.
+        if (this.config.debug) console.warn(`[EndTurnResolver] BLANK — abstained (no verdict from the judge, rawLen=${(text ?? '').length})`);
+      } else if (verdict.retire && cfg.abstain) {
         // ABSTENTION — the finish is structurally unclosable; accept it and STOP the reject
         // loop (no veto, no reject increment) instead of burning more pro@max cycles on a task
         // the junior can't fix. The finish stands (ev.endTurnCalled stays true).
@@ -9073,6 +9083,7 @@ export class CortexOrchestrator {
         toolName: 'AskForAdvice',
         detail: {
           tag: 'mentor_episode',
+          mentor: this.mentorWire('mentor-consult'),
           rung,
           ...(process.env.CORTEX_MENTOR_TEMPLATE === 'true' ? { template: true } : {}),
           turn: this.turnNumber,

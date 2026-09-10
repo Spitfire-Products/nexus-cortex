@@ -118,6 +118,21 @@ export function resolveMentorRoleConfig(
   };
 }
 
+/**
+ * HB-MENTOR-BUDGET (2026-09-10, cell-m pilot): DeepSeek counts reasoning tokens INSIDE `max_tokens` (pro@high:
+ * completion_tokens 2045 = 1641 reasoning + ~400 content). A thinking-on mentor call capped at the CONTENT budget
+ * (4000) therefore returned EMPTY content on every real planner prompt (0/10 pro lift plans, 1/8 resolver verdicts).
+ * The wire cap for a thinking-on call is the content budget PLUS this allowance; CORTEX_MENTOR_REASONING_ALLOWANCE
+ * (integer tokens) overrides the per-effort table.
+ */
+export const REASONING_ALLOWANCE_TOKENS: Record<MentorEffort, number> = { low: 4000, medium: 8000, high: 12000, max: 24000 };
+
+export function reasoningAllowanceTokens(effort: string | undefined, env: NodeJS.ProcessEnv = process.env): number {
+  const o = parseInt((env.CORTEX_MENTOR_REASONING_ALLOWANCE ?? '').trim(), 10);
+  if (Number.isInteger(o) && o >= 0) return o;
+  return REASONING_ALLOWANCE_TOKENS[normEffort(effort, DEFAULT_EFFORT)];
+}
+
 /** The wire-level summary banked on every mentor event: what the request actually carried. */
 export function describeMentorWire(cfg: MentorRoleConfig): { model: string; thinking: boolean; effort: string; budget: number } {
   return { model: cfg.modelId, thinking: cfg.thinking, effort: cfg.thinking ? cfg.effort : 'none', budget: cfg.outputBudgetTokens };

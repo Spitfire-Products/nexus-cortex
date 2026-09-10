@@ -49,7 +49,7 @@ describe('endTurnResolver — buildResolverUserPrompt', () => {
 describe('endTurnResolver — parseResolverVerdict', () => {
   it('parses MEETS', () => {
     const v = parseResolverVerdict('VERDICT: MEETS\nlooks complete');
-    expect(v).toMatchObject({ meets: true, parsed: true });
+    expect(v).toMatchObject({ meets: true, parsed: true, blank: false });
   });
   it('parses GAP and extracts the plan after the verdict line', () => {
     const v = parseResolverVerdict('VERDICT: GAP\n1. add NOT_FOUND handling\n2. rerun make test');
@@ -58,8 +58,10 @@ describe('endTurnResolver — parseResolverVerdict', () => {
     expect(v.plan).toContain('NOT_FOUND');
   });
   it('fail-opens to MEETS on empty/unparseable text (never traps the junior)', () => {
-    expect(parseResolverVerdict('')).toMatchObject({ meets: true, parsed: false });
-    expect(parseResolverVerdict('the model rambled with no verdict line')).toMatchObject({ meets: true, parsed: false });
+    // 2026-09-10 (cell-m pilot): a blank/verdict-less judge response is NOT a MEETS — it is `blank` and the
+    // orchestrator ABSTAINS (finish accepted, no veto, banked as a judge failure).
+    expect(parseResolverVerdict('')).toMatchObject({ meets: false, parsed: false, blank: true });
+    expect(parseResolverVerdict('the model rambled with no verdict line')).toMatchObject({ meets: false, parsed: false, blank: true });
   });
   it('is case-insensitive on the verdict token', () => {
     expect(parseResolverVerdict('verdict: gap\nfix it').meets).toBe(false);

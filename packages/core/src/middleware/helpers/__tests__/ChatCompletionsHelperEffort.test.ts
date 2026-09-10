@@ -8,10 +8,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const captured: any[] = [];
+/** Per-call scripted responses (HB-MENTOR-BUDGET tests); empty = the default 'ok' reply. */
+const scripted: any[] = [];
 vi.mock('../../../orchestrator/cortexProxyFetch.js', () => ({
   cortexProxyFetch: vi.fn(async (_url: any, init: any) => {
     captured.push(JSON.parse(init.body));
-    return { ok: true, json: async () => ({ id: 'x', object: 'chat.completion', created: 0, model: 'deepseek-flash', choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }) } as any;
+    const next = scripted.length ? scripted.shift() : { content: 'ok', finish_reason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } };
+    return { ok: true, json: async () => ({ id: 'x', object: 'chat.completion', created: 0, model: 'deepseek-flash', choices: [{ index: 0, message: { role: 'assistant', content: next.content, reasoning_content: next.reasoning_content }, finish_reason: next.finish_reason }], usage: next.usage }) } as any;
   }),
 }));
 
@@ -27,7 +30,7 @@ const base = {
 const msgs = [{ role: 'user', content: 'hi' }] as any;
 
 describe('ChatCompletionsAPIHelperAdapter — mentor role on the wire', () => {
-  beforeEach(() => { captured.length = 0; process.env.DEEPSEEK_API_KEY = 'test'; });
+  beforeEach(() => { captured.length = 0; scripted.length = 0; process.env.DEEPSEEK_API_KEY = 'test'; delete process.env.CORTEX_MENTOR_REASONING_ALLOWANCE; });
 
   it('mentor thinking ON → reasoning_effort=max, no thinking-disabled, mentor temperature honoured', async () => {
     const a = new ChatCompletionsAPIHelperAdapter();
@@ -93,5 +96,56 @@ describe('HelperModelMiddleware.generateGuidance carries the resolved mentor rol
       await mw.generateGuidance({ surface: 'mentor-consult', persona: 'p', task: 't', outputBudgetTokens: 400, mentor: resolveMentorRoleConfig('mentor-consult', process.env, { modelId: 'deepseek-flash', effort: 'max' }) }, 'body', 'deepseek-flash');
       expect(captured[0].reasoning_effort).toBe('max');
     } finally { delete process.env.CORTEX_MENTOR_CONSULT_REASONING; }
+  });
+});
+
+
+describe('HB-MENTOR-BUDGET — reasoning shares max_tokens, so a thinking-on mentor call gets an allowance and never returns blank silently', () => {
+  beforeEach(() => { captured.length = 0; scripted.length = 0; process.env.DEEPSEEK_API_KEY = 'test'; delete process.env.CORTEX_MENTOR_REASONING_ALLOWANCE; });
+
+  it('thinking ON: max_tokens = content budget + per-effort allowance (high → +12000), capped by the card', async () => {
+    const a = new ChatCompletionsAPIHelperAdapter();
+    await a.generate(msgs, { ...base, mentorRole: { thinking: true, effort: 'high', surface: 'endturn-resolver' } }, 4000);
+    expect(captured[0].max_tokens).toBe(16000);
+    await a.generate(msgs, { ...base, limits: { ...base.limits, outputTokens: 5000 }, mentorRole: { thinking: true, effort: 'max', surface: 'lift-plan' } }, 4000);
+    expect(captured[1].max_tokens).toBe(5000);
+  });
+
+  it('thinking OFF / helper-role calls keep the plain content cap', async () => {
+    const a = new ChatCompletionsAPIHelperAdapter();
+    await a.generate(msgs, { ...base, mentorRole: { thinking: false, effort: 'max', surface: 'lift-plan' } }, 4000);
+    expect(captured[0].max_tokens).toBe(4000);
+    await a.generate(msgs, base, 1500);
+    expect(captured[1].max_tokens).toBe(1500);
+  });
+
+  it('CORTEX_MENTOR_REASONING_ALLOWANCE overrides the table', async () => {
+    process.env.CORTEX_MENTOR_REASONING_ALLOWANCE = '2000';
+    const a = new ChatCompletionsAPIHelperAdapter();
+    await a.generate(msgs, { ...base, mentorRole: { thinking: true, effort: 'max', surface: 'lift-plan' } }, 4000);
+    expect(captured[0].max_tokens).toBe(6000);
+  });
+
+  it('a thinking-on call that returns EMPTY content (finish_reason=length, all reasoning) is retried ONCE thinking-off and the meta says so', async () => {
+    scripted.push({ content: '', reasoning_content: 'x'.repeat(100), finish_reason: 'length', usage: { prompt_tokens: 1, completion_tokens: 4000, total_tokens: 4001, completion_tokens_details: { reasoning_tokens: 4000 } } });
+    scripted.push({ content: 'VERDICT: GAP\n1. do the thing', finish_reason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 20, total_tokens: 21 } });
+    const a = new ChatCompletionsAPIHelperAdapter();
+    const out = await a.generate(msgs, { ...base, mentorRole: { thinking: true, effort: 'max', surface: 'endturn-resolver' } }, 4000);
+    expect(out).toContain('VERDICT: GAP');
+    expect(captured.length).toBe(2);
+    expect(captured[0].reasoning_effort).toBe('max');
+    expect(captured[1].thinking).toEqual({ type: 'disabled' });
+    expect(captured[1].reasoning_effort).toBeUndefined();
+    expect(a.lastCallMeta).toMatchObject({ thinking: true, truncated: true, retriedThinkingOff: true, reasoningTokens: 4000, contentChars: out.length, finishReason: 'stop' });
+    expect(a.lastCallMeta!.maxTokensSent).toBe(28000);      // the thinking-on call: 4000 + max allowance 24000
+    expect(a.lastCallMeta!.retryMaxTokensSent).toBe(4000);  // the retry (thinking off) went out at the plain content cap
+  });
+
+  it('a thinking-on call that DELIVERS content is not retried and the meta records the wire cap', async () => {
+    scripted.push({ content: 'VERDICT: MEETS', finish_reason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 900, total_tokens: 901, completion_tokens_details: { reasoning_tokens: 700 } } });
+    const a = new ChatCompletionsAPIHelperAdapter();
+    await a.generate(msgs, { ...base, mentorRole: { thinking: true, effort: 'low', surface: 'endturn-resolver' } }, 4000);
+    expect(captured.length).toBe(1);
+    expect(a.lastCallMeta).toMatchObject({ thinking: true, truncated: false, retriedThinkingOff: false, reasoningTokens: 700, maxTokensSent: 8000 });
   });
 });

@@ -1303,8 +1303,14 @@ Produce the FULL updated CORTEX.md. Rules, in priority order:
     const prompt = frameHelperPrompt(spec, body);
     const messages: HelperCanonicalMessage[] = [{ role: 'user', content: prompt }];
     const out = await adapter.generate(messages, helperConfig, spec.outputBudgetTokens);
+    // HB-MENTOR-BUDGET observability: what the mentor call actually carried/returned, banked on the mentor event.
+    if (spec.mentor) this.lastMentorCallMeta = (adapter as unknown as { lastCallMeta?: Record<string, unknown> }).lastCallMeta;
     return (out || '').replace(/^```[a-z]*\n/, '').replace(/\n```\s*$/, '').trim();
   }
+
+  /** The most recent mentor call's wire/return facts (finishReason, contentChars, reasoningTokens, maxTokensSent,
+   *  truncated, retriedThinkingOff) — read by the orchestrator right after each mentor surface call. */
+  public lastMentorCallMeta?: Record<string, unknown>;
 
   /**
    * WebFetch fallback summarization (provider-agnostic). The tool's original

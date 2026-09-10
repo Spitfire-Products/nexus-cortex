@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveMentorRoleConfig, describeMentorWire, mentorWireHint } from '../mentorRole.js';
+import { resolveMentorRoleConfig, describeMentorWire, mentorWireHint, reasoningAllowanceTokens } from '../mentorRole.js';
 
 describe('mentorRole — the mentor as a first-class resolved role', () => {
   it('planner surfaces think by default at the surface effort; model from MENTORSHIP_HELPER_MODEL', () => {
@@ -47,5 +47,19 @@ describe('CORTEX_MENTOR_EFFORT — one lever for every planner surface, per-surf
   });
   it('unset everywhere → the surface resolver value (its code default max)', () => {
     expect(resolveMentorRoleConfig('deadline-exit-mentor', {} as any, { effort: 'max' }).effort).toBe('max');
+  });
+});
+
+
+describe('HB-MENTOR-BUDGET — reasoningAllowanceTokens', () => {
+  it('per-effort table by default; unknown effort → max; env override wins (incl. 0)', () => {
+    expect(reasoningAllowanceTokens('low', {} as any)).toBe(4000);
+    expect(reasoningAllowanceTokens('medium', {} as any)).toBe(8000);
+    expect(reasoningAllowanceTokens('high', {} as any)).toBe(12000);
+    expect(reasoningAllowanceTokens('max', {} as any)).toBe(24000);
+    expect(reasoningAllowanceTokens('bogus', {} as any)).toBe(24000);
+    expect(reasoningAllowanceTokens('max', { CORTEX_MENTOR_REASONING_ALLOWANCE: '3000' } as any)).toBe(3000);
+    expect(reasoningAllowanceTokens('max', { CORTEX_MENTOR_REASONING_ALLOWANCE: '0' } as any)).toBe(0);
+    expect(reasoningAllowanceTokens('max', { CORTEX_MENTOR_REASONING_ALLOWANCE: 'nope' } as any)).toBe(24000);
   });
 });

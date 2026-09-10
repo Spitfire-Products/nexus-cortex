@@ -54,6 +54,7 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   CORTEX_ASK_FOR_ADVICE:          { tier: 'env' },
   CORTEX_MENTOR_CONSULT_REASONING: { tier: 'env' },
   CORTEX_MENTOR_TEMPERATURE:      { tier: 'env' },
+  CORTEX_MENTOR_REASONING_ALLOWANCE: { tier: 'env' },
   CORTEX_SLICE_BLOCK:             { tier: 'env' },
   CORTEX_SLICE_BLOCK_AT:          { tier: 'env' },
   CORTEX_SLICE_BLOCK_MAX:         { tier: 'env' },
