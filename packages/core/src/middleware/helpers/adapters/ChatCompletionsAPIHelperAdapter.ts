@@ -46,6 +46,9 @@ export interface HelperCallMeta {
   retriedThinkingOff: boolean;
   /** max_tokens on the thinking-off retry (the plain content cap) */
   retryMaxTokensSent?: number;
+  /** the thinking-on request was aborted at firstCallTimeoutMs (it had not returned) */
+  abortedFirstCall?: boolean;
+  firstCallTimeoutMs?: number;
 }
 
 interface ChatCompletionsRequest {
@@ -369,22 +372,42 @@ export class ChatCompletionsAPIHelperAdapter extends BaseHelperAdapter {
       }
       return { role, content: parts };
     });
-    const mentorRole = (helperConfig as unknown as { mentorRole?: { thinking: boolean; effort: string } }).mentorRole;
-    let response = await this.makeAPICall(helperConfig, chatMessages, maxTokens);
-    let content = response.choices[0]?.message.content || '';
+    const mentorRole = (helperConfig as unknown as { mentorRole?: { thinking: boolean; effort: string; firstCallTimeoutMs?: number } }).mentorRole;
+    // THINKING-AWARE FIRST-CALL BUDGET (2026-09-10, cell-m-r1): a thinking-on call may reason past the surface timeout
+    // (pro@high / flash@max ran ~90 s+), in which case the orchestrator's race gives up and the thinking-off retry never
+    // runs. Abort the FIRST request at mentorRole.firstCallTimeoutMs (60% of the thinking-aware surface timeout) so the
+    // retry always has the remaining 40%. An aborted first call is banked `abortedFirstCall` and treated like a blank.
+    let response: ChatCompletionsResponse | null = null;
+    let abortedFirstCall = false;
+    const firstBudget = mentorRole?.thinking && mentorRole.firstCallTimeoutMs && mentorRole.firstCallTimeoutMs > 0 ? mentorRole.firstCallTimeoutMs : undefined;
+    if (firstBudget) {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), firstBudget);
+      try {
+        response = await this.makeAPICall(helperConfig, chatMessages, maxTokens, ac.signal);
+      } catch (e: any) {
+        if (ac.signal.aborted || /abort/i.test(String(e?.name ?? e?.message ?? e))) abortedFirstCall = true;
+        else throw e;
+      } finally { clearTimeout(timer); }
+    } else {
+      response = await this.makeAPICall(helperConfig, chatMessages, maxTokens);
+    }
+    let content = response?.choices[0]?.message.content || '';
     const meta: HelperCallMeta = {
-      finishReason: response.choices[0]?.finish_reason,
+      finishReason: response?.choices[0]?.finish_reason,
       contentChars: content.length,
-      reasoningTokens: response.usage?.completion_tokens_details?.reasoning_tokens,
-      completionTokens: response.usage?.completion_tokens,
+      reasoningTokens: response?.usage?.completion_tokens_details?.reasoning_tokens,
+      completionTokens: response?.usage?.completion_tokens,
       maxTokensSent: this.lastMaxTokensSent,
       thinking: !!mentorRole?.thinking,
       truncated: false,
       retriedThinkingOff: false,
+      ...(abortedFirstCall ? { abortedFirstCall: true } : {}),
+      ...(firstBudget ? { firstCallTimeoutMs: firstBudget } : {}),
     };
     // HB-MENTOR-BUDGET (2026-09-10): a thinking-on call that returns NO content spent its cap on reasoning
-    // (finish_reason=length, or every completion token was reasoning). Never hand '' up as a plan/verdict —
-    // re-issue ONCE with thinking disabled (the proven baseline) and record that it happened.
+    // (finish_reason=length, or every completion token was reasoning) — or was aborted at its first-call budget.
+    // Never hand '' up as a plan/verdict — re-issue ONCE with thinking disabled (the proven baseline) and record it.
     if (mentorRole?.thinking && !content.trim()) {
       meta.truncated = true;
       const offConfig = { ...helperConfig, mentorRole: { ...mentorRole, thinking: false } } as ModelConfig;
@@ -413,7 +436,8 @@ export class ChatCompletionsAPIHelperAdapter extends BaseHelperAdapter {
   protected async makeAPICall(
     config: ModelConfig,
     messages: ChatCompletionsMessage[],
-    maxTokens: number
+    maxTokens: number,
+    signal?: AbortSignal
   ): Promise<ChatCompletionsResponse> {
     // Get API key from environment
     const apiKey = process.env[config.api.apiKeyEnvVar];
@@ -487,7 +511,8 @@ export class ChatCompletionsAPIHelperAdapter extends BaseHelperAdapter {
     const response = await cortexProxyFetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify(requestBody),
+      ...(signal ? { signal } : {})
     });
 
     if (!response.ok) {

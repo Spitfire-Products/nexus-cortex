@@ -38,6 +38,10 @@ export interface MentorRoleConfig {
   temperature?: number;
   /** Where the thinking decision came from (for the effective-config report / events). */
   thinkingSource: 'CORTEX_MENTOR_REASONING' | 'CORTEX_MENTOR_CONSULT_REASONING' | 'code-default';
+  /** Thinking-on only: the budget for the FIRST (thinking-on) request; the remainder of `timeoutMs` is kept for the
+   *  thinking-off retry so a slow thinking call can never starve the rescue (cell-m-r1: pro@high ran to the 90 s
+   *  surface timeout and banked `none` because the retry never got a turn). */
+  firstCallTimeoutMs?: number;
 }
 
 export interface MentorSurfaceInputs {
@@ -97,6 +101,16 @@ export function resolveMentorRoleConfig(
   }
   const t = parseFloat((env.CORTEX_MENTOR_TEMPERATURE ?? '').trim());
   const temperature = Number.isFinite(t) && t >= 0 && t <= 2 ? t : undefined;
+  const baseTimeout = inputs.timeoutMs && inputs.timeoutMs > 0 ? inputs.timeoutMs : DEFAULT_TIMEOUT_MS;
+  const effortResolved = (() => {
+    const sv = SURFACE_EFFORT_VAR[surface];
+    const perSurface = sv ? (env[sv] ?? '').trim() : '';
+    if (perSurface) return normEffort(perSurface, DEFAULT_EFFORT);
+    const global = (env.CORTEX_MENTOR_EFFORT ?? '').trim();
+    if (global) return normEffort(global, DEFAULT_EFFORT);
+    return normEffort(inputs.effort, DEFAULT_EFFORT);
+  })();
+  const timeoutMs = thinking ? Math.max(baseTimeout, thinkingTimeoutMs(effortResolved, env)) : baseTimeout;
   return {
     surface,
     modelId: (inputs.modelId ?? '').trim() || (env.MENTORSHIP_HELPER_MODEL ?? '').trim() || DEFAULT_MENTOR_MODEL,
@@ -112,9 +126,10 @@ export function resolveMentorRoleConfig(
       return normEffort(inputs.effort, DEFAULT_EFFORT);
     })(),
     outputBudgetTokens: inputs.outputBudgetTokens && inputs.outputBudgetTokens > 0 ? inputs.outputBudgetTokens : (isConsult ? DEFAULT_CONSULT_BUDGET : DEFAULT_BUDGET),
-    timeoutMs: inputs.timeoutMs && inputs.timeoutMs > 0 ? inputs.timeoutMs : DEFAULT_TIMEOUT_MS,
+    timeoutMs,
     ...(temperature !== undefined ? { temperature } : {}),
     thinkingSource,
+    ...(thinking ? { firstCallTimeoutMs: Math.round(timeoutMs * FIRST_CALL_SHARE) } : {}),
   };
 }
 
@@ -126,6 +141,27 @@ export function resolveMentorRoleConfig(
  * (integer tokens) overrides the per-effort table.
  */
 export const REASONING_ALLOWANCE_TOKENS: Record<MentorEffort, number> = { low: 4000, medium: 8000, high: 12000, max: 24000 };
+
+/**
+ * Thinking-aware surface timeout (2026-09-10, cell-m-r1): a thinking-on mentor call reasons for 40–90+ s on real planner
+ * prompts (pro@high, flash@max), so the 90 s surface timeouts that fit thinking-off calls (5–10 s) truncate it and the
+ * thinking-off retry never runs. A thinking-on call gets max(surface timeout, this per-effort budget);
+ * CORTEX_MENTOR_THINKING_TIMEOUT_MS (integer ms) overrides the table. Thinking-off calls keep the surface timeout.
+ */
+export const THINKING_TIMEOUT_MS: Record<MentorEffort, number> = { low: 120_000, medium: 180_000, high: 240_000, max: 300_000 };
+/** Share of the thinking-on budget given to the first request; the rest is reserved for the thinking-off retry. */
+export const FIRST_CALL_SHARE = 0.6;
+
+export function thinkingTimeoutMs(effort: string | undefined, env: NodeJS.ProcessEnv = process.env): number {
+  const o = parseInt((env.CORTEX_MENTOR_THINKING_TIMEOUT_MS ?? '').trim(), 10);
+  if (Number.isInteger(o) && o > 0) return o;
+  return THINKING_TIMEOUT_MS[normEffort(effort, DEFAULT_EFFORT)];
+}
+
+/** The surface timeout the orchestrator should race a mentor call against: thinking-aware. */
+export function mentorSurfaceTimeoutMs(surface: MentorSurface, baseMs: number, env: NodeJS.ProcessEnv = process.env): number {
+  return resolveMentorRoleConfig(surface, env, { timeoutMs: baseMs }).timeoutMs;
+}
 
 export function reasoningAllowanceTokens(effort: string | undefined, env: NodeJS.ProcessEnv = process.env): number {
   const o = parseInt((env.CORTEX_MENTOR_REASONING_ALLOWANCE ?? '').trim(), 10);
@@ -160,6 +196,9 @@ export interface MentorCallMeta {
   truncated: boolean;
   retriedThinkingOff: boolean;
   retryMaxTokensSent?: number;
+  /** the thinking-on request was aborted at firstCallTimeoutMs (before it returned) */
+  abortedFirstCall?: boolean;
+  firstCallTimeoutMs?: number;
 }
 
 export interface MentorWireWithDelivery {
@@ -169,6 +208,7 @@ export interface MentorWireWithDelivery {
   deliveredEffort: string;
   finishReason?: string; contentChars?: number; reasoningTokens?: number; completionTokens?: number;
   maxTokensSent?: number; truncated?: boolean; retriedThinkingOff?: boolean; retryMaxTokensSent?: number;
+  abortedFirstCall?: boolean; firstCallTimeoutMs?: number;
 }
 
 export function describeMentorDelivery(
@@ -191,6 +231,7 @@ export function describeMentorDelivery(
     finishReason: meta.finishReason, contentChars: meta.contentChars, reasoningTokens: meta.reasoningTokens,
     completionTokens: meta.completionTokens, maxTokensSent: meta.maxTokensSent, truncated: meta.truncated,
     retriedThinkingOff: meta.retriedThinkingOff, retryMaxTokensSent: meta.retryMaxTokensSent,
+    abortedFirstCall: meta.abortedFirstCall, firstCallTimeoutMs: meta.firstCallTimeoutMs,
   };
 }
 
@@ -200,8 +241,14 @@ export interface MentorWireHint {
   effort: MentorEffort;
   temperature?: number;
   surface: MentorSurface;
+  /** thinking-on only: abort the first request at this budget so the thinking-off retry fits the surface timeout */
+  firstCallTimeoutMs?: number;
 }
 
 export function mentorWireHint(cfg: MentorRoleConfig): MentorWireHint {
-  return { thinking: cfg.thinking, effort: cfg.effort, surface: cfg.surface, ...(cfg.temperature !== undefined ? { temperature: cfg.temperature } : {}) };
+  return {
+    thinking: cfg.thinking, effort: cfg.effort, surface: cfg.surface,
+    ...(cfg.temperature !== undefined ? { temperature: cfg.temperature } : {}),
+    ...(cfg.thinking && cfg.firstCallTimeoutMs ? { firstCallTimeoutMs: cfg.firstCallTimeoutMs } : {}),
+  };
 }

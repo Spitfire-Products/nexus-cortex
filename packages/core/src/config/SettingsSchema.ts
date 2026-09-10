@@ -112,6 +112,7 @@ export interface EnvironmentVariables {
   CORTEX_MENTOR_CONSULT_REASONING?: string; // 'on' | 'none'
   CORTEX_MENTOR_TEMPERATURE?: string; // number as string, optional
   CORTEX_MENTOR_REASONING_ALLOWANCE?: string; // integer tokens, optional (overrides the per-effort table)
+  CORTEX_MENTOR_THINKING_TIMEOUT_MS?: string; // integer ms, optional (thinking-on mentor surface timeout; overrides the per-effort table)
 
   /** Enable turn-based periodic mentorship review */
   MENTORSHIP_TURN_BASED_ENABLED?: string; // 'true' | 'false'
@@ -409,6 +410,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_MENTOR_CONSULT_REASONING: 'none',
   CORTEX_MENTOR_TEMPERATURE: '',
   CORTEX_MENTOR_REASONING_ALLOWANCE: '',
+  CORTEX_MENTOR_THINKING_TIMEOUT_MS: '',
   MENTORSHIP_TURN_BASED_ENABLED: 'false',
   MENTORSHIP_TURN_INTERVAL: '10',
   MENTORSHIP_INTERLEAVED_THINKING: 'false',
@@ -802,6 +804,14 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_MENTOR_TEMPERATURE',
     displayName: 'Mentor Temperature',
     description: 'Optional sampling temperature for mentor calls (0-2). Empty = adapter default (0.7).',
+    type: 'string',
+    category: 'mentorship',
+    default: ''
+  },
+  {
+    key: 'CORTEX_MENTOR_THINKING_TIMEOUT_MS',
+    displayName: 'Mentor Thinking Timeout (ms)',
+    description: 'Surface timeout for a thinking-on mentor call (lift planner, EndTurn resolver, loop-exit planner): max(surface timeout, this). Empty = per-effort table low 120000 / medium 180000 / high 240000 / max 300000. The first (thinking-on) request is aborted at 60% so the thinking-off retry fits.',
     type: 'string',
     category: 'mentorship',
     default: ''

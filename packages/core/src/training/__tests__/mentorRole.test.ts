@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveMentorRoleConfig, describeMentorWire, mentorWireHint, reasoningAllowanceTokens, describeMentorDelivery } from '../mentorRole.js';
+import { resolveMentorRoleConfig, describeMentorWire, mentorWireHint, reasoningAllowanceTokens, describeMentorDelivery, thinkingTimeoutMs, mentorSurfaceTimeoutMs } from '../mentorRole.js';
 
 describe('mentorRole — the mentor as a first-class resolved role', () => {
   it('planner surfaces think by default at the surface effort; model from MENTORSHIP_HELPER_MODEL', () => {
@@ -33,7 +33,8 @@ describe('mentorRole — the mentor as a first-class resolved role', () => {
   });
   it('the wire hint carries only what the adapter needs', () => {
     const h = mentorWireHint(resolveMentorRoleConfig('lift-plan', {} as any, { effort: 'high' }));
-    expect(h).toEqual({ thinking: true, effort: 'high', surface: 'lift-plan' });
+    // 4.106.2: a thinking-on hint also carries the first-call budget (60% of the thinking-aware timeout: max(90 s, 240 s) → 144 s)
+    expect(h).toEqual({ thinking: true, effort: 'high', surface: 'lift-plan', firstCallTimeoutMs: 144000 });
   });
 });
 
@@ -83,5 +84,28 @@ describe('describeMentorDelivery — who actually delivered the mentor text (tra
   });
   it('a thinking-off request that delivered → thinking-off', () => {
     expect(describeMentorDelivery({ ...wire, thinking: false, effort: 'none' }, meta({ contentChars: 500, thinking: false, maxTokensSent: 4000 }))).toMatchObject({ deliveredBy: 'thinking-off', deliveredThinking: false, deliveredEffort: 'none' });
+  });
+});
+
+
+describe('thinking-aware surface timeout (4.106.2)', () => {
+  it('per-effort table, env override, and thinking-on = max(surface, table); thinking-off keeps the surface timeout', () => {
+    expect(thinkingTimeoutMs('low', {} as any)).toBe(120000);
+    expect(thinkingTimeoutMs('max', {} as any)).toBe(300000);
+    expect(thinkingTimeoutMs('max', { CORTEX_MENTOR_THINKING_TIMEOUT_MS: '45000' } as any)).toBe(45000);
+    expect(mentorSurfaceTimeoutMs('endturn-resolver', 90000, { CORTEX_MENTOR_REASONING: 'on', CORTEX_MENTOR_EFFORT: 'high' } as any)).toBe(240000);
+    expect(mentorSurfaceTimeoutMs('endturn-resolver', 400000, { CORTEX_MENTOR_REASONING: 'on', CORTEX_MENTOR_EFFORT: 'high' } as any)).toBe(400000);
+    expect(mentorSurfaceTimeoutMs('endturn-resolver', 90000, { CORTEX_MENTOR_REASONING: 'none' } as any)).toBe(90000);
+    expect(mentorSurfaceTimeoutMs('mentor-consult', 20000, {} as any)).toBe(20000); // consult is thinking-off by default
+  });
+  it('the wire hint carries firstCallTimeoutMs (60% of the thinking-aware timeout) only when thinking is on', () => {
+    const on = resolveMentorRoleConfig('lift-plan', { CORTEX_MENTOR_REASONING: 'on', CORTEX_MENTOR_EFFORT: 'max' } as any, { timeoutMs: 90000 });
+    expect(on.timeoutMs).toBe(300000);
+    expect(on.firstCallTimeoutMs).toBe(180000);
+    expect(mentorWireHint(on).firstCallTimeoutMs).toBe(180000);
+    const off = resolveMentorRoleConfig('lift-plan', { CORTEX_MENTOR_REASONING: 'none' } as any, { timeoutMs: 90000 });
+    expect(off.timeoutMs).toBe(90000);
+    expect(off.firstCallTimeoutMs).toBeUndefined();
+    expect(mentorWireHint(off).firstCallTimeoutMs).toBeUndefined();
   });
 });

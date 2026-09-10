@@ -1332,7 +1332,9 @@ so the tick can bank the beat — (a) is cheaper and touch-free.
 `CORTEX_MENTOR_REASONING_ALLOWANCE`, finish_reason/reasoning_tokens read, one thinking-off retry on blank, call meta banked on every
 mentor event (`finishReason/contentChars/reasoningTokens/maxTokensSent/truncated/retriedThinkingOff/retryMaxTokensSent`), blank
 resolver verdict → ABSTAIN (`blank:true, meets:false`; event `abstained+blank+failOpen`) — operator decision. Tests: adapter 12,
-mentorRole 9, resolver 14 (scoped). Loop-block escalation observability (item 5) NOT in this release. **UNTESTED on the bench:** the
+mentorRole 9, resolver 14 (scoped). Loop-block escalation observability (item 5) NOT in this release. **4.106.1:** every mentor event on every path banks
+`deliveredBy` (thinking-on | thinking-off | thinking-off-retry | none) + `deliveredThinking`/`deliveredEffort` (operator: a
+thinking-off rescue must never read as a thinking-on success); the middleware clears the call meta before each mentor call. **UNTESTED on the bench:** the
 flash-none vs flash-high re-pilot (K=2, loop population, pin 4.106.0) is the efficacy test; adjudicate on DELIVERY counts.
 **Evidence (cell-m-p3, 4.105.0, 32 sessions):** with `CORTEX_MENTOR_REASONING=on`, deepseek-v4-pro delivered 0/10 lift plans and
 1/8 resolver verdicts (blank after 50–75 s); deepseek-flash 3/10 plans, 2/9 verdicts. Thinking-OFF arms: 8/8 plans (≈5 KB),

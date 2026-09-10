@@ -70,7 +70,7 @@ import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLift
 import { sliceReadFile, decideSliceBlock } from './sliceBlock.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
 import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig } from '../training/judgeEvidence.js';
-import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, type MentorCallMeta } from '../training/mentorRole.js';
+import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, mentorSurfaceTimeoutMs, type MentorCallMeta } from '../training/mentorRole.js';
 import { resolveOuterToolDeadlineMs } from './outerToolTimeout.js';
 import { resolveTurnDeadlineMs, timeBudgetState, timeBudgetWarnNudge } from './timeBudget.js';
 import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
@@ -816,7 +816,7 @@ export class CortexOrchestrator {
       // the model's first action happened to observe. Bounded + fail-open (partial stdout on
       // timeout/non-zero is still useful; empty on total failure → plan from observations alone).
       const envReport = this.gatherEnvReport();
-      const timeoutMs = parseInt(process.env.CORTEX_LIFT_PLAN_TIMEOUT_MS ?? '90000', 10);
+      const timeoutMs = mentorSurfaceTimeoutMs('lift-plan', parseInt(process.env.CORTEX_LIFT_PLAN_TIMEOUT_MS ?? '90000', 10)); // thinking-aware
       const t0 = Date.now();
       const plan = await withTimeout(
         this.helperMiddleware.generateTaskPlan({
@@ -981,7 +981,7 @@ export class CortexOrchestrator {
         const cmd = detectCheckCommand(judgeCwd);
         if (cmd) checkResult = runCheck(judgeCwd, cmd, jcfg);
       }
-      const timeoutMs = parseInt(process.env.CORTEX_ENDTURN_RESOLVER_TIMEOUT_MS ?? '90000', 10);
+      const timeoutMs = mentorSurfaceTimeoutMs('endturn-resolver', parseInt(process.env.CORTEX_ENDTURN_RESOLVER_TIMEOUT_MS ?? '90000', 10)); // thinking-aware
       const t0 = Date.now();
       const text = await withTimeout(
         this.helperMiddleware.evaluateEndTurn({
@@ -9159,7 +9159,7 @@ export class CortexOrchestrator {
               effort: cfg.effort,
               helperModelId: this.config.reactiveMentorship?.helperModelId,
             }),
-            cfg.timeoutMs,
+            mentorSurfaceTimeoutMs('loop-exit-planner', cfg.timeoutMs), // thinking-aware
           );
           plan = String(text ?? '');
           verdict = parseLoopExitVerdict(plan);

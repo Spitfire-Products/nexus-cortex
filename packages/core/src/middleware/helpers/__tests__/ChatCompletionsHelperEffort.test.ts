@@ -14,6 +14,10 @@ vi.mock('../../../orchestrator/cortexProxyFetch.js', () => ({
   cortexProxyFetch: vi.fn(async (_url: any, init: any) => {
     captured.push(JSON.parse(init.body));
     const next = scripted.length ? scripted.shift() : { content: 'ok', finish_reason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } };
+    if (next.hang) {
+      // a request that never returns unless aborted (simulates a thinking-on call reasoning past its budget)
+      return new Promise((_res, rej) => { init.signal?.addEventListener('abort', () => { const e: any = new Error('The operation was aborted'); e.name = 'AbortError'; rej(e); }); });
+    }
     return { ok: true, json: async () => ({ id: 'x', object: 'chat.completion', created: 0, model: 'deepseek-flash', choices: [{ index: 0, message: { role: 'assistant', content: next.content, reasoning_content: next.reasoning_content }, finish_reason: next.finish_reason }], usage: next.usage }) } as any;
   }),
 }));
@@ -147,5 +151,31 @@ describe('HB-MENTOR-BUDGET — reasoning shares max_tokens, so a thinking-on men
     await a.generate(msgs, { ...base, mentorRole: { thinking: true, effort: 'low', surface: 'endturn-resolver' } }, 4000);
     expect(captured.length).toBe(1);
     expect(a.lastCallMeta).toMatchObject({ thinking: true, truncated: false, retriedThinkingOff: false, reasoningTokens: 700, maxTokensSent: 8000 });
+  });
+});
+
+
+describe('thinking-aware first-call abort (4.106.2) — a thinking-on call that outruns its budget is aborted and rescued thinking-off', () => {
+  beforeEach(() => { captured.length = 0; scripted.length = 0; process.env.DEEPSEEK_API_KEY = 'test'; });
+
+  it('aborts the first request at firstCallTimeoutMs, retries thinking-off, banks abortedFirstCall + thinking-off-retry facts', async () => {
+    scripted.push({ hang: true });
+    scripted.push({ content: 'VERDICT: MEETS', finish_reason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 10, total_tokens: 11 } });
+    const a = new ChatCompletionsAPIHelperAdapter();
+    const t0 = Date.now();
+    const out = await a.generate(msgs, { ...base, mentorRole: { thinking: true, effort: 'max', surface: 'endturn-resolver', firstCallTimeoutMs: 40 } }, 4000);
+    expect(out).toBe('VERDICT: MEETS');
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(captured.length).toBe(2);
+    expect(captured[0].reasoning_effort).toBe('max');
+    expect(captured[1].thinking).toEqual({ type: 'disabled' });
+    expect(a.lastCallMeta).toMatchObject({ thinking: true, truncated: true, retriedThinkingOff: true, abortedFirstCall: true, firstCallTimeoutMs: 40, contentChars: 14 });
+  });
+
+  it('no firstCallTimeoutMs on the hint → no abort controller, single request as before', async () => {
+    const a = new ChatCompletionsAPIHelperAdapter();
+    await a.generate(msgs, { ...base, mentorRole: { thinking: true, effort: 'low', surface: 'lift-plan' } }, 4000);
+    expect(captured.length).toBe(1);
+    expect(a.lastCallMeta?.abortedFirstCall).toBeUndefined();
   });
 });
