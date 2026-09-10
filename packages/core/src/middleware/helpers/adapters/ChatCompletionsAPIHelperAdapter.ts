@@ -385,12 +385,15 @@ export class ChatCompletionsAPIHelperAdapter extends BaseHelperAdapter {
       headers[config.api.versionHeader.name] = config.api.versionHeader.value;
     }
 
+    // MENTOR ROLE (2026-09-10): a mentor call carries `mentorRole` (thinking/effort/temperature) on the config —
+    // set by HelperModelMiddleware.generateGuidance from training/mentorRole.ts. Helper-role calls carry none.
+    const mentorRole = (config as unknown as { mentorRole?: { thinking: boolean; effort: string; temperature?: number } }).mentorRole;
     // Build request body.
     const requestBody: ChatCompletionsRequest = {
       model: config.id,
       messages,
       max_tokens: Math.min(maxTokens, config.limits.outputTokens),
-      temperature: 0.7,
+      temperature: mentorRole?.temperature ?? 0.7,
       // THINKING-MODE TOGGLE (DeepSeek dual-mode; validated 2026-08-27 + api-docs.deepseek.com/
       // guides/thinking_mode): helper configs set reasoning_effort:'none' to DISABLE thinking.
       // deepseek-v4-* default to thinking (effort 'high'), which under a small helper cap spends
@@ -398,18 +401,17 @@ export class ChatCompletionsAPIHelperAdapter extends BaseHelperAdapter {
       // Helper tasks are simple → no reasoning wanted (reliable content, cheaper, faster).
       // Only sent when the card specifies reasoning.defaultEffort, so non-DeepSeek helpers
       // are unaffected.
-      // 🔴 MENTOR ROLES (HB-MENTOR-THINKING, 2026-09-10): generateGuidance sets `reasoning.effort` +
-      // `effortExplicit` for the lift planner / EndTurn resolver / deadline exit / loop-exit planner /
-      // mentor consult — the "@max" every ledger line describes. Until 4.103.0 this adapter never read
-      // that field, so every registry-resolved DeepSeek mentor call fell through to the helper-role
-      // "thinking disabled" branch: the judges and planners NEVER reasoned (wire-verified 2026-09-10:
-      // thinking:{disabled} → 0 reasoning tokens on both deepseek-flash and deepseek-v4-pro).
-      // Precedence: helper-role defaultEffort (cheap configs, 'none') > explicit mentor effort > disabled.
+      // 🔴 MENTOR ROLE (HB-MENTOR-THINKING, 2026-09-10): until 4.103.0 this adapter never read the effort the
+      // mentor surfaces set, so every registry-resolved DeepSeek mentor call fell through to the helper-role
+      // "thinking disabled" branch (wire-verified: thinking:{disabled} → 0 reasoning tokens). Precedence now:
+      // helper-role defaultEffort (cheap configs, 'none') > mentorRole.thinking → reasoning_effort > mentorRole
+      // thinking-off → disabled > DeepSeek registry-card fallback → disabled.
       ...(config.reasoning?.defaultEffort
         ? { reasoning_effort: config.reasoning.defaultEffort }
-        : (config.reasoning as { effortExplicit?: boolean; effort?: string } | undefined)?.effortExplicit
-            && ['low', 'medium', 'high', 'max'].includes(String((config.reasoning as { effort?: string }).effort))
-          ? { reasoning_effort: String((config.reasoning as { effort?: string }).effort) }
+        : mentorRole && mentorRole.thinking
+          ? { reasoning_effort: mentorRole.effort }
+        : mentorRole && !mentorRole.thinking && config.provider === 'deepseek'
+          ? { thinking: { type: 'disabled' } }
         : config.provider === 'deepseek' && config.reasoning?.supported
           // 🔴 Registry-resolved deepseek helpers (e.g. MENTORSHIP_HELPER_MODEL=
           // deepseek-v4-pro hits the MAIN card via getHelperModelConfig priority 1,

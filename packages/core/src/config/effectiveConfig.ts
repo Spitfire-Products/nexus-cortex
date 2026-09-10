@@ -44,6 +44,20 @@ type LeverSpec = {
 
 const GROUPS: Array<{ group: string; levers: LeverSpec[] }> = [
   {
+    group: 'Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)',
+    levers: [
+      { key: 'CORTEX_MENTOR_REASONING', what: 'Planner surfaces (lift / EndTurn resolver / deadline exit / loop-exit) send their *_EFFORT on the wire (thinking ON) — on | none (= the pre-4.103.0 thinking-off behaviour every mentor result to date was measured under)', codeDefault: 'on', kind: 'value' },
+      { key: 'CORTEX_MENTOR_CONSULT_REASONING', what: 'AskForAdvice consult hint reasons (on) or stays thinking-off (none; 08-30: thinking-on hints came back blank under the 400-token consult budget)', codeDefault: 'none', kind: 'value' },
+      { key: 'CORTEX_MENTOR_TEMPERATURE', what: 'Optional sampling temperature for mentor calls; empty = adapter default 0.7', codeDefault: '(unset)', kind: 'value' },
+      { key: 'CORTEX_LIFT_PLAN_EFFORT', what: 'Lift planner reasoning effort (sent only when CORTEX_MENTOR_REASONING=on)', codeDefault: 'max', kind: 'value' },
+      { key: 'CORTEX_LIFT_PLAN_BUDGET_TOKENS', what: 'Lift planner output budget', codeDefault: '4000', kind: 'value' },
+      { key: 'CORTEX_ENDTURN_RESOLVER_EFFORT', what: 'EndTurn resolver reasoning effort', codeDefault: 'max', kind: 'value' },
+      { key: 'CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS', what: 'EndTurn resolver output budget', codeDefault: '4000', kind: 'value' },
+      { key: 'CORTEX_DEADLINE_EXIT_MENTOR_EFFORT', what: 'Deadline exit planner reasoning effort', codeDefault: 'max', kind: 'value' },
+      { key: 'CORTEX_DEADLINE_EXIT_MENTOR_BUDGET_TOKENS', what: 'Deadline exit planner output budget cap', codeDefault: '2000', kind: 'value' },
+    ],
+  },
+  {
     group: 'Guards (the protection stack — see CONFIG_AUDIT_2026-08-31)',
     levers: [
       { key: 'CORTEX_NEARDUP_BREAKER', what: 'Detects "same approach retried with small tweaks" and forces a strategy change (targets the retry-loop class)', codeDefault: 'false', kind: 'flag-true' },

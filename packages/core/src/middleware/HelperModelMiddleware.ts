@@ -18,6 +18,7 @@
  */
 
 import { frameHelperPrompt, type HelperFrameSpec } from './helpers/helperFrame.js';
+import { resolveMentorRoleConfig, mentorWireHint } from '../training/mentorRole.js';
 import { resolveVisionHelperModel } from '../tools/ToolProfile.js';
 import { hasImageBlocks, extractImages, replaceImageBlocks, markerFor } from './helpers/helperImageBlocks.js';
 import {
@@ -1292,13 +1293,11 @@ Produce the FULL updated CORTEX.md. Rules, in priority order:
     let helperConfig = this.getHelperModelConfig(modelId);
     // Optional per-call reasoning-effort override (e.g. 'max' for the lift planner). Only applies
     // when the model's reasoning is toggleable; clone so the shared registry config is not mutated.
-    if (spec.effort && (helperConfig as any).reasoning?.toggleable) {
-      // `effortExplicit` tells the ChatCompletions helper adapter this is a MENTOR call that wants
-      // thinking ON at this effort (HB-MENTOR-THINKING, 2026-09-10) — the helper-role default stays "off".
-      helperConfig = {
-        ...helperConfig,
-        reasoning: { ...(helperConfig as any).reasoning, effort: spec.effort, effortExplicit: true },
-      } as ModelConfig;
+    // MENTOR ROLE (2026-09-10): a mentor call carries its resolved role on the request as `mentorRole`
+    // (thinking on/off, effort, temperature). The adapters read THAT — never inferred from the card —
+    // so the wire matches the ledger. Helper-role calls carry nothing and keep their thinking-off default.
+    if (spec.mentor) {
+      helperConfig = { ...helperConfig, mentorRole: mentorWireHint(spec.mentor) } as ModelConfig;
     }
     const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
     const prompt = frameHelperPrompt(spec, body);
@@ -1488,6 +1487,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
             ? 'Run a short structured diagnosis to isolate the blocker. Do not provide the solution or code.'
             : 'Give a directed hint or redirection. Do not provide the solution or code.',
         outputBudgetTokens: 400,
+        mentor: resolveMentorRoleConfig('mentor-consult', process.env, { modelId: context.helperModelId, outputBudgetTokens: 400 }),
       },
       body,
       context.helperModelId,
@@ -1518,6 +1518,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
     return this.generateGuidance(
       {
         surface: 'lift-plan',
+        mentor: resolveMentorRoleConfig('lift-plan', process.env, { modelId: context.helperModelId, effort: cfg.effort, outputBudgetTokens: cfg.outputBudgetTokens }),
         persona: PLANNER_SYSTEM,
         task:
           'Produce the criteria-anchored numbered plan (or a RETIRE plan). Do not write the full ' +
@@ -1561,6 +1562,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
     return this.generateGuidance(
       {
         surface: 'endturn-resolver',
+        mentor: resolveMentorRoleConfig('endturn-resolver', process.env, { modelId: context.helperModelId, effort: cfg.effort, outputBudgetTokens: cfg.outputBudgetTokens }),
         persona: resolverSystemPrompt(cfg.abstain),
         task: cfg.abstain
           ? 'Adjudicate whether the work product meets the task requirements. First line VERDICT: MEETS|GAP|RETIRE; ' +
@@ -1603,6 +1605,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
     return this.generateGuidance(
       {
         surface: 'deadline-exit-mentor',
+        mentor: resolveMentorRoleConfig('deadline-exit-mentor', process.env, { modelId: context.helperModelId, effort: context.effort, outputBudgetTokens: context.outputBudgetTokens }),
         persona: DEADLINE_EXIT_SYSTEM,
         task:
           'Checkpoint the turn near its deadline. First line VERDICT: CONTINUE|FINISH|ACTION|RETIRE; ' +
@@ -1640,6 +1643,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
     return this.generateGuidance(
       {
         surface: 'loop-exit-planner',
+        mentor: resolveMentorRoleConfig('loop-exit-planner', process.env, { modelId: context.helperModelId, effort: context.effort, outputBudgetTokens: context.outputBudgetTokens }),
         persona: LOOP_EXIT_SYSTEM.replace('{{TOOL}}', context.loopingTool),
         task:
           'The junior is stuck in a non-converging loop on the tool above, blocked twice. First line ' +

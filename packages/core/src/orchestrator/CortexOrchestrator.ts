@@ -70,6 +70,7 @@ import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLift
 import { sliceReadFile, decideSliceBlock } from './sliceBlock.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
 import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig } from '../training/judgeEvidence.js';
+import { resolveMentorRoleConfig, describeMentorWire } from '../training/mentorRole.js';
 import { resolveOuterToolDeadlineMs } from './outerToolTimeout.js';
 import { resolveTurnDeadlineMs, timeBudgetState, timeBudgetWarnNudge } from './timeBudget.js';
 import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
@@ -597,6 +598,10 @@ export class CortexOrchestrator {
   private readonly loopBlockCounts = new Map<string, number>();
   private loopBlockEscalate = false;
   private liftPlanDelivered = false; // LIFT_MENTOR_PLANNER: bounded mentor-planner at the lift, one-shot
+  /** MENTOR ROLE: what the wire carried for a mentor surface (banked on every mentor event; see mentorRole.ts). */
+  private mentorWire(surface: 'lift-plan' | 'endturn-resolver' | 'deadline-exit-mentor' | 'loop-exit-planner' | 'mentor-consult', effort?: string, budget?: number) {
+    return describeMentorWire(resolveMentorRoleConfig(surface, process.env, { modelId: this.config.reactiveMentorship?.helperModelId, effort, outputBudgetTokens: budget }));
+  }
   private cachedEnvReport?: string;  // ENV_RECON_COMMAND output; cached for the lift planner, REFRESHED for the judges (HB-JUDGE-GROUNDING)
   private taskStartMs = 0;            // HB-JUDGE-GROUNDING: the user-turn start — the workspace delta is 'files changed since here'
   private endTurnResolverRejects = 0; // endTurnResolver: GAP vetoes so far this task (bounded by maxRejects → fallback-accept)
@@ -839,7 +844,7 @@ export class CortexOrchestrator {
         kind: 'lift_plan',
         // OBSERVABILITY (resolver-AB follow-up): bank the plan TEXT + latency, not just counts —
         // so a k=5 run can score plan QUALITY (and read the reasoning behind a RETIRE).
-        detail: { fired: true, planChars: plan.length, retire, criteriaStated, latencyMs, planText: plan.slice(0, 4000) },
+        detail: { fired: true, planChars: plan.length, retire, criteriaStated, latencyMs, mentor: this.mentorWire('lift-plan', resolveLiftPlanConfig().effort, resolveLiftPlanConfig().outputBudgetTokens), planText: plan.slice(0, 4000) },
       }).catch(() => {});
       if (this.config.debug) {
         console.log(`[LiftPlan] plan delivered at lift (${plan.length} chars, retire=${retire}, criteria=${criteriaStated})`);
@@ -1001,6 +1006,7 @@ export class CortexOrchestrator {
           planChars: verdict.plan.length, rejects: this.endTurnResolverRejects, parsed: verdict.parsed,
           latencyMs, rawLen: (text ?? '').length,
           deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,
+          mentor: this.mentorWire('endturn-resolver', cfg.effort, cfg.outputBudgetTokens),
           planText: verdict.plan.slice(0, 4000),
           workProductSample: workProduct.slice(0, 1500),
           attestation: attestation.slice(0, 800),
@@ -1072,7 +1078,7 @@ export class CortexOrchestrator {
         kind: 'deadline_exit_mentor',
         detail: {
           decision: v.decision, parsed: v.parsed, remainingMs, latencyMs: Date.now() - t0,
-          detailText: v.detail.slice(0, 2000), workProductSample: workProduct.slice(0, 1200),
+          detailText: v.detail.slice(0, 2000), workProductSample: workProduct.slice(0, 1200), mentor: this.mentorWire('deadline-exit-mentor', cfg.effort, outputBudgetTokens),
         },
       }).catch(() => {});
       switch (v.decision) {
@@ -9147,7 +9153,7 @@ export class CortexOrchestrator {
       const content = plan
         ? `Tool "${toolUse.name}" is DISABLED: repeated loop interventions have not broken the pattern. A senior engineer reviewed your situation and gave this exit plan:\n\n${plan}\n\nFollow this instead of retrying "${toolUse.name}".`
         : `Tool "${toolUse.name}" is DISABLED: repeated loop interventions have not broken this pattern. Stop retrying "${toolUse.name}", re-read the task requirements, and take a fundamentally different approach.`;
-      if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'loop_tool_block', toolName: toolUse.name, detail: { trigger: this.loopBlockTrigger, escalated: true, consulted: !!plan, verdict } }).catch(() => {});
+      if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'loop_tool_block', toolName: toolUse.name, detail: { trigger: this.loopBlockTrigger, escalated: true, consulted: !!plan, verdict, mentor: this.mentorWire('loop-exit-planner', resolveLoopExitConfig().effort, resolveLoopExitConfig().outputBudgetTokens) } }).catch(() => {});
       if (this.config.debug) console.log(`[LoopBlock] ESCALATED ${toolUse.name} → exit-planner (${plan ? verdict + ' plan delivered' : 'fail-open'})`);
       return { tool_use_id: toolUse.id, tool_name: toolUse.name, content, is_error: true, metadata: { loopToolBlock: true, escalated: true, verdict } };
     }

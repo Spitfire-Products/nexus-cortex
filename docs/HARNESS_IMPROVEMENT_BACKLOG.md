@@ -1386,8 +1386,13 @@ mentor consult: `*_EFFORT` defaults 'max'). `HelperModelMiddleware.generateGuida
 `reasoning.effort` was never read. **Wire-verified 2026-09-10:** `thinking:{disabled}` → 0 reasoning tokens on
 deepseek-flash AND deepseek-v4-pro; `reasoning_effort:'max'` → reasoning present. So every judge and planner verdict in
 every cell since 08-30 (cell-d-k3's 47 resolver holds, 8 exit-planner calls, 42 lift plans; k5v2; resolver-k5 …) was a
-NON-THINKING call. "pro@max mentor" never existed; the judge-quality findings (HB-JUDGE-GROUNDING) were measured on a
-mentor that could not reason.
+NON-THINKING call. "pro@max mentor" never existed on the wire. 🔴 READ THIS RIGHT (operator 2026-09-10): those non-thinking
+mentors were NOT useless — the resolver A/B (09-05) and resolver k=5 (09-06, +17pp, 5 help / 0 hurt) banked real 1.5–7.3K-char
+plans with thinking OFF, and the thinking-ON test that WAS run (AskForAdvice, 08-27/30) came back blank (reasoning ate the
+budget) — that is why the helper-role rule exists and why the later mentor surfaces inherited it. Turning mentor thinking ON
+is therefore an UNTESTED change, not a restored one: `CORTEX_MENTOR_REASONING` (on|none, 4.104.0) keeps the measured
+baseline reachable and cell-m A/Bs {pro, flash} × {on, none} before the k=5 pins it. HB-JUDGE-GROUNDING's metrics were
+measured on the thinking-off judge and must be re-baselined per arm.
 **Fix (4.103.0):** generateGuidance marks the clone `reasoning.effortExplicit = true`; the adapter precedence is now
 helper-role `defaultEffort` ('none', cheap configs) > explicit mentor `effort` (sent as `reasoning_effort`) > DeepSeek
 thinking-disabled fallback. Non-mentor helper calls (compaction, summaries, vision hand-off) are unchanged. Tests in

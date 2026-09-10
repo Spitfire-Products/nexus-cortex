@@ -106,6 +106,9 @@ export interface EnvironmentVariables {
 
   /** Helper model for mentorship (overrides HELPER_MODEL_ID if set) */
   MENTORSHIP_HELPER_MODEL?: string;
+  CORTEX_MENTOR_REASONING?: string; // 'on' | 'none'
+  CORTEX_MENTOR_CONSULT_REASONING?: string; // 'on' | 'none'
+  CORTEX_MENTOR_TEMPERATURE?: string; // number as string, optional
 
   /** Enable turn-based periodic mentorship review */
   MENTORSHIP_TURN_BASED_ENABLED?: string; // 'true' | 'false'
@@ -397,6 +400,9 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   MENTORSHIP_KEYWORDS_ENABLED: 'false',
   MENTORSHIP_CUSTOM_KEYWORDS: '',
   MENTORSHIP_HELPER_MODEL: 'deepseek-flash',
+  CORTEX_MENTOR_REASONING: 'on',
+  CORTEX_MENTOR_CONSULT_REASONING: 'none',
+  CORTEX_MENTOR_TEMPERATURE: '',
   MENTORSHIP_TURN_BASED_ENABLED: 'false',
   MENTORSHIP_TURN_INTERVAL: '10',
   MENTORSHIP_INTERLEAVED_THINKING: 'false',
@@ -753,6 +759,30 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     type: 'string',
     category: 'mentorship',
     default: 'deepseek-flash'
+  },
+  {
+    key: 'CORTEX_MENTOR_REASONING',
+    displayName: 'Mentor Reasoning (planner surfaces)',
+    description: 'Whether the MENTOR surfaces (lift planner, EndTurn resolver, deadline exit planner, loop-exit planner) send their effort on the wire (thinking ON) or run thinking-off like helper calls. on (default) | none. Every mentor result before 4.103.0 was measured thinking-off.',
+    type: 'string',
+    category: 'mentorship',
+    default: 'on'
+  },
+  {
+    key: 'CORTEX_MENTOR_CONSULT_REASONING',
+    displayName: 'Mentor Reasoning (AskForAdvice consult)',
+    description: 'Whether the AskForAdvice consult hint reasons (on) or stays thinking-off (none, default — the 08-30 measurement: thinking-on hints came back blank under the small consult budget).',
+    type: 'string',
+    category: 'mentorship',
+    default: 'none'
+  },
+  {
+    key: 'CORTEX_MENTOR_TEMPERATURE',
+    displayName: 'Mentor Temperature',
+    description: 'Optional sampling temperature for mentor calls (0-2). Empty = adapter default (0.7).',
+    type: 'string',
+    category: 'mentorship',
+    default: ''
   },
   {
     key: 'MENTORSHIP_TURN_BASED_ENABLED',

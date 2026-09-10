@@ -14,6 +14,9 @@
  */
 
 export interface HelperFrameSpec {
+  /** MENTOR role (2026-09-10): the resolved mentor config for this call — carried to the adapters as `mentorRole`
+   *  (thinking on/off, effort, temperature). Helper-role calls leave it unset. See training/mentorRole.ts. */
+  mentor?: import('../../training/mentorRole.js').MentorRoleConfig;
   /** Surface id for provenance/telemetry (e.g. 'compaction', 'error-guidance'). */
   surface: string;
   /** One-line persona ("You are …"). */
