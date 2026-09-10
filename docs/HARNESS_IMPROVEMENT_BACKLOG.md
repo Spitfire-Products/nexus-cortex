@@ -1328,6 +1328,12 @@ task in the slice is banked; or (b) the supervisor sleeps ≥ one tick period (�
 so the tick can bank the beat — (a) is cheaper and touch-free.
 
 ## HB-MENTOR-BUDGET — thinking-ON mentor calls return EMPTY output because reasoning shares `max_tokens` (2026-09-10, cell-m pilot)
+**STATUS: SHIPPED 4.106.0 (commit bd6438612e, tag v4.106.0, 2026-09-10 22:05Z).** Built as specified below: allowance table +
+`CORTEX_MENTOR_REASONING_ALLOWANCE`, finish_reason/reasoning_tokens read, one thinking-off retry on blank, call meta banked on every
+mentor event (`finishReason/contentChars/reasoningTokens/maxTokensSent/truncated/retriedThinkingOff/retryMaxTokensSent`), blank
+resolver verdict → ABSTAIN (`blank:true, meets:false`; event `abstained+blank+failOpen`) — operator decision. Tests: adapter 12,
+mentorRole 9, resolver 14 (scoped). Loop-block escalation observability (item 5) NOT in this release. **UNTESTED on the bench:** the
+flash-none vs flash-high re-pilot (K=2, loop population, pin 4.106.0) is the efficacy test; adjudicate on DELIVERY counts.
 **Evidence (cell-m-p3, 4.105.0, 32 sessions):** with `CORTEX_MENTOR_REASONING=on`, deepseek-v4-pro delivered 0/10 lift plans and
 1/8 resolver verdicts (blank after 50–75 s); deepseek-flash 3/10 plans, 2/9 verdicts. Thinking-OFF arms: 8/8 plans (≈5 KB),
 12/12 verdicts, 5–9 s. Every blank resolver fail-opened to `meets:true` (endTurnResolver.ts:132) → the EndTurn gate

@@ -70,7 +70,7 @@ import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLift
 import { sliceReadFile, decideSliceBlock } from './sliceBlock.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
 import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig } from '../training/judgeEvidence.js';
-import { resolveMentorRoleConfig, describeMentorWire } from '../training/mentorRole.js';
+import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, type MentorCallMeta } from '../training/mentorRole.js';
 import { resolveOuterToolDeadlineMs } from './outerToolTimeout.js';
 import { resolveTurnDeadlineMs, timeBudgetState, timeBudgetWarnNudge } from './timeBudget.js';
 import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
@@ -603,8 +603,8 @@ export class CortexOrchestrator {
     const wire = describeMentorWire(resolveMentorRoleConfig(surface, process.env, { modelId: this.config.reactiveMentorship?.helperModelId, effort, outputBudgetTokens: budget }));
     // HB-MENTOR-BUDGET: the call meta (finishReason/contentChars/reasoningTokens/maxTokensSent/truncated/
     // retriedThinkingOff) proves DELIVERY, not just the intended wire config — a blank mentor is visible per event.
-    const meta = (this.helperMiddleware as unknown as { lastMentorCallMeta?: Record<string, unknown> } | undefined)?.lastMentorCallMeta;
-    return meta ? { ...wire, ...meta } : wire;
+    const meta = (this.helperMiddleware as unknown as { lastMentorCallMeta?: MentorCallMeta } | undefined)?.lastMentorCallMeta;
+    return describeMentorDelivery(wire, meta ?? null);
   }
   private cachedEnvReport?: string;  // ENV_RECON_COMMAND output; cached for the lift planner, REFRESHED for the judges (HB-JUDGE-GROUNDING)
   private taskStartMs = 0;            // HB-JUDGE-GROUNDING: the user-turn start — the workspace delta is 'files changed since here'
@@ -830,7 +830,7 @@ export class CortexOrchestrator {
       const latencyMs = Date.now() - t0;
       if (!plan || !plan.trim()) {
         if (store) void store.recordEvent({
-          sessionId, kind: 'lift_plan', detail: { fired: true, planChars: 0, empty: true },
+          sessionId, kind: 'lift_plan', detail: { fired: true, planChars: 0, empty: true, mentor: this.mentorWire('lift-plan', resolveLiftPlanConfig().effort, resolveLiftPlanConfig().outputBudgetTokens) },
         }).catch(() => {});
         return; // fail-open: proceed without a plan
       }
@@ -855,7 +855,7 @@ export class CortexOrchestrator {
       }
     } catch (e: any) {
       if (store) void store.recordEvent({
-        sessionId, kind: 'lift_plan', detail: { fired: true, error: String(e?.message ?? e).slice(0, 120) },
+        sessionId, kind: 'lift_plan', detail: { fired: true, error: String(e?.message ?? e).slice(0, 120), mentor: this.mentorWire('lift-plan') },
       }).catch(() => {});
       if (this.config.debug) console.warn(`[LiftPlan] delivery failed (continuing without): ${e?.message ?? e}`);
     }
@@ -1039,7 +1039,7 @@ export class CortexOrchestrator {
         console.log(`[EndTurnResolver] MEETS — finish confirmed (parsed=${verdict.parsed})`);
       }
     } catch (e: any) {
-      if (store) void store.recordEvent({ sessionId, kind: 'endturn_resolver', detail: { error: String(e?.message ?? e).slice(0, 120) } }).catch(() => {});
+      if (store) void store.recordEvent({ sessionId, kind: 'endturn_resolver', detail: { error: String(e?.message ?? e).slice(0, 120), mentor: this.mentorWire('endturn-resolver') } }).catch(() => {});
       // fail-open: leave the finish accepted
     }
   }
@@ -1104,7 +1104,7 @@ export class CortexOrchestrator {
           return { shouldBreak: false, signal: '' }; // CONTINUE → caller uses the normal warn nudge
       }
     } catch (e: any) {
-      if (store) void store.recordEvent({ sessionId, kind: 'deadline_exit_mentor', detail: { error: String(e?.message ?? e).slice(0, 120) } }).catch(() => {});
+      if (store) void store.recordEvent({ sessionId, kind: 'deadline_exit_mentor', detail: { error: String(e?.message ?? e).slice(0, 120), mentor: this.mentorWire('deadline-exit-mentor') } }).catch(() => {});
       return null; // fail-safe: fall back to the normal warn nudge
     }
   }

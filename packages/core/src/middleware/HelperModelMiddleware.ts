@@ -1298,6 +1298,9 @@ Produce the FULL updated CORTEX.md. Rules, in priority order:
     // so the wire matches the ledger. Helper-role calls carry nothing and keep their thinking-off default.
     if (spec.mentor) {
       helperConfig = { ...helperConfig, mentorRole: mentorWireHint(spec.mentor) } as ModelConfig;
+      // Delivery accounting: clear the previous call's meta BEFORE this call so a timeout (the orchestrator gives
+      // up while the request is in flight) banks `deliveredBy:'none'`, never a stale meta from an earlier surface.
+      this.lastMentorCallMeta = undefined;
     }
     const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
     const prompt = frameHelperPrompt(spec, body);

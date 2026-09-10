@@ -138,6 +138,62 @@ export function describeMentorWire(cfg: MentorRoleConfig): { model: string; thin
   return { model: cfg.modelId, thinking: cfg.thinking, effort: cfg.thinking ? cfg.effort : 'none', budget: cfg.outputBudgetTokens };
 }
 
+/**
+ * DELIVERY (2026-09-10, operator): a mentor event must say WHO delivered the text the model saw, so a thinking-off
+ * rescue (HB-MENTOR-BUDGET retry) is never mistaken for a thinking-on success in the transcripts/decisions:
+ *   thinking-on         — the thinking-on request itself returned content
+ *   thinking-off        — a thinking-off (CORTEX_MENTOR_REASONING=none / consult) request returned content
+ *   thinking-off-retry  — the thinking-on request came back EMPTY; the one thinking-off retry delivered
+ *   none                — nothing usable was delivered (empty after retry, timeout, error, call still in flight)
+ * `thinking`/`effort` on the event keep meaning the REQUESTED wire config; `deliveredThinking`/`deliveredEffort` say what
+ * actually produced the content. Adjudicate mentor efficacy on `deliveredBy`, never on `thinking`.
+ */
+export type MentorDelivery = 'thinking-on' | 'thinking-off' | 'thinking-off-retry' | 'none';
+
+export interface MentorCallMeta {
+  finishReason?: string;
+  contentChars: number;
+  reasoningTokens?: number;
+  completionTokens?: number;
+  maxTokensSent: number;
+  thinking: boolean;
+  truncated: boolean;
+  retriedThinkingOff: boolean;
+  retryMaxTokensSent?: number;
+}
+
+export interface MentorWireWithDelivery {
+  model: string; thinking: boolean; effort: string; budget: number;
+  deliveredBy: MentorDelivery;
+  deliveredThinking: boolean;
+  deliveredEffort: string;
+  finishReason?: string; contentChars?: number; reasoningTokens?: number; completionTokens?: number;
+  maxTokensSent?: number; truncated?: boolean; retriedThinkingOff?: boolean; retryMaxTokensSent?: number;
+}
+
+export function describeMentorDelivery(
+  wire: { model: string; thinking: boolean; effort: string; budget: number },
+  meta?: MentorCallMeta | null,
+): MentorWireWithDelivery {
+  if (!meta) return { ...wire, deliveredBy: 'none', deliveredThinking: false, deliveredEffort: 'none' };
+  const delivered = (meta.contentChars ?? 0) > 0;
+  let deliveredBy: MentorDelivery;
+  if (!delivered) deliveredBy = 'none';
+  else if (meta.retriedThinkingOff) deliveredBy = 'thinking-off-retry';
+  else if (meta.thinking) deliveredBy = 'thinking-on';
+  else deliveredBy = 'thinking-off';
+  const deliveredThinking = deliveredBy === 'thinking-on';
+  return {
+    ...wire,
+    deliveredBy,
+    deliveredThinking,
+    deliveredEffort: deliveredThinking ? wire.effort : 'none',
+    finishReason: meta.finishReason, contentChars: meta.contentChars, reasoningTokens: meta.reasoningTokens,
+    completionTokens: meta.completionTokens, maxTokensSent: meta.maxTokensSent, truncated: meta.truncated,
+    retriedThinkingOff: meta.retriedThinkingOff, retryMaxTokensSent: meta.retryMaxTokensSent,
+  };
+}
+
 /** What the adapters read off a cloned model config for a mentor call. */
 export interface MentorWireHint {
   thinking: boolean;

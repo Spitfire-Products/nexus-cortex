@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveMentorRoleConfig, describeMentorWire, mentorWireHint, reasoningAllowanceTokens } from '../mentorRole.js';
+import { resolveMentorRoleConfig, describeMentorWire, mentorWireHint, reasoningAllowanceTokens, describeMentorDelivery } from '../mentorRole.js';
 
 describe('mentorRole — the mentor as a first-class resolved role', () => {
   it('planner surfaces think by default at the surface effort; model from MENTORSHIP_HELPER_MODEL', () => {
@@ -61,5 +61,27 @@ describe('HB-MENTOR-BUDGET — reasoningAllowanceTokens', () => {
     expect(reasoningAllowanceTokens('max', { CORTEX_MENTOR_REASONING_ALLOWANCE: '3000' } as any)).toBe(3000);
     expect(reasoningAllowanceTokens('max', { CORTEX_MENTOR_REASONING_ALLOWANCE: '0' } as any)).toBe(0);
     expect(reasoningAllowanceTokens('max', { CORTEX_MENTOR_REASONING_ALLOWANCE: 'nope' } as any)).toBe(24000);
+  });
+});
+
+
+describe('describeMentorDelivery — who actually delivered the mentor text (transcript/decisions disambiguation)', () => {
+  const wire = { model: 'deepseek-v4-pro', thinking: true, effort: 'high', budget: 4000 };
+  const meta = (o: Partial<Parameters<typeof describeMentorDelivery>[1] & object>) => ({ contentChars: 0, maxTokensSent: 16000, thinking: true, truncated: false, retriedThinkingOff: false, ...o } as any);
+  it('no meta (timeout / in flight / error) → none, and the requested config is kept', () => {
+    expect(describeMentorDelivery(wire, null)).toMatchObject({ model: 'deepseek-v4-pro', thinking: true, effort: 'high', deliveredBy: 'none', deliveredThinking: false, deliveredEffort: 'none' });
+  });
+  it('thinking-on request that returned content → thinking-on, deliveredEffort = requested effort', () => {
+    expect(describeMentorDelivery(wire, meta({ contentChars: 900, reasoningTokens: 700, finishReason: 'stop' }))).toMatchObject({ deliveredBy: 'thinking-on', deliveredThinking: true, deliveredEffort: 'high', reasoningTokens: 700, maxTokensSent: 16000 });
+  });
+  it('thinking-on request came back EMPTY and the thinking-off retry delivered → thinking-off-retry, NOT thinking-on', () => {
+    const d = describeMentorDelivery(wire, meta({ contentChars: 1200, truncated: true, retriedThinkingOff: true, retryMaxTokensSent: 4000, reasoningTokens: 4000 }));
+    expect(d).toMatchObject({ thinking: true, effort: 'high', deliveredBy: 'thinking-off-retry', deliveredThinking: false, deliveredEffort: 'none', truncated: true, retriedThinkingOff: true, retryMaxTokensSent: 4000 });
+  });
+  it('empty even after the retry → none', () => {
+    expect(describeMentorDelivery(wire, meta({ contentChars: 0, truncated: true, retriedThinkingOff: true }))).toMatchObject({ deliveredBy: 'none', deliveredThinking: false, deliveredEffort: 'none' });
+  });
+  it('a thinking-off request that delivered → thinking-off', () => {
+    expect(describeMentorDelivery({ ...wire, thinking: false, effort: 'none' }, meta({ contentChars: 500, thinking: false, maxTokensSent: 4000 }))).toMatchObject({ deliveredBy: 'thinking-off', deliveredThinking: false, deliveredEffort: 'none' });
   });
 });
