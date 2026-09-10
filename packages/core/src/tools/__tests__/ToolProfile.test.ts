@@ -271,7 +271,7 @@ import { resolveVisionHelperModel } from '../ToolProfile.js';
 describe('VISION_HELPER_MODEL', () => {
   const ORIG_V = process.env.VISION_HELPER_MODEL;
   afterEach(() => { if (ORIG_V === undefined) delete process.env.VISION_HELPER_MODEL; else process.env.VISION_HELPER_MODEL = ORIG_V; });
-  it('defaults to the DeepSeek vision card', () => { delete process.env.VISION_HELPER_MODEL; expect(resolveVisionHelperModel()).toBe('deepseek-v4-flash-vision-exp'); });
+  it('defaults to deepseek-flash (V4.1, multimodal; vision-exp retired 2026-09-10)', () => { delete process.env.VISION_HELPER_MODEL; expect(resolveVisionHelperModel()).toBe('deepseek-flash'); });
   it('honors an explicit card id', () => { process.env.VISION_HELPER_MODEL = 'some-vision-card'; expect(resolveVisionHelperModel()).toBe('some-vision-card'); });
   it('false/off/none disable the hand-off', () => {
     for (const v of ['false', 'off', 'none', '0']) { process.env.VISION_HELPER_MODEL = v; expect(resolveVisionHelperModel()).toBeNull(); }

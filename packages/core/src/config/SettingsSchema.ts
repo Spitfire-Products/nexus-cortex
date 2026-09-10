@@ -383,7 +383,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
 
   // Model Configuration
   DEFAULT_MODEL_ID: 'deepseek-v4-flash',
-  HELPER_MODEL_ID: 'deepseek-v4-flash',
+  HELPER_MODEL_ID: 'deepseek-flash',
 
   // System Settings
   DEBUG: 'false',
@@ -396,7 +396,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   MENTORSHIP_ERROR_THRESHOLD: 'medium',
   MENTORSHIP_KEYWORDS_ENABLED: 'false',
   MENTORSHIP_CUSTOM_KEYWORDS: '',
-  MENTORSHIP_HELPER_MODEL: 'deepseek-v4-pro',
+  MENTORSHIP_HELPER_MODEL: 'deepseek-flash',
   MENTORSHIP_TURN_BASED_ENABLED: 'false',
   MENTORSHIP_TURN_INTERVAL: '10',
   MENTORSHIP_INTERLEAVED_THINKING: 'false',
@@ -445,7 +445,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   ENABLE_LOCAL_CODE_EXECUTION: 'false',
   ENABLE_DEFERRED_TOOL_LOADING: 'true',
   ENABLE_WEBTOOLS: 'auto',
-  VISION_HELPER_MODEL: 'deepseek-v4-flash-vision-exp',
+  VISION_HELPER_MODEL: 'deepseek-flash',
   TOOL_TIMEOUT_MODE: 'auto',
   VISION_HANDOFF_MAX: '8',
   CORTEX_SLICE_NUDGE: 'true',
@@ -752,7 +752,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     description: 'Model for mentorship guidance (any registered model ID)',
     type: 'string',
     category: 'mentorship',
-    default: 'deepseek-v4-pro'
+    default: 'deepseek-flash'
   },
   {
     key: 'MENTORSHIP_TURN_BASED_ENABLED',
@@ -1057,7 +1057,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     description: 'Vision-capable card that reads images on behalf of text-only models: ReadImage sends the image + your question through the helper middleware and returns text (the primary never receives image bytes). Default deepseek-v4-flash-vision-exp (same DeepSeek key). Set false to offer ReadImage only to vision-capable primaries.',
     type: 'string',
     category: 'server_side_tools',
-    default: 'deepseek-v4-flash-vision-exp'
+    default: 'deepseek-flash'
   },
   {
     key: 'ENABLE_WEBTOOLS',

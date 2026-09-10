@@ -1351,7 +1351,7 @@ ${context.content}
     filePath?: string;
     helperModelId?: string;
   }): Promise<string> {
-    const modelId = context.helperModelId || resolveVisionHelperModel() || 'deepseek-v4-flash-vision-exp';
+    const modelId = context.helperModelId || resolveVisionHelperModel() || 'deepseek-flash';
     const helperConfig = this.getHelperModelConfig(modelId);
     const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
     const ask = (context.prompt || '').trim() ||

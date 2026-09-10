@@ -8747,7 +8747,7 @@ export class CortexOrchestrator {
     const queue = this.pendingVisionHandoffs; this.pendingVisionHandoffs = [];
     const max = resolveVisionHandoffMax(process.env);
     for (const h of queue) {
-      const modelId = resolveVisionHelperModel(process.env) || 'deepseek-v4-flash-vision-exp';
+      const modelId = resolveVisionHelperModel(process.env) || 'deepseek-flash';
       if (max > 0 && this.visionHandoffsThisTurn >= max) {
         h.tr.is_error = false;
         h.tr.content =

@@ -138,7 +138,7 @@ export function resolveVisionHelperModel(env: NodeJS.ProcessEnv = process.env): 
   const raw = (env.VISION_HELPER_MODEL ?? '').trim();
   const v = raw.toLowerCase();
   if (v === 'false' || v === 'off' || v === 'none' || v === '0') return null;
-  return raw || 'deepseek-v4-flash-vision-exp';
+  return raw || 'deepseek-flash'; // V4.1 Flash (multimodal); the vision-exp name is retired (2026-09-10)
 }
 
 export function resolveToolProfile(env: NodeJS.ProcessEnv = process.env): ToolProfileName {
