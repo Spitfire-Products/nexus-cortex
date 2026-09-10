@@ -33,7 +33,7 @@ export async function autoResearchFix(options: AutoResearchFixOptions): Promise<
   const json = !!options.json;
 
   const cwd = options.cwd ?? process.cwd();
-  const model = options.model ?? process.env.DEFAULT_MODEL_ID ?? 'deepseek-v4-flash';
+  const model = options.model ?? process.env.DEFAULT_MODEL_ID ?? 'deepseek-flash';
   const prompt = options.promptFile ? readFileSync(options.promptFile, 'utf8') : options.prompt;
 
   if (!prompt) {

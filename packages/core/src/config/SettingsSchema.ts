@@ -382,7 +382,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   ANTHROPIC_PROMPT_CACHING: 'true',
 
   // Model Configuration
-  DEFAULT_MODEL_ID: 'deepseek-v4-flash',
+  DEFAULT_MODEL_ID: 'deepseek-flash',
   HELPER_MODEL_ID: 'deepseek-flash',
 
   // System Settings
@@ -663,7 +663,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     type: 'string',
     category: 'models',
     required: true,
-    default: 'deepseek-v4-flash'
+    default: 'deepseek-flash'
   },
   {
     key: 'HELPER_MODEL_ID',
@@ -671,7 +671,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     description: 'Model for context management and summarization (any registered model ID)',
     type: 'string',
     category: 'models',
-    default: 'deepseek-v4-flash'
+    default: 'deepseek-flash'
   },
 
   // ============================================

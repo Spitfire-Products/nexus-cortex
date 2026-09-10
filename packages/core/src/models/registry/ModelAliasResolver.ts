@@ -77,10 +77,12 @@ export const MODEL_ALIASES: Record<string, string> = {
   // existing agent configs and sessions keep resolving. 'deepseek-coder' was never
   // a registered card, so its self-alias is dropped.
   // ─────────────────────────────────────────────────────────────────
-  'deepseek': 'deepseek-v4-pro',
-  'deepseek-chat': 'deepseek-v4-flash',
-  'reasoner': 'deepseek-v4-pro',
-  'deepseek-reasoner': 'deepseek-v4-pro',
+  // 2026-09-10 catalog collapse: `deepseek-flash` (V4.1 Flash) is the canonical DeepSeek model; V4 Pro retires
+  // 2026-09-14 04:00 UTC and routes to V4.1 Flash. All DeepSeek aliases land on the canonical card.
+  'deepseek': 'deepseek-flash',
+  'deepseek-chat': 'deepseek-flash',
+  'reasoner': 'deepseek-flash',
+  'deepseek-reasoner': 'deepseek-flash',
 
   // ─────────────────────────────────────────────────────────────────
   // Mistral Models

@@ -61,7 +61,7 @@ describe('HelperModelMiddleware', () => {
 
     it('should fall back to deepseek-v4-flash for unknown provider (single-key congruence)', () => {
       const helper = middleware.selectHelperModel('unknown-provider');
-      expect(helper).toBe('deepseek-v4-flash'); // last-resort default: reuse the DeepSeek key, no 2nd API key
+      expect(helper).toBe('deepseek-flash'); // last-resort default: reuse the DeepSeek key, no 2nd API key
     });
 
     it('should be case-insensitive', () => {

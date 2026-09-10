@@ -129,7 +129,7 @@ export const HELPER_MODEL_REGISTRY: Record<string, string> = {
   xai: 'grok-4.3',
 
   // DeepSeek: -> DeepSeek V4 Flash ($0.14/1M tokens; supersedes the deprecated deepseek-chat)
-  deepseek: 'deepseek-v4-flash',
+  deepseek: 'deepseek-flash',
 
   // Mistral: Use same model (cost-effective already)
   mistral: 'mistral-small',
@@ -704,7 +704,7 @@ export class HelperModelMiddleware {
     // Gemma/CF default would force the user to enter a 2nd API key before the
     // helper works. deepseek-v4-flash is cheap, large-context, and reuses the
     // main DeepSeek key for the text-only helper role (compaction/mentorship).
-    return HELPER_MODEL_REGISTRY[provider.toLowerCase()] || 'deepseek-v4-flash';
+    return HELPER_MODEL_REGISTRY[provider.toLowerCase()] || 'deepseek-flash';
   }
 
   /**
@@ -931,8 +931,8 @@ export class HelperModelMiddleware {
     // DeepSeek — current cheap helper (OpenAI-compatible chat/completions).
     // (deepseek-chat removed 2026-06-10 — DeepSeek deprecating it 2026-07-24;
     // deepseek-v4-flash supersedes it at the same price.)
-    helperConfigs['deepseek-v4-flash'] = {
-      id: 'deepseek-v4-flash',
+    helperConfigs['deepseek-flash'] = {
+      id: 'deepseek-flash',
       displayName: 'DeepSeek V4 Flash',
       provider: 'deepseek',
       family: 'deepseek-v4',
@@ -1266,7 +1266,7 @@ Produce the FULL updated CORTEX.md. Rules, in priority order:
       outputBudgetTokens: budget,
     }, body);
     const helperConfig = this.getHelperModelConfig(
-      context.helperModelId || process.env.HELPER_MODEL_ID || 'deepseek-v4-flash'
+      context.helperModelId || process.env.HELPER_MODEL_ID || 'deepseek-flash'
     );
     const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
     const messages: HelperCanonicalMessage[] = [{ role: 'user', content: prompt }];
@@ -1288,14 +1288,16 @@ Produce the FULL updated CORTEX.md. Rules, in priority order:
     body: string,
     helperModelId?: string,
   ): Promise<string> {
-    const modelId = helperModelId || 'deepseek-v4-flash';
+    const modelId = helperModelId || 'deepseek-flash';
     let helperConfig = this.getHelperModelConfig(modelId);
     // Optional per-call reasoning-effort override (e.g. 'max' for the lift planner). Only applies
     // when the model's reasoning is toggleable; clone so the shared registry config is not mutated.
     if (spec.effort && (helperConfig as any).reasoning?.toggleable) {
+      // `effortExplicit` tells the ChatCompletions helper adapter this is a MENTOR call that wants
+      // thinking ON at this effort (HB-MENTOR-THINKING, 2026-09-10) — the helper-role default stays "off".
       helperConfig = {
         ...helperConfig,
-        reasoning: { ...(helperConfig as any).reasoning, effort: spec.effort },
+        reasoning: { ...(helperConfig as any).reasoning, effort: spec.effort, effortExplicit: true },
       } as ModelConfig;
     }
     const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
@@ -1662,7 +1664,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
     const truncated = firstUserMessage.slice(0, 500);
     const prompt = `Generate a concise 5-10 word title for this conversation. Return ONLY the title, no quotes, no explanation.\n\nUser message: ${truncated}`;
 
-    const modelId = helperModelId || process.env.HELPER_MODEL_ID || 'deepseek-v4-flash';
+    const modelId = helperModelId || process.env.HELPER_MODEL_ID || 'deepseek-flash';
     const helperConfig = this.getHelperModelConfig(modelId);
     const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
 
@@ -1699,7 +1701,7 @@ Respond in exactly this format (no other text):
 SUMMARY: <summary>
 PREDICTION: <prediction>`;
 
-    const modelId = context.helperModelId || process.env.HELPER_MODEL_ID || 'deepseek-v4-flash';
+    const modelId = context.helperModelId || process.env.HELPER_MODEL_ID || 'deepseek-flash';
     const helperConfig = this.getHelperModelConfig(modelId);
     const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
 

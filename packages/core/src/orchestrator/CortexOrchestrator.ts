@@ -3837,7 +3837,7 @@ export class CortexOrchestrator {
           this.pendingTurnPrediction = {
             sessionId: this.currentSessionId,
             turnNumber: this.turnNumber,
-            predictorModel: process.env.HELPER_MODEL_ID || 'deepseek-v4-flash',
+            predictorModel: process.env.HELPER_MODEL_ID || 'deepseek-flash',
             summary: turnSummaryData.summary || null,
             prediction: turnSummaryData.prediction,
             predictedAtMs: Date.now(),
@@ -5808,7 +5808,7 @@ export class CortexOrchestrator {
           this.pendingTurnPrediction = {
             sessionId: this.currentSessionId,
             turnNumber: this.turnNumber,
-            predictorModel: process.env.HELPER_MODEL_ID || 'deepseek-v4-flash',
+            predictorModel: process.env.HELPER_MODEL_ID || 'deepseek-flash',
             summary: turnSummaryData.summary || null,
             prediction: turnSummaryData.prediction,
             predictedAtMs: Date.now(),

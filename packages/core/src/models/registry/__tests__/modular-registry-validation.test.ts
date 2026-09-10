@@ -39,6 +39,7 @@ describe('Modular Registry Validation', () => {
       expect(deepseekModels.length).toBeGreaterThan(0);
       expect(deepseekModels.some(m => m.id === 'deepseek-v4-pro')).toBe(true);
       expect(deepseekModels.some(m => m.id === 'deepseek-v4-flash')).toBe(true);
+    expect(deepseekModels.some(m => m.id === 'deepseek-flash')).toBe(true); // canonical since 2026-09-10
     });
 
     it('should load expected Anthropic models', () => {

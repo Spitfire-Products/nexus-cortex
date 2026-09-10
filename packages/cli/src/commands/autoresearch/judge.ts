@@ -68,7 +68,7 @@ export async function autoResearchJudge(options: AutoResearchJudgeOptions): Prom
   const json = !!options.json;
 
   const cwd = options.cwd ?? process.cwd();
-  const model = options.model ?? process.env.DEFAULT_MODEL_ID ?? 'deepseek-v4-flash';
+  const model = options.model ?? process.env.DEFAULT_MODEL_ID ?? 'deepseek-flash';
   const baseRef = options.baseRef;
   const candidateRef = options.candidateRef;
   const rubric = options.rubricFile ? readFileSync(options.rubricFile, 'utf8') : options.rubric;

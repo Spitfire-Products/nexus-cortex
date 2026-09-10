@@ -39,7 +39,7 @@ import type { PermissionPolicy } from '../middleware/contracts/MiddlewareContrac
  * dollar, and it honors the no-xAI cost constraint (a grok/sonnet fallback here
  * would silently bill expensive providers for routine sub-agent work).
  */
-const DEFAULT_SUBAGENT_MODEL = 'deepseek-v4-flash';
+const DEFAULT_SUBAGENT_MODEL = 'deepseek-flash'; // V4.1 Flash — canonical id since the 2026-09-10 catalog collapse
 
 /**
  * Configuration for the sub-agent manager

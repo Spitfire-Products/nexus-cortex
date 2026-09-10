@@ -1377,6 +1377,24 @@ cell-d-k3: the soft nudge fired 23× on 17/42 rows and was ignored (61 further b
 slicing). `resolveSliceBlock` flipped to `!== 'false'`; `CORTEX_SLICE_BLOCK/_AT/_MAX` registered in SettingsSchema, SettingsLoader,
 RuntimeConfigRegistry; env ledger line. Append-log exemption + MAX=2/file unchanged. Watch `slice_block` events on the k=5.
 
+## HB-MENTOR-THINKING — every DeepSeek MENTOR call has run with thinking DISABLED since 2026-08-30 (found 2026-09-10) — ✅ FIXED
+**Symptom:** the ledgers say "mentor roles @max" (lift planner, EndTurn resolver, deadline exit planner, loop-exit planner,
+mentor consult: `*_EFFORT` defaults 'max'). `HelperModelMiddleware.generateGuidance` (`:1295-1300`) clones the config with
+`reasoning.effort = spec.effort`. But `ChatCompletionsAPIHelperAdapter` (`:400-412`) builds the wire body from
+`reasoning.defaultEffort` only, and for any registry-resolved DeepSeek card (no defaultEffort) sends
+`thinking: {type: 'disabled'}` — the 2026-08-30 fix for blank helper hints ("the helper ROLE never wants thinking").
+`reasoning.effort` was never read. **Wire-verified 2026-09-10:** `thinking:{disabled}` → 0 reasoning tokens on
+deepseek-flash AND deepseek-v4-pro; `reasoning_effort:'max'` → reasoning present. So every judge and planner verdict in
+every cell since 08-30 (cell-d-k3's 47 resolver holds, 8 exit-planner calls, 42 lift plans; k5v2; resolver-k5 …) was a
+NON-THINKING call. "pro@max mentor" never existed; the judge-quality findings (HB-JUDGE-GROUNDING) were measured on a
+mentor that could not reason.
+**Fix (4.103.0):** generateGuidance marks the clone `reasoning.effortExplicit = true`; the adapter precedence is now
+helper-role `defaultEffort` ('none', cheap configs) > explicit mentor `effort` (sent as `reasoning_effort`) > DeepSeek
+thinking-disabled fallback. Non-mentor helper calls (compaction, summaries, vision hand-off) are unchanged. Tests in
+HelperAdapters.test.ts. Cost note: mentor calls will now spend reasoning tokens (outputBudgetTokens 4000 was sized for it).
+**Bench consequence:** cell-m (mentor pro@max vs flash@max) is the FIRST cell with a thinking mentor. Re-baseline
+HB-JUDGE-GROUNDING's metrics on it.
+
 ## FUTURE FIXES QUEUE (2026-09-09 — deferred items surfaced this session)
 
 **Harness code:**
