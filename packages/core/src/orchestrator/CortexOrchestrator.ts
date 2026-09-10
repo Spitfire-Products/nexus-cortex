@@ -69,6 +69,7 @@ import { toolFactory } from '../tools/ToolFactory.js';
 import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveLiftPlan, resolveEndTurnResolver, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked, resolveVisionHelperModel, resolveVisionHandoffMax, resolveSliceNudge, resolveSliceBlock, resolveSliceBlockAt, resolveSliceBlockMax } from '../tools/ToolProfile.js';
 import { sliceReadFile, decideSliceBlock } from './sliceBlock.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
+import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig } from '../training/judgeEvidence.js';
 import { resolveOuterToolDeadlineMs } from './outerToolTimeout.js';
 import { resolveTurnDeadlineMs, timeBudgetState, timeBudgetWarnNudge } from './timeBudget.js';
 import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
@@ -596,7 +597,8 @@ export class CortexOrchestrator {
   private readonly loopBlockCounts = new Map<string, number>();
   private loopBlockEscalate = false;
   private liftPlanDelivered = false; // LIFT_MENTOR_PLANNER: bounded mentor-planner at the lift, one-shot
-  private cachedEnvReport?: string;  // ENV_RECON_COMMAND output, gathered once, shared by lift-planner + endturn-resolver
+  private cachedEnvReport?: string;  // ENV_RECON_COMMAND output; cached for the lift planner, REFRESHED for the judges (HB-JUDGE-GROUNDING)
+  private taskStartMs = 0;            // HB-JUDGE-GROUNDING: the user-turn start — the workspace delta is 'files changed since here'
   private endTurnResolverRejects = 0; // endTurnResolver: GAP vetoes so far this task (bounded by maxRejects → fallback-accept)
   private effectiveDeferredLoading = true; // per-turn resolved deferred-loading (card > env > settings); set at assembly
 
@@ -852,8 +854,10 @@ export class CortexOrchestrator {
 
   /** Bounded read-only environment recon (ENV_RECON_COMMAND), gathered ONCE and cached — shared by the
    *  lift planner and the EndTurn resolver. Fail-open: partial stdout on timeout/non-zero, else empty. */
-  private gatherEnvReport(): string {
-    if (this.cachedEnvReport !== undefined) return this.cachedEnvReport;
+  private gatherEnvReport(opts: { fresh?: boolean } = {}): string {
+    // HB-JUDGE-GROUNDING: the judges (resolver, exit planner) must see the box as it is NOW, not the
+    // start-of-task snapshot the lift planner saw; `fresh` re-runs the (bounded, ~1 s) recon.
+    if (!opts.fresh && this.cachedEnvReport !== undefined) return this.cachedEnvReport;
     let r = '';
     try {
       r = String(
@@ -953,17 +957,31 @@ export class CortexOrchestrator {
     const sessionId = this.currentSessionId ?? 'unknown';
     try {
       const etInput = toolUses.find((t) => t.id === et.tool_use_id || t.name === 'EndTurn')?.input ?? {};
-      const outputs = ((ev as { outputs?: string[] }).outputs ?? []).join('\n').slice(0, 4000);
-      const workProduct = `${this.lastAssistantText()}\n\n--- checks / tool outputs this task ---\n${outputs}`.slice(0, 8000);
+      // HB-JUDGE-GROUNDING (2026-09-10): the LATEST outputs (the checks it ran before finishing), not the
+      // oldest 4K; plus the deliverable itself (workspace delta) and, when an evident check entry point
+      // exists, a real check result — the evidence the judge prompt already promises.
+      const allOut = ((ev as { outputs?: string[] }).outputs ?? []).join('\n');
+      const outputs = allOut.length > 4000 ? allOut.slice(-4000) : allOut;
+      const workProduct = `${this.lastAssistantText()}\n\n--- most recent checks / tool outputs this task ---\n${outputs}`.slice(0, 8000);
       const attestation = JSON.stringify(etInput).slice(0, 2000);
+      const jcfg = resolveJudgeGroundingConfig();
+      const judgeCwd = this.config.projectPath || process.cwd();
+      const workspaceDelta = collectWorkspaceDelta(judgeCwd, this.taskStartMs, jcfg);
+      let checkResult = '';
+      if (jcfg.runCheck) {
+        const cmd = detectCheckCommand(judgeCwd);
+        if (cmd) checkResult = runCheck(judgeCwd, cmd, jcfg);
+      }
       const timeoutMs = parseInt(process.env.CORTEX_ENDTURN_RESOLVER_TIMEOUT_MS ?? '90000', 10);
       const t0 = Date.now();
       const text = await withTimeout(
         this.helperMiddleware.evaluateEndTurn({
           task,
-          envReport: this.gatherEnvReport(),
+          envReport: this.gatherEnvReport({ fresh: true }),
           workProduct,
           attestation,
+          workspaceDelta,
+          checkResult,
           helperModelId: this.config.reactiveMentorship?.helperModelId,
         }),
         timeoutMs,
@@ -982,6 +1000,7 @@ export class CortexOrchestrator {
           meets: verdict.meets, retire: verdict.retire, abstained: verdict.retire && cfg.abstain,
           planChars: verdict.plan.length, rejects: this.endTurnResolverRejects, parsed: verdict.parsed,
           latencyMs, rawLen: (text ?? '').length,
+          deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,
           planText: verdict.plan.slice(0, 4000),
           workProductSample: workProduct.slice(0, 1500),
           attestation: attestation.slice(0, 800),
@@ -1037,8 +1056,9 @@ export class CortexOrchestrator {
       const text = await withTimeout(
         this.helperMiddleware.evaluateDeadlineExit({
           task,
-          envReport: this.gatherEnvReport(),
+          envReport: this.gatherEnvReport({ fresh: true }),
           workProduct,
+          workspaceDelta: collectWorkspaceDelta(this.config.projectPath || process.cwd(), this.taskStartMs),
           remainingBudget: `~${Math.max(0, Math.round(remainingMs / 1000))}s of budget left`,
           outputBudgetTokens,
           effort: cfg.effort,
@@ -2087,6 +2107,7 @@ export class CortexOrchestrator {
     // models (grok-4.3); a required tool call is not. Bounded so a model
     // that refuses cannot hang the turn (fallback: accept after N nudges).
     const ev = new TurnEvidence(); // per-turn evidence for the EndTurn gates (shared module, 4.91.0)
+    this.taskStartMs = Date.now(); // HB-JUDGE-GROUNDING delta anchor
     this.visionHandoffsThisTurn = 0;
     let endTurnNudges = 0;
     let surrenderNudgeUsed = false; // item 13b: one execute-your-plan nudge per turn
@@ -2894,7 +2915,7 @@ export class CortexOrchestrator {
               if (input === undefined) continue;
               const outcome = classifyToolOutcome(tr.tool_name, input, tr);
               const ladder = loopLadder.observe(tr.tool_name, outcome);
-              this.armLoopBlock(tr.tool_name, ladder.action);
+              this.armLoopBlock(tr.tool_name, ladder);
               const sig = formatLadderSignal(tr.tool_name, ladder);
               if (sig) ladderSignal = sig;
               if (ladder.action === 'break') ladderBreak = sig;
@@ -4517,6 +4538,7 @@ export class CortexOrchestrator {
 
     let lastExecutedBatchUuid: string | null = null; // 4.90.3 re-execution guard (def-7f510b5635)
     const ev = new TurnEvidence(); // 4.91.0: per-turn evidence for the EndTurn gates (streaming)
+    this.taskStartMs = Date.now(); // HB-JUDGE-GROUNDING delta anchor
     this.visionHandoffsThisTurn = 0;
     let streamEndTurnNudges = 0;
     let pendingGateRequest = false; // Stage-1: a reminder was appended; run one continuation with NO tool batch
@@ -4934,7 +4956,7 @@ export class CortexOrchestrator {
             if (input === undefined) continue;
             const outcome = classifyToolOutcome(tr.tool_name, input, tr);
             const ladder = loopLadder.observe(tr.tool_name, outcome);
-            this.armLoopBlock(tr.tool_name, ladder.action);
+            this.armLoopBlock(tr.tool_name, ladder);
             const sig = formatLadderSignal(tr.tool_name, ladder);
             if (sig) ladderSignal = sig;
             if (ladder.action === 'break') ladderBreak = sig;
@@ -9059,9 +9081,11 @@ export class CortexOrchestrator {
    *  non-converging same-approach loop (diversify/break). If this tool has
    *  already been blocked twice, request a mentor escalation instead of a 3rd
    *  block. Called from the turn loop where the ladder result is computed. */
-  private armLoopBlock(toolName: string, ladderAction: string | undefined): void {
+  private loopBlockTrigger: string = ''; // HB-LOOP-NEARDUP: which lens armed the block (ladder | neardup-hash | neardup-similarity)
+  private armLoopBlock(toolName: string, ladder: { action: string; family?: string; trigger?: string }): void {
     if ((process.env.CORTEX_LOOP_TOOL_BLOCK ?? '').trim().toLowerCase() !== 'true') return;
-    if (!isLoopBlockTrigger(ladderAction)) return;
+    if (!isLoopBlockTrigger(ladder.action)) return;
+    this.loopBlockTrigger = ladder.family === 'neardup' ? `neardup-${ladder.trigger ?? 'hash'}` : 'ladder';
     if (this.loopBlockEscalate) return; // already pending
     const prior = this.loopBlockCounts.get(toolName) ?? 0;
     const decision = decideLoopBlock(toolName, prior);
@@ -9123,7 +9147,7 @@ export class CortexOrchestrator {
       const content = plan
         ? `Tool "${toolUse.name}" is DISABLED: repeated loop interventions have not broken the pattern. A senior engineer reviewed your situation and gave this exit plan:\n\n${plan}\n\nFollow this instead of retrying "${toolUse.name}".`
         : `Tool "${toolUse.name}" is DISABLED: repeated loop interventions have not broken this pattern. Stop retrying "${toolUse.name}", re-read the task requirements, and take a fundamentally different approach.`;
-      if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'loop_tool_block', toolName: toolUse.name, detail: { escalated: true, consulted: !!plan, verdict } }).catch(() => {});
+      if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'loop_tool_block', toolName: toolUse.name, detail: { trigger: this.loopBlockTrigger, escalated: true, consulted: !!plan, verdict } }).catch(() => {});
       if (this.config.debug) console.log(`[LoopBlock] ESCALATED ${toolUse.name} → exit-planner (${plan ? verdict + ' plan delivered' : 'fail-open'})`);
       return { tool_use_id: toolUse.id, tool_name: toolUse.name, content, is_error: true, metadata: { loopToolBlock: true, escalated: true, verdict } };
     }
@@ -9135,7 +9159,7 @@ export class CortexOrchestrator {
         sessionId: this.currentSessionId ?? 'unknown',
         kind: 'loop_tool_block',
         toolName: toolUse.name,
-        detail: { blockNumber: prior + 1, redirectTools: decision.redirectTools },
+        detail: { trigger: this.loopBlockTrigger, blockNumber: prior + 1, redirectTools: decision.redirectTools },
       }).catch(() => {});
     }
     if (this.config.debug) console.log(`[LoopBlock] redirected ${toolUse.name} → ${decision.redirectTools.join(',')}`);

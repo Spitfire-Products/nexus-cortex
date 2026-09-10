@@ -1313,6 +1313,70 @@ old_string / line ranges / files) and count only identical-input repeats; classi
 mode (`endturn_reject_loop`). Also: `budget_frac`/`frame` columns print "-"/"?" for STDB-driven rows (the row schema
 carries `latency_s` + `effective_config`, not `agent_budget_s`/`budget_frac`) — read the budget from `tb2-budgets.json`.
 
+## HB-JUDGE-GROUNDING — the done/not-done judges (resolver, exit planner, lift planner) never see the deliverable (2026-09-10, cell-d-k3; operator: "big deficiency")
+**Evidence (cell-d-k3, 42 rows):** the EndTurn resolver HELD the first finish on 24/25 rows that reached EndTurn and held
+**9 of the 10 passing rows** (false-negative holds; ≤1 hold-driven flip). The deadline exit planner fired 8× and mis-called
+done/not-done in 3/3 real calls (FINISH on a failing row; ACTION ×2 that overran into the wall). Same mentor, same failure
+in both directions. **Cause, verified in code:** the judges never see the artifact.
+- `CortexOrchestrator.ts:855` `gatherEnvReport()` runs `ENV_RECON_COMMAND` (`training/liftPlanner.ts:59`: tooling, pip list,
+  node globals, df/free, a find of test-looking files, top-level `ls`) — an INVENTORY, no file contents, no diff, no test
+  result — and caches it in `cachedEnvReport` (`:872`, never invalidated) at the lift-plan call at task START; the resolver
+  (`:964`) and the exit planner (`:1041`) reuse that stale snapshot at task END.
+- Resolver work product (`:957`): `lastAssistantText()` + `ev.outputs.join('\n').slice(0, 4000)` = the FIRST 4,000 chars
+  of the task's tool outputs (the oldest, not the final checks) + the attestation JSON (2,000).
+- Exit planner work product (`buildDeadlineWorkProduct`): `lastAssistantText()` + the LAST 6 tool results at 500 chars.
+So the judge classifies "done" from the model's prose about the work plus stale/early context — it cannot tell a correct
+finish from a confident one. **The PROMPTS already carry the intended design** (`training/endTurnResolver.ts:41` RESOLVER_SYSTEM:
+"Be adversarial: hunt for the exact constraint a nearly-done agent misses — a wrong output artifact, a filename/path/format
+mismatch…", judge "the criteria the hidden grader will check, NOT the junior's own tests"; `deadlineExitMentor.ts:72` same
+framing) — the adversarial criteria derivation is asked for and, per the banked planText, performed. What is broken is the
+EVIDENCE path: the prompt promises the judge "the WORK PRODUCT (its final answer + the checks it ran)" and an ENVIRONMENT
+REPORT, but the orchestrator hands it the model's prose, the OLDEST 4K of outputs (not the checks it ran), and a start-of-task
+inventory. A judge told to hunt for a wrong artifact that is never shown the artifact can only be suspicious of prose
+(→ false holds on passing work) or trust it (→ FINISH on failing work). The fix is not a prompt change; it is delivering
+what the prompt already assumes.
+**Fix, two tiers (both generic, no task knowledge):**
+- **Tier 1 — cheap, no new model calls, ship before the k=5 if time allows:** (a) `gatherEnvReport({ fresh: true })` at the
+  two judge sites (bust the cache; the ~1 s recon is nothing next to a pro@max call); (b) resolver outputs = the LAST 4,000
+  chars (recent checks), not the first; (c) add a bounded **workspace delta** to both judges: files changed since task start
+  (`git status --short` + `git diff --stat` when a repo, else `find -newer <task-start-marker>`), plus the head (≤60 lines)
+  of each changed file up to a cap — the deliverable itself; (d) the judge prompts state that a HOLD must name a concrete
+  failed check or a missing/incorrect artifact visible in the delta, and a FINISH/MEETS must point at a passing check.
+- **Tier 2 — grounded check:** when a test entry point is evident (Makefile `test`, `test.sh`, `pytest` layout, the task's own
+  "verify" phrasing), the harness runs it read-only and hands the judge the result; HOLD only on a failed check, FINISH only
+  on a passing one; otherwise the judge abstains (accept) rather than guess. Bounded by the existing resolver call budget.
+**Metrics (finishing population, k=3):** false-hold rate on passing rows (baseline 9/10), hold-driven flips (≤1), exit-planner
+mis-calls (3/3), EndTurn turns/session, cost. Pair with HB-ENDTURN-CITATION-GROUNDING's `endturn_rejections/session`.
+**✅ BUILT 2026-09-10 (both tiers, release-gated → 4.101.0):** `training/judgeEvidence.ts` (`collectWorkspaceDelta`,
+`detectCheckCommand`, `runCheck`, `resolveJudgeGroundingConfig`; 9 tests), `gatherEnvReport({fresh})`, `taskStartMs` anchor
+at both loops, resolver = LAST 4K outputs + delta + check, exit planner = delta; prompts carry the EVIDENCE RULE; resolver
+event banks `deltaChars/checkRan/checkPassed`. Levers CORTEX_JUDGE_* (defaults on) in `.env.defaults` + effectiveConfig.
+Efficacy = the next finishing-population cell (false-hold rate on passing rows, hold-driven flips, exit-planner mis-calls).
+**Downstream map before editing (rule [[feedback-downstream-order-mapping]]):** `gatherEnvReport` callers: lift planner
+(`:807`), resolver (`:964`), exit planner (`:1041`), loop-exit mentor (`:9110`); `buildDeadlineWorkProduct` callers `:3158`
+(sendMessage) + `:5142` (streaming) — both loops must change together; `helperMiddleware.evaluateEndTurn` /
+`evaluateDeadlineExit` / `generateTaskPlan` prompt templates consume `envReport`/`workProduct` verbatim.
+
+## HB-LOOP-NEARDUP — CORTEX_LOOP_TOOL_BLOCK never armed because its trigger lens could not see real loops (2026-09-10) — ✅ BUILT
+**Evidence:** cell-l pilot (6 lever rows on dna-assembly/gcode/train-fasttext, the known loopers): `loop_tool_block` 0×,
+`loop_escalation` 1×. Replay of the harness's own `approachHash` + 30-window over 47 real sessions: the hash lens peaked at
+**7-in-30 on every genuine loop** (each loop iteration = 3-5 distinct calls, so 12-in-30 is structurally unreachable) and its
+top hits were paging `Read`s with different offsets that digit-stripping collapses into one key. The distiller's ≥0.9
+similarity criterion is what actually sees the loops (`python3 -c "…"` retries with an edited script hash differently).
+**Fix (built):** `training/toolOutcome.ts` `approachText` (normalized command/content for EXECUTING tools; slice-reads
+excluded → the slice block's job) + `diceSimilarity`; `LoopLadder.observeSimilar` — bigram-Dice ≥ `NEARDUP_SIM` (0.9) over the
+last `NEARDUP_WINDOW` executing calls, diversify at `NEARDUP_SIM_AT` (7), break at 2×; masking fix (`RANK`-based: a near-dup
+diversify is never hidden by a failure-ladder remind); `LadderResult.trigger` and `loop_tool_block.detail.trigger`
+(ladder | neardup-hash | neardup-similarity). Threshold 7 chosen from the replay: dna-assembly 7/7, gcode python -c 18 cross
+it; no PASSING session exceeds 6 (healthy test iteration). 6 new ladder tests + 4 approachText tests.
+**Gate before k:** CORTEX_LOOP_TOOL_BLOCK stays a lever; a mechanism-fire pilot (cell-l's 6 rows) must show `loop_tool_block`
+events with `trigger: neardup-similarity` before it is measured at k=3.
+
+## HB-SLICE-BLOCK — default ON since 4.101.0 (2026-09-10)
+cell-d-k3: the soft nudge fired 23× on 17/42 rows and was ignored (61 further bash slices vs 5 Reads; 3 files switched, 15 kept
+slicing). `resolveSliceBlock` flipped to `!== 'false'`; `CORTEX_SLICE_BLOCK/_AT/_MAX` registered in SettingsSchema, SettingsLoader,
+RuntimeConfigRegistry; env ledger line. Append-log exemption + MAX=2/file unchanged. Watch `slice_block` events on the k=5.
+
 ## FUTURE FIXES QUEUE (2026-09-09 — deferred items surfaced this session)
 
 **Harness code:**

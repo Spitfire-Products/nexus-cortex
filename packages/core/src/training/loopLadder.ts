@@ -5,7 +5,7 @@
  * (docs/UNIFIED_OUTCOME_LADDER.md. The exact-hash MAX_LOOP_REPETITIONS
  * detector remains as the fast path for byte-identical spam.)
  */
-import type { ToolOutcome } from './toolOutcome.js';
+import { diceSimilarity, type ToolOutcome } from './toolOutcome.js';
 
 export type LadderAction = 'none' | 'remind' | 'diversify' | 'break';
 
@@ -14,7 +14,11 @@ export interface LadderResult {
   /** Consecutive not-ok observations for this (tool, approach). */
   count: number;
   family?: string;
+  /** Which lens produced a 'neardup' result: 'hash' (approachHash equality) or 'similarity' (HB-LOOP-NEARDUP). */
+  trigger?: 'hash' | 'similarity';
 }
+
+const RANK: Record<LadderAction, number> = { none: 0, remind: 1, diversify: 2, break: 3 };
 
 export interface LoopLadderThresholds {
   remindAt?: number;
@@ -52,6 +56,16 @@ export class LoopLadder {
   private readonly nearDupEnabled: boolean;
   private readonly nearDupWindow: number;
   private readonly nearDupNudgeAt: number;
+  // HB-LOOP-NEARDUP (2026-09-10): SIMILARITY lens for EXECUTING tools. Replay of 47 real sessions
+  // (cell-l loops + cell-d-k3): the hash lens peaked at 7-in-30 on every genuine loop (the 12 rung was
+  // structurally unreachable — each loop iteration is 3-5 distinct calls) and its top hits were paging
+  // Reads with different offsets. Bigram-Dice ≥ NEARDUP_SIM over the last NEARDUP_WINDOW executing
+  // calls (slice-reads excluded): every real loop (dna-assembly ×2, gcode python -c ×1 at 7/7/18) crossed
+  // 7; no PASSING session did (max 6 = healthy test iteration). Diversify at NEARDUP_SIM_AT (7), break at 2×.
+  private readonly nearDupSim: number;
+  private readonly nearDupSimAt: number;
+  private readonly recentSim: Array<{ tool: string; text: string }> = [];
+  private readonly simNudged = new Set<string>();
   private readonly recentKeys: string[] = [];
   private readonly nearDupNudged = new Set<string>();
 
@@ -73,6 +87,24 @@ export class LoopLadder {
     // genuine grinds more rope while still catching runaway loops (engaged help:harm
     // was 3.75:1 at 8 — the tune trims the harm side). Ledger: r-tb21g-guarded.
     this.nearDupNudgeAt = envInt('NEARDUP_NUDGE_AT', 12);
+    this.nearDupSimAt = envInt('NEARDUP_SIM_AT', 7);
+    const sim = parseFloat(process.env.NEARDUP_SIM ?? '');
+    this.nearDupSim = Number.isFinite(sim) && sim > 0 && sim <= 1 ? sim : 0.9;
+  }
+
+  /** HB-LOOP-NEARDUP: windowed similarity count for an executing tool's normalized text. */
+  private observeSimilar(toolName: string, text: string | undefined): LadderResult | null {
+    if (!this.nearDupEnabled || !text) return null;
+    const count = 1 + this.recentSim.filter((e) => e.tool === toolName && (e.text === text || diceSimilarity(e.text, text) >= this.nearDupSim)).length;
+    this.recentSim.push({ tool: toolName, text });
+    if (this.recentSim.length > this.nearDupWindow) this.recentSim.shift();
+    if (count >= this.nearDupSimAt * 2) return { action: 'break', count, family: 'neardup', trigger: 'similarity' };
+    const nudgeKey = `${toolName}\n${text.slice(0, 80)}`;
+    if (count >= this.nearDupSimAt && !this.simNudged.has(nudgeKey)) {
+      this.simNudged.add(nudgeKey);
+      return { action: 'diversify', count, family: 'neardup', trigger: 'similarity' };
+    }
+    return null;
   }
 
   /** 14b: outcome-agnostic windowed near-dup check. Returns a result when the
@@ -84,18 +116,21 @@ export class LoopLadder {
     if (this.recentKeys.length > this.nearDupWindow) this.recentKeys.shift();
     const count = this.recentKeys.filter(k => k === key).length;
     if (count >= this.nearDupNudgeAt * 2) {
-      return { action: 'break', count, family: 'neardup' };
+      return { action: 'break', count, family: 'neardup', trigger: 'hash' };
     }
     if (count >= this.nearDupNudgeAt && !this.nearDupNudged.has(key)) {
       this.nearDupNudged.add(key);
-      return { action: 'diversify', count, family: 'neardup' };
+      return { action: 'diversify', count, family: 'neardup', trigger: 'hash' };
     }
     return null;
   }
 
-  observe(toolName: string, outcome: Pick<ToolOutcome, 'status' | 'approachHash' | 'family'>): LadderResult {
+  observe(toolName: string, outcome: Pick<ToolOutcome, 'status' | 'approachHash' | 'family' | 'approachText'>): LadderResult {
     const key = `${toolName}\n${outcome.approachHash}`;
-    const nearDup = this.observeNearDup(key);
+    const hashDup = this.observeNearDup(key);
+    const simDup = this.observeSimilar(toolName, outcome.approachText);
+    // the more severe of the two near-dup lenses
+    const nearDup = hashDup && simDup ? (RANK[simDup.action] >= RANK[hashDup.action] ? simDup : hashDup) : (simDup ?? hashDup);
     if (outcome.status === 'ok') {
       this.counts.delete(key);
       if (this.pollEnabled) {
@@ -125,7 +160,9 @@ export class LoopLadder {
     if (entry.count >= this.breakAt) action = 'break';
     else if (entry.count >= this.diversifyAt) action = 'diversify';
     else if (entry.count >= this.remindAt) action = 'remind';
-    if (action === 'none' && nearDup) return nearDup;
+    // HB-LOOP-NEARDUP masking fix: a near-dup diversify/break is never dropped because a LOWER
+    // failure-ladder rung (remind) fired on the same call — return the more severe signal.
+    if (nearDup && RANK[nearDup.action] > RANK[action]) return nearDup;
     return { action, count: entry.count, ...(entry.family ? { family: entry.family } : {}) };
   }
 }

@@ -54,7 +54,12 @@ export const RESOLVER_SYSTEM =
   'If GAP: after the verdict line, give a SHORT numbered FIX PLAN — name each unmet requirement, then the ' +
   'concrete step(s) to close it and the exact check to verify it against the TASK\'s criteria. If a gap ' +
   'cannot be verified in this box, say so and tell the junior to note it in open_items and finish. Be ' +
-  'terse and concrete; do not rewrite the whole solution.';
+  'terse and concrete; do not rewrite the whole solution.\n' +
+  'EVIDENCE RULE (HB-JUDGE-GROUNDING): judge the ARTIFACT, not the prose. When a WORKSPACE DELTA and/or a CHECK RUN ' +
+  'are provided, they are the ground truth: a GAP must name a concrete defect you can point at in the delta or a ' +
+  'failed check; a MEETS must point at a passing check or the delta content that satisfies each criterion. Do not ' +
+  'GAP on suspicion of the junior\'s wording when the delta shows the artifact meets the criteria, and do not MEETS ' +
+  'on the junior\'s claim when the check failed or the artifact is missing from the delta.';
 
 /** Appended to the persona when abstention is enabled — offers the conservative RETIRE verdict. */
 export const RESOLVER_ABSTAIN_CLAUSE =
@@ -79,6 +84,10 @@ export interface EndTurnResolverContext {
   workProduct: string;
   /** The junior's own EndTurn attestation (requirements/verification), if any — what IT claims it did. */
   attestation?: string;
+  /** HB-JUDGE-GROUNDING: files changed this task + a bounded head of each (collectWorkspaceDelta). */
+  workspaceDelta?: string;
+  /** HB-JUDGE-GROUNDING: the labeled result of running an evident check entry point (runCheck). */
+  checkResult?: string;
 }
 
 /** Build the user prompt for the judge. Bounded slices keep the call cheap and cache-stable. */
@@ -87,7 +96,11 @@ export function buildResolverUserPrompt(ctx: EndTurnResolverContext, abstain = f
   parts.push(`TASK:\n${(ctx.task || '').trim().slice(0, 2500)}`);
   const env = (ctx.envReport || '').trim();
   if (env) parts.push(`ENVIRONMENT REPORT:\n${env.slice(0, 2500)}`);
-  parts.push(`WORK PRODUCT (what the junior produced + the checks it ran this task):\n${(ctx.workProduct || '').trim().slice(0, 5000)}`);
+  const delta = (ctx.workspaceDelta || '').trim();
+  if (delta) parts.push(`WORKSPACE DELTA — THE ARTIFACT (files changed this task, with heads; ground truth):\n${delta.slice(0, 6000)}`);
+  const check = (ctx.checkResult || '').trim();
+  if (check) parts.push(`CHECK RUN (an evident check entry point, executed by the harness just now; ground truth):\n${check.slice(0, 3000)}`);
+  parts.push(`WORK PRODUCT (the junior's final answer + its most recent checks/tool outputs):\n${(ctx.workProduct || '').trim().slice(0, 5000)}`);
   const att = (ctx.attestation || '').trim();
   if (att) parts.push(`THE JUNIOR'S OWN ATTESTATION (treat as a claim to VERIFY, not as truth):\n${att.slice(0, 2000)}`);
   parts.push(

@@ -237,6 +237,9 @@ export interface EnvironmentVariables {
 
   /** Slice-reader nudge: after 3 sed/head/tail slices of one file, remind to Read it once ('true'|'false') */
   CORTEX_SLICE_NUDGE?: string;
+  CORTEX_SLICE_BLOCK?: string;
+  CORTEX_SLICE_BLOCK_AT?: string;
+  CORTEX_SLICE_BLOCK_MAX?: string;
 
   /** Enable local code execution for non-PTC models (node -e with tool globals) */
   ENABLE_LOCAL_CODE_EXECUTION?: string; // 'true' | 'false'
@@ -446,6 +449,9 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   TOOL_TIMEOUT_MODE: 'auto',
   VISION_HANDOFF_MAX: '8',
   CORTEX_SLICE_NUDGE: 'true',
+  CORTEX_SLICE_BLOCK: 'true',
+  CORTEX_SLICE_BLOCK_AT: '5',
+  CORTEX_SLICE_BLOCK_MAX: '2',
 
   // Model Router
   MODEL_ROUTER_ENABLED: 'false',
@@ -1020,6 +1026,30 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     type: 'boolean',
     category: 'server_side_tools',
     default: 'true'
+  },
+  {
+    key: 'CORTEX_SLICE_BLOCK',
+    displayName: 'Slice-Reader Block',
+    description: 'After CORTEX_SLICE_BLOCK_AT bash slice-reads (sed -n / head / tail) of the same static/source file, the next slice-read is refused and the model is told to Read the file once (bounded to CORTEX_SLICE_BLOCK_MAX blocks per file; append-mostly logs exempt). Set false to fall back to the soft nudge only.',
+    type: 'boolean',
+    category: 'server_side_tools',
+    default: 'true'
+  },
+  {
+    key: 'CORTEX_SLICE_BLOCK_AT',
+    displayName: 'Slice-Reader Block Threshold',
+    description: 'Slice count at which CORTEX_SLICE_BLOCK starts blocking a file.',
+    type: 'number',
+    category: 'server_side_tools',
+    default: '5'
+  },
+  {
+    key: 'CORTEX_SLICE_BLOCK_MAX',
+    displayName: 'Slice-Reader Block Max',
+    description: 'Max coercive slice-blocks per file before letting further slices through.',
+    type: 'number',
+    category: 'server_side_tools',
+    default: '2'
   },
   {
     key: 'VISION_HELPER_MODEL',

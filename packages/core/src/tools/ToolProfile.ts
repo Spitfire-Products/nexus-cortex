@@ -120,9 +120,10 @@ export function resolveSliceNudge(env: NodeJS.ProcessEnv = process.env): boolean
 
 /** CORTEX_SLICE_BLOCK (HB-SLICE-BLOCK): the coercive escalation of the ignored slice-nudge — after
  *  CORTEX_SLICE_BLOCK_AT slices of a STATIC/source file, BLOCK further slice-reads of it (force Read),
- *  bounded to CORTEX_SLICE_BLOCK_MAX blocks/file. Ships DARK (default OFF); only 'true' enables. */
+ *  bounded to CORTEX_SLICE_BLOCK_MAX blocks/file. DEFAULT ON since 4.101.0 (cell-d-k3 2026-09-10: the
+ *  nudge fired 23× on 17/42 rows and was ignored — 61 further slices vs 5 Reads); 'false' disables. */
 export function resolveSliceBlock(env: NodeJS.ProcessEnv = process.env): boolean {
-  return (env.CORTEX_SLICE_BLOCK ?? '').trim().toLowerCase() === 'true';
+  return (env.CORTEX_SLICE_BLOCK ?? '').trim().toLowerCase() !== 'false';
 }
 export function resolveSliceBlockAt(env: NodeJS.ProcessEnv = process.env): number {
   const n = parseInt((env.CORTEX_SLICE_BLOCK_AT ?? '').trim(), 10);

@@ -1543,6 +1543,8 @@ Give concise, actionable guidance in plain text with these labeled parts:
     envReport?: string;
     workProduct: string;
     attestation?: string;
+    workspaceDelta?: string;
+    checkResult?: string;
     helperModelId?: string;
   }): Promise<string> {
     const ctx: EndTurnResolverContext = {
@@ -1550,6 +1552,8 @@ Give concise, actionable guidance in plain text with these labeled parts:
       envReport: context.envReport,
       workProduct: context.workProduct,
       attestation: context.attestation,
+      workspaceDelta: context.workspaceDelta,
+      checkResult: context.checkResult,
     };
     const cfg = resolveEndTurnResolverConfig();
     return this.generateGuidance(
@@ -1581,6 +1585,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
     workProduct: string;
     remainingBudget: string;
     recentProgress?: string;
+    workspaceDelta?: string;
     outputBudgetTokens: number;
     effort: string;
     helperModelId?: string;
@@ -1591,6 +1596,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
       workProduct: context.workProduct,
       remainingBudget: context.remainingBudget,
       recentProgress: context.recentProgress,
+      workspaceDelta: context.workspaceDelta,
     };
     return this.generateGuidance(
       {

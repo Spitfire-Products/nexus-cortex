@@ -234,3 +234,64 @@ d2('near-dup breaker (CORTEX_NEARDUP_BREAKER)', () => {
     ex2(r2.family).not.toBe('neardup');
   });
 });
+
+describe('HB-LOOP-NEARDUP — similarity lens on executing tools (2026-09-10)', () => {
+  const prev = process.env.CORTEX_NEARDUP_BREAKER;
+  beforeEach(() => { process.env.CORTEX_NEARDUP_BREAKER = 'true'; delete process.env.CORTEX_POLL_GUARD; delete process.env.NEARDUP_SIM_AT; });
+  afterEach(() => { if (prev === undefined) delete process.env.CORTEX_NEARDUP_BREAKER; else process.env.CORTEX_NEARDUP_BREAKER = prev; });
+  const bash = (cmd: string, i: number) => ({ status: 'ok' as const, approachHash: `h${i}`, exactHash: `e${i}`, approachText: cmd.replace(/\d+/g, '#') });
+
+  it('the gcode python -c grind: edited-script retries with DIFFERENT hashes cross the similarity rung at 7', () => {
+    const l = new LoopLadder();
+    const base = 'cd /app && python3 -c " import re, math data = open(\'text.gcode\').read() lines = data.splitlines() pts=[] for ln in lines: if ln.startswith(\'G1\'): pts.append(ln) print(len(pts)) ';
+    let fired: any = null;
+    for (let i = 0; i < 10; i++) {
+      const r = l.observe('Bash', bash(base + ` # v${i} tweak`, i)); // each retry a slightly different script
+      if (r.family === 'neardup' && !fired) fired = r;
+    }
+    expect(fired).not.toBeNull();
+    expect(fired.action).toBe('diversify');
+    expect(fired.trigger).toBe('similarity');
+    expect(fired.count).toBeGreaterThanOrEqual(7);
+  });
+
+  it('6 similar runs (healthy test iteration, the schemelike passes) stay silent; 7 fires', () => {
+    const l = new LoopLadder();
+    const cmd = 'cd /app && python3 interp.py test/calculator.scm';
+    for (let i = 0; i < 6; i++) expect(l.observe('Bash', bash(cmd, i)).family).not.toBe('neardup');
+    expect(l.observe('Bash', bash(cmd, 6)).action).toBe('diversify');
+  });
+
+  it('slice-reads (sed -n paging) never feed the lens — that is the slice block\'s job', () => {
+    const l = new LoopLadder();
+    for (let i = 0; i < 20; i++) {
+      // classifyToolOutcome yields approachText '' for slice-reads; the ladder must treat '' as no text
+      expect(l.observe('Bash', { status: 'ok', approachHash: `p${i}`, exactHash: `x${i}`, approachText: '' }).family).not.toBe('neardup');
+    }
+  });
+
+  it('non-executing tools (Read paging) do not carry approachText and never fire the similarity lens', () => {
+    const l = new LoopLadder();
+    for (let i = 0; i < 20; i++) expect(l.observe('Read', { status: 'ok', approachHash: 'same', exactHash: `x${i}` }).trigger).not.toBe('similarity');
+  });
+
+  it('masking fix: a near-dup diversify is not hidden by a failure-ladder remind on the same call', () => {
+    const l = new LoopLadder();
+    const cmd = 'cd /app && python3 build.py';
+    for (let i = 0; i < 5; i++) l.observe('Bash', bash(cmd, i));
+    // 6th similar call FAILS (failure count 1, similarity 6: nothing yet); 7th FAILS again: the failure
+    // ladder says remind (2nd fail on its hash) while the similarity lens crosses 7 → diversify must win
+    l.observe('Bash', { ...bash(cmd, 99), status: 'failed' });
+    const r = l.observe('Bash', { ...bash(cmd, 99), status: 'failed' });
+    expect(r.action).toBe('diversify');
+    expect(r.family).toBe('neardup');
+  });
+
+  it('NEARDUP_SIM_AT tunes the rung', () => {
+    process.env.NEARDUP_SIM_AT = '3';
+    const l = new LoopLadder();
+    const cmd = 'make test';
+    l.observe('Bash', bash(cmd, 0)); l.observe('Bash', bash(cmd, 1));
+    expect(l.observe('Bash', bash(cmd, 2)).action).toBe('diversify');
+  });
+});

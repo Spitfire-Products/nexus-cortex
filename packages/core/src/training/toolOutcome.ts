@@ -24,6 +24,39 @@ export interface ToolOutcome {
   approachHash: string;
   /** Byte-sensitive input hash (the existing exact-prior key). */
   exactHash: string;
+  /** HB-LOOP-NEARDUP (2026-09-10): for EXECUTING tools (Bash/Write/Edit/…), the normalized command/content
+   *  text the similarity near-dup lens compares (the approachHash is too fine: `python3 -c "…"` retries
+   *  with an edited script never collide, the 12-in-30 rung was unreachable on every real loop replayed). */
+  approachText?: string;
+}
+
+export const EXEC_TOOLS = new Set(['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+/** Slice-reads (sed -n / head / tail paging) are inspection, handled by CORTEX_SLICE_BLOCK — excluded from the loop lens. */
+export const SLICE_READ_RE = /\b(sed\s+-n|head\s+-[nc]|tail\s+-[nc])\b/;
+
+/** The text the similarity lens compares for an executing tool; '' for non-executing tools / slice-reads. */
+export function approachText(toolName: string, input: unknown): string {
+  if (!EXEC_TOOLS.has(toolName) || !input || typeof input !== 'object') return '';
+  const i = input as Record<string, unknown>;
+  let raw = '';
+  if (toolName === 'Bash') {
+    raw = String(i.command ?? '');
+    if (SLICE_READ_RE.test(raw)) return '';
+  } else if (toolName === 'Write') raw = `${i.file_path ?? ''}\n${i.content ?? ''}`;
+  else if (toolName === 'Edit') raw = `${i.file_path ?? ''}\n${i.old_string ?? ''}\n${i.new_string ?? ''}`;
+  else raw = JSON.stringify(i);
+  return raw.replace(/\d+/g, '#').replace(/\s+/g, ' ').trim().slice(0, 400);
+}
+
+/** Bigram Dice similarity in [0,1] (the distiller's ≥0.9 "near-identical call" criterion, dependency-free). */
+export function diceSimilarity(a: string, b: string): number {
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return 0;
+  const grams = (s: string) => { const g = new Map<string, number>(); for (let k = 0; k < s.length - 1; k++) { const x = s.slice(k, k + 2); g.set(x, (g.get(x) ?? 0) + 1); } return g; };
+  const ga = grams(a), gb = grams(b);
+  let inter = 0;
+  for (const [k, v] of ga) inter += Math.min(v, gb.get(k) ?? 0);
+  return (2 * inter) / ((a.length - 1) + (b.length - 1));
 }
 
 interface ToolResultLike {
@@ -162,6 +195,7 @@ export function classifyToolOutcome(
       : {}),
     approachHash: aHash,
     exactHash,
+    ...(EXEC_TOOLS.has(toolName) ? { approachText: approachText(toolName, input) } : {}),
   };
 }
 

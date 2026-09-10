@@ -85,7 +85,10 @@ export const DEADLINE_EXIT_SYSTEM =
   'If ACTION: after the verdict line, give the SINGLE concrete step + the exact check to run.\n' +
   'If FINISH: optionally one clause confirming the criteria are met.\n' +
   'If RETIRE: one short line naming why the residual cannot close it.\n' +
-  'If CONTINUE: nothing more.';
+  'If CONTINUE: nothing more.\n' +
+  'EVIDENCE RULE (HB-JUDGE-GROUNDING): when a WORKSPACE DELTA is provided it is the ground truth for what exists — ' +
+  'FINISH only if the delta shows the required artifact(s) present and the recent outputs show them checked; ACTION ' +
+  'only for a defect you can point at in the delta; never FINISH on the junior\'s claim alone.';
 
 export interface DeadlineExitContext {
   task: string;
@@ -97,6 +100,8 @@ export interface DeadlineExitContext {
   /** A brief trace of the last few tool calls / whether recent steps reduced the gap (for the
    *  convergence judgment), if available. */
   recentProgress?: string;
+  /** HB-JUDGE-GROUNDING: files changed this task + a bounded head of each (collectWorkspaceDelta). */
+  workspaceDelta?: string;
 }
 
 export function buildDeadlineExitPrompt(ctx: DeadlineExitContext): string {
@@ -107,6 +112,8 @@ export function buildDeadlineExitPrompt(ctx: DeadlineExitContext): string {
   parts.push(`REMAINING BUDGET: ${(ctx.remainingBudget || '').trim().slice(0, 200)}`);
   const prog = (ctx.recentProgress || '').trim();
   if (prog) parts.push(`RECENT PROGRESS (did each step reduce the gap?):\n${prog.slice(0, 1500)}`);
+  const delta = (ctx.workspaceDelta || '').trim();
+  if (delta) parts.push(`WORKSPACE DELTA — THE ARTIFACT (files changed this task, with heads; ground truth):\n${delta.slice(0, 5000)}`);
   parts.push(`WORK SO FAR (latest answer + recent tool outputs):\n${(ctx.workProduct || '').trim().slice(0, 5000)}`);
   parts.push(
     'Checkpoint now. First line: `VERDICT: CONTINUE` | `FINISH` | `ACTION` | `RETIRE`. ' +
