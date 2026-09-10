@@ -1399,6 +1399,12 @@ thinking-disabled fallback. Non-mentor helper calls (compaction, summaries, visi
 HelperAdapters.test.ts. Cost note: mentor calls will now spend reasoning tokens (outputBudgetTokens 4000 was sized for it).
 **Bench consequence:** cell-m (mentor pro@max vs flash@max) is the FIRST cell with a thinking mentor. Re-baseline
 HB-JUDGE-GROUNDING's metrics on it.
+**✅ 4.104.0 — MENTOR ROLE (operator: "build the mentor role config and schema first"):** `training/mentorRole.ts` makes the
+mentor a first-class role like the helper: `resolveMentorRoleConfig(surface)` → {model, thinking, effort, budget, timeout,
+temperature}; `HelperFrameSpec.mentor` carries it; the adapters read `mentorRole` (never inferred from the card); every
+mentor event banks `mentor:{model,thinking,effort,budget}` so a ledger proves the wire. Levers: CORTEX_MENTOR_REASONING
+(on|none), CORTEX_MENTOR_CONSULT_REASONING (none default), CORTEX_MENTOR_TEMPERATURE; "Mentor role" effective-config group;
+schema/loader/registry; master .env MENTOR ROLE section. The bench INV can now assert `mentor.thinking` per arm.
 
 ## FUTURE FIXES QUEUE (2026-09-09 — deferred items surfaced this session)
 

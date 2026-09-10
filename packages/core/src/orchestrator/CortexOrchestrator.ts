@@ -8936,6 +8936,10 @@ export class CortexOrchestrator {
    *  gated on reactiveMentorship.enabled (off by default) and idempotent. */
   private ensureAskForAdviceTool<T extends { name: string }>(tools: T[]): T[] {
     if (!this.config.reactiveMentorship?.enabled || !tools) return tools;
+    // CORTEX_ASK_FOR_ADVICE=false (2026-09-10): drop the model-initiated consult tool while mentorship (the planner
+    // surfaces) stays on — the consult was measured thinking-off with a weak voluntary heed (v1 0/6); a mentor
+    // effort/model A/B must not carry it as a confound. Also removes it from the forced-consult path (tool absent).
+    if ((process.env.CORTEX_ASK_FOR_ADVICE ?? '').trim().toLowerCase() === 'false') return tools.filter((t) => t.name !== 'AskForAdvice');
     if (tools.some((t) => t.name === 'AskForAdvice')) return tools;
     const def = toolFactory.getTool('AskForAdvice') as unknown as T | undefined;
     return def ? [...tools, def] : tools;

@@ -58,6 +58,15 @@ function offValue(v: string | undefined): boolean {
   return s === 'none' || s === 'off' || s === 'false';
 }
 
+/** The per-surface effort variable each surface already honours (explicit wins over the global lever). */
+export const SURFACE_EFFORT_VAR: Record<MentorSurface, string | null> = {
+  'lift-plan': 'CORTEX_LIFT_PLAN_EFFORT',
+  'endturn-resolver': 'CORTEX_ENDTURN_RESOLVER_EFFORT',
+  'deadline-exit-mentor': 'CORTEX_DEADLINE_EXIT_MENTOR_EFFORT',
+  'loop-exit-planner': 'CORTEX_LOOP_TOOL_BLOCK_EFFORT',
+  'mentor-consult': null,
+};
+
 function normEffort(v: string | undefined, d: MentorEffort): MentorEffort {
   const s = (v ?? '').trim().toLowerCase();
   return s === 'low' || s === 'medium' || s === 'high' || s === 'max' ? s : d;
@@ -92,7 +101,16 @@ export function resolveMentorRoleConfig(
     surface,
     modelId: (inputs.modelId ?? '').trim() || (env.MENTORSHIP_HELPER_MODEL ?? '').trim() || DEFAULT_MENTOR_MODEL,
     thinking,
-    effort: normEffort(inputs.effort, DEFAULT_EFFORT),
+    // Effort precedence: the surface's own *_EFFORT (explicitly set) > CORTEX_MENTOR_EFFORT (one lever for every
+    // planner surface — the low/high/max A/B) > what the surface resolver passed (its code default, max) > max.
+    effort: (() => {
+      const sv = SURFACE_EFFORT_VAR[surface];
+      const perSurface = sv ? (env[sv] ?? '').trim() : '';
+      if (perSurface) return normEffort(perSurface, DEFAULT_EFFORT);
+      const global = (env.CORTEX_MENTOR_EFFORT ?? '').trim();
+      if (global) return normEffort(global, DEFAULT_EFFORT);
+      return normEffort(inputs.effort, DEFAULT_EFFORT);
+    })(),
     outputBudgetTokens: inputs.outputBudgetTokens && inputs.outputBudgetTokens > 0 ? inputs.outputBudgetTokens : (isConsult ? DEFAULT_CONSULT_BUDGET : DEFAULT_BUDGET),
     timeoutMs: inputs.timeoutMs && inputs.timeoutMs > 0 ? inputs.timeoutMs : DEFAULT_TIMEOUT_MS,
     ...(temperature !== undefined ? { temperature } : {}),

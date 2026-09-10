@@ -36,3 +36,16 @@ describe('mentorRole — the mentor as a first-class resolved role', () => {
     expect(h).toEqual({ thinking: true, effort: 'high', surface: 'lift-plan' });
   });
 });
+
+describe('CORTEX_MENTOR_EFFORT — one lever for every planner surface, per-surface var wins', () => {
+  it('global lever applies when the surface var is unset', () => {
+    expect(resolveMentorRoleConfig('lift-plan', { CORTEX_MENTOR_EFFORT: 'low' } as any, { effort: 'max' }).effort).toBe('low');
+    expect(resolveMentorRoleConfig('loop-exit-planner', { CORTEX_MENTOR_EFFORT: 'high' } as any, { effort: 'max' }).effort).toBe('high');
+  });
+  it('an explicitly set per-surface *_EFFORT wins over the global lever', () => {
+    expect(resolveMentorRoleConfig('endturn-resolver', { CORTEX_MENTOR_EFFORT: 'low', CORTEX_ENDTURN_RESOLVER_EFFORT: 'max' } as any, { effort: 'max' }).effort).toBe('max');
+  });
+  it('unset everywhere → the surface resolver value (its code default max)', () => {
+    expect(resolveMentorRoleConfig('deadline-exit-mentor', {} as any, { effort: 'max' }).effort).toBe('max');
+  });
+});

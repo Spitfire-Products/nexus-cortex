@@ -47,6 +47,8 @@ const GROUPS: Array<{ group: string; levers: LeverSpec[] }> = [
     group: 'Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)',
     levers: [
       { key: 'CORTEX_MENTOR_REASONING', what: 'Planner surfaces (lift / EndTurn resolver / deadline exit / loop-exit) send their *_EFFORT on the wire (thinking ON) — on | none (= the pre-4.103.0 thinking-off behaviour every mentor result to date was measured under)', codeDefault: 'on', kind: 'value' },
+      { key: 'CORTEX_MENTOR_EFFORT', what: 'ONE effort for every planner surface (low|medium|high|max) — the mentor-effort A/B lever; a surface\'s own *_EFFORT, when set, wins over it', codeDefault: '(unset → per-surface, max)', kind: 'value' },
+      { key: 'CORTEX_ASK_FOR_ADVICE', what: 'Include the model-initiated AskForAdvice consult tool while mentorship is on; =false drops it (measured thinking-off, voluntary heed v1 0/6 — keep it out of mentor A/Bs)', codeDefault: 'true', kind: 'flag-not-false' },
       { key: 'CORTEX_MENTOR_CONSULT_REASONING', what: 'AskForAdvice consult hint reasons (on) or stays thinking-off (none; 08-30: thinking-on hints came back blank under the 400-token consult budget)', codeDefault: 'none', kind: 'value' },
       { key: 'CORTEX_MENTOR_TEMPERATURE', what: 'Optional sampling temperature for mentor calls; empty = adapter default 0.7', codeDefault: '(unset)', kind: 'value' },
       { key: 'CORTEX_LIFT_PLAN_EFFORT', what: 'Lift planner reasoning effort (sent only when CORTEX_MENTOR_REASONING=on)', codeDefault: 'max', kind: 'value' },

@@ -107,6 +107,8 @@ export interface EnvironmentVariables {
   /** Helper model for mentorship (overrides HELPER_MODEL_ID if set) */
   MENTORSHIP_HELPER_MODEL?: string;
   CORTEX_MENTOR_REASONING?: string; // 'on' | 'none'
+  CORTEX_MENTOR_EFFORT?: string; // '' | 'low' | 'medium' | 'high' | 'max'
+  CORTEX_ASK_FOR_ADVICE?: string; // 'true' | 'false'
   CORTEX_MENTOR_CONSULT_REASONING?: string; // 'on' | 'none'
   CORTEX_MENTOR_TEMPERATURE?: string; // number as string, optional
 
@@ -401,6 +403,8 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   MENTORSHIP_CUSTOM_KEYWORDS: '',
   MENTORSHIP_HELPER_MODEL: 'deepseek-flash',
   CORTEX_MENTOR_REASONING: 'on',
+  CORTEX_MENTOR_EFFORT: '',
+  CORTEX_ASK_FOR_ADVICE: 'true',
   CORTEX_MENTOR_CONSULT_REASONING: 'none',
   CORTEX_MENTOR_TEMPERATURE: '',
   MENTORSHIP_TURN_BASED_ENABLED: 'false',
@@ -767,6 +771,22 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     type: 'string',
     category: 'mentorship',
     default: 'on'
+  },
+  {
+    key: 'CORTEX_MENTOR_EFFORT',
+    displayName: 'Mentor Effort (all planner surfaces)',
+    description: 'One reasoning effort for the lift planner, EndTurn resolver, deadline exit and loop-exit planner (low | medium | high | max). Empty = each surface\'s own *_EFFORT (default max). A surface variable that is explicitly set wins over this.',
+    type: 'string',
+    category: 'mentorship',
+    default: ''
+  },
+  {
+    key: 'CORTEX_ASK_FOR_ADVICE',
+    displayName: 'AskForAdvice Tool',
+    description: 'Include the model-initiated AskForAdvice consult tool while mentorship is on. Set false to drop it (the consult was measured thinking-off with weak voluntary heed; keep it out of mentor A/Bs).',
+    type: 'boolean',
+    category: 'mentorship',
+    default: 'true'
   },
   {
     key: 'CORTEX_MENTOR_CONSULT_REASONING',

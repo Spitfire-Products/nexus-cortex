@@ -50,6 +50,8 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   VISION_HANDOFF_MAX:             { tier: 'env' },
   CORTEX_SLICE_NUDGE:             { tier: 'env' },
   CORTEX_MENTOR_REASONING:        { tier: 'env' },
+  CORTEX_MENTOR_EFFORT:           { tier: 'env' },
+  CORTEX_ASK_FOR_ADVICE:          { tier: 'env' },
   CORTEX_MENTOR_CONSULT_REASONING: { tier: 'env' },
   CORTEX_MENTOR_TEMPERATURE:      { tier: 'env' },
   CORTEX_SLICE_BLOCK:             { tier: 'env' },
