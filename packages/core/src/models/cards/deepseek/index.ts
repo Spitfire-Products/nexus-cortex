@@ -21,6 +21,7 @@
  */
 
 export { deepseekV4Pro } from './deepseek-v4-pro.js';
+export { deepseekFlash } from './deepseek-flash.js'; // deepseek-flash = V4.1 Flash GA (catalog collapse 2026-09-10)
 export { deepseekV4Flash } from './deepseek-v4-flash.js';
 export { deepseekV41Flash } from './deepseek-v4-1-flash.js'; // BETA, expires 2026-09-10
 export { deepseekV4FlashVisionExp } from './deepseek-v4-flash-vision-exp.js';

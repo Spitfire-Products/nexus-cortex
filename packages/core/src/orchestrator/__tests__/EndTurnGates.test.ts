@@ -101,6 +101,35 @@ describe('evaluateEndTurnGates', () => {
   });
 });
 
+describe('evaluateEndTurnGates — 4.100.0 grounding corpus (Bash-authored text + task statement)', () => {
+  it('accepts a citation of text the model authored inside a Bash heredoc', () => {
+    const ev = new TurnEvidence();
+    ev.noteToolUses([{ id: '1', name: 'Bash', input: { command: "cat > /app/t.html <<'EOF'\n<iframe srcdoc=\"<p>hi</p>\"></iframe>\nEOF" } }]);
+    ev.noteToolResults([{ tool_use_id: '1', tool_name: 'Bash', content: '' }]);
+    const tr = etResult();
+    evaluateEndTurnGates(ev, [tr], [endTurn({ citations: [{ reference: 'test html', verbatim_source: '<iframe srcdoc="<p>hi</p>"></iframe>' }] })], deps({ env: {} as any }));
+    expect(tr.is_error).toBeFalsy();
+  });
+  it('accepts a citation of the task statement itself', () => {
+    const ev = new TurnEvidence();
+    const tr = etResult();
+    evaluateEndTurnGates(ev, [tr], [endTurn({ citations: [{ reference: 'the ask', verbatim_source: 'Write the answer to /app/move.txt and print it' }] })], deps({ env: {} as any }));
+    expect(tr.is_error).toBeFalsy();
+  });
+  it('CORTEX_ENDTURN_CITATION_LINEWISE=false restores whole-block matching', () => {
+    const ev = new TurnEvidence();
+    ev.noteToolResults([{ tool_use_id: '1', tool_name: 'Bash', content: 'line one is here\nunrelated\nline two is here\n' }]);
+    const ev2 = new TurnEvidence();
+    ev2.noteToolResults([{ tool_use_id: '1', tool_name: 'Bash', content: 'line one is here\nunrelated\nline two is here\n' }]);
+    const on = etResult(); const off = etResult();
+    const cits = [{ reference: 'x', verbatim_source: 'line one is here\nline two is here' }];
+    evaluateEndTurnGates(ev, [on], [endTurn({ citations: cits })], deps({ env: {} as any }));
+    evaluateEndTurnGates(ev2, [off], [endTurn({ citations: cits })], deps({ env: { CORTEX_ENDTURN_CITATION_LINEWISE: 'false' } as any }));
+    expect(on.is_error).toBeFalsy();
+    expect(off.is_error).toBe(true);
+  });
+});
+
 describe('buildMissingEndTurnReminder', () => {
   it('names requirements when the requirements mode is on', () => {
     const ev = new TurnEvidence(); ev.usedMutatingTool = true;

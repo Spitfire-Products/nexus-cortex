@@ -127,7 +127,13 @@ export function evaluateEndTurnGates(
       const input: any = etUse?.input ?? {};
       const cits = input.citations;
       ev.lastCitations = Array.isArray(cits) ? cits : undefined; // Stage 3 baseline
-      const verdict = verifyCitationsGrounded(cits, ev.citationCorpus());
+      // 4.100.0 grounding corpus (cell-d-k3 distill 2026-09-10, 84 rejected citations audited): observations +
+      // text authored via Write/Edit (as before) + text authored inside Bash commands (heredocs, `python -c`
+      // — authored is authored) + the task statement itself (quoting the ask is not a fabrication). Line-wise
+      // matching for multi-line quotes unless CORTEX_ENDTURN_CITATION_LINEWISE=false.
+      const corpus = [ev.citationCorpus(), ...ev.commands, deps.userTaskText ?? ''].join('\n');
+      const linewise = String(env.CORTEX_ENDTURN_CITATION_LINEWISE ?? 'true').toLowerCase() !== 'false';
+      const verdict = verifyCitationsGrounded(cits, corpus, { linewise });
       if (!verdict.grounded) {
         const bad = verdict.ungrounded
           .map((u: any) => ` - "${u.reference}" — not found in this turn's tool output: ${String(u.verbatim_source).slice(0, 120)}`)

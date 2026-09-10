@@ -94,6 +94,25 @@ call) WOULD help JS/SPA pages (the `fetch`-only fallback gets little), layout/ta
 - **Cheaper existing escalation:** `browseEscalationDirective` (WebFetch) + web_search `mode:'interactive'` already hand
   JS-heavy work to a nexus-browser subagent. So this is a want, not a need — logged, not scheduled.
 
+## EVAL — ttfx (Rust terminal text-effects) for TUI polish (IDEA, logged 2026-09-09, operator-requested)
+
+Operator asked to evaluate **github.com/omacom/ttfx** for "our TUIs or the SPA — more efficient + more
+flexibility." Grounded (WebFetch 2026-09-09): ttfx = **MIT Rust CLI**, an officially-sanctioned Rust port of
+TerminalTextEffects (Python). Pipes stdin → renders **37 animated text effects** (decrypt, matrix, beams,
+fireworks…); single ~3.3MB static binary, no deps, ~0.5ms startup (vs Python ~64ms), median **~27.5× faster**
+than the Python original, byte-identical output.
+- 🔴 SCOPE CORRECTION (temper the ask): it is **NOT a TUI framework, layout engine, or renderer** — it's a
+  text-ANIMATION effects pipe. It will **not** make a TUI "more efficient" (no render/layout perf gain). Its
+  value is **flexibility/polish**: flourish for the nexus-cortex TUIs (fuzzycortex/neoncortex) — boot/orient
+  animations, completion/finish effects, banners, streamed-reveal — the open polish gap ([[tui-release-2-context]]).
+- **SPA fit is INDIRECT**: it's a terminal binary, not web code → not droppable into the React SPA. Options:
+  (a) run it inside the SPA's SHELL/TMUX xterm windows (a container-side binary), or (b) reimplement the few
+  effects we'd want in JS. Not a direct dependency.
+- **EVAL when TUI polish is prioritized**: try `<cmd> | ttfx <effect>` in a TUI render path, measure the
+  startup/latency budget against the **streamed** layout (operator prefers the streamed layout as final —
+  [[feedback-tui-streaming-layout-preferred]]); decide effects-as-Rust-dependency vs port-what-we-use. Cost =
+  a Rust binary in the TUI distribution (or a SHELL-only toy). Verdict pending the eval; logged, not scheduled.
+
 ## Item 1 — EndTurn gate: `requirements` attestation extension
 
 **Gate as-built (analyzed 2026-08-25; BaseToolRegistry.ts:970, orchestrator ~1515-1870):**
@@ -1263,6 +1282,36 @@ argument-pollution sibling). DSML is the fully-leaked-into-content DeepSeek vari
 (deepseek+xai round-trip, confirm normal path unaffected) + release.
 
 ---
+
+## HB-ENDTURN-CITATION-GROUNDING — 39% of EndTurn attempts rejected; audited to the citation (2026-09-10, cell-d-k3, 26 sessions)
+**Measured:** the EndTurn Stage-2 gate (`packages/core/src/orchestrator/endTurnGates.ts`) rejected **42 of 107 EndTurn
+calls** across 41 sessions (21/26 sessions that reached EndTurn took ≥1; 4 took ≥3 consecutive). Identical in every arm.
+**Diagnosis (corrected the same day — the first write-up blamed a "per-turn window"; WRONG: the corpus is already
+cumulative over the whole task, `TurnEvidence.outputs` is never reset).** All 84 flagged citations were re-checked
+against the session's full tool output with the gate's own normalizer:
+| share | what the model quoted | verdict |
+|---|---|---|
+| 47% | real lines stitched from several outputs / a heredoc it wrote then cat'd — every LINE verbatim, the BLOCK not contiguous | gate too strict at block granularity |
+| 44% | text never observed through any tool (memory/paraphrase) | gate correct — fabrication |
+| 3% | text it authored inside a Bash heredoc / `python -c` (only Write/Edit counted as authored) | corpus gap |
+| 2% | the task statement itself | corpus gap |
+| 2% | in the corpus but rejected (normalization edge) | true false-reject |
+**✅ FIX BUILT 2026-09-10 (release-gated, ships in 4.100.0):** (1) grounding corpus = observations + Write/Edit text +
+**Bash command text** + **the task statement** (`endTurnGates.ts` at the Stage-2 call; `deps.userTaskText`); (2)
+**line-wise verbatim matching** for multi-line quotes — every non-trivial line must be present, contiguity relaxed
+(`citationVerification.ts` `verifyCitationsGrounded(…, {linewise})`, default on, `CORTEX_ENDTURN_CITATION_LINEWISE=false`
+restores block matching). Audit replay: rescues ~60/84 (the 47% + the corpus gaps), still rejects every invented line.
+7 new unit tests. Standing metric for every finishing-population cell: `endturn_rejections/session`.
+
+## BENCH-TOOLING — the distiller's `retry_loop` classifier over-fires on same-file edit iteration (2026-09-10)
+`scripts/tb2-distill.py` labelled 21/31 cell-d-k3 failures "repeated-identical-retry loop" from *near-identical call
+clusters*, but the clusters are `Edit:/app/vm.js` ×7–17, `Edit:/app/filter.py` ×4–21, `sed -n 'a,bp' file` paging and
+`ReadImage strip_N.png` — ordinary edit-test-edit / chunked-read iteration on one artifact, NOT the retry loop the
+harness LoopLadder targets (only 5 `loop_escalation` events fleet-wide). The genuine loop in the set is the EndTurn
+rejection loop above. Fix: exempt same-file Edit/Read/sed-paging/ReadImage sequences whose *inputs differ* (different
+old_string / line ranges / files) and count only identical-input repeats; classify EndTurn-rejection repeats as their own
+mode (`endturn_reject_loop`). Also: `budget_frac`/`frame` columns print "-"/"?" for STDB-driven rows (the row schema
+carries `latency_s` + `effective_config`, not `agent_budget_s`/`budget_frac`) — read the budget from `tb2-budgets.json`.
 
 ## FUTURE FIXES QUEUE (2026-09-09 — deferred items surfaced this session)
 

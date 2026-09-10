@@ -57,23 +57,42 @@ function sourceForms(src: string): string[] {
  * @param citations  the EndTurn attestation's citation list
  * @param toolOutputs concatenated text of THIS turn's tool results
  */
+export interface CitationVerificationOptions {
+  /**
+   * 4.100.0 (cell-d-k3 distill, 2026-09-10): accept a MULTI-LINE verbatim_source when every non-trivial
+   * line of it is present verbatim in the corpus, even if the block as a whole is not contiguous there.
+   * Measured on 84 rejected citations: 47% were "near-verbatim" — real lines the model stitched from
+   * several outputs (test runs, a heredoc it wrote then cat'd) — and were rejected as a block while every
+   * line was genuine evidence. Line granularity keeps the anti-fabrication guarantee (an invented line
+   * still fails); only contiguity relaxes. Default on; CORTEX_ENDTURN_CITATION_LINEWISE=false restores
+   * whole-block matching.
+   */
+  linewise?: boolean;
+}
+
 export function verifyCitationsGrounded(
   citations: CitationEvidence[] | undefined,
   toolOutputs: string,
+  opts: CitationVerificationOptions = {},
 ): CitationVerificationResult {
   if (!Array.isArray(citations) || citations.length === 0) {
     return { grounded: true, ungrounded: [] };
   }
   const haystack = normalize(toolOutputs);
   const ungrounded: CitationEvidence[] = [];
+  const present = (f: string) => haystack.includes(normalize(f));
 
   for (const c of citations) {
-    const src = normalize(c?.verbatim_source ?? '');
+    const raw = c?.verbatim_source ?? '';
+    const src = normalize(raw);
     if (src.length < MIN_SOURCE_LEN) continue; // too short to verify meaningfully
     // grounded if the source — or its de-annotated form (raw output after a `$ cmd →` wrapper) — is present
-    if (!sourceForms(src).some((f) => haystack.includes(normalize(f)))) {
-      ungrounded.push(c);
+    if (sourceForms(src).some(present)) continue;
+    if (opts.linewise) {
+      const lines = String(raw).split(/\r?\n/).map(normalize).filter((l) => l.length >= MIN_SOURCE_LEN);
+      if (lines.length >= 2 && lines.every((l) => sourceForms(l).some(present))) continue;
     }
+    ungrounded.push(c);
   }
 
   return { grounded: ungrounded.length === 0, ungrounded };

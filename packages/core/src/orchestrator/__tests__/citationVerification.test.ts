@@ -98,3 +98,32 @@ describe('verifyCitationsGrounded — 4.91.1 command-echo tolerance', () => {
     expect(v.grounded).toBe(false);
   });
 });
+
+describe('verifyCitationsGrounded — 4.100.0 line-wise grounding (cell-d-k3 audit)', () => {
+  const corpus = 'run A\n--- empty.html rc=0 out: b\'\'\nrun B\n--- text.html rc=0 out: b\'just some text\'\n';
+  it('accepts a multi-line quote whose every line is verbatim in the corpus even when not contiguous', () => {
+    const r = verifyCitationsGrounded(
+      [{ reference: 'tests', verbatim_source: "--- empty.html rc=0 out: b''\n--- text.html rc=0 out: b'just some text'" }],
+      corpus, { linewise: true },
+    );
+    expect(r.grounded).toBe(true);
+  });
+  it('still rejects when ANY line is invented', () => {
+    const r = verifyCitationsGrounded(
+      [{ reference: 'tests', verbatim_source: "--- empty.html rc=0 out: b''\n--- fake.html rc=0 out: b'nope nope'" }],
+      corpus, { linewise: true },
+    );
+    expect(r.grounded).toBe(false);
+  });
+  it('single-line quotes are unchanged (no line-wise relaxation for one line)', () => {
+    const r = verifyCitationsGrounded([{ reference: 'x', verbatim_source: 'this never appeared anywhere' }], corpus, { linewise: true });
+    expect(r.grounded).toBe(false);
+  });
+  it('whole-block behaviour is unchanged when linewise is off', () => {
+    const r = verifyCitationsGrounded(
+      [{ reference: 'tests', verbatim_source: "--- empty.html rc=0 out: b''\n--- text.html rc=0 out: b'just some text'" }],
+      corpus, { linewise: false },
+    );
+    expect(r.grounded).toBe(false);
+  });
+});

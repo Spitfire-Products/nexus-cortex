@@ -89,6 +89,7 @@ export class ModularModelRegistry implements ModelRegistry {
       // ModelAliasResolver for back-compat. (v3.x / r1-0528 / deepseek-coder were
       // already rejected by the live API as of 2026-05-13.)
       deepseekModels.deepseekV4Pro,
+      deepseekModels.deepseekFlash, // canonical flash id since 2026-09-10 (V4.1 Flash GA; legacy flash names + the beta alias route here)
       deepseekModels.deepseekV4Flash,
       deepseekModels.deepseekV41Flash, // BETA, expires 2026-09-10 (probe-verified 2026-09-08)
       deepseekModels.deepseekV4FlashVisionExp,
