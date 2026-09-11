@@ -102,11 +102,15 @@ export interface DeadlineExitContext {
   recentProgress?: string;
   /** HB-JUDGE-GROUNDING: files changed this task + a bounded head of each (collectWorkspaceDelta). */
   workspaceDelta?: string;
+  /** 4.107.0: the lift planner's PLAN OF ATTACK (advisory anchor; the TASK wins on disagreement). */
+  liftPlan?: string;
 }
 
 export function buildDeadlineExitPrompt(ctx: DeadlineExitContext): string {
   const parts: string[] = [];
   parts.push(`TASK:\n${(ctx.task || '').trim().slice(0, 2500)}`);
+  const lift = (ctx.liftPlan || '').trim();
+  if (lift) parts.push(`PLAN OF ATTACK (stated at lift by the planner — ADVISORY: judge against the TASK's real criteria; where the plan and the TASK disagree, the TASK wins — say so in one line):\n${lift.slice(0, 3500)}`);
   const env = (ctx.envReport || '').trim();
   if (env) parts.push(`ENVIRONMENT REPORT:\n${env.slice(0, 2000)}`);
   parts.push(`REMAINING BUDGET: ${(ctx.remainingBudget || '').trim().slice(0, 200)}`);

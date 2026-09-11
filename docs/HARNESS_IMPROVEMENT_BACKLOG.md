@@ -1334,7 +1334,13 @@ mentor event (`finishReason/contentChars/reasoningTokens/maxTokensSent/truncated
 resolver verdict → ABSTAIN (`blank:true, meets:false`; event `abstained+blank+failOpen`) — operator decision. Tests: adapter 12,
 mentorRole 9, resolver 14 (scoped). Loop-block escalation observability (item 5) NOT in this release. **4.106.1:** every mentor event on every path banks
 `deliveredBy` (thinking-on | thinking-off | thinking-off-retry | none) + `deliveredThinking`/`deliveredEffort` (operator: a
-thinking-off rescue must never read as a thinking-on success); the middleware clears the call meta before each mentor call. **UNTESTED on the bench:** the
+thinking-off rescue must never read as a thinking-on success); the middleware clears the call meta before each mentor call.
+**4.106.2 (cell-m-r1 evidence, 23 rows):** pro@high / flash@max reasoned past the 90 s surface timeouts → `deliveredBy:none` (the retry
+never ran); flash@high delivered 6 thinking-on + 6 thinking-off-retry. Fix: thinking-aware surface timeout max(surface,
+THINKING_TIMEOUT_MS[effort] low 120 s / medium 180 s / high 240 s / max 300 s; `CORTEX_MENTOR_THINKING_TIMEOUT_MS`) on lift / resolver /
+loop-exit; the adapter aborts the first (thinking-on) request at 60% (AbortSignal via cortexProxyFetch) so the retry always fits;
+events bank `abortedFirstCall` + `firstCallTimeoutMs`. Deadline-exit keeps its residual-scaled budget. ALLOWANCE SIZED (r1 full run): flash@high delivered calls 10.2K/10.6K reasoning tokens med/p90, 7/18 hit the 16K cap → use
+`CORTEX_MENTOR_REASONING_ALLOWANCE=16000` on the next run (env lever); raise the `high` table entry to 16000 in a later release if it holds. **UNTESTED on the bench:** the
 flash-none vs flash-high re-pilot (K=2, loop population, pin 4.106.0) is the efficacy test; adjudicate on DELIVERY counts.
 **Evidence (cell-m-p3, 4.105.0, 32 sessions):** with `CORTEX_MENTOR_REASONING=on`, deepseek-v4-pro delivered 0/10 lift plans and
 1/8 resolver verdicts (blank after 50–75 s); deepseek-flash 3/10 plans, 2/9 verdicts. Thinking-OFF arms: 8/8 plans (≈5 KB),
@@ -1360,6 +1366,7 @@ prompts (6 KB delta + recon + outputs) high/max reasoning exhausts the cap → `
 resolver prompt of ≥8K tokens at pro@max must return `parsed:true`; re-pilot flash-none vs flash-high (K=2) on the loop
 population; adjudicate on DELIVERY counts (`planChars>0`, `parsed:true`) not fire counts.
 **Third surface, same day:** `scripts/doctrine-mine.py` synthesis (deepseek-v4-pro, thinking on, max_tokens 10000) returned EMPTY content on the cell-m clusters and crashed on `json.loads('')`; thinking-off returned 5 valid edits first try. The labeler had already been switched to thinking-off on 2026-08-26 for the identical reason (its source comment) — the class was known and never generalized. Every DeepSeek thinking-on call in the codebase needs the allowance + finish_reason handling, not per-surface workarounds.
+**Follow-up (cell-m-r1 §6, 2026-09-11): per-SURFACE reasoning switch.** `CORTEX_MENTOR_REASONING` is global; the r1 quality read wants "lift planner thinking-ON (task-specific, adversarial plans) + resolver thinking-OFF (strict judge, 0 false accepts)". Add `CORTEX_LIFT_PLAN_REASONING` / `CORTEX_ENDTURN_RESOLVER_REASONING` (on|none) that win over the global, mirroring the *_EFFORT precedence; bank on the event as `thinkingSource`.
 **Rule promoted:** mechanism-engagement evidence = DELIVERY, not "fired": a mentor event with the right wire config and
 `planChars:0`/`rawLen:0` is a broken arm (second control with a stall), not a null result.
 

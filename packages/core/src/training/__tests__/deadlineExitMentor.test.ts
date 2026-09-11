@@ -78,3 +78,12 @@ describe('deadlineExitMentor — parseDeadlineExitVerdict', () => {
     expect(parseDeadlineExitVerdict('verdict: retire\nx').decision).toBe('retire');
   });
 });
+
+
+describe('4.107.0 — the deadline-exit mentor receives the lift plan', () => {
+  it('adds the PLAN OF ATTACK section when given', () => {
+    const p = buildDeadlineExitPrompt({ task: 'T', workProduct: 'W', remainingBudget: '~60s', liftPlan: '1. do a\n2. do b' } as any);
+    expect(p).toContain('PLAN OF ATTACK'); expect(p).toContain('1. do a');
+    expect(buildDeadlineExitPrompt({ task: 'T', workProduct: 'W', remainingBudget: '~60s' } as any)).not.toContain('PLAN OF ATTACK');
+  });
+});

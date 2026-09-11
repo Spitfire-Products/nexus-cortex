@@ -113,6 +113,10 @@ export interface EnvironmentVariables {
   CORTEX_MENTOR_TEMPERATURE?: string; // number as string, optional
   CORTEX_MENTOR_REASONING_ALLOWANCE?: string; // integer tokens, optional (overrides the per-effort table)
   CORTEX_MENTOR_THINKING_TIMEOUT_MS?: string; // integer ms, optional (thinking-on mentor surface timeout; overrides the per-effort table)
+  CORTEX_LIFT_PLAN_REASONING?: string; // 'on' | 'none' — per-surface, wins over CORTEX_MENTOR_REASONING
+  CORTEX_ENDTURN_RESOLVER_REASONING?: string; // 'on' | 'none' — per-surface, wins over CORTEX_MENTOR_REASONING
+  CORTEX_DEADLINE_EXIT_MENTOR_REASONING?: string; // 'on' | 'none' — per-surface, wins over CORTEX_MENTOR_REASONING
+  CORTEX_LOOP_TOOL_BLOCK_REASONING?: string; // 'on' | 'none' — per-surface, wins over CORTEX_MENTOR_REASONING
 
   /** Enable turn-based periodic mentorship review */
   MENTORSHIP_TURN_BASED_ENABLED?: string; // 'true' | 'false'
@@ -411,6 +415,10 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_MENTOR_TEMPERATURE: '',
   CORTEX_MENTOR_REASONING_ALLOWANCE: '',
   CORTEX_MENTOR_THINKING_TIMEOUT_MS: '',
+  CORTEX_LIFT_PLAN_REASONING: '',
+  CORTEX_ENDTURN_RESOLVER_REASONING: '',
+  CORTEX_DEADLINE_EXIT_MENTOR_REASONING: '',
+  CORTEX_LOOP_TOOL_BLOCK_REASONING: '',
   MENTORSHIP_TURN_BASED_ENABLED: 'false',
   MENTORSHIP_TURN_INTERVAL: '10',
   MENTORSHIP_INTERLEAVED_THINKING: 'false',
@@ -804,6 +812,38 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_MENTOR_TEMPERATURE',
     displayName: 'Mentor Temperature',
     description: 'Optional sampling temperature for mentor calls (0-2). Empty = adapter default (0.7).',
+    type: 'string',
+    category: 'mentorship',
+    default: ''
+  },
+  {
+    key: 'CORTEX_LIFT_PLAN_REASONING',
+    displayName: 'Lift planner Reasoning',
+    description: 'on | none — this surface\'s own thinking switch; wins over CORTEX_MENTOR_REASONING. Empty = follow the global lever.',
+    type: 'string',
+    category: 'mentorship',
+    default: ''
+  },
+  {
+    key: 'CORTEX_ENDTURN_RESOLVER_REASONING',
+    displayName: 'EndTurn resolver Reasoning',
+    description: 'on | none — this surface\'s own thinking switch; wins over CORTEX_MENTOR_REASONING. Empty = follow the global lever.',
+    type: 'string',
+    category: 'mentorship',
+    default: ''
+  },
+  {
+    key: 'CORTEX_DEADLINE_EXIT_MENTOR_REASONING',
+    displayName: 'Deadline exit mentor Reasoning',
+    description: 'on | none — this surface\'s own thinking switch; wins over CORTEX_MENTOR_REASONING. Empty = follow the global lever.',
+    type: 'string',
+    category: 'mentorship',
+    default: ''
+  },
+  {
+    key: 'CORTEX_LOOP_TOOL_BLOCK_REASONING',
+    displayName: 'Loop-exit planner Reasoning',
+    description: 'on | none — this surface\'s own thinking switch; wins over CORTEX_MENTOR_REASONING. Empty = follow the global lever.',
     type: 'string',
     category: 'mentorship',
     default: ''

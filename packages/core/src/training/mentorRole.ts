@@ -36,8 +36,9 @@ export interface MentorRoleConfig {
   timeoutMs: number;
   /** Optional sampling temperature for mentor calls (CORTEX_MENTOR_TEMPERATURE); undefined = adapter default. */
   temperature?: number;
-  /** Where the thinking decision came from (for the effective-config report / events). */
-  thinkingSource: 'CORTEX_MENTOR_REASONING' | 'CORTEX_MENTOR_CONSULT_REASONING' | 'code-default';
+  /** Where the thinking decision came from (for the effective-config report / events): the surface's own
+   *  *_REASONING var (4.107.0), the global CORTEX_MENTOR_REASONING, the consult's own var, or the code default. */
+  thinkingSource: string;
   /** Thinking-on only: the budget for the FIRST (thinking-on) request; the remainder of `timeoutMs` is kept for the
    *  thinking-off retry so a slow thinking call can never starve the rescue (cell-m-r1: pro@high ran to the 90 s
    *  surface timeout and banked `none` because the retry never got a turn). */
@@ -61,6 +62,19 @@ function offValue(v: string | undefined): boolean {
   const s = (v ?? '').trim().toLowerCase();
   return s === 'none' || s === 'off' || s === 'false';
 }
+
+/**
+ * PER-SURFACE REASONING SWITCH (4.107.0, cell-m-r1 §6): the quality read wants a thinking-ON lift planner (task-specific,
+ * adversarial plans) with a thinking-OFF EndTurn resolver (strict judge, 0 false accepts). A surface's own *_REASONING
+ * (on|none) wins over the global CORTEX_MENTOR_REASONING, mirroring the *_EFFORT precedence.
+ */
+export const SURFACE_REASONING_VAR: Record<MentorSurface, string> = {
+  'lift-plan': 'CORTEX_LIFT_PLAN_REASONING',
+  'endturn-resolver': 'CORTEX_ENDTURN_RESOLVER_REASONING',
+  'deadline-exit-mentor': 'CORTEX_DEADLINE_EXIT_MENTOR_REASONING',
+  'loop-exit-planner': 'CORTEX_LOOP_TOOL_BLOCK_REASONING',
+  'mentor-consult': 'CORTEX_MENTOR_CONSULT_REASONING',
+};
 
 /** The per-surface effort variable each surface already honours (explicit wins over the global lever). */
 export const SURFACE_EFFORT_VAR: Record<MentorSurface, string | null> = {
@@ -95,9 +109,16 @@ export function resolveMentorRoleConfig(
     thinking = raw === undefined || raw.trim() === '' ? false : !offValue(raw);
     thinkingSource = raw === undefined || raw.trim() === '' ? 'code-default' : 'CORTEX_MENTOR_CONSULT_REASONING';
   } else {
-    const raw = env.CORTEX_MENTOR_REASONING;
-    thinking = raw === undefined || raw.trim() === '' ? true : !offValue(raw);
-    thinkingSource = raw === undefined || raw.trim() === '' ? 'code-default' : 'CORTEX_MENTOR_REASONING';
+    const sv = SURFACE_REASONING_VAR[surface];
+    const perSurface = (env[sv] ?? '').trim();
+    if (perSurface) {
+      thinking = !offValue(perSurface);
+      thinkingSource = sv;
+    } else {
+      const raw = env.CORTEX_MENTOR_REASONING;
+      thinking = raw === undefined || raw.trim() === '' ? true : !offValue(raw);
+      thinkingSource = raw === undefined || raw.trim() === '' ? 'code-default' : 'CORTEX_MENTOR_REASONING';
+    }
   }
   const t = parseFloat((env.CORTEX_MENTOR_TEMPERATURE ?? '').trim());
   const temperature = Number.isFinite(t) && t >= 0 && t <= 2 ? t : undefined;

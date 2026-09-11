@@ -88,12 +88,17 @@ export interface EndTurnResolverContext {
   workspaceDelta?: string;
   /** HB-JUDGE-GROUNDING: the labeled result of running an evident check entry point (runCheck). */
   checkResult?: string;
+  /** 4.107.0: the lift planner's PLAN OF ATTACK delivered to the junior at lift (advisory anchor — the judge holds the
+   *  junior to the bar it was steered to and says where the plan and the TASK disagree; the TASK wins). */
+  liftPlan?: string;
 }
 
 /** Build the user prompt for the judge. Bounded slices keep the call cheap and cache-stable. */
 export function buildResolverUserPrompt(ctx: EndTurnResolverContext, abstain = false): string {
   const parts: string[] = [];
   parts.push(`TASK:\n${(ctx.task || '').trim().slice(0, 2500)}`);
+  const lift = (ctx.liftPlan || '').trim();
+  if (lift) parts.push(`PLAN OF ATTACK (stated at lift by the planner — ADVISORY: judge against the TASK's real criteria; where the plan and the TASK disagree, the TASK wins — say so in one line):\n${lift.slice(0, 3500)}`);
   const env = (ctx.envReport || '').trim();
   if (env) parts.push(`ENVIRONMENT REPORT:\n${env.slice(0, 2500)}`);
   const delta = (ctx.workspaceDelta || '').trim();

@@ -109,3 +109,21 @@ describe('thinking-aware surface timeout (4.106.2)', () => {
     expect(mentorWireHint(off).firstCallTimeoutMs).toBeUndefined();
   });
 });
+
+
+describe('per-surface reasoning switch (4.107.0)', () => {
+  it('a surface\'s own *_REASONING wins over the global lever, in both directions, and is banked as the source', () => {
+    const env = { CORTEX_MENTOR_REASONING: 'none', CORTEX_LIFT_PLAN_REASONING: 'on', CORTEX_MENTOR_EFFORT: 'high' } as any;
+    const lift = resolveMentorRoleConfig('lift-plan', env, { effort: 'max' });
+    expect(lift.thinking).toBe(true); expect(lift.thinkingSource).toBe('CORTEX_LIFT_PLAN_REASONING'); expect(lift.effort).toBe('high');
+    const res = resolveMentorRoleConfig('endturn-resolver', env, { effort: 'max' });
+    expect(res.thinking).toBe(false); expect(res.thinkingSource).toBe('CORTEX_MENTOR_REASONING');
+    const env2 = { CORTEX_MENTOR_REASONING: 'on', CORTEX_ENDTURN_RESOLVER_REASONING: 'none' } as any;
+    expect(resolveMentorRoleConfig('endturn-resolver', env2, {}).thinking).toBe(false);
+    expect(resolveMentorRoleConfig('endturn-resolver', env2, {}).thinkingSource).toBe('CORTEX_ENDTURN_RESOLVER_REASONING');
+    expect(resolveMentorRoleConfig('deadline-exit-mentor', env2, {}).thinking).toBe(true);
+    expect(resolveMentorRoleConfig('loop-exit-planner', { CORTEX_LOOP_TOOL_BLOCK_REASONING: 'none' } as any, {}).thinking).toBe(false);
+    // the consult keeps its own var
+    expect(resolveMentorRoleConfig('mentor-consult', { CORTEX_LIFT_PLAN_REASONING: 'on' } as any, {}).thinking).toBe(false);
+  });
+});

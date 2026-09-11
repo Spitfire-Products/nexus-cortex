@@ -609,6 +609,7 @@ export class CortexOrchestrator {
   private cachedEnvReport?: string;  // ENV_RECON_COMMAND output; cached for the lift planner, REFRESHED for the judges (HB-JUDGE-GROUNDING)
   private taskStartMs = 0;            // HB-JUDGE-GROUNDING: the user-turn start — the workspace delta is 'files changed since here'
   private endTurnResolverRejects = 0; // endTurnResolver: GAP vetoes so far this task (bounded by maxRejects → fallback-accept)
+  private liftPlanText = '';          // 4.107.0: the PLAN OF ATTACK delivered at lift — handed to the resolver / deadline-exit / loop-exit judges as an advisory anchor
   private effectiveDeferredLoading = true; // per-turn resolved deferred-loading (card > env > settings); set at assembly
 
   /**
@@ -836,6 +837,7 @@ export class CortexOrchestrator {
       }
       const retire = /\bRETIRE\b/i.test(plan);
       const criteriaStated = /criteri|grader|test\.sh|expected|verify/i.test(plan);
+      this.liftPlanText = plan; // 4.107.0: retained for the judges
       lastMsg.message.content.push({
         type: 'text',
         text:
@@ -986,6 +988,7 @@ export class CortexOrchestrator {
       const text = await withTimeout(
         this.helperMiddleware.evaluateEndTurn({
           task,
+          liftPlan: this.liftPlanText || undefined,
           envReport: this.gatherEnvReport({ fresh: true }),
           workProduct,
           attestation,
@@ -1011,6 +1014,7 @@ export class CortexOrchestrator {
           planChars: verdict.plan.length, rejects: this.endTurnResolverRejects, parsed: verdict.parsed,
           latencyMs, rawLen: (text ?? '').length,
           deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,
+          liftPlanChars: this.liftPlanText.length,
           mentor: this.mentorWire('endturn-resolver', cfg.effort, cfg.outputBudgetTokens),
           planText: verdict.plan.slice(0, 4000),
           workProductSample: workProduct.slice(0, 1500),
@@ -1072,6 +1076,7 @@ export class CortexOrchestrator {
       const text = await withTimeout(
         this.helperMiddleware.evaluateDeadlineExit({
           task,
+          liftPlan: this.liftPlanText || undefined,
           envReport: this.gatherEnvReport({ fresh: true }),
           workProduct,
           workspaceDelta: collectWorkspaceDelta(this.config.projectPath || process.cwd(), this.taskStartMs),
@@ -1087,7 +1092,7 @@ export class CortexOrchestrator {
         sessionId,
         kind: 'deadline_exit_mentor',
         detail: {
-          decision: v.decision, parsed: v.parsed, remainingMs, latencyMs: Date.now() - t0,
+          decision: v.decision, parsed: v.parsed, remainingMs, latencyMs: Date.now() - t0, liftPlanChars: this.liftPlanText.length,
           detailText: v.detail.slice(0, 2000), workProductSample: workProduct.slice(0, 1200), mentor: this.mentorWire('deadline-exit-mentor', cfg.effort, outputBudgetTokens),
         },
       }).catch(() => {});
@@ -2124,6 +2129,7 @@ export class CortexOrchestrator {
     // that refuses cannot hang the turn (fallback: accept after N nudges).
     const ev = new TurnEvidence(); // per-turn evidence for the EndTurn gates (shared module, 4.91.0)
     this.taskStartMs = Date.now(); // HB-JUDGE-GROUNDING delta anchor
+    this.liftPlanText = '';         // 4.107.0: a new task has no plan yet
     this.visionHandoffsThisTurn = 0;
     let endTurnNudges = 0;
     let surrenderNudgeUsed = false; // item 13b: one execute-your-plan nudge per turn
@@ -9152,6 +9158,7 @@ export class CortexOrchestrator {
           const text = await withTimeout(
             this.helperMiddleware.evaluateLoopExit({
               task: this.lastRealUserText(),
+              liftPlan: this.liftPlanText || undefined,
               envReport: this.gatherEnvReport(),
               loopingTool: toolUse.name,
               recentAttempts: this.recentToolCalls(toolUse.name, 4) || this.lastAssistantText().slice(0, 2000),
@@ -9168,7 +9175,7 @@ export class CortexOrchestrator {
       const content = plan
         ? `Tool "${toolUse.name}" is DISABLED: repeated loop interventions have not broken the pattern. A senior engineer reviewed your situation and gave this exit plan:\n\n${plan}\n\nFollow this instead of retrying "${toolUse.name}".`
         : `Tool "${toolUse.name}" is DISABLED: repeated loop interventions have not broken this pattern. Stop retrying "${toolUse.name}", re-read the task requirements, and take a fundamentally different approach.`;
-      if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'loop_tool_block', toolName: toolUse.name, detail: { trigger: this.loopBlockTrigger, escalated: true, consulted: !!plan, verdict, mentor: this.mentorWire('loop-exit-planner', resolveLoopExitConfig().effort, resolveLoopExitConfig().outputBudgetTokens) } }).catch(() => {});
+      if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'loop_tool_block', toolName: toolUse.name, detail: { trigger: this.loopBlockTrigger, escalated: true, consulted: !!plan, verdict, liftPlanChars: this.liftPlanText.length, mentor: this.mentorWire('loop-exit-planner', resolveLoopExitConfig().effort, resolveLoopExitConfig().outputBudgetTokens) } }).catch(() => {});
       if (this.config.debug) console.log(`[LoopBlock] ESCALATED ${toolUse.name} → exit-planner (${plan ? verdict + ' plan delivered' : 'fail-open'})`);
       return { tool_use_id: toolUse.id, tool_name: toolUse.name, content, is_error: true, metadata: { loopToolBlock: true, escalated: true, verdict } };
     }

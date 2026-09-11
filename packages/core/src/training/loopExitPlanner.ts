@@ -36,6 +36,8 @@ export interface LoopExitContext {
   envReport?: string;
   loopingTool: string;
   recentAttempts?: string;
+  /** 4.107.0: the lift planner's PLAN OF ATTACK — the exit plan must not contradict it without saying why. */
+  liftPlan?: string;
 }
 
 export const LOOP_EXIT_SYSTEM =
@@ -64,6 +66,7 @@ export const LOOP_EXIT_SYSTEM =
 export function buildLoopExitPrompt(ctx: LoopExitContext): string {
   const parts = [
     `TASK:\n${ctx.task}`,
+    ctx.liftPlan ? `\nPLAN OF ATTACK (stated at lift — ADVISORY: your exit plan must not contradict it without saying why; the TASK wins):\n${ctx.liftPlan.slice(0, 3500)}` : '',
     ctx.envReport ? `\nENVIRONMENT REPORT:\n${ctx.envReport}` : '',
     `\nLOOPING TOOL (blocked twice): ${ctx.loopingTool}`,
     ctx.recentAttempts ? `\nRECENT ATTEMPTS (what the junior kept doing):\n${ctx.recentAttempts}` : '',

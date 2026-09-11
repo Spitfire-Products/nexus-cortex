@@ -1552,6 +1552,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
    */
   async evaluateEndTurn(context: {
     task: string;
+    liftPlan?: string;
     envReport?: string;
     workProduct: string;
     attestation?: string;
@@ -1560,6 +1561,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
     helperModelId?: string;
   }): Promise<string> {
     const ctx: EndTurnResolverContext = {
+      liftPlan: context.liftPlan,
       task: context.task,
       envReport: context.envReport,
       workProduct: context.workProduct,
@@ -1594,6 +1596,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
    */
   async evaluateDeadlineExit(context: {
     task: string;
+    liftPlan?: string;
     envReport?: string;
     workProduct: string;
     remainingBudget: string;
@@ -1604,6 +1607,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
     helperModelId?: string;
   }): Promise<string> {
     const ctx: DeadlineExitContext = {
+      liftPlan: context.liftPlan,
       task: context.task,
       envReport: context.envReport,
       workProduct: context.workProduct,
@@ -1636,6 +1640,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
    */
   async evaluateLoopExit(context: {
     task: string;
+    liftPlan?: string;
     envReport?: string;
     loopingTool: string;
     recentAttempts?: string;
@@ -1644,6 +1649,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
     helperModelId?: string;
   }): Promise<string> {
     const ctx: LoopExitContext = {
+      liftPlan: context.liftPlan,
       task: context.task,
       envReport: context.envReport,
       loopingTool: context.loopingTool,

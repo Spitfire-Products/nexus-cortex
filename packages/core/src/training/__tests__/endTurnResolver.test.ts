@@ -101,3 +101,17 @@ describe('endTurnResolver — ABSTENTION (RETIRE verdict)', () => {
     expect(parseResolverVerdict('verdict: retire\nhopeless').retire).toBe(true);
   });
 });
+
+
+describe('4.107.0 — the resolver receives the lift plan as an ADVISORY anchor', () => {
+  it('includes the PLAN OF ATTACK section only when a plan is given, bounded, before the environment report', () => {
+    const base = { task: 'do X', envReport: 'ENV', workProduct: 'WP' };
+    expect(buildResolverUserPrompt(base)).not.toContain('PLAN OF ATTACK');
+    const p = buildResolverUserPrompt({ ...base, liftPlan: '1. read the grader\n2. ' + 'x'.repeat(5000) });
+    expect(p).toContain('PLAN OF ATTACK (stated at lift');
+    expect(p).toContain('the TASK wins');
+    expect(p.indexOf('PLAN OF ATTACK')).toBeLessThan(p.indexOf('ENVIRONMENT REPORT'));
+    expect(p.indexOf('PLAN OF ATTACK')).toBeGreaterThan(p.indexOf('TASK:'));
+    expect(p.length).toBeLessThan(3500 + 800);
+  });
+});
