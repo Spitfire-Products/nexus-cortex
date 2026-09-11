@@ -51,6 +51,16 @@ jobs:
   publish:
     needs: test
     runs-on: ubuntu-latest
+    # Trusted publishing (2026-09-11): npm now REQUIRES 2FA on every token publish and no
+    # longer offers the granular-token 2FA bypass, so a stored NPM_TOKEN cannot publish from
+    # CI at all (4.107.1: E404 = the 90-day token expired, then E403 "Two-factor
+    # authentication required" with a fresh one). npm instead trusts this workflow's GitHub
+    # OIDC identity: each package on npmjs.com lists Trusted Publisher = GitHub Actions,
+    # org Spitfire-Products, repo nexus-cortex, workflow publish.yml (no environment).
+    # `id-token: write` lets npm mint the short-lived publish credential; no secret is used.
+    permissions:
+      contents: read
+      id-token: write
     env:
       # executors -> playwright downloads browsers on install and OOM-crashes npm ci.
       # No browser tests here, so skip it.
@@ -64,7 +74,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20.18.1
-          registry-url: 'https://registry.npmjs.org'
       # `npm ci` reify intermittently aborts on this runner with "Exit handler never
       # called!" then exits 0, leaving an INCOMPLETE install (bins not linked). Gate
       # fallbacks on whether tsc linked, NOT exit code; lead with --ignore-scripts (skips
@@ -83,12 +92,17 @@ jobs:
           echo "[ok] local tsc $(node_modules/.bin/tsc --version)"
       # Ordered two-pass build (scripts/build.sh) — breaks the core<->executors cycle.
       - run: npm run build
-      - name: Publish types -> core -> executors -> server -> cli -> tui -> meta
+      # Trusted publishing needs npm >= 11.5.1; node 20.18.1 bundles 10.8.2, so the publish
+      # calls go through `npx -y npm@11` (an explicit newer npm, leaving the install/build npm
+      # untouched — see the pin note above). --provenance attaches the SLSA attestation npm
+      # derives from the same OIDC identity.
+      - name: Publish types -> core -> executors -> server -> cli -> tui -> meta (trusted publishing, no token)
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           DRY_RUN: ${{ github.event.inputs.dry_run }}
+          NPM11: npx -y npm@11
         run: |
           set -euo pipefail
+          $NPM11 --version
           for pkg in types canon core executors server cli tui meta; do
             dir="packages/$pkg"
             if [ ! -d "$dir" ]; then
@@ -103,10 +117,10 @@ jobs:
             fi
             if [ "${DRY_RUN:-false}" = "true" ]; then
               echo "::notice::[dry-run] would publish $name@$version"
-              ( cd "$dir" && npm publish --access public --dry-run )
+              ( cd "$dir" && $NPM11 publish --access public --provenance --dry-run )
             else
               echo "::notice::publishing $name@$version"
-              ( cd "$dir" && npm publish --access public )
+              ( cd "$dir" && $NPM11 publish --access public --provenance )
             fi
           done
           echo "Done."
