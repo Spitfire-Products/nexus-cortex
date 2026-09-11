@@ -74,6 +74,32 @@ export const ENV_RECON_COMMAND =
  * toward the REAL criteria and a concrete plan; the junior does the work. Explicitly targets the
  * two measured failure classes: grind-to-wall and self-graded-success (criteria-misalignment).
  */
+/**
+ * CORTEX_LIFT_PLAN_DOCTRINE=v2 (4.107.2): the four census-traced bullets added in 4.107.1 (ONE INSTALL LAYER, LONG
+ * WAITS, EXACT-OUTPUT, EXPECTED LITERALS ARE LAW). v1 (default) = the 4.107.0 prompt without them. A lever because
+ * 4.107.1 shipped them together with the EndTurn tier change and the hard core regressed (11/26 → 4/18); the 2×2
+ * (cell-n-r6) attributes the regression. Prompt-only; no runtime cost difference.
+ */
+export const DOCTRINE_V2 =
+  '- ONE INSTALL LAYER, no redundant stacks: the box\'s budget is finite, so plan the cheapest toolchain ' +
+  'that reaches the real criteria and reuse whatever the report shows PRESENT. Never stack the same ' +
+  'capability twice (system python, then a .venv, then a second interpreter inside it; a global npm plus ' +
+  'a per-project node; conda on top of pip). One layer: `uv` owns the venv AND the packages (`uv venv`, ' +
+  '`uv pip install`, or `uv run`), `bun` owns JS deps, or use the interpreter already present with ' +
+  'pip/npm directly. Install only what a step needs — no full IDE/toolchain bundles for a single ' +
+  'library, and no reinstalling something the report already lists.\n' +
+  '- LONG WAITS: never `sleep` for minutes inside one command (training, servers, big builds) — run it in ' +
+  'the background or with a matched timeout and poll its output in short checks (<= 60 s per wait), so the ' +
+  'budget is spent on progress, not idling.\n' +
+  '- EXACT-OUTPUT tasks: when the criteria say the output must be byte-identical or formatting preserved, ' +
+  'plan a byte-level transform on the raw text — NEVER a parse-then-re-serialize round trip, which silently ' +
+  'normalizes whitespace, quotes, key order, or numbers.\n' +
+  '- EXPECTED LITERALS ARE LAW: an exact string, value, path, or filename stated by the task or its tests is ' +
+  'used verbatim — never "corrected" (spelling, casing, leetspeak, units). Assume the hidden grader ' +
+  're-parameterizes (another seed, size, input file, working dir): derive results from the inputs at run ' +
+  'time, never bake constants observed in one run, and resolve paths from the task\'s stated locations.\n';
+
+/** The planner system prompt WITH the v2 doctrine bullets. */
 export const PLANNER_SYSTEM =
   'You are a senior engineer writing a battle-tested plan of attack for a junior agent that will ' +
   'execute it in a real terminal container. The junior acts in small steps and plans poorly — it ' +
@@ -93,28 +119,20 @@ export const PLANNER_SYSTEM =
   '- If the task needs a language, tool, or package that the report shows is MISSING, add an explicit ' +
   'INSTALL step — prefer a fast cached installer (uv for Python, bun/npm for JS), pin the version, and ' +
   'verify with a real run. An empty/bare box is part of the task, not an error.\n' +
-  '- ONE INSTALL LAYER, no redundant stacks: the box\'s budget is finite, so plan the cheapest toolchain ' +
-  'that reaches the real criteria and reuse whatever the report shows PRESENT. Never stack the same ' +
-  'capability twice (system python, then a .venv, then a second interpreter inside it; a global npm plus ' +
-  'a per-project node; conda on top of pip). One layer: `uv` owns the venv AND the packages (`uv venv`, ' +
-  '`uv pip install`, or `uv run`), `bun` owns JS deps, or use the interpreter already present with ' +
-  'pip/npm directly. Install only what a step needs — no full IDE/toolchain bundles for a single ' +
-  'library, and no reinstalling something the report already lists.\n' +
-  '- LONG WAITS: never `sleep` for minutes inside one command (training, servers, big builds) — run it in ' +
-  'the background or with a matched timeout and poll its output in short checks (<= 60 s per wait), so the ' +
-  'budget is spent on progress, not idling.\n' +
-  '- EXACT-OUTPUT tasks: when the criteria say the output must be byte-identical or formatting preserved, ' +
-  'plan a byte-level transform on the raw text — NEVER a parse-then-re-serialize round trip, which silently ' +
-  'normalizes whitespace, quotes, key order, or numbers.\n' +
-  '- EXPECTED LITERALS ARE LAW: an exact string, value, path, or filename stated by the task or its tests is ' +
-  'used verbatim — never "corrected" (spelling, casing, leetspeak, units). Assume the hidden grader ' +
-  're-parameterizes (another seed, size, input file, working dir): derive results from the inputs at run ' +
-  'time, never bake constants observed in one run, and resolve paths from the task\'s stated locations.\n' +
+  DOCTRINE_V2 +
   '- If a step is long-running (a build, a large install, training, a big test suite), tell the junior ' +
   'to set an adequate Bash timeout for THAT command (e.g. timeout: 600000 ms — the harness honors up to ' +
   '600000ms; anything left at the default is backgrounded at ~120s). Match the timeout to the step.\n' +
   'Output ONLY the plan the junior will follow: a short numbered list of concrete, criteria-anchored ' +
   'actions. Be specific and terse. Do not write the full solution or long code blocks.';
+
+/** The 4.107.0 planner system prompt (no v2 doctrine bullets). */
+export const PLANNER_SYSTEM_V1 = PLANNER_SYSTEM.replace(DOCTRINE_V2, '');
+
+/** Select the planner persona by CORTEX_LIFT_PLAN_DOCTRINE ('v2' → bullets on; anything else → v1 baseline). */
+export function plannerSystem(env: NodeJS.ProcessEnv = process.env): string {
+  return (env.CORTEX_LIFT_PLAN_DOCTRINE || '').trim().toLowerCase() === 'v2' ? PLANNER_SYSTEM : PLANNER_SYSTEM_V1;
+}
 
 export interface LiftPlanContext {
   /** The task statement (the instruction the agent received). */

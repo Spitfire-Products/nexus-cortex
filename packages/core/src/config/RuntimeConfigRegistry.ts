@@ -57,6 +57,8 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   CORTEX_MENTOR_REASONING_ALLOWANCE: { tier: 'env' },
   CORTEX_MENTOR_THINKING_TIMEOUT_MS: { tier: 'env' },
   CORTEX_LIFT_PLAN_REASONING: { tier: 'env' },
+  CORTEX_LIFT_PLAN_DOCTRINE: { tier: 'env' },
+  CORTEX_ENDTURN_TIER: { tier: 'env' },
   CORTEX_ENDTURN_RESOLVER_REASONING: { tier: 'env' },
   CORTEX_DEADLINE_EXIT_MENTOR_REASONING: { tier: 'env' },
   CORTEX_LOOP_TOOL_BLOCK_REASONING: { tier: 'env' },

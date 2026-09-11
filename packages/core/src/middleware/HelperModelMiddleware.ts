@@ -27,7 +27,7 @@ import {
   MENTOR_INTERVIEW_SYSTEM,
 } from '../training/mentorConsult.js';
 import {
-  PLANNER_SYSTEM,
+  plannerSystem,
   buildPlannerUserPrompt,
   resolveLiftPlanConfig,
   type LiftPlanContext,
@@ -1528,7 +1528,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
       {
         surface: 'lift-plan',
         mentor: resolveMentorRoleConfig('lift-plan', process.env, { modelId: context.helperModelId, effort: cfg.effort, outputBudgetTokens: cfg.outputBudgetTokens }),
-        persona: PLANNER_SYSTEM,
+        persona: plannerSystem(),
         task:
           'Produce the criteria-anchored numbered plan (or a RETIRE plan). Do not write the full ' +
           'solution.',

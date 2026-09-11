@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   PLANNER_SYSTEM,
+  PLANNER_SYSTEM_V1,
+  DOCTRINE_V2,
+  plannerSystem,
   buildPlannerUserPrompt,
   resolveLiftPlanConfig,
   ENV_RECON_COMMAND,
@@ -111,3 +114,19 @@ describe('liftPlanner — buildPlannerUserPrompt', () => {
     expect(out).not.toContain('O'.repeat(2001));
   });
 });
+
+describe('CORTEX_LIFT_PLAN_DOCTRINE (4.107.2 lever)', () => {
+  it('v1 is the 4.107.0 prompt: no doctrine bullets; v2 = v1 + DOCTRINE_V2', () => {
+    expect(PLANNER_SYSTEM_V1).not.toMatch(/ONE INSTALL LAYER|LONG WAITS|EXACT-OUTPUT|EXPECTED LITERALS ARE LAW/);
+    expect(PLANNER_SYSTEM_V1).toMatch(/uv for Python/);
+    expect(PLANNER_SYSTEM).toContain(DOCTRINE_V2);
+    expect(PLANNER_SYSTEM.replace(DOCTRINE_V2, '')).toBe(PLANNER_SYSTEM_V1);
+  });
+  it('selector: default/empty/junk → v1; v2 → the bullets', () => {
+    expect(plannerSystem({})).toBe(PLANNER_SYSTEM_V1);
+    expect(plannerSystem({ CORTEX_LIFT_PLAN_DOCTRINE: '' })).toBe(PLANNER_SYSTEM_V1);
+    expect(plannerSystem({ CORTEX_LIFT_PLAN_DOCTRINE: 'v3' })).toBe(PLANNER_SYSTEM_V1);
+    expect(plannerSystem({ CORTEX_LIFT_PLAN_DOCTRINE: ' V2 ' })).toBe(PLANNER_SYSTEM);
+  });
+});
+

@@ -1105,7 +1105,7 @@ After EndTurn returns, act on your own self_review, then produce your final plai
       required: ['citations', 'verification', 'summary', 'open_items', 'self_review']
     },
     category: 'base',
-    discoveryTier: 'essential', // 2026-09-11 (cell-n-r1 census): was 'standard' → hidden behind SearchTools under deferred loading; 70–80% of bench sessions spent a SearchTools call hunting the MANDATORY finish tool and 11 tried Task-as-EndTurn. The gate filter still drops it when CORTEX_ENDTURN_GATE is off; the turn-1 anchor still narrows to Bash+Edit,
+    discoveryTier: 'standard', // baseline (4.107.0). CORTEX_ENDTURN_TIER=essential lifts it into the turn-1 set — see the BaseToolRegistry constructor (4.107.2; cell-n-r1 census found 70–80% of sessions hunting it via SearchTools, but 4.107.1 shipped it essential together with the planner doctrine and the hard core REGRESSED 11/26 → 4/18, so it is now a lever for the 2×2).
     metadata: {
       immutable: true,
       executionEnvironment: 'client',
@@ -2258,11 +2258,21 @@ Set stripSignatures=true when the session was recorded under a DIFFERENT provide
 export class BaseToolRegistry implements ToolRegistry {
   private readonly tools: Map<string, CanonicalToolDefinition>;
 
-  constructor() {
+  constructor(env: NodeJS.ProcessEnv = process.env) {
     this.tools = new Map();
     BASE_TOOLS.forEach(tool => {
       this.tools.set(tool.name, tool);
     });
+    // CORTEX_ENDTURN_TIER (4.107.2): 'essential' puts the MANDATORY finish tool in the turn-1 tool set
+    // (no SearchTools hunt); 'standard' (default) keeps the 4.107.0 baseline where it is deferred.
+    // A lever because the two shipped together in 4.107.1 and the hard core regressed — cell-n-r6
+    // separates EndTurn salience from the planner doctrine. The gate filter (CORTEX_ENDTURN_GATE)
+    // and the turn-1 anchor are unchanged either way.
+    const tier = (env.CORTEX_ENDTURN_TIER || '').trim().toLowerCase();
+    const endTurn = this.tools.get('EndTurn');
+    if (endTurn && (tier === 'essential' || tier === 'standard')) {
+      this.tools.set('EndTurn', { ...endTurn, discoveryTier: tier });
+    }
   }
 
   /**

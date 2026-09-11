@@ -1494,6 +1494,23 @@ leetspeak flag; model-extraction baked width-30/seed-5 constants; raman wrong ax
 next hard-core run on 4.107.1 vs cell-n-r1 flash-none 10/24. NOT built: the remaining-budget footer (HARNESS candidate) and
 the pytorch-model-cli preprocessing case (needs the grader output, which the supervisor `git add grader` fix now banks).
 
+## HB-4107-REGRESSION — 4.107.1 (EndTurn essential + planner doctrine) REGRESSED the hard core; both are levers in 4.107.2 (2026-09-11)
+**Evidence (cell-n-r5, hard core 13×K=2 on 4.107.1, control = cell-n-r1 flash-none on 4.107.0):** 4/18 vs 11/26; PAIRED on
+the 18 common tasks control 10 / r5 4 (lost gcode r1+r2, model-extraction r2, pytorch r2, raman r2, train-fasttext r2; gained
+dna r1). Turns lower on 12/18 (tune 29→17, filter-js 54→21, raman r2 42→24): the agent finishes EARLIER with less
+verification (gcode r5 read "gcodo3" without the control's max-zoom check of the c–d span). Resolver false-accept 1.00 (5
+MEETS→fail). Mechanism of the tier change PROVEN (SearchTools 21→2, Task 3→0) — the outcome still fell.
+**Fix (4.107.2):** `CORTEX_ENDTURN_TIER` (standard default | essential) applied in the BaseToolRegistry constructor, and
+`CORTEX_LIFT_PLAN_DOCTRINE` (v1 default | v2 = the four bullets as `DOCTRINE_V2`, `plannerSystem(env)` selects); both in
+schema/loader/registry/effectiveConfig + adapter passthrough; tests EndTurnTier (3) + liftPlanner (19). Defaults = the
+4.107.0 baseline. **Next:** cell-n-r6 2×2 (base / et-ess / doc-v2 / et-doc) attributes the regression; the winner becomes the
+default in 4.107.3 before the k=5.
+**Row loss (bench-side, same run):** 8/26 lanes printed COMPLETE but never pushed (4 never pushed even the boot row);
+prior runs lost 3–10% the same way. Supervisor `bank()` rebuilt as reconcile-by-rows (local ledger `/app/bench/banked/`,
+unwedge stale rebase, fetch → reset --mixed origin/main → rewrite results file → push, 6 attempts w/ backoff, git stderr
+logged, COMPLETE only when origin/main holds every slice row). Tested against a local bare remote (normal, non-fast-forward,
+wedged+unpushed, outage+recovery). Ships with the next `seed`.
+
 ## FUTURE FIXES QUEUE (2026-09-09 — deferred items surfaced this session)
 
 **Harness code:**

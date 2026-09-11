@@ -114,6 +114,8 @@ export interface EnvironmentVariables {
   CORTEX_MENTOR_REASONING_ALLOWANCE?: string; // integer tokens, optional (overrides the per-effort table)
   CORTEX_MENTOR_THINKING_TIMEOUT_MS?: string; // integer ms, optional (thinking-on mentor surface timeout; overrides the per-effort table)
   CORTEX_LIFT_PLAN_REASONING?: string; // 'on' | 'none' — per-surface, wins over CORTEX_MENTOR_REASONING
+  CORTEX_LIFT_PLAN_DOCTRINE?: string; // 'v1' | 'v2' — planner doctrine bullets (4.107.2 lever)
+  CORTEX_ENDTURN_TIER?: string; // 'standard' | 'essential' — EndTurn discovery tier (4.107.2 lever)
   CORTEX_ENDTURN_RESOLVER_REASONING?: string; // 'on' | 'none' — per-surface, wins over CORTEX_MENTOR_REASONING
   CORTEX_DEADLINE_EXIT_MENTOR_REASONING?: string; // 'on' | 'none' — per-surface, wins over CORTEX_MENTOR_REASONING
   CORTEX_LOOP_TOOL_BLOCK_REASONING?: string; // 'on' | 'none' — per-surface, wins over CORTEX_MENTOR_REASONING
@@ -416,6 +418,8 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_MENTOR_REASONING_ALLOWANCE: '',
   CORTEX_MENTOR_THINKING_TIMEOUT_MS: '',
   CORTEX_LIFT_PLAN_REASONING: '',
+  CORTEX_LIFT_PLAN_DOCTRINE: '',
+  CORTEX_ENDTURN_TIER: '',
   CORTEX_ENDTURN_RESOLVER_REASONING: '',
   CORTEX_DEADLINE_EXIT_MENTOR_REASONING: '',
   CORTEX_LOOP_TOOL_BLOCK_REASONING: '',
@@ -822,6 +826,22 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     description: 'on | none — this surface\'s own thinking switch; wins over CORTEX_MENTOR_REASONING. Empty = follow the global lever.',
     type: 'string',
     category: 'mentorship',
+    default: ''
+  },
+  {
+    key: 'CORTEX_LIFT_PLAN_DOCTRINE',
+    displayName: 'Lift planner doctrine version',
+    description: 'v1 (default, 4.107.0 prompt) | v2 (adds the census bullets: one install layer, no long sleeps, byte-level exact output, literals verbatim). Lever for the cell-n-r6 2×2.',
+    type: 'string',
+    category: 'mentorship',
+    default: ''
+  },
+  {
+    key: 'CORTEX_ENDTURN_TIER',
+    displayName: 'EndTurn discovery tier',
+    description: 'standard (default, deferred behind SearchTools) | essential (in the turn-1 tool set). Lever for the cell-n-r6 2×2.',
+    type: 'string',
+    category: 'training',
     default: ''
   },
   {
