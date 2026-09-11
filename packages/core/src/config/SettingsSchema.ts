@@ -839,7 +839,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
   {
     key: 'CORTEX_ENDTURN_TIER',
     displayName: 'EndTurn discovery tier',
-    description: 'standard (default, deferred behind SearchTools) | essential (in the turn-1 tool set). Lever for the cell-n-r6 2×2.',
+    description: 'essential (default since 4.107.3: in the turn-1 tool set) | standard (deferred behind SearchTools; the 4.107.0 baseline).',
     type: 'string',
     category: 'training',
     default: ''

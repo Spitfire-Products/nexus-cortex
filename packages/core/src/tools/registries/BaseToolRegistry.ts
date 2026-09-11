@@ -2268,9 +2268,12 @@ export class BaseToolRegistry implements ToolRegistry {
     // A lever because the two shipped together in 4.107.1 and the hard core regressed — cell-n-r6
     // separates EndTurn salience from the planner doctrine. The gate filter (CORTEX_ENDTURN_GATE)
     // and the turn-1 anchor are unchanged either way.
-    const tier = (env.CORTEX_ENDTURN_TIER || '').trim().toLowerCase();
+    // 4.107.3: default flipped to ESSENTIAL — cell-n-r6 2×2 (essential 11/26 vs standard 7/26) and tb21-k5-n1
+    // (70/89, SearchTools 3 calls in 88 tasks) confirmed it; 'standard' remains selectable for the baseline.
+    const raw = (env.CORTEX_ENDTURN_TIER || '').trim().toLowerCase();
+    const tier = raw === 'standard' ? 'standard' : 'essential';
     const endTurn = this.tools.get('EndTurn');
-    if (endTurn && (tier === 'essential' || tier === 'standard')) {
+    if (endTurn && endTurn.discoveryTier !== tier) {
       this.tools.set('EndTurn', { ...endTurn, discoveryTier: tier });
     }
   }
