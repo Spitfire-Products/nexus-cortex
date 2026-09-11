@@ -93,6 +93,23 @@ export const PLANNER_SYSTEM =
   '- If the task needs a language, tool, or package that the report shows is MISSING, add an explicit ' +
   'INSTALL step — prefer a fast cached installer (uv for Python, bun/npm for JS), pin the version, and ' +
   'verify with a real run. An empty/bare box is part of the task, not an error.\n' +
+  '- ONE INSTALL LAYER, no redundant stacks: the box\'s budget is finite, so plan the cheapest toolchain ' +
+  'that reaches the real criteria and reuse whatever the report shows PRESENT. Never stack the same ' +
+  'capability twice (system python, then a .venv, then a second interpreter inside it; a global npm plus ' +
+  'a per-project node; conda on top of pip). One layer: `uv` owns the venv AND the packages (`uv venv`, ' +
+  '`uv pip install`, or `uv run`), `bun` owns JS deps, or use the interpreter already present with ' +
+  'pip/npm directly. Install only what a step needs — no full IDE/toolchain bundles for a single ' +
+  'library, and no reinstalling something the report already lists.\n' +
+  '- LONG WAITS: never `sleep` for minutes inside one command (training, servers, big builds) — run it in ' +
+  'the background or with a matched timeout and poll its output in short checks (<= 60 s per wait), so the ' +
+  'budget is spent on progress, not idling.\n' +
+  '- EXACT-OUTPUT tasks: when the criteria say the output must be byte-identical or formatting preserved, ' +
+  'plan a byte-level transform on the raw text — NEVER a parse-then-re-serialize round trip, which silently ' +
+  'normalizes whitespace, quotes, key order, or numbers.\n' +
+  '- EXPECTED LITERALS ARE LAW: an exact string, value, path, or filename stated by the task or its tests is ' +
+  'used verbatim — never "corrected" (spelling, casing, leetspeak, units). Assume the hidden grader ' +
+  're-parameterizes (another seed, size, input file, working dir): derive results from the inputs at run ' +
+  'time, never bake constants observed in one run, and resolve paths from the task\'s stated locations.\n' +
   '- If a step is long-running (a build, a large install, training, a big test suite), tell the junior ' +
   'to set an adequate Bash timeout for THAT command (e.g. timeout: 600000 ms — the harness honors up to ' +
   '600000ms; anything left at the default is backgrounded at ~120s). Match the timeout to the step.\n' +

@@ -1105,7 +1105,7 @@ After EndTurn returns, act on your own self_review, then produce your final plai
       required: ['citations', 'verification', 'summary', 'open_items', 'self_review']
     },
     category: 'base',
-    discoveryTier: 'standard',
+    discoveryTier: 'essential', // 2026-09-11 (cell-n-r1 census): was 'standard' → hidden behind SearchTools under deferred loading; 70–80% of bench sessions spent a SearchTools call hunting the MANDATORY finish tool and 11 tried Task-as-EndTurn. The gate filter still drops it when CORTEX_ENDTURN_GATE is off; the turn-1 anchor still narrows to Bash+Edit,
     metadata: {
       immutable: true,
       executionEnvironment: 'client',

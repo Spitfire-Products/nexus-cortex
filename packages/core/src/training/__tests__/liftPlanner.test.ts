@@ -49,6 +49,21 @@ describe('liftPlanner — PLANNER_SYSTEM (the 3-part role)', () => {
     expect(PLANNER_SYSTEM).toMatch(/600000/);
     expect(PLANNER_SYSTEM).toMatch(/timeout/i);
   });
+  it('steers ONE install layer — no redundant toolchain stacks (uv owns venv+packages; reuse what is present)', () => {
+    expect(PLANNER_SYSTEM).toMatch(/ONE INSTALL LAYER/);
+    expect(PLANNER_SYSTEM).toMatch(/uv venv/);
+    expect(PLANNER_SYSTEM).toMatch(/Never stack the same capability twice/);
+    expect(PLANNER_SYSTEM).toMatch(/reuse whatever the report shows PRESENT/);
+  });
+  it('steers the census doctrine: no long sleeps, byte-level transforms for exact output, literals verbatim, no baked constants', () => {
+    expect(PLANNER_SYSTEM).toMatch(/LONG WAITS/);
+    expect(PLANNER_SYSTEM).toMatch(/<= 60 s per wait/);
+    expect(PLANNER_SYSTEM).toMatch(/EXACT-OUTPUT/);
+    expect(PLANNER_SYSTEM).toMatch(/parse-then-re-serialize/);
+    expect(PLANNER_SYSTEM).toMatch(/EXPECTED LITERALS ARE LAW/);
+    expect(PLANNER_SYSTEM).toMatch(/re-parameterizes/);
+    expect(PLANNER_SYSTEM).toMatch(/never bake constants/);
+  });
 });
 
 describe('liftPlanner — ENV_RECON_COMMAND', () => {

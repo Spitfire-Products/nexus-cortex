@@ -1367,6 +1367,7 @@ resolver prompt of ≥8K tokens at pro@max must return `parsed:true`; re-pilot f
 population; adjudicate on DELIVERY counts (`planChars>0`, `parsed:true`) not fire counts.
 **Third surface, same day:** `scripts/doctrine-mine.py` synthesis (deepseek-v4-pro, thinking on, max_tokens 10000) returned EMPTY content on the cell-m clusters and crashed on `json.loads('')`; thinking-off returned 5 valid edits first try. The labeler had already been switched to thinking-off on 2026-08-26 for the identical reason (its source comment) — the class was known and never generalized. Every DeepSeek thinking-on call in the codebase needs the allowance + finish_reason handling, not per-surface workarounds.
 **Follow-up (cell-m-r1 §6, 2026-09-11): per-SURFACE reasoning switch.** `CORTEX_MENTOR_REASONING` is global; the r1 quality read wants "lift planner thinking-ON (task-specific, adversarial plans) + resolver thinking-OFF (strict judge, 0 false accepts)". Add `CORTEX_LIFT_PLAN_REASONING` / `CORTEX_ENDTURN_RESOLVER_REASONING` (on|none) that win over the global, mirroring the *_EFFORT precedence; bank on the event as `thinkingSource`.
+**OUTCOME (cell-n-r1, 2026-09-11, hard core n≈25/arm, 4.107.0):** with delivery fixed, thinking-on mentors LOSE to thinking-off (7–9/25 vs 10/24); thinking-on resolvers false-accept ~50%. `CORTEX_MENTOR_REASONING=none` confirmed; the allowance/timeout/deliveredBy/per-surface/plan-hand-off machinery stays as measured infrastructure. Residual observations: flash@high/max truncate ~30% at 20K; pro@high needs >144 s per call. Ledger `.cortex/bench/r-cell-n-r1-2026-09-11.md`.
 **Rule promoted:** mechanism-engagement evidence = DELIVERY, not "fired": a mentor event with the right wire config and
 `planChars:0`/`rawLen:0` is a broken arm (second control with a stall), not a null result.
 
@@ -1472,6 +1473,26 @@ temperature}; `HelperFrameSpec.mentor` carries it; the adapters read `mentorRole
 mentor event banks `mentor:{model,thinking,effort,budget}` so a ledger proves the wire. Levers: CORTEX_MENTOR_REASONING
 (on|none), CORTEX_MENTOR_CONSULT_REASONING (none default), CORTEX_MENTOR_TEMPERATURE; "Mentor role" effective-config group;
 schema/loader/registry; master .env MENTOR ROLE section. The bench INV can now assert `mentor.thinking` per arm.
+
+## HB-ENDTURN-TIER — the MANDATORY finish tool was hidden behind SearchTools (found 2026-09-11, cell-n-r1 failure census §8) — ✅ FIXED 4.107.1
+**Symptom:** `EndTurn` carried `discoveryTier: 'standard'`, so under deferred loading it was NOT in the turn-1 tool set; the
+system prompt nonetheless calls it mandatory. Census over cell-n-r1 (130 lanes): 70–80% of sessions spent a SearchTools call
+hunting for EndTurn, 11 sessions tried `Task` as a finish tool, and several ended by wall-clock instead of a clean submit.
+**Fix:** `discoveryTier: 'essential'` in `BaseToolRegistry.ts`. The `endTurnGateOn` filter still removes it when
+CORTEX_ENDTURN_GATE is off; the turn-1 anchor still narrows to Bash+Edit. Not a lever. ToolProfile tests 34/34; the
+EndTurn-referencing suites (structuredOutput, timeBudget, endTurnResolver, coordinateVerification, IntegrityVerification,
+EndTurnGates, RequirementsVerification) green; emptyTurnContinue's 3 timeouts reproduce on the unpatched HEAD (pre-existing).
+
+## HB-PLAN-DOCTRINE — census doctrine folded into the lift planner (2026-09-11, cell-n-r1 census §8) — ✅ SHIPPED 4.107.1
+The planner system prompt (`liftPlanner.ts` PLANNER_SYSTEM, now ~3.6K chars) gained four bullets, each traced to a census
+failure class: (1) ONE INSTALL LAYER — no redundant toolchain stacks (system python → .venv → second interpreter; global npm +
+per-project node; conda over pip); `uv` owns venv+packages, `bun` owns JS, reuse what the env report shows PRESENT
+(bare-box lanes burned budget installing toolchains); (2) LONG WAITS — never `sleep` minutes in one command, background +
+poll ≤60 s (train-fasttext slept 2000–3000 s/session); (3) EXACT-OUTPUT — byte-level transforms, never parse→re-serialize
+(filter-js 0/50 vs a byte-compare grader); (4) EXPECTED LITERALS ARE LAW + graders re-parameterize (gcode "corrected" the
+leetspeak flag; model-extraction baked width-30/seed-5 constants; raman wrong axis). Prompt-only (no lever): measured by the
+next hard-core run on 4.107.1 vs cell-n-r1 flash-none 10/24. NOT built: the remaining-budget footer (HARNESS candidate) and
+the pytorch-model-cli preprocessing case (needs the grader output, which the supervisor `git add grader` fix now banks).
 
 ## FUTURE FIXES QUEUE (2026-09-09 — deferred items surfaced this session)
 
