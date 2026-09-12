@@ -85,3 +85,18 @@ function clampPct(raw: string | undefined, dflt: number, lo = 0.3, hi = 0.99): n
 export function renderResumeMemoryPrompt(conversationText: string, targetTokens: number): string {
   return RESUME_MEMORY_PROMPT.replace('{{TARGET_TOKENS}}', String(targetTokens)).replace('{{CONVERSATION}}', conversationText);
 }
+
+/**
+ * v3 (4.108.3): the band to re-arm the rung at AFTER a compaction. The memory is fresh at that moment, so later cycles need only
+ * the LAST rung before the threshold (one whole-conversation helper call per cycle, not one per band — each call summarizes the
+ * whole history, which at a 747K threshold is a ~$0.1 helper call). Returns max(band at the post-compaction level, lastBand − 1).
+ */
+export function resolveRearmBand(
+  tokensAfter: number,
+  threshold: number,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  if (!(threshold > 0)) return 0;
+  const lastBand = resolveCheckpointBand(threshold * 0.999999, threshold, env);
+  return Math.max(resolveCheckpointBand(tokensAfter, threshold, env), Math.max(0, lastBand - 1));
+}

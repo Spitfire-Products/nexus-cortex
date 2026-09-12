@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { RESUME_MEMORY_PROMPT, renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBand } from '../compactionResumeTemplate';
+import { RESUME_MEMORY_PROMPT, renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBand, resolveRearmBand } from '../compactionResumeTemplate';
 import { buildCompactionResumeReminder } from '../compactionResume';
 
 describe('HB-COMPACTION-RESUME v2 (4.108.2): the resume-session protocol ported into the harness', () => {
@@ -25,5 +25,18 @@ describe('HB-COMPACTION-RESUME v2 (4.108.2): the resume-session protocol ported 
     expect(resolveCheckpointBand(600, 1000, { CORTEX_COMPACTION_CHECKPOINT_PCT: 'junk' })).toBe(0);
     expect(resolveCheckpointBand(990, 1000, { CORTEX_COMPACTION_CHECKPOINT_PCT: '5' })).toBe(1); // clamped to 0.99
     expect(resolveCheckpointBand(500, 0, {})).toBe(0);
+  });
+});
+
+describe('v3 rung re-arm', () => {
+  it('re-arms so only the LAST band before the threshold fires on later cycles (unless the level is already above it)', () => {
+    const env = { CORTEX_COMPACTION_CHECKPOINT_PCT: '0.75', CORTEX_COMPACTION_CHECKPOINT_STEP: '0.10' } as any;
+    // bands: 0.75→1, 0.85→2, 0.95→3; last band = 3 → re-arm at 2 → next checkpoint fires at ≥95%
+    expect(resolveRearmBand(5000, 14000, env)).toBe(2);
+    expect(resolveCheckpointBand(13400, 14000, env)).toBe(3);   // 95.7% → fires after re-arm at 2
+    expect(resolveCheckpointBand(12000, 14000, env)).toBe(2);   // 85.7% → does NOT fire after re-arm at 2
+    // post-compaction level already in the last band → re-arm there (fires again only after the next compaction)
+    expect(resolveRearmBand(13500, 14000, env)).toBe(3);
+    expect(resolveRearmBand(5000, 0, env)).toBe(0);
   });
 });

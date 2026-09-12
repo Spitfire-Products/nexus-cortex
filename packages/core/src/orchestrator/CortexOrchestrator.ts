@@ -69,8 +69,8 @@ import { toolFactory } from '../tools/ToolFactory.js';
 import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveLiftPlan, resolveEndTurnResolver, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked, resolveVisionHelperModel, resolveVisionHandoffMax, resolveSliceNudge, resolveSliceBlock, resolveSliceBlockAt, resolveSliceBlockMax } from '../tools/ToolProfile.js';
 import { sliceReadFile, decideSliceBlock } from './sliceBlock.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
-import { resolveCompactionResume, extractFirstUserText, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage } from './compactionResume.js';
-import { renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBand } from './compactionResumeTemplate.js';
+import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage } from './compactionResume.js';
+import { renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBand, resolveRearmBand } from './compactionResumeTemplate.js';
 import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig } from '../training/judgeEvidence.js';
 import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, mentorSurfaceTimeoutMs, type MentorCallMeta } from '../training/mentorRole.js';
 import { resolveOuterToolDeadlineMs } from './outerToolTimeout.js';
@@ -516,7 +516,8 @@ export class CortexOrchestrator {
   private turnNumber: number = 0;
   /** HB-COMPACTION-RESUME v2: pressure-rung checkpoint state (once per band; reused at compaction). */
   private lastCheckpointBand = 0;
-  private lastResumeMemory: { text: string; tokensAt: number; turn: number; helperModelId?: string; cost: number } | null = null;
+  private lastResumeMemory: { text: string; tokensAt: number; turn: number; helperModelId?: string; cost: number; covered: WeakSet<object> } | null = null;
+  private pinnedTaskText = '';
 
   /** Pending TURN_SUMMARY_PREDICTION awaiting the user's ACTUAL next message —
    *  scored + recorded at the next sendMessage (graduation-signal capture,
@@ -6813,8 +6814,13 @@ export class CortexOrchestrator {
       actualSystemTokens: 0
     };
 
-    // Calculate compaction threshold using model's configuration (with accurate overrides)
-    const threshold = this.contextBudgetManager.getCompactionThreshold(model, budgetOverrides);
+    // Calculate compaction threshold using model's configuration (with accurate overrides).
+    // CORTEX_COMPACTION_THRESHOLD_TOKENS (4.108.3, test/ops override): a positive integer replaces the card-derived threshold so the
+    // checkpoint rung + compaction can be exercised in a short live run (efficacy proof before any long-horizon bench).
+    const thresholdOverride = Number(String(process.env.CORTEX_COMPACTION_THRESHOLD_TOKENS ?? '').trim() || 0);
+    const threshold = thresholdOverride > 0
+      ? thresholdOverride
+      : this.contextBudgetManager.getCompactionThreshold(model, budgetOverrides);
 
     if (this.config.debug) {
       console.log(`[Orchestrator Context] Current tokens: ${currentTokens}, Threshold: ${threshold} (tool reserve: ${this.currentToolTokens})`);
@@ -6829,11 +6835,13 @@ export class CortexOrchestrator {
       if (band > this.lastCheckpointBand) {
         this.lastCheckpointBand = band;
         try {
+          const tgt = resumeMemoryTargetTokens(threshold);
           const r = await (this.helperMiddleware as any).summarizeForResume(
-            this.convertToCanonicalMessages([...this.messageHistory]), model, 6000, renderResumeMemoryPrompt('{{CONVERSATION}}', 6000));
+            this.convertToCanonicalMessages([...this.messageHistory]), model, tgt, renderResumeMemoryPrompt('{{CONVERSATION}}', tgt));
           const text = String(r?.summary ?? '');
           if (text.trim()) {
-            this.lastResumeMemory = { text, tokensAt: currentTokens, turn: this.turnNumber, helperModelId: r?.helperModelId, cost: Number(r?.cost ?? 0) };
+            this.lastResumeMemory = { text, tokensAt: currentTokens, turn: this.turnNumber, helperModelId: r?.helperModelId, cost: Number(r?.cost ?? 0),
+              covered: new WeakSet<object>(this.messageHistory as unknown as object[]) };
             this.writeResumeMemoryFile(text, `checkpoint band ${band} (${currentTokens}/${threshold} tokens, turn ${this.turnNumber})`);
             const store = this.getDecisionStore();
             if (store) void store.recordEvent({
@@ -6859,6 +6867,7 @@ export class CortexOrchestrator {
     try {
       // Calculate available budget for history (with accurate overrides)
       const budget = this.contextBudgetManager.calculateBudget(model, budgetOverrides);
+      if (thresholdOverride > 0) budget.availableForHistory = Math.floor(thresholdOverride * 0.5); // override: keep ~half the forced window
 
       // Determine selection strategy based on model configuration
       const strategy = model.compaction?.behavior?.compactOlder ? 'preserve-critical' : 'sliding-window';
@@ -6887,22 +6896,33 @@ export class CortexOrchestrator {
       // session JSONL (so a bench can count compactions), (5) .cortex/memory/resume-<session>.md is written.
       const compactionResume = resolveCompactionResume();
       const dropped = pickDropped(this.messageHistory, selectedMessages);
-      const taskText = extractFirstUserText(this.messageHistory);
+      const taskText = resolveTaskText(this.messageHistory, this.pinnedTaskText);
+      if (taskText) this.pinnedTaskText = taskText;
       let resumeText = '';
       let resumeHelper: string | undefined;
       let resumeCost = 0;
-      let memorySource: 'checkpoint' | 'dropped' | 'none' = 'none';
-      // v2: a checkpoint written within the last ~15% of the threshold is fresh enough to reuse (no second helper call)
-      if (compactionResume && this.lastResumeMemory && (currentTokens - this.lastResumeMemory.tokensAt) <= threshold * 0.15) {
+      let memorySource: 'checkpoint' | 'dropped' | 'rolled' | 'none' = 'none';
+      // v3 (4.108.3): reuse the checkpoint only if it already covered every message being dropped. The v2 token-distance test went
+      // negative after the first compaction and replayed one stale checkpoint forever (the hardened live proof: 27 compactions, 0 fresh memories).
+      if (compactionResume && this.lastResumeMemory && coversAll(this.lastResumeMemory.covered, dropped)) {
         resumeText = this.lastResumeMemory.text; resumeHelper = this.lastResumeMemory.helperModelId; resumeCost = 0; memorySource = 'checkpoint';
       } else if (compactionResume && dropped.length > 0 && this.config.useHelperModels && typeof (this.helperMiddleware as any)?.summarizeForResume === 'function') {
         try {
+          const tgt = resumeMemoryTargetTokens(threshold);
+          // v3: roll the prior memory forward — the helper summarizes [prior memory, ...newly dropped] into ONE memory.
+          const prior = this.lastResumeMemory;
+          const seed = prior && prior.text.trim() ? [buildRollingSeedMessage(prior.text)] : [];
           const r = await (this.helperMiddleware as any).summarizeForResume(
-            this.convertToCanonicalMessages(dropped), model, 6000, renderResumeMemoryPrompt('{{CONVERSATION}}', 6000));
+            this.convertToCanonicalMessages([...seed, ...dropped] as any), model, tgt, renderResumeMemoryPrompt('{{CONVERSATION}}', tgt));
           resumeText = String(r?.summary ?? '');
           resumeHelper = r?.helperModelId;
           resumeCost = Number(r?.cost ?? 0);
-          memorySource = resumeText.trim() ? 'dropped' : 'none';
+          memorySource = resumeText.trim() ? (seed.length ? 'rolled' : 'dropped') : 'none';
+          if (resumeText.trim()) {
+            const covered = prior?.covered ?? new WeakSet<object>();
+            for (const m of dropped) if (m && typeof m === 'object') covered.add(m as object);
+            this.lastResumeMemory = { text: resumeText, tokensAt: currentTokens, turn: this.turnNumber, helperModelId: resumeHelper, cost: resumeCost, covered };
+          }
         } catch (e: any) {
           console.error('[Orchestrator Context] resume memory summary failed (degrading to task-only reminder):', e?.message ?? e);
         }
@@ -6912,6 +6932,9 @@ export class CortexOrchestrator {
       this.messageHistory = compactionResume ? selectedMessages.filter((m) => !isCompactionResumeMessage(m)) : selectedMessages;
 
       if (compactionResume && dropped.length > 0) {
+        // v3: re-arm the checkpoint rung relative to the post-compaction level so a fresh whole-conversation memory is written
+        // again as the context climbs (v2 left lastCheckpointBand at its pre-compaction high-water mark → the rung never re-fired).
+        this.lastCheckpointBand = resolveRearmBand(newTokenCount, threshold);
         const text = buildCompactionResumeReminder({
           turn: this.turnNumber, droppedCount: dropped.length, keptCount: this.messageHistory.length,
           tokensBefore: currentTokens, tokensAfter: newTokenCount, resumeText, taskText, helperModelId: resumeHelper,

@@ -1327,6 +1327,24 @@ before the run started). Reconcile's slice check only resolves `complete_pending
 task in the slice is banked; or (b) the supervisor sleeps ≥ one tick period (≥300 s, or until a probe) after COMPLETE
 so the tick can bank the beat — (a) is cheaper and touch-free.
 
+## HB-CHUNKED-READS — the anti-loop stack fights legitimate sequential chunk reads of a large file (2026-09-12, compaction proof run 5)
+**Evidence (`/tmp/claude-1000/cmp-test`, deepseek-flash, 4.108.3 tree, task = read a 1200-line file in ≤200-line `sed -n 'A,Bp'` chunks):**
+decisions.jsonl shows the ladder counting every chunk read as ONE approach (`loop_escalation rung=remind count=4`, `rung=diversify count=12`,
+same `approachHash f639aa85…` — the hash strips digits, so `sed -n '1,200p'` ≡ `sed -n '201,400p'`), `steering_injected {kind: slice_read,
+count: 3}` on the same file, then `loop_tool_block {trigger: neardup-hash, blockNumber: 1, redirectTools: [Read, Write, Edit]}` — the model
+was pushed off Bash onto `Read`, guessed a wrong absolute path twice (`family: file not found`), and the run ended at 61 iterations with
+no artifact. A monotonic range progression over one file is the canonical way to read a large input; every 8-h TB4.0 task that ingests a
+big log/CSV will meet this. **Fix candidates:** (a) the near-dup lens keeps digits when the ONLY difference between two commands is a
+numeric range and the ranges are disjoint/increasing (a progression, not a retry); (b) the ladder's approachHash gets the same exemption;
+(c) `slice_read` steering must not count disjoint `sed -n` ranges as re-reads. Verify on the proof task (expect 0 ladder/neardup events
+across 6 chunk reads) and on the TB2.1 loop set (no regression in real retry-loop detection). Related: HB-LOOP-NEARDUP (built 09-10).
+
+## HB-DSML-TAIL — a raw `<｜DSML｜>` tool call surfaced as the FINAL TEXT after a long, compaction-heavy session (2026-09-12, proof run 5)
+The response's last content block was the literal DSML `calls/invoke name="Read"` markup with `string="true"` parameter attributes —
+the model emitted a tool call the parser did not lift, so the turn ended with it as prose (iteration 61, after 27 compactions). Check
+whether the DSML parser (HB-DSML-PARSE, canary-passed 09-09) handles the `string="true|false"` attribute form and the `<｜｜DSML｜｜` double-bar
+variant; if not, extend the grammar + canary. Bench signature to grep in trajectories: final assistant text containing `DSML｜｜ calls`.
+
 ## HB-MENTOR-BUDGET — thinking-ON mentor calls return EMPTY output because reasoning shares `max_tokens` (2026-09-10, cell-m pilot)
 **STATUS: SHIPPED 4.106.0 (commit bd6438612e, tag v4.106.0, 2026-09-10 22:05Z).** Built as specified below: allowance table +
 `CORTEX_MENTOR_REASONING_ALLOWANCE`, finish_reason/reasoning_tokens read, one thinking-off retry on blank, call meta banked on every
@@ -1549,6 +1567,13 @@ wedged+unpushed, outage+recovery). Ships with the next `seed`.
   (`HARNESS_BENCH_CONSOLIDATION_PLAN.md` Layer 3); deferred until the headless system is fully proven (operator).
 
 ### HB-COMPACTION-RESUME — resume memory across compaction + compaction observability (2026-09-12, operator-requested) — ✅ BUILT 4.108.0 (items 1–3, 5; item 4 streaming reactive-catch and item 6 delegation doctrine OPEN)
+**v3 (4.108.3, 2026-09-12) — the LIVE PROOF found and fixed a design bug:** the v2 checkpoint-reuse rule compared token distance
+(`currentTokens − tokensAt ≤ 15% of threshold`), which goes NEGATIVE once a compaction shrinks the history, so ONE stale checkpoint was
+replayed into every later reminder and the rung never re-fired (band never rose past its high-water mark): 4 checkpoints, 27 proactive
+compactions, 0 fresh memories, the model re-reading chunks it had already covered until iteration 61. Fix: reuse only when the checkpoint
+already COVERED every dropped message (`coversAll`, WeakSet of message identities); otherwise the helper summarizes [prior memory, …newly
+dropped] into ONE rolled memory (`buildRollingSeedMessage`, memorySource `rolled`); after each compaction the rung is re-armed relative to
+the post-compaction level. Also from the proof: `CORTEX_COMPACTION_THRESHOLD_TOKENS` (test override), task pin persistence, memory sizing.
 **Trigger:** Terminal-Bench 4.0 tasks carry 8-hour budgets on a 1M-context card; no bench run has ever crossed the compaction threshold, so
 the behavior is unmeasured. Operator: "build a system into the harness that invokes a stop hook or the helper model middleware to prepare a
 resume memory pre compaction and then another hook and instruction to rebuild context post compaction."
