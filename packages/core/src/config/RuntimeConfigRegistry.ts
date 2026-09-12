@@ -60,6 +60,7 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   CORTEX_LIFT_PLAN_DOCTRINE: { tier: 'env' },
   CORTEX_ENDTURN_TIER: { tier: 'env' },
   CORTEX_COMPACTION_RESUME: { tier: 'env' },
+  CORTEX_DELEGATION_HINT: { tier: 'env' },
   CORTEX_ENDTURN_RESOLVER_REASONING: { tier: 'env' },
   CORTEX_DEADLINE_EXIT_MENTOR_REASONING: { tier: 'env' },
   CORTEX_LOOP_TOOL_BLOCK_REASONING: { tier: 'env' },

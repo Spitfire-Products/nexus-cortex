@@ -116,6 +116,7 @@ export interface EnvironmentVariables {
   CORTEX_LIFT_PLAN_REASONING?: string; // 'on' | 'none' — per-surface, wins over CORTEX_MENTOR_REASONING
   CORTEX_LIFT_PLAN_DOCTRINE?: string; // 'v1' | 'v2' — planner doctrine bullets (4.107.2 lever)
   CORTEX_ENDTURN_TIER?: string; // 'standard' | 'essential' — EndTurn discovery tier (4.107.2 lever)
+  CORTEX_DELEGATION_HINT?: string; // 'true' | 'false' — DARK: boot-minimal clause naming the Task tool for delegation (4.108.1)
   CORTEX_COMPACTION_RESUME?: string; // 'true' | 'false' — resume memory + task pin injected after proactive compaction (4.108.0)
   CORTEX_ENDTURN_RESOLVER_REASONING?: string; // 'on' | 'none' — per-surface, wins over CORTEX_MENTOR_REASONING
   CORTEX_DEADLINE_EXIT_MENTOR_REASONING?: string; // 'on' | 'none' — per-surface, wins over CORTEX_MENTOR_REASONING
@@ -422,6 +423,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_LIFT_PLAN_DOCTRINE: '',
   CORTEX_ENDTURN_TIER: '',
   CORTEX_COMPACTION_RESUME: '',
+  CORTEX_DELEGATION_HINT: '',
   CORTEX_ENDTURN_RESOLVER_REASONING: '',
   CORTEX_DEADLINE_EXIT_MENTOR_REASONING: '',
   CORTEX_LOOP_TOOL_BLOCK_REASONING: '',
@@ -836,6 +838,14 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     description: 'v1 (default, 4.107.0 prompt) | v2 (adds the census bullets: one install layer, no long sleeps, byte-level exact output, literals verbatim). Lever for the cell-n-r6 2×2.',
     type: 'string',
     category: 'mentorship',
+    default: ''
+  },
+  {
+    key: 'CORTEX_DELEGATION_HINT',
+    displayName: 'Delegation hint (dark)',
+    description: 'true | false (default) — append one clause to the boot-minimal prompt naming the Task tool for large/independent/output-heavy sub-tasks (4.108.1, HB-DELEGATION-DOCTRINE). Dark until an A/B reads.',
+    type: 'string',
+    category: 'training',
     default: ''
   },
   {

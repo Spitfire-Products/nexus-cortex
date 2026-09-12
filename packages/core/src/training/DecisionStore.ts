@@ -87,6 +87,7 @@ export type SteeringEventKind =
   | 'mentor_consult'
   // HB-DSML-PARSE (2026-09-09): the DeepSeek DSML tool-call recovery fired — a tool call that leaked
   // into assistant TEXT was recovered into a real tool_use (detail carries {count, tools}).
+  | 'task_spawn' // HB-DELEGATION-DOCTRINE (4.108.1): the model dispatched Task subagent(s) — detail {count, subagentTypes, models, parallel}; mechanism-engagement evidence for delegation
   | 'compaction' // HB-COMPACTION-RESUME (4.108.0): proactive compaction fired — detail {mode, turn, tokensBefore, tokensAfter, dropped, kept, resumeChars, helperModelId, cost}
   | 'slice_block' // CORTEX_SLICE_BLOCK: a re-slice of a static file was coercively blocked (force Read); detail {file, priorSlices, blockNumber}
   | 'dsml_recovered';

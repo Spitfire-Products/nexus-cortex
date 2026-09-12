@@ -1548,7 +1548,7 @@ wedged+unpushed, outage+recovery). Ships with the next `seed`.
 - **BENCHMARKS / BENCHRUNNER SPA windows** — the two visual command windows over the STDB control plane
   (`HARNESS_BENCH_CONSOLIDATION_PLAN.md` Layer 3); deferred until the headless system is fully proven (operator).
 
-### HB-COMPACTION-RESUME — resume memory across compaction + compaction observability (2026-09-12, operator-requested)
+### HB-COMPACTION-RESUME — resume memory across compaction + compaction observability (2026-09-12, operator-requested) — ✅ BUILT 4.108.0 (items 1–3, 5; item 4 streaming reactive-catch and item 6 delegation doctrine OPEN)
 **Trigger:** Terminal-Bench 4.0 tasks carry 8-hour budgets on a 1M-context card; no bench run has ever crossed the compaction threshold, so
 the behavior is unmeasured. Operator: "build a system into the harness that invokes a stop hook or the helper model middleware to prepare a
 resume memory pre compaction and then another hook and instruction to rebuild context post compaction."

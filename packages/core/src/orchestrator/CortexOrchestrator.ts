@@ -7278,6 +7278,23 @@ export class CortexOrchestrator {
     // Separate Task tools from other tools for parallel execution
     const taskTools = toolUseBlocks.filter(t => t.name === 'Task');
     const otherTools = toolUseBlocks.filter(t => t.name !== 'Task');
+    // HB-DELEGATION-DOCTRINE (4.108.1): bank every subagent dispatch as a decisions.jsonl event — until now no bench
+    // could tell whether the model ever reached for Task (it is anchor-stripped on turn 1 and never prompted).
+    if (taskTools.length > 0) {
+      const store = this.getDecisionStore();
+      if (store) void store.recordEvent({
+        sessionId: this.currentSessionId ?? 'unknown',
+        kind: 'task_spawn',
+        toolName: 'Task',
+        detail: {
+          count: taskTools.length,
+          parallel: taskTools.length > 1,
+          subagentTypes: taskTools.map(t => String((t.input as any)?.subagent_type ?? '')),
+          models: taskTools.map(t => String((t.input as any)?.model ?? 'inherit')),
+          turn: this.turnNumber,
+        },
+      }).catch(() => {});
+    }
 
     if (this.config.debug && taskTools.length > 0) {
       console.log(`[Orchestrator] Task tools in this batch: ${taskTools.length} (need >1 for parallel execution)`);
