@@ -63,7 +63,8 @@ export class ResponsesAPIHelperAdapter extends BaseHelperAdapter {
   async compact(
     messages: HelperCanonicalMessage[],
     helperConfig: ModelConfig,
-    targetTokens: number
+    targetTokens: number,
+    promptOverride?: string
   ): Promise<CompactionResult> {
     const startTime = Date.now();
 
@@ -72,7 +73,7 @@ export class ResponsesAPIHelperAdapter extends BaseHelperAdapter {
     const originalTokens = this.estimateTokens(originalText);
 
     // Create compaction prompt
-    const prompt = this.createCompactionPrompt(messages, targetTokens);
+    const prompt = this.resolveCompactionPrompt(messages, targetTokens, promptOverride);
 
     // Convert to Responses API format
     const inputItems: ResponsesAPIInputItem[] = [

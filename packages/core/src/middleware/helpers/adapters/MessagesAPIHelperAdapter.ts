@@ -77,7 +77,8 @@ export class MessagesAPIHelperAdapter extends BaseHelperAdapter {
   async compact(
     messages: HelperCanonicalMessage[],
     helperConfig: ModelConfig,
-    targetTokens: number
+    targetTokens: number,
+    promptOverride?: string
   ): Promise<CompactionResult> {
     const startTime = Date.now();
 
@@ -95,7 +96,7 @@ export class MessagesAPIHelperAdapter extends BaseHelperAdapter {
     }
 
     // Create compaction prompt
-    const prompt = this.createCompactionPrompt(messages, targetTokens);
+    const prompt = this.resolveCompactionPrompt(messages, targetTokens, promptOverride);
 
     // Make real API call
     const response = await this.makeAPICall(

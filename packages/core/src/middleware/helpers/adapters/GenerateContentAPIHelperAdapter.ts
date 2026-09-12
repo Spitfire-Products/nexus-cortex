@@ -45,7 +45,8 @@ export class GenerateContentAPIHelperAdapter extends BaseHelperAdapter {
   async compact(
     messages: HelperCanonicalMessage[],
     helperConfig: ModelConfig,
-    targetTokens: number
+    targetTokens: number,
+    promptOverride?: string
   ): Promise<CompactionResult> {
     const startTime = Date.now();
 
@@ -54,7 +55,7 @@ export class GenerateContentAPIHelperAdapter extends BaseHelperAdapter {
     const originalTokens = this.estimateTokens(originalText);
 
     // Create compaction prompt
-    const prompt = this.createCompactionPrompt(messages, targetTokens);
+    const prompt = this.resolveCompactionPrompt(messages, targetTokens, promptOverride);
 
     // Make real API call via Google Generative AI SDK
     const response = await this.makeAPICall(helperConfig, prompt, targetTokens);

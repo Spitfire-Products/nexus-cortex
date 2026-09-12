@@ -24,7 +24,7 @@ import { sanitizeHistoryForDisplay } from './displayHistorySanitizer.js';
 import { verifyCoordinates, deterministicCoordinateScore } from './coordinateVerification.js';
 import { buildRouterSample, appendJsonlRotating } from './cortexTrainingRecord.js';
 import { join as pathJoin } from 'path';
-import { existsSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { execSync } from 'node:child_process';
 import { ENV_RECON_COMMAND, resolveLiftPlanConfig } from '../training/liftPlanner.js';
 import { resolveEndTurnResolverConfig, parseResolverVerdict } from '../training/endTurnResolver.js';
@@ -70,6 +70,7 @@ import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLift
 import { sliceReadFile, decideSliceBlock } from './sliceBlock.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
 import { resolveCompactionResume, extractFirstUserText, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage } from './compactionResume.js';
+import { renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBand } from './compactionResumeTemplate.js';
 import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig } from '../training/judgeEvidence.js';
 import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, mentorSurfaceTimeoutMs, type MentorCallMeta } from '../training/mentorRole.js';
 import { resolveOuterToolDeadlineMs } from './outerToolTimeout.js';
@@ -513,6 +514,9 @@ export class CortexOrchestrator {
   private currentModelId: string;
   private messageHistory: Message[] = [];
   private turnNumber: number = 0;
+  /** HB-COMPACTION-RESUME v2: pressure-rung checkpoint state (once per band; reused at compaction). */
+  private lastCheckpointBand = 0;
+  private lastResumeMemory: { text: string; tokensAt: number; turn: number; helperModelId?: string; cost: number } | null = null;
 
   /** Pending TURN_SUMMARY_PREDICTION awaiting the user's ACTUAL next message —
    *  scored + recorded at the next sendMessage (graduation-signal capture,
@@ -6769,6 +6773,16 @@ export class CortexOrchestrator {
    * - Uses ContextBudgetManager for message selection
    * - Preserves critical messages (tool calls, recent context)
    */
+  /** HB-COMPACTION-RESUME: best-effort write of the resume memory to .cortex/memory/resume-<session>.md (synchronous fs). */
+  private writeResumeMemoryFile(text: string, why: string): void {
+    try {
+      const dir = pathJoin(this.config.projectPath || process.cwd(), '.cortex', 'memory');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(pathJoin(dir, `resume-${this.currentSessionId}.md`),
+        `---\nname: resume-${this.currentSessionId}\ndescription: resume memory — ${why}\ntype: project\n---\n${text}\n`);
+    } catch { /* best-effort */ }
+  }
+
   private async ensureHistoryFitsModel(model: ModelConfig): Promise<void> {
     // Capture the active model's context window for request-build-time
     // pruning (pruneAgedForRequest) — set before any early return so the
@@ -6804,6 +6818,33 @@ export class CortexOrchestrator {
 
     if (this.config.debug) {
       console.log(`[Orchestrator Context] Current tokens: ${currentTokens}, Threshold: ${threshold} (tool reserve: ${this.currentToolTokens})`);
+    }
+
+    // HB-COMPACTION-RESUME v2 (4.108.2) — PRESSURE RUNG: like the operator's resume-session routine (checkpoint at ~85% of the
+    // window BEFORE compaction fires), write the resume memory of the WHOLE conversation once per band from
+    // CORTEX_COMPACTION_CHECKPOINT_PCT (default 0.75) of the threshold upward, so a fresh memory exists before any drop.
+    const resumeOn = resolveCompactionResume();
+    if (resumeOn && this.config.useHelperModels && typeof (this.helperMiddleware as any)?.summarizeForResume === 'function') {
+      const band = resolveCheckpointBand(currentTokens, threshold);
+      if (band > this.lastCheckpointBand) {
+        this.lastCheckpointBand = band;
+        try {
+          const r = await (this.helperMiddleware as any).summarizeForResume(
+            this.convertToCanonicalMessages([...this.messageHistory]), model, 6000, renderResumeMemoryPrompt('{{CONVERSATION}}', 6000));
+          const text = String(r?.summary ?? '');
+          if (text.trim()) {
+            this.lastResumeMemory = { text, tokensAt: currentTokens, turn: this.turnNumber, helperModelId: r?.helperModelId, cost: Number(r?.cost ?? 0) };
+            this.writeResumeMemoryFile(text, `checkpoint band ${band} (${currentTokens}/${threshold} tokens, turn ${this.turnNumber})`);
+            const store = this.getDecisionStore();
+            if (store) void store.recordEvent({
+              sessionId: this.currentSessionId ?? 'unknown', kind: 'compaction',
+              detail: { mode: 'checkpoint', band, turn: this.turnNumber, tokens: currentTokens, threshold, resumeChars: text.length, helperModelId: r?.helperModelId ?? null, cost: Number(r?.cost ?? 0) },
+            }).catch(() => {});
+          }
+        } catch (e: any) {
+          console.error('[Orchestrator Context] pre-compaction checkpoint failed:', e?.message ?? e);
+        }
+      }
     }
 
     // Check if compaction needed
@@ -6850,12 +6891,18 @@ export class CortexOrchestrator {
       let resumeText = '';
       let resumeHelper: string | undefined;
       let resumeCost = 0;
-      if (compactionResume && dropped.length > 0 && this.config.useHelperModels && typeof (this.helperMiddleware as any)?.summarizeForResume === 'function') {
+      let memorySource: 'checkpoint' | 'dropped' | 'none' = 'none';
+      // v2: a checkpoint written within the last ~15% of the threshold is fresh enough to reuse (no second helper call)
+      if (compactionResume && this.lastResumeMemory && (currentTokens - this.lastResumeMemory.tokensAt) <= threshold * 0.15) {
+        resumeText = this.lastResumeMemory.text; resumeHelper = this.lastResumeMemory.helperModelId; resumeCost = 0; memorySource = 'checkpoint';
+      } else if (compactionResume && dropped.length > 0 && this.config.useHelperModels && typeof (this.helperMiddleware as any)?.summarizeForResume === 'function') {
         try {
-          const r = await (this.helperMiddleware as any).summarizeForResume(this.convertToCanonicalMessages(dropped), model);
+          const r = await (this.helperMiddleware as any).summarizeForResume(
+            this.convertToCanonicalMessages(dropped), model, 6000, renderResumeMemoryPrompt('{{CONVERSATION}}', 6000));
           resumeText = String(r?.summary ?? '');
           resumeHelper = r?.helperModelId;
           resumeCost = Number(r?.cost ?? 0);
+          memorySource = resumeText.trim() ? 'dropped' : 'none';
         } catch (e: any) {
           console.error('[Orchestrator Context] resume memory summary failed (degrading to task-only reminder):', e?.message ?? e);
         }
@@ -6868,6 +6915,7 @@ export class CortexOrchestrator {
         const text = buildCompactionResumeReminder({
           turn: this.turnNumber, droppedCount: dropped.length, keptCount: this.messageHistory.length,
           tokensBefore: currentTokens, tokensAfter: newTokenCount, resumeText, taskText, helperModelId: resumeHelper,
+          rebuild: buildRebuildInstructions(), memorySource,
         });
         const reminder: Message = {
           uuid: uuidv4(),
@@ -6879,20 +6927,14 @@ export class CortexOrchestrator {
         } as any;
         this.messageHistory = [reminder, ...this.messageHistory];
         try { await this.historyStore.appendMessage(this.currentSessionId, reminder); } catch { /* best-effort */ }
-        try {
-          const { mkdirSync, writeFileSync } = await import('fs');
-          const dir = pathJoin(this.config.projectPath || process.cwd(), '.cortex', 'memory');
-          mkdirSync(dir, { recursive: true });
-          writeFileSync(pathJoin(dir, `resume-${this.currentSessionId}.md`),
-            `---\nname: resume-${this.currentSessionId}\ndescription: compaction resume memory (turn ${this.turnNumber}, ${dropped.length} messages dropped)\ntype: project\n---\n${text}\n`);
-        } catch { /* best-effort */ }
+        this.writeResumeMemoryFile(text, `compaction at turn ${this.turnNumber}, ${dropped.length} messages dropped, memory=${memorySource}`);
         const store = this.getDecisionStore();
         if (store) void store.recordEvent({
           sessionId: this.currentSessionId ?? 'unknown',
           kind: 'compaction',
           detail: { mode: 'proactive', turn: this.turnNumber, tokensBefore: currentTokens, tokensAfter: newTokenCount,
                     dropped: dropped.length, kept: selectedMessages.length, resumeChars: resumeText.length,
-                    helperModelId: resumeHelper ?? null, cost: resumeCost, taskPinned: taskText.length > 0 },
+                    helperModelId: resumeHelper ?? null, cost: resumeCost, taskPinned: taskText.length > 0, memorySource },
         }).catch(() => {});
         if (this.config.debug) console.log(`[Orchestrator Context] resume reminder injected (${resumeText.length} chars memory, task pinned=${taskText.length > 0})`);
       }

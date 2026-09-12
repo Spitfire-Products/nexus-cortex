@@ -647,11 +647,12 @@ export class HelperModelMiddleware {
   async summarizeForResume(
     messages: any[],
     mainModel: ModelConfig,
-    targetTokens = 6000
+    targetTokens = 6000,
+    promptOverride?: string
   ): Promise<{ summary: string; helperModelId: string; cost: number; originalTokens: number; compressedTokens: number; processingTime: number }> {
     const helperModelId = mainModel.compaction?.behavior?.helperModelId || this.selectHelperModel(mainModel.provider);
     const helperConfig = this.getHelperModelConfig(helperModelId);
-    const r = await this.compactHistoryViaHelper(messages, targetTokens, helperConfig);
+    const r = await this.compactHistoryViaHelper(messages, targetTokens, helperConfig, promptOverride);
     return {
       summary: r.summary,
       helperModelId: r.helperModelId,
@@ -665,7 +666,8 @@ export class HelperModelMiddleware {
   private async compactHistoryViaHelper(
     messages: any[],
     targetTokens: number,
-    helperConfig: ModelConfig
+    helperConfig: ModelConfig,
+    promptOverride?: string
   ): Promise<CompactionResult> {
     console.log(` Compacting ${messages.length} messages via ${helperConfig.id}...`);
 
@@ -688,7 +690,7 @@ export class HelperModelMiddleware {
     console.log(` Using adapter: ${adapter.name} (pattern: ${adapter.apiPattern})`);
 
     // Make REAL API call via adapter
-    const result = await adapter.compact(canonicalMessages, helperConfig, targetTokens);
+    const result = await adapter.compact(canonicalMessages, helperConfig, targetTokens, promptOverride);
 
     console.log(
       ` [OK] Compaction complete: ${result.originalTokens} → ${result.compressedTokens} tokens ` +

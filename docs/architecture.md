@@ -183,8 +183,13 @@ Beyond the core loop, the harness ships surfaces you'd otherwise build yourself:
   webhook.
 - **Isolated git worktrees.** `WorkspaceManager` hands each agent a clean worktree (clone → branch
   → work → cleanup) so parallel agents never clobber each other.
-- **Helper-model middleware.** A cheaper secondary model auto-compacts the conversation near the
-  context limit — *compaction first, windowing last*.
+- **Helper-model middleware.** A cheaper secondary model summarizes the conversation when the provider
+  rejects a request on context (reactive path, non-streaming loop only). The path that fires in normal
+  operation is the PROACTIVE one: at ~80% of the model's history budget the orchestrator drops the oldest
+  message groups (`ensureHistoryFitsModel`) — until 4.108.0 with no summary and no trace. Since 4.108.0
+  (`CORTEX_COMPACTION_RESUME`, default on) the helper model writes a resume memory of the dropped messages,
+  the original task is pinned verbatim, both are prepended as a system reminder that survives later
+  compactions, a `compaction` event is recorded and `.cortex/memory/resume-<session>.md` is written.
 - **Session summarization + next-action prediction.** `TURN_SUMMARY_PREDICTION` emits a post-turn
   summary and predicted next action — handy for agent-team handoffs and autonomy loops.
 - **Deferred tool loading.** Expose only essential tools up front and let the model discover the

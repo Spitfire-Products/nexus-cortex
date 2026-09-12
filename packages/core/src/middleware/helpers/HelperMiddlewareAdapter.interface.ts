@@ -113,7 +113,8 @@ export interface HelperMiddlewareAdapter {
   compact(
     messages: HelperCanonicalMessage[],
     helperConfig: ModelConfig,
-    targetTokens: number
+    targetTokens: number,
+    promptOverride?: string
   ): Promise<CompactionResult>;
 
   /**
@@ -175,7 +176,8 @@ export abstract class BaseHelperAdapter implements HelperMiddlewareAdapter {
   abstract compact(
     messages: HelperCanonicalMessage[],
     helperConfig: ModelConfig,
-    targetTokens: number
+    targetTokens: number,
+    promptOverride?: string
   ): Promise<CompactionResult>;
 
   abstract summarizeToolResult(
@@ -288,6 +290,21 @@ export abstract class BaseHelperAdapter implements HelperMiddlewareAdapter {
    * @param targetTokens - Target token count
    * @returns Prompt text for compaction
    */
+  /**
+   * HB-COMPACTION-RESUME v2 (4.108.2): callers may pass a full prompt template containing `{{CONVERSATION}}`;
+   * the adapter substitutes the extracted history text. Absent → the default 9-category compaction prompt.
+   */
+  protected resolveCompactionPrompt(
+    messages: HelperCanonicalMessage[],
+    targetTokens: number,
+    promptOverride?: string
+  ): string {
+    if (promptOverride && promptOverride.length > 0) {
+      return promptOverride.replace('{{CONVERSATION}}', this.extractTextContent(messages));
+    }
+    return this.createCompactionPrompt(messages, targetTokens);
+  }
+
   protected createCompactionPrompt(
     messages: HelperCanonicalMessage[],
     targetTokens: number

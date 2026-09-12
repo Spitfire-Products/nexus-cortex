@@ -67,6 +67,8 @@ export interface CompactionResumeInput {
   resumeText: string;      // helper-model summary of the DROPPED messages ('' when unavailable)
   taskText: string;        // original task, verbatim
   helperModelId?: string;
+  rebuild?: string;       // post-compaction wake protocol text (v2)
+  memorySource?: 'checkpoint' | 'dropped' | 'none';
 }
 
 /** The `<system-reminder>` prepended to the compacted history. */
@@ -74,14 +76,16 @@ export function buildCompactionResumeReminder(i: CompactionResumeInput): string 
   const head =
     `${COMPACTION_RESUME_MARKER} at turn ${i.turn}: ${i.droppedCount} older message(s) (~${Math.max(0, i.tokensBefore - i.tokensAfter)} tokens) ` +
     `were removed from your context to stay within the model window; ${i.keptCount} recent message(s) were kept verbatim.]`;
+  const src = i.memorySource === 'checkpoint' ? 'at the pre-compaction checkpoint (whole conversation)' : 'from the removed messages';
   const memory = i.resumeText.trim()
-    ? `RESUME MEMORY (written by ${i.helperModelId ?? 'the helper model'} from the removed messages — decisions, artifacts, what worked, what failed, open plan):\n${i.resumeText.trim()}`
+    ? `RESUME MEMORY (written by ${i.helperModelId ?? 'the helper model'} ${src}):\n${i.resumeText.trim()}`
     : 'RESUME MEMORY: unavailable (the helper summary failed); rely on the files on disk and the recent messages below.';
   const task = i.taskText.trim()
     ? `ORIGINAL TASK (verbatim — this is still the goal):\n${i.taskText.trim()}`
     : 'ORIGINAL TASK: not recoverable from history; re-read any task file in the working directory.';
-  const tail =
-    'Continue from the CURRENT state: files already written are on disk (re-read before editing), commands already run need not be repeated, ' +
-    'and completed sub-goals in the resume memory are done. Do not restart from scratch.</system-reminder>';
+  const tail = (i.rebuild && i.rebuild.trim()
+    ? i.rebuild.trim()
+    : 'Continue from the CURRENT state: files already written are on disk (re-read before editing), commands already run need not be repeated, ' +
+      'and completed sub-goals in the resume memory are done. Do not restart from scratch.') + '</system-reminder>';
   return `${head}\n${memory}\n${task}\n${tail}`;
 }

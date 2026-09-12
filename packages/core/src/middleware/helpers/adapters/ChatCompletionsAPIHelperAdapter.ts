@@ -97,7 +97,8 @@ export class ChatCompletionsAPIHelperAdapter extends BaseHelperAdapter {
   async compact(
     messages: HelperCanonicalMessage[],
     helperConfig: ModelConfig,
-    targetTokens: number
+    targetTokens: number,
+    promptOverride?: string
   ): Promise<CompactionResult> {
     const startTime = Date.now();
 
@@ -115,7 +116,7 @@ export class ChatCompletionsAPIHelperAdapter extends BaseHelperAdapter {
     }
 
     // Create compaction prompt
-    const prompt = this.createCompactionPrompt(messages, targetTokens);
+    const prompt = this.resolveCompactionPrompt(messages, targetTokens, promptOverride);
 
     // Convert to Chat Completions format
     const chatMessages: ChatCompletionsMessage[] = [
