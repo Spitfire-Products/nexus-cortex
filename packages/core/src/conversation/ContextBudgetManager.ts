@@ -541,6 +541,14 @@ export class ContextBudgetManager {
         }
       }
 
+      // HB-COMPACTION-RESUME (4.108.0): the compaction resume reminder (a user message starting with the marker)
+      // survives further compactions — it carries the original task and the resume memory.
+      const _txt = (message as any)?.message?.content;
+      const _first = Array.isArray(_txt) ? (_txt.find((b: any) => b && b.type === 'text')?.text ?? '') : (typeof _txt === 'string' ? _txt : '');
+      if (typeof _first === 'string' && _first.startsWith('<system-reminder>[CONTEXT COMPACTED')) {
+        critical.push(message);
+      }
+
       // System messages with important context
       if (isSystemMessage(message)) {
         // Check for checkpoint, compaction boundary, or file snapshot

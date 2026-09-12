@@ -639,6 +639,29 @@ export class HelperModelMiddleware {
    *
    * Week 2 Integration: Uses real API calls via helper middleware adapters
    */
+  /**
+   * HB-COMPACTION-RESUME (4.108.0): summarize the messages the PROACTIVE compaction is about to drop into a
+   * resume memory (the same helper-adapter compaction prompt the reactive path uses). Best-effort; the
+   * orchestrator degrades to a task-only reminder when this throws.
+   */
+  async summarizeForResume(
+    messages: any[],
+    mainModel: ModelConfig,
+    targetTokens = 6000
+  ): Promise<{ summary: string; helperModelId: string; cost: number; originalTokens: number; compressedTokens: number; processingTime: number }> {
+    const helperModelId = mainModel.compaction?.behavior?.helperModelId || this.selectHelperModel(mainModel.provider);
+    const helperConfig = this.getHelperModelConfig(helperModelId);
+    const r = await this.compactHistoryViaHelper(messages, targetTokens, helperConfig);
+    return {
+      summary: r.summary,
+      helperModelId: r.helperModelId,
+      cost: r.cost,
+      originalTokens: r.originalTokens,
+      compressedTokens: r.compressedTokens,
+      processingTime: r.processingTime,
+    };
+  }
+
   private async compactHistoryViaHelper(
     messages: any[],
     targetTokens: number,

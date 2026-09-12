@@ -69,6 +69,7 @@ import { toolFactory } from '../tools/ToolFactory.js';
 import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveLiftPlan, resolveEndTurnResolver, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked, resolveVisionHelperModel, resolveVisionHandoffMax, resolveSliceNudge, resolveSliceBlock, resolveSliceBlockAt, resolveSliceBlockMax } from '../tools/ToolProfile.js';
 import { sliceReadFile, decideSliceBlock } from './sliceBlock.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
+import { resolveCompactionResume, extractFirstUserText, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage } from './compactionResume.js';
 import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig } from '../training/judgeEvidence.js';
 import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, mentorSurfaceTimeoutMs, type MentorCallMeta } from '../training/mentorRole.js';
 import { resolveOuterToolDeadlineMs } from './outerToolTimeout.js';
@@ -6838,12 +6839,63 @@ export class CortexOrchestrator {
         console.log(` Strategy: ${strategy}, Removed: ${removedCount} messages`);
       }
 
-      // Update message history with selected messages
-      this.messageHistory = selectedMessages;
+      // HB-COMPACTION-RESUME (4.108.0): before 4.108.0 this was a SILENT DROP — no summary, no event, no trace,
+      // and the task statement itself could be lost. Now: (1) the helper model writes a resume memory of the
+      // DROPPED messages, (2) the original task is pinned verbatim, (3) both are prepended as a <system-reminder>
+      // (the endTurnReminder shape), (4) a `compaction` event is recorded and the reminder is appended to the
+      // session JSONL (so a bench can count compactions), (5) .cortex/memory/resume-<session>.md is written.
+      const compactionResume = resolveCompactionResume();
+      const dropped = pickDropped(this.messageHistory, selectedMessages);
+      const taskText = extractFirstUserText(this.messageHistory);
+      let resumeText = '';
+      let resumeHelper: string | undefined;
+      let resumeCost = 0;
+      if (compactionResume && dropped.length > 0 && this.config.useHelperModels && typeof (this.helperMiddleware as any)?.summarizeForResume === 'function') {
+        try {
+          const r = await (this.helperMiddleware as any).summarizeForResume(this.convertToCanonicalMessages(dropped), model);
+          resumeText = String(r?.summary ?? '');
+          resumeHelper = r?.helperModelId;
+          resumeCost = Number(r?.cost ?? 0);
+        } catch (e: any) {
+          console.error('[Orchestrator Context] resume memory summary failed (degrading to task-only reminder):', e?.message ?? e);
+        }
+      }
 
-      // TODO Phase 2: Record compaction event in timeline
-      // TODO Phase 2: Save compaction summary to StoredCompactionManager
-      // TODO Phase 2: Update JSONL history with compaction marker
+      // Update message history with selected messages (dropping any OLDER compaction reminder — the new one supersedes it)
+      this.messageHistory = compactionResume ? selectedMessages.filter((m) => !isCompactionResumeMessage(m)) : selectedMessages;
+
+      if (compactionResume && dropped.length > 0) {
+        const text = buildCompactionResumeReminder({
+          turn: this.turnNumber, droppedCount: dropped.length, keptCount: this.messageHistory.length,
+          tokensBefore: currentTokens, tokensAfter: newTokenCount, resumeText, taskText, helperModelId: resumeHelper,
+        });
+        const reminder: Message = {
+          uuid: uuidv4(),
+          timestamp: new Date().toISOString(),
+          type: 'user',
+          message: { role: 'user', content: [{ type: 'text', text }] },
+          timeline: { sessionId: this.currentSessionId, conversationId: this.currentConversationId, turnNumber: this.turnNumber },
+          model: { id: model.id, provider: model.provider, apiPattern: model.api.pattern },
+        } as any;
+        this.messageHistory = [reminder, ...this.messageHistory];
+        try { await this.historyStore.appendMessage(this.currentSessionId, reminder); } catch { /* best-effort */ }
+        try {
+          const { mkdirSync, writeFileSync } = await import('fs');
+          const dir = pathJoin(this.config.projectPath || process.cwd(), '.cortex', 'memory');
+          mkdirSync(dir, { recursive: true });
+          writeFileSync(pathJoin(dir, `resume-${this.currentSessionId}.md`),
+            `---\nname: resume-${this.currentSessionId}\ndescription: compaction resume memory (turn ${this.turnNumber}, ${dropped.length} messages dropped)\ntype: project\n---\n${text}\n`);
+        } catch { /* best-effort */ }
+        const store = this.getDecisionStore();
+        if (store) void store.recordEvent({
+          sessionId: this.currentSessionId ?? 'unknown',
+          kind: 'compaction',
+          detail: { mode: 'proactive', turn: this.turnNumber, tokensBefore: currentTokens, tokensAfter: newTokenCount,
+                    dropped: dropped.length, kept: selectedMessages.length, resumeChars: resumeText.length,
+                    helperModelId: resumeHelper ?? null, cost: resumeCost, taskPinned: taskText.length > 0 },
+        }).catch(() => {});
+        if (this.config.debug) console.log(`[Orchestrator Context] resume reminder injected (${resumeText.length} chars memory, task pinned=${taskText.length > 0})`);
+      }
 
     } catch (error: any) {
       console.error(`[Orchestrator Context] Context management failed:`, error.message);

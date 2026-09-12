@@ -1547,3 +1547,41 @@ wedged+unpushed, outage+recovery). Ships with the next `seed`.
   `npm i nexus-cortex@pin`) via a warm pool / cache-mount into task containers (HB-PLACEMENT ④ above; deploy-gated).
 - **BENCHMARKS / BENCHRUNNER SPA windows** — the two visual command windows over the STDB control plane
   (`HARNESS_BENCH_CONSOLIDATION_PLAN.md` Layer 3); deferred until the headless system is fully proven (operator).
+
+### HB-COMPACTION-RESUME — resume memory across compaction + compaction observability (2026-09-12, operator-requested)
+**Trigger:** Terminal-Bench 4.0 tasks carry 8-hour budgets on a 1M-context card; no bench run has ever crossed the compaction threshold, so
+the behavior is unmeasured. Operator: "build a system into the harness that invokes a stop hook or the helper model middleware to prepare a
+resume memory pre compaction and then another hook and instruction to rebuild context post compaction."
+**Grounded map (Explore agent, 2026-09-12; file:line in omniclaude-v4):**
+- Proactive compaction = `CortexOrchestrator.ts:6771 ensureHistoryFitsModel()`; threshold `ContextBudgetManager.getCompactionThreshold` (:269)
+  = 80% of availableForHistory (DeepSeek cards: `DeepSeekConfigurator.ts:118-130`, percentage 0.8, safetyMargin 4000) → ≈747K tokens on
+  deepseek-flash (contextWindow 1M, outputTokens 65536). It DROPS whole tool-atomic message groups oldest-first via `selectMessages` (:6825),
+  keeps ≥5 recent (`MIN_RECENT_MESSAGES=5`, ContextBudgetManager.ts:98), then `this.messageHistory = selected` (:6842). NO summary, NO
+  persistence, NO event (TODOs at :6844-6846). Runs in BOTH loops (non-stream :1651… / stream :4205…). `behavior.preserveRecent: 10` is never read.
+- Reactive compaction (helper-model 9-category summary, `HelperModelMiddleware.handleContextRejection` :225 → `MessagesAPIHelperAdapter.ts:113-121`,
+  writes `.cortex/compactions` + timeline `compaction` event) fires ONLY on a provider context-limit error and ONLY in `sendMessage` (:1861) —
+  `streamMessage` has no `isContextLimitError` catch.
+- Session JSONL is append-only; compaction leaves no on-disk trace. `decisions.jsonl` has no compaction kind.
+- Existing turn-boundary injection precedents: `endTurnReminder` (:2684), `SURRENDER_REMINDER` (`turnEndGuards.ts:44`), turn-varying system
+  messages survive the `minimal` mass filter (`SystemMessageMiddleware.ts:374-376`).
+- Memory surfaces: `MemoryWrite`/`MemoryRecall` (`MemoryTools.ts:57/99`; Write is `standard` tier, Recall `essential`), `StoredCompactionManager`
+  (.cortex/compactions), `CheckpointManager`, canon tools — none reachable pre-lift under `bash-edit`; `MEMORY.md` not injected under boot-minimal.
+- Context-spreading: `Task` (`BaseToolRegistry.ts:613`, essential) is stripped on turn 1 by the bash-edit anchor (`ToolProfile.ts:45`,
+  applied `CortexOrchestrator.ts:1131`); subagents get a FRESH context (`SubAgentOrchestrator.ts:130-146`); boot-minimal never mentions Task/
+  delegation; no decisions.jsonl kind or counter records subagent use. No mailbox/SendMessage/agent-team implementation exists in core.
+**Design (minimal, both loops, one edit site):**
+1. `compaction_pre` hook at :6812: before `selectMessages`, ask the helper model (mentor role, thinking-off, same allowance rules as the mentor
+   fixes) for a RESUME MEMORY over the messages ABOUT TO BE DROPPED (task statement verbatim, decisions taken, artifacts/paths, what worked/
+   failed, open plan) — the 9-category template already exists (`HelperMiddlewareAdapter.interface.ts:291-316`; the richer
+   `SummaryTemplates.ts` is dead code to revive). Persist it via `StoredCompactionManager.createCompaction` + `.cortex/memory/resume-<session>.md`.
+2. `compaction_post` at :6842: unshift ONE turn-varying `<system-reminder>` = "[Context was compacted at turn N] <resume memory>" + the ORIGINAL
+   task instruction verbatim (the first user message must never be lost — verify whether `preserve-critical` keeps it; if not, pin it).
+3. Observability: emit `decisions.jsonl` kind `compaction` {turn, tokensBefore/After, dropped, mode: proactive|reactive, resumeChars} and a
+   session-JSONL boundary marker so benches can count compactions (the current runs cannot).
+4. Mirror the reactive catch into `streamMessage`.
+5. Levers: `CORTEX_COMPACTION_RESUME=true|false` (default true), `CORTEX_COMPACTION_RESUME_MODEL` (default helper), report in effectiveConfig.
+6. Context-spreading (separate item HB-DELEGATION-DOCTRINE): a boot-minimal clause + orient line that names `Task` for parallelizable / large-
+   output work, keep `Task` in the bash-edit anchor set (or lift it first), and record `task_spawn` events — then measure on TB4 whether the
+   model ever reaches for it.
+**Test:** seeded long session (synthetic 800K-token history on the flash card) → assert resume memory written, reminder injected, event
+recorded, task text preserved; then a real TB4 8-h task on 4.108.x with the compaction counter.
