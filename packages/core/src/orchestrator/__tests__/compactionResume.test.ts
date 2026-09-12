@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   resolveCompactionResume, extractFirstUserText, pickDropped, buildCompactionResumeReminder,
-  isCompactionResumeMessage, COMPACTION_RESUME_MARKER, coversAll, buildRollingSeedMessage, upsertMemoryIndex, memoryIndexLine, MEMORY_INDEX_HEADER,
+  isCompactionResumeMessage, COMPACTION_RESUME_MARKER, coversAll, buildRollingSeedMessage, upsertMemoryIndex, memoryIndexLine, MEMORY_INDEX_HEADER, scaleEstimateToRequestView, approxCharsOf,
 } from '../compactionResume';
 
 const user = (text: string) => ({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
@@ -102,5 +102,22 @@ describe('4.108.4 — workspace state in the reminder + MEMORY.md index', () => 
     expect(b.split('\n').filter((l) => l.includes('(memory/resume-s1.md)')).length).toBe(1);
     expect(b).toContain('compaction at turn 3'); expect(b).not.toContain('checkpoint band 1'); expect(b).toContain('keep me');
     expect(b.endsWith('\n')).toBe(true);
+  });
+});
+
+describe('4.108.5 — compaction judges the request view, not the raw history (R129)', () => {
+  it('scales the history estimate by pruned/raw chars, clamped, and is the identity when nothing was pruned', () => {
+    expect(scaleEstimateToRequestView(1_080_000, 4_000_000, 250_000)).toBe(67_500);
+    expect(scaleEstimateToRequestView(100_000, 400_000, 400_000)).toBe(100_000);
+    expect(scaleEstimateToRequestView(100_000, 400_000, 1)).toBe(5_000);        // floor 5%
+    expect(scaleEstimateToRequestView(100_000, 0, 0)).toBe(100_000);            // no raw size → unchanged
+    expect(scaleEstimateToRequestView(100_000, 400_000, 900_000)).toBe(100_000); // never scales up
+  });
+  it('approxCharsOf measures text, thinking and JSON-encoded blocks on both message shapes', () => {
+    const a = { type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'abcd' }] } };
+    const b = { role: 'assistant', content: [{ type: 'thinking', thinking: 'xy' }, { type: 'tool_result', content: 'zz' }] };
+    const n = approxCharsOf([a, b]);
+    expect(n).toBeGreaterThanOrEqual(4 + 2 + JSON.stringify({ type: 'tool_result', content: 'zz' }).length);
+    expect(approxCharsOf([{ message: { content: 'hello' } }])).toBe(5);
   });
 });

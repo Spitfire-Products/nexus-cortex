@@ -167,3 +167,33 @@ export function upsertMemoryIndex(content: string, name: string, line: string | 
   if (line) lines.push(line);
   return lines.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n*$/, '\n');
 }
+
+/**
+ * 4.108.5 (R129, TB4.0 cad-model): the compaction threshold was compared against the STORED history estimate (raw tool outputs —
+ * 1.08M "tokens" at 82 messages) while the request sent the aged-pruned view (68K real tokens), so the checkpoint rung and the
+ * proactive drop fired on a false reading and re-fired every iteration. Scale the history estimate by the pruned-view/raw
+ * char ratio so compaction judges what the request actually carries. Ratio is clamped to [0.05, 1]; a zero raw size returns
+ * the estimate unchanged.
+ */
+export function scaleEstimateToRequestView(historyEstimate: number, rawChars: number, prunedChars: number): number {
+  if (!(historyEstimate > 0) || !(rawChars > 0) || !(prunedChars >= 0)) return Math.max(0, historyEstimate | 0);
+  const ratio = Math.min(1, Math.max(0.05, prunedChars / rawChars));
+  return Math.max(1, Math.round(historyEstimate * ratio));
+}
+
+/** Char size of a canonical/request-shaped message list, the same way pruneAgedForRequest measures it. */
+export function approxCharsOf(messages: any[]): number {
+  let n = 0;
+  for (const m of messages ?? []) {
+    const content = (m?.message ?? m)?.content;
+    if (typeof content === 'string') { n += content.length; continue; }
+    if (!Array.isArray(content)) continue;
+    for (const b of content) {
+      if (!b || typeof b !== 'object') continue;
+      if (b.type === 'text' && typeof b.text === 'string') n += b.text.length;
+      else if (b.type === 'thinking' && typeof b.thinking === 'string') n += b.thinking.length;
+      else { try { n += JSON.stringify(b).length; } catch { /* skip */ } }
+    }
+  }
+  return n;
+}

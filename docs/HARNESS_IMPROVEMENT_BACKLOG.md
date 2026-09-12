@@ -1345,6 +1345,16 @@ the model emitted a tool call the parser did not lift, so the turn ended with it
 whether the DSML parser (HB-DSML-PARSE, canary-passed 09-09) handles the `string="true|false"` attribute form and the `<｜｜DSML｜｜` double-bar
 variant; if not, extend the grammar + canary. Bench signature to grep in trajectories: final assistant text containing `DSML｜｜ calls`.
 
+## HB-COMPACTION-ESTIMATE — compaction judged the stored history while the request sent the pruned view (2026-09-12, TB4.0 cad-model on the VM) — ✅ FIXED 4.108.5
+Evidence (live job dir, 4.108.4): `compaction` events `checkpoint band 1 tokens 597065 threshold 732836` at 35 messages, band 8 at 1,079,498
+tokens / 82 messages, then `proactive 1079498 → 795000`, `1008936 → 857314`, `1006333 → 863439` … (tokensAfter above the threshold → re-fires
+every iteration); the session record's last provider usage for the same turn: `inputTokens 68001`. Cause: `estimateTotalTokens(messageHistory)`
+tokenizes the STORED history; the request path (`convertToCanonicalMessages` → `pruneAgedForRequest`) stubs aged tool results above 50%
+utilization. Fix: scale the estimate by the pruned-view/raw char ratio (`scaleEstimateToRequestView`, `approxCharsOf`), same ratio on
+`newTokenCount`; debug line `request-view estimate: N of M stored tokens`. Follow-ups: (a) the helper checkpoint summarizes the whole history —
+confirm the helper adapter's own truncation keeps that call bounded (the VM run showed ~$0.006–0.01 per call, so it is); (b) `selectMessages`
+still measures raw sizes when choosing what to keep — the kept set is now sized against the scaled budget only via the threshold comparison.
+
 ## HB-MENTOR-BUDGET — thinking-ON mentor calls return EMPTY output because reasoning shares `max_tokens` (2026-09-10, cell-m pilot)
 **STATUS: SHIPPED 4.106.0 (commit bd6438612e, tag v4.106.0, 2026-09-10 22:05Z).** Built as specified below: allowance table +
 `CORTEX_MENTOR_REASONING_ALLOWANCE`, finish_reason/reasoning_tokens read, one thinking-off retry on blank, call meta banked on every
@@ -1574,6 +1584,12 @@ compactions, 0 fresh memories, the model re-reading chunks it had already covere
 already COVERED every dropped message (`coversAll`, WeakSet of message identities); otherwise the helper summarizes [prior memory, …newly
 dropped] into ONE rolled memory (`buildRollingSeedMessage`, memorySource `rolled`); after each compaction the rung is re-armed relative to
 the post-compaction level. Also from the proof: `CORTEX_COMPACTION_THRESHOLD_TOKENS` (test override), task pin persistence, memory sizing.
+**v4 (4.108.4, 2026-09-12, operator-requested):** the reminder now carries (1) the in-session RECALL RAIL — the session JSONL path + the four
+historical tools — so the memory is the index and the append-only record is the store; (2) a WORKSPACE STATE block read from disk at compaction
+(git Repository State forced past `CORTEX_GIT_CONTEXT` in a repo, else the mtime file delta since session start — the model's own edit history,
+replaced right after it was dropped); (3) the resume file indexed in `.cortex/MEMORY.md` via the MemoryWrite contract. Canon store / knowledge
+graph deliberately NOT wired (cross-session, sterile bench containers, fairness). Proof: 20K threshold on a git-initialized workspace, 4/4, 26
+iterations, 5 compactions, every reminder carried state + pointer. Still OPEN: HB-CHUNKED-READS (the loop stack vs sequential chunk reads).
 **Trigger:** Terminal-Bench 4.0 tasks carry 8-hour budgets on a 1M-context card; no bench run has ever crossed the compaction threshold, so
 the behavior is unmeasured. Operator: "build a system into the harness that invokes a stop hook or the helper model middleware to prepare a
 resume memory pre compaction and then another hook and instruction to rebuild context post compaction."

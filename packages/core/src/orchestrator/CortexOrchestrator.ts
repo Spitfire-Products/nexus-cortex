@@ -69,7 +69,7 @@ import { toolFactory } from '../tools/ToolFactory.js';
 import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveLiftPlan, resolveEndTurnResolver, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked, resolveVisionHelperModel, resolveVisionHandoffMax, resolveSliceNudge, resolveSliceBlock, resolveSliceBlockAt, resolveSliceBlockMax } from '../tools/ToolProfile.js';
 import { sliceReadFile, decideSliceBlock } from './sliceBlock.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
-import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage, memoryIndexLine, upsertMemoryIndex } from './compactionResume.js';
+import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage, memoryIndexLine, upsertMemoryIndex, scaleEstimateToRequestView, approxCharsOf } from './compactionResume.js';
 import { renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBand, resolveRearmBand } from './compactionResumeTemplate.js';
 import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig } from '../training/judgeEvidence.js';
 import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, mentorSurfaceTimeoutMs, type MentorCallMeta } from '../training/mentorRole.js';
@@ -6826,7 +6826,22 @@ export class CortexOrchestrator {
     // Thinking blocks are NEVER stripped — stripping mutates messageHistory,
     // breaks prompt-cache prefix continuity, and causes model confusion.
     // Context overflow is handled by compaction (whole-message removal).
-    const currentTokens: number = (this.contextBudgetManager as any).estimateTotalTokens(this.messageHistory);
+    const rawEstimate: number = (this.contextBudgetManager as any).estimateTotalTokens(this.messageHistory);
+    // 4.108.5 (R129, TB4.0 cad-model): the stored history can weigh 1M+ "tokens" of raw tool output while the REQUEST carries the
+    // aged-pruned view (68K real tokens). Compaction must judge what the request sends, or the checkpoint rung and the proactive drop
+    // fire on a false reading and re-fire every iteration (tokensAfter stays above the threshold). Scale the estimate by the
+    // pruned-view/raw char ratio; below the pruner's 50%-utilization gate the ratio is 1 and nothing changes.
+    let requestRatio = 1;
+    let currentTokens: number = rawEstimate;
+    try {
+      const rawChars = approxCharsOf(this.messageHistory);
+      const prunedChars = approxCharsOf(this.convertToCanonicalMessages(this.messageHistory));
+      currentTokens = scaleEstimateToRequestView(rawEstimate, rawChars, prunedChars);
+      requestRatio = rawEstimate > 0 ? currentTokens / rawEstimate : 1;
+      if (this.config.debug && requestRatio < 1) {
+        console.log(`[Orchestrator Context] request-view estimate: ${currentTokens} of ${rawEstimate} stored tokens (ratio ${requestRatio.toFixed(3)})`);
+      }
+    } catch { currentTokens = rawEstimate; requestRatio = 1; }
 
     // Budget overrides: use actual token counts instead of hardcoded estimates.
     // - actualToolTokens: real tool schema size (tools are NOT in messageHistory)
@@ -6904,7 +6919,7 @@ export class CortexOrchestrator {
       );
 
       const removedCount = this.messageHistory.length - selectedMessages.length;
-      const newTokenCount = (this.contextBudgetManager as any).estimateTotalTokens(selectedMessages);
+      const newTokenCount = Math.max(1, Math.round((this.contextBudgetManager as any).estimateTotalTokens(selectedMessages) * requestRatio));
 
       if (this.config.debug) {
         console.log(`[OK] Context managed: ${this.messageHistory.length} -> ${selectedMessages.length} messages`);
