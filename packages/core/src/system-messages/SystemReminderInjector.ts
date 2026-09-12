@@ -74,8 +74,11 @@ export class SystemReminderInjector {
    * @returns a `<harness-note>` string, or null when disabled / not a git repo
    *   and nothing stale to report.
    */
-  buildGitContextSection(projectPath: string): string | null {
-    if (process.env.CORTEX_GIT_CONTEXT === 'false') return null;
+  buildGitContextSection(projectPath: string, opts?: { force?: boolean }): string | null {
+    // `force` (4.108.4): the compaction reminder builds this note ONCE regardless of the per-turn lever — a bench keeps
+    // CORTEX_GIT_CONTEXT=false to spare per-turn prompt mass, but right after a compaction the model has just lost its
+    // own edit history and this is the cheapest factual replacement.
+    if (!opts?.force && process.env.CORTEX_GIT_CONTEXT === 'false') return null;
 
     const git = (args: string[]): string | null => {
       try {

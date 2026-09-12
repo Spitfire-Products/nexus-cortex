@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   resolveCompactionResume, extractFirstUserText, pickDropped, buildCompactionResumeReminder,
-  isCompactionResumeMessage, COMPACTION_RESUME_MARKER, coversAll, buildRollingSeedMessage,
+  isCompactionResumeMessage, COMPACTION_RESUME_MARKER, coversAll, buildRollingSeedMessage, upsertMemoryIndex, memoryIndexLine, MEMORY_INDEX_HEADER,
 } from '../compactionResume';
 
 const user = (text: string) => ({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
@@ -81,5 +81,26 @@ describe('HB-COMPACTION-RESUME v3 — rolling memory (from the hardened live pro
     const r = buildCompactionResumeReminder({ turn: 3, droppedCount: 5, keptCount: 6, tokensBefore: 15000, tokensAfter: 8000,
       resumeText: 'memory', taskText: 'task', helperModelId: 'h', memorySource: 'rolled' });
     expect(r).toContain('carrying the earlier resume memory forward');
+  });
+});
+
+describe('4.108.4 — workspace state in the reminder + MEMORY.md index', () => {
+  it('the reminder carries the workspace state block between the memory and the task', () => {
+    const r = buildCompactionResumeReminder({ turn: 2, droppedCount: 3, keptCount: 6, tokensBefore: 15000, tokensAfter: 8000,
+      resumeText: 'memory', taskText: 'task', memorySource: 'checkpoint', workspaceState: 'Branch: main\nUncommitted changes:\n M a.py' });
+    const iMem = r.indexOf('RESUME MEMORY'), iWs = r.indexOf('WORKSPACE STATE'), iTask = r.indexOf('ORIGINAL TASK');
+    expect(iMem).toBeGreaterThan(-1); expect(iWs).toBeGreaterThan(iMem); expect(iTask).toBeGreaterThan(iWs);
+    expect(r).toContain(' M a.py');
+    expect(buildCompactionResumeReminder({ turn: 2, droppedCount: 3, keptCount: 6, tokensBefore: 1, tokensAfter: 1, resumeText: 'm', taskText: 't' })).not.toContain('WORKSPACE STATE');
+  });
+  it('upsertMemoryIndex adds the header to an empty index, replaces the line for the same name, keeps others', () => {
+    const line1 = memoryIndexLine('resume-s1', 'resume memory — checkpoint band 1');
+    const a = upsertMemoryIndex('', 'resume-s1', line1);
+    expect(a.startsWith(MEMORY_INDEX_HEADER.split('\n')[0])).toBe(true);
+    expect(a).toContain('- [resume-s1](memory/resume-s1.md) — resume memory — checkpoint band 1');
+    const b = upsertMemoryIndex(a + '- [other](memory/other.md) — keep me\n', 'resume-s1', memoryIndexLine('resume-s1', 'compaction at turn 3'));
+    expect(b.split('\n').filter((l) => l.includes('(memory/resume-s1.md)')).length).toBe(1);
+    expect(b).toContain('compaction at turn 3'); expect(b).not.toContain('checkpoint band 1'); expect(b).toContain('keep me');
+    expect(b.endsWith('\n')).toBe(true);
   });
 });

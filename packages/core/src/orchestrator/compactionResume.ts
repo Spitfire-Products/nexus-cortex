@@ -69,6 +69,7 @@ export interface CompactionResumeInput {
   helperModelId?: string;
   rebuild?: string;       // post-compaction wake protocol text (v2)
   memorySource?: 'checkpoint' | 'dropped' | 'rolled' | 'none';
+  workspaceState?: string; // 4.108.4: git repository state (or mtime delta) read from disk AT compaction
 }
 
 /** The `<system-reminder>` prepended to the compacted history. */
@@ -85,11 +86,14 @@ export function buildCompactionResumeReminder(i: CompactionResumeInput): string 
   const task = i.taskText.trim()
     ? `ORIGINAL TASK (verbatim — this is still the goal):\n${i.taskText.trim()}`
     : 'ORIGINAL TASK: not recoverable from history; re-read any task file in the working directory.';
+  const ws = i.workspaceState && i.workspaceState.trim()
+    ? `WORKSPACE STATE (read from disk at this compaction — your own edits so far):\n${i.workspaceState.trim()}\n`
+    : '';
   const tail = (i.rebuild && i.rebuild.trim()
     ? i.rebuild.trim()
     : 'Continue from the CURRENT state: files already written are on disk (re-read before editing), commands already run need not be repeated, ' +
       'and completed sub-goals in the resume memory are done. Do not restart from scratch.') + '</system-reminder>';
-  return `${head}\n${memory}\n${task}\n${tail}`;
+  return `${head}\n${memory}\n${ws}${task}\n${tail}`;
 }
 
 /** Recover the ORIGINAL TASK text from a prior compaction reminder (the task message itself is gone after the first compaction). */
@@ -145,4 +149,21 @@ export function buildRollingSeedMessage(priorText: string): any {
     type: 'user',
     message: { role: 'user', content: [{ type: 'text', text }] },
   };
+}
+
+/** 4.108.4: the resume file is a first-class memory — index it in `.cortex/MEMORY.md` exactly as MemoryWrite would. */
+export const MEMORY_INDEX_HEADER =
+  '# Memory\n\nCurated index — one line per memory; detail lives in `.cortex/memory/<name>.md`\n(use MemoryRecall to load one).\n';
+
+export function memoryIndexLine(name: string, description: string): string {
+  return `- [${name}](memory/${name}.md) — ${description.replace(/\s+/g, ' ').trim()}`;
+}
+
+/** Pure: replace any existing line for `name` (matched by its `(memory/<name>.md)` marker) with `line`; empty content gets the header. */
+export function upsertMemoryIndex(content: string, name: string, line: string | null): string {
+  const base = content && content.trim() ? content : MEMORY_INDEX_HEADER;
+  const marker = `(memory/${name}.md)`;
+  const lines = base.split('\n').filter((l) => !l.includes(marker));
+  if (line) lines.push(line);
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n*$/, '\n');
 }

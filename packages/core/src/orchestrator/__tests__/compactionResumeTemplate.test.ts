@@ -40,3 +40,13 @@ describe('v3 rung re-arm', () => {
     expect(resolveRearmBand(5000, 0, env)).toBe(0);
   });
 });
+
+describe('4.108.4 rebuild protocol names the in-session recall rail', () => {
+  it('lists the historical tools and, when given, the session record path', () => {
+    const r = buildRebuildInstructions({ sessionPath: '/w/.cortex/sessions/abc.jsonl' });
+    for (const t of ['SearchConversationHistory', 'GetConversationSegment', 'RequestHistoricalContext', 'ListCompactionBoundaries']) expect(r).toContain(t);
+    expect(r).toContain('/w/.cortex/sessions/abc.jsonl');
+    expect(r).toContain('(6)');
+    expect(buildRebuildInstructions()).not.toContain('session record at');
+  });
+});

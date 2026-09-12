@@ -45,14 +45,22 @@ CONVERSATION HISTORY:
 Write the resume memory now (sections 0–6, nothing else):`;
 
 /** The skill's §4 wake protocol, spoken to the resumed agent. */
-export function buildRebuildInstructions(): string {
+export function buildRebuildInstructions(opts?: { sessionPath?: string }): string {
+  // 4.108.4: name the in-session recall rail — the memory is the INDEX, the session record is the STORE (every dropped
+  // turn is still on disk, append-only), mirroring the operator's resume-session §5 "retrieve before reconstruct".
+  const recall =
+    '(6) Detail this memory lacks is recoverable VERBATIM: ' +
+    (opts?.sessionPath ? `the session record at ${opts.sessionPath} (append-only JSONL — grep it with Bash for a command, path or error text), and ` : '') +
+    'the tools SearchConversationHistory / GetConversationSegment / RequestHistoricalContext / ListCompactionBoundaries ' +
+    '(reach them via SearchTools if they are not in your current tool list). Retrieve before you reconstruct.';
   return (
     'REBUILD PROTOCOL — do these in order before new work: ' +
     '(1) Re-read the WORK ORDER above; that is still the goal. ' +
     '(2) Trust the files on disk over this memory: verify the state of every artifact in §4 (ls / cat / git status / the check commands in §2) before acting on it. ' +
     '(3) Do NOT redo anything listed as DONE in §1; do NOT retry anything listed as REJECTED in §3. ' +
     '(4) Start with §2 item 1. ' +
-    '(5) If something in this memory contradicts what you observe, the observation wins — note the discrepancy and continue.'
+    '(5) If something in this memory contradicts what you observe, the observation wins — note the discrepancy and continue. ' +
+    recall
   );
 }
 

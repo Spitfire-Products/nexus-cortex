@@ -24,7 +24,7 @@ import { sanitizeHistoryForDisplay } from './displayHistorySanitizer.js';
 import { verifyCoordinates, deterministicCoordinateScore } from './coordinateVerification.js';
 import { buildRouterSample, appendJsonlRotating } from './cortexTrainingRecord.js';
 import { join as pathJoin } from 'path';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'node:child_process';
 import { ENV_RECON_COMMAND, resolveLiftPlanConfig } from '../training/liftPlanner.js';
 import { resolveEndTurnResolverConfig, parseResolverVerdict } from '../training/endTurnResolver.js';
@@ -69,7 +69,7 @@ import { toolFactory } from '../tools/ToolFactory.js';
 import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveLiftPlan, resolveEndTurnResolver, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked, resolveVisionHelperModel, resolveVisionHandoffMax, resolveSliceNudge, resolveSliceBlock, resolveSliceBlockAt, resolveSliceBlockMax } from '../tools/ToolProfile.js';
 import { sliceReadFile, decideSliceBlock } from './sliceBlock.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
-import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage } from './compactionResume.js';
+import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage, memoryIndexLine, upsertMemoryIndex } from './compactionResume.js';
 import { renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBand, resolveRearmBand } from './compactionResumeTemplate.js';
 import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig } from '../training/judgeEvidence.js';
 import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, mentorSurfaceTimeoutMs, type MentorCallMeta } from '../training/mentorRole.js';
@@ -518,6 +518,8 @@ export class CortexOrchestrator {
   private lastCheckpointBand = 0;
   private lastResumeMemory: { text: string; tokensAt: number; turn: number; helperModelId?: string; cost: number; covered: WeakSet<object> } | null = null;
   private pinnedTaskText = '';
+  /** 4.108.4: session start — the mtime floor for the non-git workspace delta at compaction. */
+  private readonly sessionStartMs = Date.now();
 
   /** Pending TURN_SUMMARY_PREDICTION awaiting the user's ACTUAL next message —
    *  scored + recorded at the next sendMessage (graduation-signal capture,
@@ -6777,11 +6779,32 @@ export class CortexOrchestrator {
   /** HB-COMPACTION-RESUME: best-effort write of the resume memory to .cortex/memory/resume-<session>.md (synchronous fs). */
   private writeResumeMemoryFile(text: string, why: string): void {
     try {
-      const dir = pathJoin(this.config.projectPath || process.cwd(), '.cortex', 'memory');
+      const cortexDir = pathJoin(this.config.projectPath || process.cwd(), '.cortex');
+      const dir = pathJoin(cortexDir, 'memory');
       mkdirSync(dir, { recursive: true });
-      writeFileSync(pathJoin(dir, `resume-${this.currentSessionId}.md`),
-        `---\nname: resume-${this.currentSessionId}\ndescription: resume memory — ${why}\ntype: project\n---\n${text}\n`);
+      const name = `resume-${this.currentSessionId}`;
+      writeFileSync(pathJoin(dir, `${name}.md`),
+        `---\nname: ${name}\ndescription: resume memory — ${why}\ntype: project\n---\n${text}\n`);
+      // 4.108.4: index it in .cortex/MEMORY.md (the harness's two-tier memory) so MemoryRecall and a resumed session can find it.
+      const indexPath = pathJoin(cortexDir, 'MEMORY.md');
+      let current = '';
+      try { current = readFileSync(indexPath, 'utf8'); } catch { current = ''; }
+      writeFileSync(indexPath, upsertMemoryIndex(current, name, memoryIndexLine(name, `resume memory (${why}) — load after a context compaction or session resume`)));
     } catch { /* best-effort */ }
+  }
+
+  /** 4.108.4: the working tree as it is RIGHT NOW — git state when the workspace is a repo (forced past the per-turn lever), else
+   *  the mtime-based file delta since session start. Read from disk at compaction; capped so it cannot crowd the kept history. */
+  private buildCompactionWorkspaceState(): string {
+    try {
+      const root = process.env.PROJECT_ROOT || this.config.projectPath || this.config.workingDirectory || process.cwd();
+      let state = this.systemReminderInjector.buildGitContextSection(root, { force: true }) ?? '';
+      if (!state.trim()) {
+        state = collectWorkspaceDelta(root, this.sessionStartMs, { ...resolveJudgeGroundingConfig(), delta: true, deltaMaxFiles: 0 });
+      }
+      const MAX = 2500;
+      return state.length > MAX ? state.slice(0, MAX) + '\n[… workspace state truncated]' : state;
+    } catch { return ''; }
   }
 
   private async ensureHistoryFitsModel(model: ModelConfig): Promise<void> {
@@ -6935,10 +6958,13 @@ export class CortexOrchestrator {
         // v3: re-arm the checkpoint rung relative to the post-compaction level so a fresh whole-conversation memory is written
         // again as the context climbs (v2 left lastCheckpointBand at its pre-compaction high-water mark → the rung never re-fired).
         this.lastCheckpointBand = resolveRearmBand(newTokenCount, threshold);
+        const workspaceState = this.buildCompactionWorkspaceState();
+        let sessionPath: string | undefined;
+        try { sessionPath = this.currentSessionId ? this.historyStore.getSessionPath(this.currentSessionId) : undefined; } catch { sessionPath = undefined; }
         const text = buildCompactionResumeReminder({
           turn: this.turnNumber, droppedCount: dropped.length, keptCount: this.messageHistory.length,
           tokensBefore: currentTokens, tokensAfter: newTokenCount, resumeText, taskText, helperModelId: resumeHelper,
-          rebuild: buildRebuildInstructions(), memorySource,
+          rebuild: buildRebuildInstructions({ sessionPath }), memorySource, workspaceState,
         });
         const reminder: Message = {
           uuid: uuidv4(),
@@ -6957,7 +6983,8 @@ export class CortexOrchestrator {
           kind: 'compaction',
           detail: { mode: 'proactive', turn: this.turnNumber, tokensBefore: currentTokens, tokensAfter: newTokenCount,
                     dropped: dropped.length, kept: selectedMessages.length, resumeChars: resumeText.length,
-                    helperModelId: resumeHelper ?? null, cost: resumeCost, taskPinned: taskText.length > 0, memorySource },
+                    helperModelId: resumeHelper ?? null, cost: resumeCost, taskPinned: taskText.length > 0, memorySource,
+                    workspaceStateChars: workspaceState.length, sessionPath: sessionPath ?? null },
         }).catch(() => {});
         if (this.config.debug) console.log(`[Orchestrator Context] resume reminder injected (${resumeText.length} chars memory, task pinned=${taskText.length > 0})`);
       }
