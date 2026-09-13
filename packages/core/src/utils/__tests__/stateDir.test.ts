@@ -7,6 +7,12 @@ import { resolveCortexStateDir, resetCortexStateDirCache, cortexStatePath, hashP
 describe('HB-READONLY-WORKDIR (4.108.6, R131) — resolveCortexStateDir', () => {
   beforeEach(() => resetCortexStateDirCache());
 
+  it('resolves a non-existent project path PURELY (no probe, no fallback) — synthetic roots keep <root>/.cortex', () => {
+    const r = resolveCortexStateDir('/definitely/not/a/real/dir', {} as any);
+    expect(r.dir).toBe(join('/definitely/not/a/real/dir', '.cortex')); expect(r.fallback).toBe(false);
+    expect(existsSync('/definitely/not/a/real/dir')).toBe(false);
+  });
+
   it('uses <project>/.cortex when the project dir is writable', () => {
     const p = mkdtempSync(join(tmpdir(), 'cortex-state-'));
     const r = resolveCortexStateDir(p, {} as any);

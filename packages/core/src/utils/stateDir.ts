@@ -52,6 +52,13 @@ export function resolveCortexStateDir(projectPath?: string, env: NodeJS.ProcessE
   const project = projectPath || process.cwd();
   const cached = cache.get(project);
   if (cached) return cached;
+  // A project path that does not exist (unit tests with synthetic roots, a not-yet-created workspace) is resolved PURELY —
+  // no probe, no fallback, no side effects. A real working directory always exists, so the read-only case is still caught.
+  if (!existsSync(project)) {
+    const pure: CortexStateDir = { dir: join(project, '.cortex'), fallback: false, projectPath: project };
+    cache.set(project, pure);
+    return pure;
+  }
 
   const candidates: Array<{ dir: string; label: string }> = [];
   const override = String(env.CORTEX_STATE_DIR ?? '').trim();
