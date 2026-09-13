@@ -80,7 +80,7 @@ import { resolveOuterToolDeadlineMs, resolveOuterToolTimeoutFloorMs } from './ou
 import { resolveSubAgentTimeoutMs } from './subAgentTimeout.js';
 import { resolveTurnDeadlineMs, timeBudgetState, timeBudgetWarnNudge } from './timeBudget.js';
 import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
-import { ExactRepeatTracker } from '../training/loopLadder.js';
+import { ExactRepeatTracker, notePollResults } from '../training/loopLadder.js';
 
 // Phase 2.9: MCP Integration
 import { McpClientManager } from '../mcp/index.js';
@@ -2099,6 +2099,10 @@ export class CortexOrchestrator {
     let currentAssistantCanonicalMessage = assistantCanonicalMessage;
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     let toolCallIteration = 0;
+    // R137 HB-POLL-REPEAT-BREAKER: the exact-repeat breaker used to force-exit by overwriting
+    // toolCallIteration = MAX_TOOL_ITERATIONS, which banked toolCallIterations=1000 (a metrics
+    // artifact). An explicit flag ends the loop the same way and keeps the true count.
+    let loopBreak = false;
 
     // Loop control settings — single source of truth via getLoopControlConfig()
     const loopDefaults = this.getLoopControlConfig();
@@ -2907,8 +2911,9 @@ export class CortexOrchestrator {
             );
             console.warn(`[Orchestrator Phase 2.5] Repeated input: ${inputHash.substring(0, 100)}...`);
 
-            // Break out of the main while loop
-            toolCallIteration = MAX_TOOL_ITERATIONS;
+            // Break out of the main while loop (R137: flag, not a counter overwrite)
+            loopBreak = true;
+            this.recordLoopBreak(toolUse.name, matchCount, toolCallIteration);
             break;
           }
         }
@@ -2917,7 +2922,7 @@ export class CortexOrchestrator {
         // Without this, `break` above only exits the inner for, and the full tool
         // batch still executes this iteration (defeats loop prevention).
         // Orphaned tool_use blocks are handled by orphan-recovery at loop exit.
-        if (toolCallIteration >= MAX_TOOL_ITERATIONS) {
+        if (loopBreak || toolCallIteration >= MAX_TOOL_ITERATIONS) {
           break;
         }
 
@@ -2943,6 +2948,7 @@ export class CortexOrchestrator {
           const toolResults = await this.handleToolCalls(toolUseBlocks, abortController.signal, structuredOutputState);
           this.testPostExecThrow(); // test-only fault injection for the re-execution guard (inert in prod)
           clearTimeout(timeoutId);
+          notePollResults(exactRepeatTracker, toolUseBlocks, toolResults); // R137: poll repeats count only on identical STALLED output
 
           // Unified Outcome Ladder: observe each result's TRUE outcome (exit
           // codes, not wire is_error) and escalate on repeated failing
@@ -3657,8 +3663,10 @@ export class CortexOrchestrator {
       }
     }
 
-    // Warn if we hit max iterations
-    if (toolCallIteration >= MAX_TOOL_ITERATIONS) {
+    // Warn if we hit max iterations (or the exact-repeat breaker ended the loop — R137)
+    if (loopBreak) {
+      console.warn(`[Orchestrator Phase 2.5] Exact-repeat breaker ended the tool loop at iteration ${toolCallIteration}. Stopping loop.`);
+    } else if (toolCallIteration >= MAX_TOOL_ITERATIONS) {
       console.warn(`[Orchestrator Phase 2.5] Max tool iterations (${MAX_TOOL_ITERATIONS}) reached. Stopping loop.`);
     }
 
@@ -4521,6 +4529,7 @@ export class CortexOrchestrator {
     // Phase 2.8: Multi-turn tool execution loop (STREAMING VERSION)
     // Matches sendMessage() pattern exactly (lines 800-1229), but with streaming
     let toolCallIteration = 0;
+    let loopBreak = false; // R137: explicit exact-repeat break flag (parity with sendMessage; keeps the true iteration count)
     let totalToolErrors = 0;
     let emptyResponseRetryUsed = false; // R32: parity with sendMessage R18b guard
     let inactionNudgeUsed = false; // Inaction guard (backlog item 2) — streaming parity
@@ -4958,7 +4967,8 @@ export class CortexOrchestrator {
               `[Orchestrator Streaming] Loop detected: Tool "${toolUse.name}" called ${matchCount} times with same input. Stopping.`
             );
           }
-          toolCallIteration = MAX_TOOL_ITERATIONS; // Force exit
+          loopBreak = true; // Force exit (R137: flag, not a counter overwrite)
+          this.recordLoopBreak(toolUse.name, matchCount, toolCallIteration);
           break;
         }
       }
@@ -4967,7 +4977,7 @@ export class CortexOrchestrator {
       // Without this, `break` above only exits the inner for, and the full tool
       // batch still executes this iteration (defeats loop prevention).
       // Orphaned tool_use blocks are handled by orphan-recovery at loop exit.
-      if (toolCallIteration >= MAX_TOOL_ITERATIONS) {
+      if (loopBreak || toolCallIteration >= MAX_TOOL_ITERATIONS) {
         break;
       }
 
@@ -4988,6 +4998,7 @@ export class CortexOrchestrator {
         const toolResults = await this.handleToolCalls(toolUseBlocks, abortController.signal, structuredOutputState);
         this.testPostExecThrow(); // test-only fault injection for the re-execution guard (inert in prod)
         clearTimeout(timeoutId);
+        notePollResults(streamRepeatTracker, toolUseBlocks, toolResults); // R137 (streaming parity)
         // 4.91.0: EndTurn gates for STREAMING (were sendMessage-only) — same evidence + evaluation.
         ev.noteToolResults(toolResults);
         evaluateEndTurnGates(ev, toolResults, toolUseBlocks, this.gateDeps());
@@ -5700,10 +5711,12 @@ export class CortexOrchestrator {
       }
     }
 
-    // Warn if hit max iterations
-    if (toolCallIteration >= MAX_TOOL_ITERATIONS) {
+    // Warn if hit max iterations (or the exact-repeat breaker ended the loop — R137)
+    if (loopBreak || toolCallIteration >= MAX_TOOL_ITERATIONS) {
       if (this.config.debug) {
-        console.warn(`[Orchestrator Streaming] Max tool iterations (${MAX_TOOL_ITERATIONS}) reached. Stopping loop.`);
+        console.warn(loopBreak
+          ? `[Orchestrator Streaming] Exact-repeat breaker ended the tool loop at iteration ${toolCallIteration}. Stopping loop.`
+          : `[Orchestrator Streaming] Max tool iterations (${MAX_TOOL_ITERATIONS}) reached. Stopping loop.`);
       }
     }
 
@@ -7377,6 +7390,17 @@ export class CortexOrchestrator {
    * @param signal AbortSignal for cancellation
    * @returns Array of tool results
    */
+  /** R137 HB-POLL-REPEAT-BREAKER: bank the exact-repeat break as a decisions event (mechanism-engagement evidence). */
+  private recordLoopBreak(tool: string, matchCount: number, iteration: number): void {
+    const store = this.getDecisionStore();
+    if (store) void store.recordEvent({
+      sessionId: this.currentSessionId ?? 'unknown',
+      kind: 'loop_break',
+      toolName: tool,
+      detail: { tool, matchCount, iteration },
+    }).catch(() => {});
+  }
+
   private async handleToolCalls(
     toolUseBlocks: Array<{ id: string; name: string; input: any }>,
     signal: AbortSignal,

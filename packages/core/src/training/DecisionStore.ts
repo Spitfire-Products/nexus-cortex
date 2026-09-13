@@ -92,6 +92,7 @@ export type SteeringEventKind =
   //   R132 HB-COMPACTION-ESTIMATE: checkpoint + proactive rows also carry {estimateSource: 'usage-anchored'|'heuristic', anchorTokens} —
   //   the last real prompt_tokens the estimate was anchored on (0 = heuristic fallback)
   | 'slice_block' // CORTEX_SLICE_BLOCK: a re-slice of a static file was coercively blocked (force Read); detail {file, priorSlices, blockNumber}
+  | 'loop_break' // R137 HB-POLL-REPEAT-BREAKER: the exact-repeat breaker (MAX_LOOP_REPETITIONS) ended the tool loop — detail {tool, matchCount, iteration}; the banked toolCallIterations stays the TRUE count (no longer overwritten to the cap)
   | 'dsml_recovered';
 
 export interface SteeringEventInput {

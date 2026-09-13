@@ -243,11 +243,46 @@ export function formatLadderSignal(toolName: string, result: LadderResult): stri
  * (sleep → status → sleep → status) resets both trackers — covered by the
  * budget-pressure system, not by repeat detection.
  */
+/**
+ * R137 HB-POLL-REPEAT-BREAKER: tools whose whole purpose is to RE-READ a handle. An identical
+ * call is the expected shape of a poll (BashOutput {bash_id} after TOOL_TIMEOUT_MODE=auto promoted
+ * a long job — exactly what the promote steering tells the model to do), so byte-identical INPUT is
+ * not evidence of a stall; only byte-identical OUTPUT is. TB4.0 validation: 5 identical BashOutput
+ * polls on a live `timeout 580 python3 fit.py` tripped the exact-repeat breaker, ending the turn
+ * with the final-answer nudge while the job was still running (and banking toolCallIterations=1000).
+ */
+export const POLL_TOOL_NAMES: ReadonlySet<string> = new Set(['BashOutput', 'InspectSandbox']);
+
+/** True when a poll tool's result says the polled process is still alive (BashOutput: the
+ *  `Status: Running` line from BashOutputTool, or its `isRunning` metadata). Never true for
+ *  non-poll tools. */
+export function isPollResultRunning(toolName: string, content: string, metadata?: Record<string, unknown>): boolean {
+  if (!POLL_TOOL_NAMES.has(toolName)) return false;
+  if (metadata && metadata.isRunning === true) return true;
+  return /^Status: Running$/m.test(content);
+}
+
+/** Small stable text hash (djb2) — keeps the tracker from retaining whole tool outputs. */
+function hashText(text: string): string {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
+  return `${h.toString(16)}:${text.length}`;
+}
+
 export class ExactRepeatTracker {
   private lastKey: string | null = null;
   private count = 0;
+  // R137 poll-tool state for the CURRENT key only (a different call resets everything).
+  private lastResultHash: string | null = null;
+  /** Length of the trailing run of byte-identical, not-running results for the current key. */
+  private resultStreak = 0;
+  /** A poll was observed and its result has not been reported yet (noteResult never called). */
+  private pendingResult = false;
 
-  /** Returns the CONSECUTIVE occurrence count for this exact call. */
+  /** Returns the CONSECUTIVE occurrence count for this exact call. For poll tools
+   *  (POLL_TOOL_NAMES) the count is the trailing run of byte-identical stalled results + 1 —
+   *  a live process or changing output never accumulates (falls back to the raw consecutive
+   *  count when results were never reported via noteResult). */
   observe(toolName: string, inputHash: string): number {
     const key = `${toolName}\u0000${inputHash}`;
     if (key === this.lastKey) {
@@ -255,7 +290,44 @@ export class ExactRepeatTracker {
     } else {
       this.lastKey = key;
       this.count = 1;
+      this.lastResultHash = null;
+      this.resultStreak = 0;
+      this.pendingResult = false;
     }
-    return this.count;
+    if (!POLL_TOOL_NAMES.has(toolName)) return this.count;
+    const effective = this.count > 1 && this.pendingResult ? this.count : this.resultStreak + 1;
+    this.pendingResult = true;
+    return effective;
+  }
+
+  /** Report the RESULT of the most recently observed call (poll tools only; other keys are ignored). */
+  noteResult(toolName: string, inputHash: string, content: string, metadata?: Record<string, unknown>): void {
+    if (!POLL_TOOL_NAMES.has(toolName)) return;
+    if (`${toolName}\u0000${inputHash}` !== this.lastKey) return;
+    this.pendingResult = false;
+    if (isPollResultRunning(toolName, content, metadata)) {
+      this.lastResultHash = null;
+      this.resultStreak = 0;
+      return;
+    }
+    const h = hashText(content);
+    this.resultStreak = h === this.lastResultHash ? this.resultStreak + 1 : 1;
+    this.lastResultHash = h;
+  }
+}
+
+/** Orchestrator glue (both tool loops): feed a batch's results back to the tracker. Non-poll
+ *  tools are ignored inside noteResult; the inputHash must be the same JSON.stringify(input)
+ *  the observe() call used. */
+export function notePollResults(
+  tracker: ExactRepeatTracker,
+  toolUseBlocks: ReadonlyArray<{ id: string; name: string; input: unknown }>,
+  toolResults: ReadonlyArray<{ tool_use_id: string; tool_name: string; content: string; metadata?: Record<string, unknown> }>,
+): void {
+  const inputById = new Map(toolUseBlocks.map((b) => [b.id, b.input]));
+  for (const tr of toolResults) {
+    if (!POLL_TOOL_NAMES.has(tr.tool_name)) continue;
+    if (!inputById.has(tr.tool_use_id)) continue;
+    tracker.noteResult(tr.tool_name, JSON.stringify(inputById.get(tr.tool_use_id)), tr.content ?? '', tr.metadata);
   }
 }

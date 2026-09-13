@@ -1345,6 +1345,45 @@ the model emitted a tool call the parser did not lift, so the turn ended with it
 whether the DSML parser (HB-DSML-PARSE, canary-passed 09-09) handles the `string="true|false"` attribute form and the `<｜｜DSML｜｜` double-bar
 variant; if not, extend the grammar + canary. Bench signature to grep in trajectories: final assistant text containing `DSML｜｜ calls`.
 
+## HB-POLL-REPEAT-BREAKER — the exact-repeat breaker force-exits the turn on identical BashOutput polls (2026-09-13, TB4.0 validation mp-checkpoint-consolidation) — BUILT 2026-09-13 → 4.108.11 (R137)
+Evidence (t4v session, 4.108.9): the model launched `timeout 580 python3 -u /tmp/fit.py` (promoted to background by TOOL_TIMEOUT_MODE=auto)
+and polled `BashOutput {"bash_id": "bg-8c537679"}` five times in a row — exactly what the promote steering tells it to do. `ExactRepeatTracker`
+(CortexOrchestrator.ts ~2903) counts CONSECUTIVE byte-identical calls and at MAX_LOOP_REPETITIONS=5 logs "Loop detected … Stopping to prevent
+infinite loop", sets `toolCallIteration = MAX_TOOL_ITERATIONS` and breaks the loop (:2911 non-streaming, :4961 streaming) → the turn ends
+with the final-answer nudge while the job is still running; the banked row shows toolCallIterations=1000 (a metrics artifact of the forced exit).
+Fix: (1) poll tools are exempt from the exact-repeat breaker — BashOutput (and any tool whose purpose is to re-read a handle: TaskOutput,
+InspectSandbox) never count as a repeat while the polled process is alive / its output is still changing; count only when the RESULT is also
+byte-identical N times AND the handle is not running. (2) Do not overwrite `toolCallIteration` to force the exit — use an explicit
+`loopBreak` flag so the banked iteration count stays true and the decisions row says why the turn ended (`kind: loop_break`). Validation:
+replay the mp-checkpoint tail (5 identical BashOutput polls on a live job) → no break; 5 identical Bash calls with identical error output → break.
+
+## HB-NEARDUP-SCRIPT-SHAPE — the similarity lens blocks Bash on DISTINCT experiment scripts that share a wrapper shape (2026-09-13, TB4.0 validation mp-checkpoint-consolidation) — OPEN (R136)
+Evidence (t4v session, 4.108.9): `cd /app && timeout N python3 -u /tmp/search.py`, `/tmp/unfused.py`, `/tmp/moe_search.py`, `/tmp/grad_diag.py`
+and several `python3 -u -c "<different code>"` runs — different experiments, one shell wrapper — scored as near-duplicates:
+`loop_escalation diversify` ×4 then `loop_tool_block trigger: neardup-similarity` ×3 (blockNumber 1..3 → "tool is disabled: repeated loop
+interventions have not broken…"). With Bash gone the model finished on BashOutput/KillShell/Edit and gave an honest "unable to complete" at
+42 min / 160 tool calls; the SAME task passed on 4.108.5 in 1.9 h (114 calls, 4 Task delegates). Same family as HB-POLL-LOOP (R135): the loop
+stack removing the last executor on legitimate work. Fix: the similarity lens must weight the SCRIPT IDENTITY (path of the executed file, or
+a hash of inline `-c` code) far above the wrapper (`cd … && timeout N python3 -u … 2>&1 | grep`); two commands that run different files or
+different inline bodies are different approaches even when the wrapper is identical. Keep true repeats (same file/body, same args) blockable.
+Validation: replay the mp-checkpoint session — expect 0 loop_tool_block on that sequence; TB2.1 loop set unchanged.
+
+## HB-POLL-LOOP — the loop stack blocks Bash on a legitimate poll-and-wait, stranding a monitoring task (2026-09-13, TB4.0 ctr-optimization) — OPEN (R135)
+Evidence (t4y session + decisions): a 48-sim-hour task (1 sim hour = 6 real minutes) requires setting a config and then observing an eval
+window hours later. The model polled with `sleep 115; curl …/config | python3 -c …` — the only way to wait without a monitor — and the
+near-dup similarity lens scored every poll as a repeat: steering diversity/ladder → `loop_escalation diversify` ×3 → `loop_tool_block
+trigger: neardup-similarity` ×3 (blockNumber 1..3) redirecting to Read/Write/Edit. With Bash gone ("No HTTP tool exists; Bash is disabled")
+the model found CreateArtifactTool via SearchTools and used oneshot mode 14x as a `python -c` substitute to reach the API (it worked), then
+tried persistent/dev mode for a monitor (tmux refusal, HB-TMUX-FALLBACK) and finalized WITHOUT observing the eval window. It had used
+`run_in_background` twice but never called BashOutput; persistentSession needs tmux.
+Fix: (1) recognize a POLL pattern (`sleep N; <probe>` / repeated identical read-only HTTP or status probes with a wait, no error) as
+monitoring, not a stuck approach — never block the last executor on it; steer instead: "run the probe loop in the background
+(run_in_background) and poll with BashOutput / TimedWait". (2) The LONG WAITS doctrine bullet (v2, OFF) says this in prose; make the
+mechanism say it at the moment it matters (the steering text on a poll pattern). (3) CreateArtifactTool is not the defect: its oneshot mode
+was a working escape hatch; its description is UI/sandbox-oriented (visual feedback, hot reload, InspectSandbox) and deferred-tier — fine for
+the bench once persistent mode degrades gracefully. Validation: replay ctr-optimization — expect 0 loop_tool_block events on the poll loop and
+a background probe + BashOutput pattern.
+
 ## HB-OUTER-TOOL-FLOOR — every non-Bash tool is killed by the 150 s outer batch abort (2026-09-13, TB4.0) — BUILT 2026-09-13 → 4.108.10 (R133b)
 Evidence: 5 `Tool execution timeout after 150000ms` in the tb4-flash-v1 server logs (3 Task delegates mid-turn, 2 CreateArtifactTool persistent
 launches). `resolveOuterToolDeadlineMs` honored only Bash's requested timeout. Fix: `CORTEX_OUTER_TOOL_TIMEOUT_MS` floor

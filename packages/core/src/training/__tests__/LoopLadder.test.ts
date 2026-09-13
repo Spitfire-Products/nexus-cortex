@@ -171,6 +171,96 @@ d2('ExactRepeatTracker (consecutive-only hard-kill semantics)', () => {
   });
 });
 
+// ── R137 HB-POLL-REPEAT-BREAKER: poll tools count only on byte-identical STALLED results ──
+import { POLL_TOOL_NAMES, isPollResultRunning, notePollResults } from '../loopLadder.js';
+
+d2('ExactRepeatTracker poll exemption (R137 HB-POLL-REPEAT-BREAKER)', () => {
+  const pollInput = JSON.stringify({ bash_id: 'bg-8c537679' });
+  const running = (n: number) => `Shell ID: bg-8c537679\nPID: 42\nStatus: Running\nCommand: python3 fit.py\nNew Lines: ${n}\n\n=== Output ===\nepoch ${n}\n`;
+  const exited = 'Shell ID: bg-8c537679\nPID: 42\nStatus: Exited\nExit Code: 0\nCommand: python3 fit.py\nNew Lines: 0\n\n=== Output ===\n(no new output)';
+
+  it2('exports BashOutput as a poll tool', () => {
+    ex2(POLL_TOOL_NAMES.has('BashOutput')).toBe(true);
+    ex2(POLL_TOOL_NAMES.has('Bash')).toBe(false);
+  });
+
+  it2('isPollResultRunning reads the BashOutput status line and metadata', () => {
+    ex2(isPollResultRunning('BashOutput', running(1))).toBe(true);
+    ex2(isPollResultRunning('BashOutput', exited)).toBe(false);
+    ex2(isPollResultRunning('BashOutput', '(no new output)', { isRunning: true })).toBe(true);
+    ex2(isPollResultRunning('Bash', 'Status: Running')).toBe(false);
+  });
+
+  it2('(a) 5 identical BashOutput polls with changing results never trip', () => {
+    const t = new ExactRepeatTracker();
+    let max = 0;
+    for (let i = 0; i < 5; i++) {
+      max = Math.max(max, t.observe('BashOutput', pollInput));
+      t.noteResult('BashOutput', pollInput, running(i));
+    }
+    ex2(max).toBeLessThan(5);
+    ex2(max).toBe(1); // process alive → never counts
+  });
+
+  it2('(a2) exited process with CHANGING output still never trips', () => {
+    const t = new ExactRepeatTracker();
+    let max = 0;
+    for (let i = 0; i < 5; i++) {
+      max = Math.max(max, t.observe('BashOutput', pollInput));
+      t.noteResult('BashOutput', pollInput, `${exited}\nline ${i}`);
+    }
+    ex2(max).toBeLessThan(5);
+  });
+
+  it2('(b) 5 identical BashOutput polls with byte-identical not-running results trip at 5', () => {
+    const t = new ExactRepeatTracker();
+    let n = 0;
+    for (let i = 0; i < 5; i++) {
+      n = t.observe('BashOutput', pollInput);
+      t.noteResult('BashOutput', pollInput, exited);
+    }
+    ex2(n).toBe(5);
+  });
+
+  it2('(c) 5 identical Bash calls (non-poll) trip at 5 regardless of results', () => {
+    const t = new ExactRepeatTracker();
+    let n = 0;
+    for (let i = 0; i < 5; i++) {
+      n = t.observe('Bash', 'same');
+      t.noteResult('Bash', 'same', `different output ${i}`);
+    }
+    ex2(n).toBe(5);
+  });
+
+  it2('(d) a poll interleaved between identical Bash calls resets consecutive counting', () => {
+    const t = new ExactRepeatTracker();
+    ex2(t.observe('Bash', 'same')).toBe(1);
+    ex2(t.observe('Bash', 'same')).toBe(2);
+    ex2(t.observe('BashOutput', pollInput)).toBe(1);
+    t.noteResult('BashOutput', pollInput, exited);
+    ex2(t.observe('Bash', 'same')).toBe(1);
+    ex2(t.observe('Bash', 'same')).toBe(2);
+  });
+
+  it2('notePollResults feeds a batch back by tool_use_id using the observe() input hash', () => {
+    const t = new ExactRepeatTracker();
+    const input = { bash_id: 'bg-8c537679' };
+    let n = 0;
+    for (let i = 0; i < 5; i++) {
+      n = t.observe('BashOutput', JSON.stringify(input));
+      notePollResults(t, [{ id: `u${i}`, name: 'BashOutput', input }], [{ tool_use_id: `u${i}`, tool_name: 'BashOutput', content: '(no new output)', metadata: { isRunning: true } }]);
+    }
+    ex2(n).toBe(1);
+  });
+
+  it2('a poll whose result was never reported falls back to raw consecutive counting', () => {
+    const t = new ExactRepeatTracker();
+    let n = 0;
+    for (let i = 0; i < 5; i++) n = t.observe('BashOutput', pollInput);
+    ex2(n).toBe(5);
+  });
+});
+
 // ── Item 14b: windowed near-dup breaker (outcome-agnostic, interleaving-proof) ──
 d2('near-dup breaker (CORTEX_NEARDUP_BREAKER)', () => {
   const prevN = process.env.CORTEX_NEARDUP_BREAKER;

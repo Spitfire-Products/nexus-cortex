@@ -43,6 +43,13 @@ describe('DecisionStore.recordEvent', () => {
     expect(events[0].detail).toMatchObject({ rung: 'diversify' });
   });
 
+  it('accepts the R137 loop_break kind (exact-repeat breaker fired) with its detail', async () => {
+    await store.recordEvent({ sessionId: 's1', kind: 'loop_break', toolName: 'Bash', detail: { tool: 'Bash', matchCount: 5, iteration: 7 } });
+    const events = await store.readEvents('loop_break');
+    expect(events).toHaveLength(1);
+    expect(events[0].detail).toEqual({ tool: 'Bash', matchCount: 5, iteration: 7 });
+  });
+
   it('readEvents filters by kind', async () => {
     await store.recordEvent({ sessionId: 's1', kind: 'steering_injected', detail: { kinds: ['budget'] } });
     await store.recordEvent({ sessionId: 's1', kind: 'inaction_nudge' });
