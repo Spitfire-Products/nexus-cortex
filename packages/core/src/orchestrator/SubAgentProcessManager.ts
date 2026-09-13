@@ -22,6 +22,7 @@ import { fork, execSync, type ChildProcess } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
+import { DEFAULT_SUBAGENT_TIMEOUT_MS } from './subAgentTimeout.js';
 import { EventEmitter } from 'events';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'fs';
 import type {
@@ -324,7 +325,7 @@ export class SubAgentProcessManager implements ISubAgentManager {
             taskPrompt,
             modelId: state.modelId,
             projectPath: this.config.projectPath,
-            timeoutMs: options.timeoutMs ?? 300000,
+            timeoutMs: options.timeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS,
             maxTurns: options.maxTurns ?? 50,
             debug: this.config.debug,
           },

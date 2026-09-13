@@ -1345,6 +1345,29 @@ the model emitted a tool call the parser did not lift, so the turn ended with it
 whether the DSML parser (HB-DSML-PARSE, canary-passed 09-09) handles the `string="true|false"` attribute form and the `<｜｜DSML｜｜` double-bar
 variant; if not, extend the grammar + canary. Bench signature to grep in trajectories: final assistant text containing `DSML｜｜ calls`.
 
+## HB-TMUX-FALLBACK — persistent execution hard-requires tmux; tmux-less images lose long-running monitors (2026-09-13, TB4.0 ctr-optimization) — BUILT 2026-09-13 → 4.108.8, validation cell pending (R134)
+Evidence: `CreateArtifactTool.ts:852` throws `tmux is not installed. Persistent mode requires tmux for session management.`; `ShellTool.ts:639-645`
+returns `tmux is not available. Persistent sessions require tmux to be installed.` The ctr-optimization image has no tmux; the model needed a
+monitor across ~2 h of sim time, tried CreateArtifactTool ×16, then finalized on a partial window ("long-running background monitors were
+unavailable — tmux is not installed"). The detached `run_in_background` path (BackgroundProcessRegistry + BashOutput) needs no tmux.
+Fix: when tmux is absent, `persistentSession=true` and persistent process artifacts degrade to the detached background path and prefix the
+result with `[WARN] tmux not available: ... downgraded to a detached background process (state/cwd/env will not persist across calls); poll
+with BashOutput`; parameter descriptions state the degradation. Error only if the fallback itself fails. Tests mock tmux unavailable.
+
+## HB-SUBAGENT-TIMEOUT — Task sub-agents die at a hardcoded 300 s regardless of the parent's budget (2026-09-13, TB4.0) — BUILT 2026-09-13 → 4.108.8, validation cell pending (R133)
+Evidence (store `tinkersnot/tb2-t4y-ctl`, 4.108.5; `.bench/distill-tb4-flash-v1/SUMMARY.md`): 6 Task dispatches in the run, 3 ended
+`Status: TIMEOUT, Duration: 300.0s` — mp-checkpoint-consolidation (Turns 0: the delegate's first bash call ran the full 300 s),
+retro-console-soc (24 turns, 1 file modified), vllm-deepseek-streaming (62 turns, 6 files modified, cut off mid-work; the parent received a
+truncated summary). `CortexOrchestrator.ts:7879` and `:8171` hardcode `timeoutMs: 300000` on dispatch; `SubAgentOrchestrator.ts:174`,
+`SubAgentManager.ts:181`, `SubAgentEventEmitter.ts:364` default the same. Under an 8-hour agent budget a 5-minute delegate cannot build,
+train or run a long test — exactly the sub-tasks worth delegating.
+Fix: (1) default the Task timeout to a fraction of the parent's remaining deadline (`CORTEX_DEADLINE` − margin; fall back to a
+`CORTEX_SUBAGENT_TIMEOUT_MS` lever, default ≥ 30 min under a deadline, 5 min without one); (2) accept `timeoutMs` on the Task input and
+document it in the tool description; (3) on timeout return the delegate's partial transcript digest + files-modified list (status
+`TIMEOUT_PARTIAL`) so the parent continues instead of redoing; (4) bank `timeoutMs` on the `task_spawn` decision row. Ship BEFORE turning
+on HB-DELEGATION-DOCTRINE (CORTEX_DELEGATION_HINT), which will raise the dispatch rate. Test: a delegate running `sleep 400` under a
+2-hour deadline completes; under no deadline it times out at the lever value with a partial result.
+
 ## HB-COMPACTION-ESTIMATE — compaction judged the stored history while the request sent the pruned view (2026-09-12, TB4.0 cad-model on the VM) — ✅ FIXED 4.108.5
 Evidence (live job dir, 4.108.4): `compaction` events `checkpoint band 1 tokens 597065 threshold 732836` at 35 messages, band 8 at 1,079,498
 tokens / 82 messages, then `proactive 1079498 → 795000`, `1008936 → 857314`, `1006333 → 863439` … (tokensAfter above the threshold → re-fires
@@ -1354,6 +1377,18 @@ utilization. Fix: scale the estimate by the pruned-view/raw char ratio (`scaleEs
 `newTokenCount`; debug line `request-view estimate: N of M stored tokens`. Follow-ups: (a) the helper checkpoint summarizes the whole history —
 confirm the helper adapter's own truncation keeps that call bounded (the VM run showed ~$0.006–0.01 per call, so it is); (b) `selectMessages`
 still measures raw sizes when choosing what to keep — the kept set is now sized against the scaled budget only via the threshold comparison.
+
+## HB-COMPACTION-ESTIMATE — the compaction/checkpoint token estimator over-reads the request ~5–7× (2026-09-13, TB4.0 heat-pump-warranty) — BUILT 2026-09-13 → 4.108.8, validation cell pending (R132)
+Evidence (store `tinkersnot/tb2-t4y-ctl`, 4.108.5): `decisions.jsonl` kind=compaction rows carry `tokens=760218 / 1004072 / 1008073` against
+`threshold=732836` (70% of the flash window), yet the same session's `session.jsonl` usage blocks report a maximum prompt of 151,763 tokens.
+layout-config-recreation (est. 818K–827K, 6+2 messages dropped) and vba-userform-port (815K) show the same shape. R129 (4.108.5) switched the
+estimate to the pruned request view, but the chars-based count still runs ~5–7× over DeepSeek's tokenizer on tool-output-heavy history, so the
+checkpoint rung and proactive compaction fire at ~15% of the real window. The resume machinery worked (taskPinned, covering checkpoint memory
+reused, workspace-state block 2530 chars, sessionPath pointer) — it just fires far too early and pays helper calls (~$0.011 each) for nothing.
+Fix: anchor the estimator on the most recent API-reported `prompt_tokens` (+ `prompt_cache_hit_tokens`) and add only the delta of content
+appended since that request (chars/4 on the delta only); use the pure heuristic only until the first usage block arrives; bank `estimateSource`
+(`usage-anchored` | `heuristic`) and the anchor value on every compaction decision row so the field read can verify it. Test: replay the
+heat-pump session and assert no compaction fires below 70% of the API-reported size.
 
 ## HB-READONLY-WORKDIR — the server crashes at boot when the project dir is not writable (2026-09-12, TB4.0 risk-scorer-replay) — OPEN (R131)
 Evidence (VM job dir, 4.108.5): `Failed to start server: Error: EACCES: permission denied, mkdir '/app/.cortex/tmux-sessions/metadata'` from

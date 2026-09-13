@@ -88,6 +88,9 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
   private static readonly OUTPUT_UPDATE_INTERVAL_MS = 1000; // 1 second
   private static readonly MAX_OUTPUT_LENGTH = 30000; // ~30KB max to prevent context overflow
   private static readonly PERSISTENT_POLL_INTERVAL_MS = 400; // sentinel poll cadence for tmux sessions
+  /** HB-TMUX-FALLBACK (R134): one-line prefix when persistentSession degrades to run_in_background. */
+  private static readonly TMUX_FALLBACK_WARN =
+    '[WARN] tmux not available: persistentSession downgraded to a detached background process (state/cwd/env will not persist across calls); poll with BashOutput';
 
   private tmux: TmuxManager;
   private persistence: SessionPersistence;
@@ -127,7 +130,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
           persistentSession: {
             type: 'boolean',
             description:
-              'Optional: Run command in a persistent tmux session (state, cwd, and env persist across calls). Requires tmux.',
+              'Optional: Run command in a persistent tmux session (state, cwd, and env persist across calls). Requires tmux; when tmux is absent the command is downgraded to a detached background process (run_in_background semantics, poll with BashOutput) and a [WARN] line is prefixed to the result.',
           },
           sessionId: {
             type: 'string',
@@ -636,15 +639,28 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
   ): Promise<ToolResult> {
     const startTime = Date.now();
 
-    // Check tmux availability
+    // Check tmux availability. HB-TMUX-FALLBACK (R134): task images without tmux
+    // used to lose long-running monitors entirely (hard error). Degrade to the
+    // run_in_background machinery instead (same BackgroundProcessRegistry handle,
+    // BashOutput-pollable); keep the error only if that fallback itself fails.
     if (!(await this.tmux.isAvailable())) {
+      const fallback = this.executeInBackground(params, signal);
+      if (fallback.success) {
+        return {
+          ...fallback,
+          llmContent: `${ShellTool.TMUX_FALLBACK_WARN}\n${fallback.llmContent}`,
+          returnDisplay: `${ShellTool.TMUX_FALLBACK_WARN}\n${fallback.returnDisplay ?? fallback.llmContent}`,
+          metadata: { ...fallback.metadata, persistentSessionDegraded: true },
+        };
+      }
       return this.createErrorResult(
-        'tmux is not available. Persistent sessions require tmux to be installed.\n\n' +
+        'tmux is not available. Persistent sessions require tmux to be installed, ' +
+        `and the detached background fallback failed: ${fallback.error ?? 'unknown error'}\n\n` +
         'Installation:\n' +
         ' - Ubuntu/Debian: apt-get install tmux\n' +
         ' - macOS: brew install tmux\n' +
         ' - Replit: Add tmux in the Packages tab\n\n' +
-        'Falling back to standard execution is not automatic. Please either:\n' +
+        'Please either:\n' +
         '1. Install tmux and retry\n' +
         '2. Remove persistentSession=true to use standard execution'
       );

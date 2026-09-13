@@ -28,14 +28,40 @@ video-processing). Tool shape is not the difference: DSH used its editor tool in
 
 ## 2. Terminal-Bench 4.0 (66 tasks, `terminal-bench/terminal-bench`, 8-hour agent budgets)
 
-_Run in progress (VM executor, 63 non-GPU tasks, native resources, real budgets). Fill: pass/66 with the 3 GPU tasks counted as fails,
-category breakdown, cost triple._ Independent reference (Artificial Analysis, 3 repeats): V4.1 Flash 26.8, V4 Pro 14.1, GPT-6 Astra 59.6.
+| arm | runs | pass@1 | notes |
+|---|---|---|---|
+| nexus-cortex 4.108.5, flash | n=1 (63 tasks executed, 3 GPU tasks scored as fails) | **16.7%** (11/66, Wilson 9.6–27.4; 11/63 = 17.5% on the executed set) | Science 4/14, ML 2/11, Media 1/4, Software 4/18, Hardware 0/5, Operations 0/9, Security 0/5 |
+
+Independent reference (Artificial Analysis, Terminus 2 harness, all 66 tasks, pass@1 over 3 repeats): V4.1 Flash **26.8**, V4 Pro 14.1,
+GPT-6 Astra 59.6, Claude Fable 5.1 (xhigh) 55.1. Our point sits ~10 points under the AA flash number (about 1.5 SE at n=1 on 66 tasks) —
+not parity, and unlike TB2.1 (§1) where our harness matched the vendor's and the independent band. TB4.0's multi-hour, 100–350-iteration
+tasks are where this harness + flash trails Terminus 2 + flash.
+
+Cost triple: **$13.50 of tokens** for the 63 rows (off-peak flash, 99.4% prompt-cache hit; median 107 tool iterations / 33 min wall / 185K
+output tokens per task; 55 h of agent time on 8 lanes over ~14 h of wall) + **$4.29 of host** (one Vast.ai 24-vCPU VM at $0.24/h for its
+whole 17.8-h life, ≈$3.4 for the run window) — versus the $40–110 of container-hours a full run cost on the previous substrate. DeepSeek's
+dashboard reconciles to $16.1 including unbanked diagnostic runs (accounting under-count 16%, attributed in the ledger).
+
+Passes: atrx-vep-crispr, coq-block-bound, cumulative-layout-shift, layout-config-recreation2, mp-checkpoint-consolidation,
+photonic-waveguide-routing, protein-autointerp-disulfide, react-lead-form, sglang-qwen-burst, telecom-entity-resolution, wdm-design (6.8 h,
+the longest agent phase; nothing hit the 8-h wall).
+
+Compaction-resume field read (4.108.5): 11 compaction events in 3 of 62 sessions; every proactive compaction carried the pinned task, a
+covering checkpoint memory and the workspace-state block. Grounded defect found: the token estimator that triggers it over-reads the request
+by ~5–7× (fired at "760K–1.0M" where the API reported ≤152K prompt tokens), so it engages far earlier than needed (R132, open).
+
+Store: `tinkersnot/tb2-t4y-ctl` (rows, trajectories, grader output, the adapter + supervisor). Ledger: `.cortex/bench/r-tb4-flash-v1-2026-09-12.md`.
 
 ## 3. Methodology and disclosures
 - pass@1 = mean over independent full passes; a single-run delta under ~5 points on TB2.1 is inside the measured run-to-run band (32 of 89 tasks flip).
 - Sterile installs: the published npm package, no private memory or skills, no web tools (TB has no browse dependency), the model's own key only.
 - TB2.1: all 89 tasks, no exclusions, task budgets from the dataset's `task.toml`.
 - TB4.0: 3 GPU tasks (fp8-rmsnorm-gemm, jax-speedrun-gpu, math-eval-grader — two require an H100) not run on the CPU VM; reported as failures.
+- TB4.0 run specifics: 7 tasks ran with `--cpus ignore` on a 24-vCPU host (dataset asks 8–16; one of them, wdm-design, passed);
+  medical-claims-processing ran in bridge mode (its service containers via an extra compose file); 2 tasks (distributed-dedup,
+  pretrain-shard-corruption) hit the grader's verifier timeout after the agent phase completed and are scored as fails (outcome unknown);
+  risk-scorer-replay was re-run on 4.108.7 after its first session died at boot on the task's read-only workdir (harness bug R131, fixed);
+  delivered config had `CORTEX_ACTION_EFFORT=low` (the TB2.1 A/B found effort a wash on flash).
 - Cache-warm token costs are disclosed as such; cold-start would be ~30× on input.
 - Every number links to a public HF dataset with per-task rows, trajectories (`trajectories/<task>.session.jsonl`) and grader output (`grader/`).
 

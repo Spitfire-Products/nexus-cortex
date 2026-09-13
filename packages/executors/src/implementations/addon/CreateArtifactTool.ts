@@ -16,6 +16,7 @@ import { SandboxRegistry } from '../../utils/SandboxRegistry.js';
 import { ArtifactRegistry, type ArtifactRuntime } from '../../utils/ArtifactRegistry.js';
 import { TmuxManager } from '../../utils/TmuxManager.js';
 import { SessionPersistence } from '../../utils/SessionPersistence.js';
+import { BackgroundProcessRegistry } from '../execution/BackgroundProcessRegistry.js';
 
 const execAsync = promisify(exec);
 
@@ -37,6 +38,8 @@ interface ArtifactSession {
   name: string;
   process?: ChildProcess;
   tmuxSessionId?: string;  // NEW: Tmux session ID for persistent mode
+  bashId?: string;          // HB-TMUX-FALLBACK (R134): BackgroundProcessRegistry id when tmux is absent
+  degradedWarning?: string; // HB-TMUX-FALLBACK (R134): one-line [WARN] when persistent mode ran without tmux
   url?: string;
   port?: number;
   mode: ArtifactMode;
@@ -133,6 +136,9 @@ const activeArtifactes = new Map<string, ArtifactSession>();
  */
 export class CreateArtifactToolExecutor extends BaseTool<CreateArtifactToolParams, ToolResult> {
   private artifactDir: string;
+  /** HB-TMUX-FALLBACK (R134): one-line prefix when persistent/dev mode runs without tmux. */
+  private static readonly TMUX_FALLBACK_WARN =
+    '[WARN] tmux not available: persistent mode downgraded to a detached background process (attach/reconnect and dashboard restart are not available); poll with BashOutput';
   private workingDirectory: string;
 
   constructor(config: { workingDirectory: string }) {
@@ -458,7 +464,9 @@ export class CreateArtifactToolExecutor extends BaseTool<CreateArtifactToolParam
           port: session!.port,
           status: 'running',
           visualFeedbackEnabled: params.enableVisualFeedback || false,
-          hasVisualSnapshot: !!session!.visualSnapshot
+          hasVisualSnapshot: !!session!.visualSnapshot,
+          persistentDegraded: !!session!.degradedWarning,   // HB-TMUX-FALLBACK (R134)
+          bash_id: session!.bashId
         }
       };
     } catch (error) {
@@ -846,36 +854,62 @@ if __name__ == '__main__':
     // Initialize tmux manager
     const tmuxManager = TmuxManager.getInstance();
 
-    // Check if tmux is available
+    // Check if tmux is available. HB-TMUX-FALLBACK (R134): task images without
+    // tmux used to throw here and lose the long-running artifact entirely. Degrade
+    // to a plain detached process artifact (runtime 'process' — the non-tmux path
+    // SandboxViewServer already knows) registered in BackgroundProcessRegistry so
+    // BashOutput can poll it. Attach/reconnect + dashboard restart-into-pane are
+    // the tmux semantics the plain path cannot honor; the [WARN] says so.
     const tmuxAvailable = await tmuxManager.isAvailable();
-    if (!tmuxAvailable) {
-      throw new Error('tmux is not installed. Persistent mode requires tmux for session management.');
+    let tmuxSessionId: string | undefined;
+    let detachedProcess: ChildProcess | undefined;
+    let bashId: string | undefined;
+    let degradedWarning: string | undefined;
+    if (tmuxAvailable) {
+      // Create tmux session with artifact ID as session name
+      tmuxSessionId = `artifact-${artifactId.substring(0, 8)}`;
+      await tmuxManager.createSession(tmuxSessionId, artifactPath);
+
+      // Send command to tmux session
+      await tmuxManager.sendKeys(tmuxSessionId, command);
+    } else {
+      detachedProcess = spawn('bash', ['-c', command], {
+        cwd: artifactPath,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: true,
+      });
+      if (!detachedProcess.pid) {
+        throw new Error('tmux is not installed and the detached background fallback failed to spawn.');
+      }
+      bashId = `artifact-${artifactId.substring(0, 8)}`;
+      BackgroundProcessRegistry.getInstance().registerProcess(bashId, detachedProcess.pid, command, detachedProcess);
+      detachedProcess.unref();
+      runtime = 'process';
+      degradedWarning = CreateArtifactToolExecutor.TMUX_FALLBACK_WARN;
     }
-
-    // Create tmux session with artifact ID as session name
-    const tmuxSessionId = `artifact-${artifactId.substring(0, 8)}`;
-    await tmuxManager.createSession(tmuxSessionId, artifactPath);
-
-    // Send command to tmux session
-    await tmuxManager.sendKeys(tmuxSessionId, command);
 
     // Wait a moment for process to start
     await new Promise(resolve => setTimeout(resolve, 1000));
 
     // Save tmux session metadata for dashboard
-    const sessionPersistence = new SessionPersistence(this.workingDirectory);
-    await sessionPersistence.saveSession({
-      sessionId: tmuxSessionId,
-      created: new Date(),
-      lastUsed: new Date(),
-      cwd: artifactPath,
-      env: {}
-    });
+    if (tmuxSessionId) {
+      const sessionPersistence = new SessionPersistence(this.workingDirectory);
+      await sessionPersistence.saveSession({
+        sessionId: tmuxSessionId,
+        created: new Date(),
+        lastUsed: new Date(),
+        cwd: artifactPath,
+        env: {}
+      });
+    }
 
     const session: ArtifactSession = {
       id: artifactId,
       name: params.name,
       tmuxSessionId,
+      process: detachedProcess,
+      bashId,
+      degradedWarning,
       url,
       port,
       mode: params.mode || 'persistent',
@@ -914,7 +948,7 @@ if __name__ == '__main__':
       name: params.name,
       port,
       url,
-      pid: undefined, // No PID for tmux sessions, use tmux session ID instead
+      pid: detachedProcess?.pid, // No PID for tmux sessions (tmux session ID instead); set on the R134 fallback
       mode: params.mode || 'persistent',
       startTime: new Date().toISOString(),
       lastActivity: new Date().toISOString(),
@@ -960,9 +994,14 @@ if __name__ == '__main__':
     }
 
     // Log tmux session info
-    console.log(`[${params.name}] Running in tmux session: ${tmuxSessionId}`);
-    console.log(`[${params.name}] Access at: ${url}`);
-    console.log(`[${params.name}] View output: tmux attach -t ${tmuxSessionId}`);
+    if (tmuxSessionId) {
+      console.log(`[${params.name}] Running in tmux session: ${tmuxSessionId}`);
+      console.log(`[${params.name}] Access at: ${url}`);
+      console.log(`[${params.name}] View output: tmux attach -t ${tmuxSessionId}`);
+    } else {
+      console.log(`[${params.name}] ${degradedWarning}`);
+      console.log(`[${params.name}] Running as detached process pid ${detachedProcess?.pid} (bash_id ${bashId}); access at: ${url}`);
+    }
 
     return session;
   }
@@ -1148,6 +1187,13 @@ if __name__ == '__main__':
     originalName?: string
   ): string {
     const lines: string[] = [];
+
+    // HB-TMUX-FALLBACK (R134): the degradation notice is the FIRST line of the result
+    if (session.degradedWarning) {
+      lines.push(session.degradedWarning);
+      lines.push(`Use BashOutput({ bash_id: "${session.bashId}" }) to read its output, KillShell({ shell_id: "${session.bashId}" }) to stop it.`);
+      lines.push('');
+    }
 
     lines.push(`#  ${params.name} - ${params.mode?.toUpperCase()} MODE`);
     lines.push('');

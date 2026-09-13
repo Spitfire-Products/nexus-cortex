@@ -36,4 +36,30 @@ describe('resolveOuterToolDeadlineMs (D-A)', () => {
     expect(resolveOuterToolDeadlineMs([{ name: 'Bash', input: { timeout: 'nope' } }], T, G)).toBe(150_000);
     expect(resolveOuterToolDeadlineMs([{ name: 'Bash', input: { timeout: -5 } }], T, G)).toBe(150_000);
   });
+
+  // R133 HB-SUBAGENT-TIMEOUT: a Task batch was aborted at ~150s, BELOW the 300s (now deadline-derived)
+  // sub-agent timeout. A per-block resolver lets Task blocks contribute their resolved timeout.
+  describe('Task blocks contribute their resolved sub-agent timeout (R133)', () => {
+    it('without a resolver a Task block is ignored (legacy behaviour)', () => {
+      expect(resolveOuterToolDeadlineMs([{ name: 'Task', input: { timeout_ms: 900_000 } }], T, G)).toBe(150_000);
+    });
+    it('a Task block raises the outer deadline to its resolved timeout + grace', () => {
+      const blocks = [{ name: 'Task', input: { subagent_type: 'x' } }, { name: 'Read', input: {} }];
+      expect(resolveOuterToolDeadlineMs(blocks, T, G, (b) => (b.name === 'Task' ? 3_210_000 : undefined))).toBe(3_240_000);
+    });
+    it('takes the MAX across Bash requests and Task resolutions; Task is NOT clamped to the shell ceiling', () => {
+      const blocks = [
+        { name: 'Bash', input: { timeout: 400_000 } },
+        { name: 'Task', input: {} },
+        { name: 'Task', input: {} },
+      ];
+      const ms = [0, 700_000, 5_000_000];
+      expect(resolveOuterToolDeadlineMs(blocks, T, G, (_b, i) => (i === 0 ? undefined : ms[i]))).toBe(5_030_000);
+      expect(resolveOuterToolDeadlineMs(blocks, T, G, (_b, i) => (i === 0 ? undefined : 200_000))).toBe(430_000);
+    });
+    it('ignores garbage resolver values', () => {
+      expect(resolveOuterToolDeadlineMs([{ name: 'Task', input: {} }], T, G, () => NaN)).toBe(150_000);
+      expect(resolveOuterToolDeadlineMs([{ name: 'Task', input: {} }], T, G, () => -1)).toBe(150_000);
+    });
+  });
 });

@@ -14,17 +14,34 @@
  */
 const SHELL_MAX_TIMEOUT_MS = 600_000; // mirrors ShellTool.MAX_TIMEOUT_MS (requested timeouts are clamped there)
 
+export type ToolUseBlockLike = { name?: string; input?: unknown };
+
+/**
+ * R133 HB-SUBAGENT-TIMEOUT (2026-09-13): a Task batch was aborted at this same ~150s, BELOW the sub-agent's
+ * own timeout (300s hardcoded then; now derived from the parent's remaining turn budget). The optional
+ * `blockTimeoutMs` lookup lets the caller contribute a per-block resolved timeout (Task → resolveSubAgentTimeoutMs)
+ * so the batch abort is >= the sub-agent timeout + grace. Not clamped to the shell ceiling — a sub-agent
+ * legitimately runs for hours under a long turn deadline.
+ */
 export function resolveOuterToolDeadlineMs(
-  toolUseBlocks: ReadonlyArray<{ name?: string; input?: unknown }>,
+  toolUseBlocks: ReadonlyArray<ToolUseBlockLike>,
   toolTimeoutMs: number,
   graceMs: number,
+  blockTimeoutMs?: (block: ToolUseBlockLike, index: number) => number | undefined,
 ): number {
   let maxRequested = 0;
-  for (const b of toolUseBlocks) {
+  let maxResolved = 0;
+  for (let i = 0; i < toolUseBlocks.length; i++) {
+    const b = toolUseBlocks[i];
+    if (!b) continue;
+    if (blockTimeoutMs) {
+      const r = Number(blockTimeoutMs(b, i));
+      if (Number.isFinite(r) && r > maxResolved) maxResolved = r;
+    }
     if (b?.name !== 'Bash') continue; // only Bash carries a requested `timeout`
     const t = Number((b.input as { timeout?: unknown } | undefined)?.timeout);
     if (Number.isFinite(t) && t > maxRequested) maxRequested = t;
   }
-  const honored = Math.min(maxRequested, SHELL_MAX_TIMEOUT_MS);
+  const honored = Math.max(Math.min(maxRequested, SHELL_MAX_TIMEOUT_MS), maxResolved);
   return Math.max(toolTimeoutMs, honored) + graceMs;
 }

@@ -13,6 +13,7 @@ import { v4 as uuidv4 } from 'uuid';
 // Phase 1.5 Week 1: Multi-Provider
 import { AdapterRegistry } from '../adapters/AdapterRegistry.js';
 import { GatewayTranslationLayer } from '../adapters/GatewayTranslationLayer.js';
+import type { TokenUsageMetrics } from '../adapters/GatewayTranslationLayer.js';
 import { ToolNamingHandler } from '../adapters/ToolNamingHandler.js';
 import type { ModelConfig } from '../models/ModelConfig.interface.js';
 import type { CanonicalMessage, CanonicalTool } from '../adapters/FormatAdapter.interface.js';
@@ -69,12 +70,13 @@ import { toolFactory } from '../tools/ToolFactory.js';
 import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveLiftPlan, resolveEndTurnResolver, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked, resolveVisionHelperModel, resolveVisionHandoffMax, resolveSliceNudge, resolveSliceBlock, resolveSliceBlockAt, resolveSliceBlockMax } from '../tools/ToolProfile.js';
 import { sliceReadFile, decideSliceBlock } from './sliceBlock.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
-import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage, memoryIndexLine, upsertMemoryIndex, scaleEstimateToRequestView, approxCharsOf } from './compactionResume.js';
+import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage, memoryIndexLine, upsertMemoryIndex, scaleEstimateToRequestView, approxCharsOf, anchoredRequestEstimate } from './compactionResume.js';
 import { renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBand, resolveRearmBand } from './compactionResumeTemplate.js';
 import { resolveCortexStateDir, cortexStatePath } from '../utils/stateDir.js';
 import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig } from '../training/judgeEvidence.js';
 import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, mentorSurfaceTimeoutMs, type MentorCallMeta } from '../training/mentorRole.js';
 import { resolveOuterToolDeadlineMs } from './outerToolTimeout.js';
+import { resolveSubAgentTimeoutMs } from './subAgentTimeout.js';
 import { resolveTurnDeadlineMs, timeBudgetState, timeBudgetWarnNudge } from './timeBudget.js';
 import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
 import { ExactRepeatTracker } from '../training/loopLadder.js';
@@ -541,6 +543,9 @@ export class CortexOrchestrator {
   /** Active model's context window, captured by ensureHistoryFitsModel for
    *  the request-build pruning gate (pruneAgedForRequest). */
   private lastKnownContextWindow: number | undefined;
+  // R132 HB-COMPACTION-ESTIMATE: the last REAL prompt_tokens the provider reported + the request-view char size at that moment.
+  // ensureHistoryFitsModel anchors its estimate here (anchor + grown chars/4) instead of the ~5-7x over-reading heuristic.
+  private lastUsageAnchor: { promptTokens: number; requestChars: number } | null = null;
 
   // Responses API stateful chaining: track last response ID for XAI/OpenAI
   // When set, continuation requests send previous_response_id instead of full history,
@@ -617,6 +622,8 @@ export class CortexOrchestrator {
   }
   private cachedEnvReport?: string;  // ENV_RECON_COMMAND output; cached for the lift planner, REFRESHED for the judges (HB-JUDGE-GROUNDING)
   private taskStartMs = 0;            // HB-JUDGE-GROUNDING: the user-turn start — the workspace delta is 'files changed since here'
+  private turnLoopStartMs = 0;        // R133 HB-SUBAGENT-TIMEOUT: the tool-loop start of the active turn (mirror of the sendMessage/streamMessage local)
+  private turnDeadlineMsActive = 0;   // R133: the active turn's wall-clock budget (0 = no deadline) — sub-agent timeouts derive from what remains
   private endTurnResolverRejects = 0; // endTurnResolver: GAP vetoes so far this task (bounded by maxRejects → fallback-accept)
   private liftPlanText = '';          // 4.107.0: the PLAN OF ATTACK delivered at lift — handed to the resolver / deadline-exit / loop-exit judges as an advisory anchor
   private effectiveDeferredLoading = true; // per-turn resolved deferred-loading (card > env > settings); set at assembly
@@ -2007,6 +2014,7 @@ export class CortexOrchestrator {
     // messageCountAtLastResponse is current when we save responsesApiChain).
     if (convertedResponse.usage) {
       this.cacheMetricsAccumulator.addUsage(convertedResponse.usage, effectiveModel.provider);
+      this.noteRequestUsage(convertedResponse.usage); // R132
 
       if (this.config.debug && convertedResponse.usage.cache) {
         console.log('[Orchestrator Cache] Cache hit detected:', {
@@ -2115,6 +2123,7 @@ export class CortexOrchestrator {
     // #2 (2026-09-04): per-turn wall-clock budget (opt-in — 0 disables, no behaviour change when unset).
     const TURN_DEADLINE_MS = loopDefaults.turnDeadlineMs;
     const loopStartMs = Date.now();
+    this.turnLoopStartMs = loopStartMs; this.turnDeadlineMsActive = TURN_DEADLINE_MS; // R133: sub-agent timeouts read the residual
     let timeWarnFired = false;
 
     let totalToolErrors = 0;
@@ -2919,7 +2928,7 @@ export class CortexOrchestrator {
         const abortController = new AbortController();
         // D-A (2026-09-04): outer cap must sit ABOVE the model's REQUESTED Bash timeout, not a static
         // ~150s, or a legit `Bash({ timeout: 250000 })` is killed before ShellTool's own promote-at-deadline.
-        const outerDeadlineMs = resolveOuterToolDeadlineMs(toolUseBlocks, TOOL_TIMEOUT_MS, OUTER_TIMEOUT_GRACE_MS);
+        const outerDeadlineMs = resolveOuterToolDeadlineMs(toolUseBlocks, TOOL_TIMEOUT_MS, OUTER_TIMEOUT_GRACE_MS, this.subAgentBlockTimeoutMs);
         const timeoutId = setTimeout(() => {
           console.warn(`[Orchestrator Phase 2.5] Tool execution timeout after ${outerDeadlineMs}ms`);
           abortController.abort();
@@ -3514,6 +3523,7 @@ export class CortexOrchestrator {
       // sessions with many tool iterations report only the initial-request metrics.
       if (continuationConvertedResponse.usage) {
         this.cacheMetricsAccumulator.addUsage(continuationConvertedResponse.usage, effectiveModel.provider);
+        this.noteRequestUsage(continuationConvertedResponse.usage); // R132
         this.persistCacheMetrics(effectiveModel.id).catch(err => {
           if (this.config.debug) {
             console.warn('[Orchestrator] Failed to persist cache metrics (continuation):', err);
@@ -3792,6 +3802,7 @@ export class CortexOrchestrator {
           this.sessionTimeline.recordMessage(synthAssistantMessage.uuid, 'assistant');
           if (synthConverted.usage) {
             this.cacheMetricsAccumulator.addUsage(synthConverted.usage, effectiveModel.provider);
+            this.noteRequestUsage(synthConverted.usage); // R132
           }
           currentAssistantMessage = synthAssistantMessage as any;
           currentAssistantCanonicalMessage = synthAssistantCanonical;
@@ -4449,6 +4460,7 @@ export class CortexOrchestrator {
     // Phase 2.7: Track cache metrics (streaming path — persist AFTER history push below).
     if (convertedResponse.usage) {
       this.cacheMetricsAccumulator.addUsage(convertedResponse.usage, effectiveModel.provider);
+      this.noteRequestUsage(convertedResponse.usage); // R132
       if (this.config.debug && convertedResponse.usage.cache) {
         console.log('[Orchestrator Cache] Cache hit detected (streaming):', {
           provider: effectiveModel.provider,
@@ -4577,6 +4589,7 @@ export class CortexOrchestrator {
     // #2 (2026-09-04): per-turn wall-clock budget (opt-in — 0 disables; streaming parity with non-stream).
     const TURN_DEADLINE_MS = loopDefaults.turnDeadlineMs;
     const loopStartMs = Date.now();
+    this.turnLoopStartMs = loopStartMs; this.turnDeadlineMsActive = TURN_DEADLINE_MS; // R133: sub-agent timeouts read the residual
     let timeWarnFired = false;
     // HB-ENDTURN-TERMINAL (2026-09-08): dark gate + bounded continue-counter (streaming parity).
     const EMPTY_TURN_CONTINUE = loopDefaults.emptyTurnContinue;
@@ -4959,7 +4972,7 @@ export class CortexOrchestrator {
       // see the non-stream site: ShellTool's promote-at-deadline must win the race; 4.90.1)
       const abortController = new AbortController();
       // D-A (2026-09-04): outer cap sits above the requested Bash timeout (see the non-stream site).
-      const outerDeadlineMs = resolveOuterToolDeadlineMs(toolUseBlocks, TOOL_TIMEOUT_MS, OUTER_TIMEOUT_GRACE_MS);
+      const outerDeadlineMs = resolveOuterToolDeadlineMs(toolUseBlocks, TOOL_TIMEOUT_MS, OUTER_TIMEOUT_GRACE_MS, this.subAgentBlockTimeoutMs);
       const timeoutId = setTimeout(() => {
         if (this.config.debug) {
           console.warn(`[Orchestrator Streaming] Tool execution timeout after ${outerDeadlineMs}ms`);
@@ -5509,6 +5522,7 @@ export class CortexOrchestrator {
         // iterations don't add their cache numbers to the session total.
         if (continuationConvertedResponse.usage) {
           this.cacheMetricsAccumulator.addUsage(continuationConvertedResponse.usage, effectiveModel.provider);
+          this.noteRequestUsage(continuationConvertedResponse.usage); // R132
           this.persistCacheMetrics(effectiveModel.id).catch(err => {
             if (this.config.debug) {
               console.warn('[Orchestrator Streaming] Failed to persist cache metrics (continuation):', err);
@@ -5805,6 +5819,7 @@ export class CortexOrchestrator {
           currentAssistantCanonicalMessage = synthCanonical;
           if (synthConverted.usage) {
             this.cacheMetricsAccumulator.addUsage(synthConverted.usage, effectiveModel.provider);
+            this.noteRequestUsage(synthConverted.usage); // R132
           }
         }
       } catch (synthErr: any) {
@@ -6808,6 +6823,21 @@ export class CortexOrchestrator {
     } catch { return ''; }
   }
 
+  /**
+   * R132 HB-COMPACTION-ESTIMATE: bank the last real prompt_tokens as the compaction estimate anchor. Called right after
+   * every cacheMetricsAccumulator.addUsage; a 0/absent inputTokens (the synthesized streaming chat/completions usage) is
+   * ignored so it can never anchor. requestChars is the request view measured NOW — the reply pushed after this point is
+   * absorbed by the delta logic in anchoredRequestEstimate.
+   */
+  private noteRequestUsage(usage?: TokenUsageMetrics): void {
+    const promptTokens = Number(usage?.inputTokens ?? 0);
+    if (!(promptTokens > 0)) return;
+    try {
+      const requestChars = approxCharsOf(this.convertToCanonicalMessages(this.messageHistory));
+      if (requestChars > 0) this.lastUsageAnchor = { promptTokens, requestChars };
+    } catch { /* keep the previous anchor */ }
+  }
+
   private async ensureHistoryFitsModel(model: ModelConfig): Promise<void> {
     // Capture the active model's context window for request-build-time
     // pruning (pruneAgedForRequest) — set before any early return so the
@@ -6834,15 +6864,22 @@ export class CortexOrchestrator {
     // pruned-view/raw char ratio; below the pruner's 50%-utilization gate the ratio is 1 and nothing changes.
     let requestRatio = 1;
     let currentTokens: number = rawEstimate;
+    // R132 HB-COMPACTION-ESTIMATE: anchor on the last real prompt_tokens when one exists (the heuristic over-read ~5-7x:
+    // rows logged 760K..1.0M vs prompt_tokens <= 151763). The R129 scaled estimate stays as the fallback.
+    let estimateSource: 'usage-anchored' | 'heuristic' = 'heuristic';
+    const anchorTokens = this.lastUsageAnchor?.promptTokens ?? 0;
+    const anchorChars = this.lastUsageAnchor?.requestChars ?? 0;
     try {
       const rawChars = approxCharsOf(this.messageHistory);
       const prunedChars = approxCharsOf(this.convertToCanonicalMessages(this.messageHistory));
-      currentTokens = scaleEstimateToRequestView(rawEstimate, rawChars, prunedChars);
-      requestRatio = rawEstimate > 0 ? currentTokens / rawEstimate : 1;
-      if (this.config.debug && requestRatio < 1) {
-        console.log(`[Orchestrator Context] request-view estimate: ${currentTokens} of ${rawEstimate} stored tokens (ratio ${requestRatio.toFixed(3)})`);
+      const heuristicTokens = scaleEstimateToRequestView(rawEstimate, rawChars, prunedChars);
+      requestRatio = rawEstimate > 0 ? heuristicTokens / rawEstimate : 1;
+      const est = anchoredRequestEstimate({ anchorTokens, anchorChars, currentChars: prunedChars, heuristicTokens });
+      currentTokens = est.tokens; estimateSource = est.source;
+      if (this.config.debug && (requestRatio < 1 || estimateSource === 'usage-anchored')) {
+        console.log(`[Orchestrator Context] request-view estimate: ${currentTokens} (${estimateSource}, anchor ${anchorTokens}) of ${rawEstimate} stored tokens (ratio ${requestRatio.toFixed(3)})`);
       }
-    } catch { currentTokens = rawEstimate; requestRatio = 1; }
+    } catch { currentTokens = rawEstimate; requestRatio = 1; estimateSource = 'heuristic'; }
 
     // Budget overrides: use actual token counts instead of hardcoded estimates.
     // - actualToolTokens: real tool schema size (tools are NOT in messageHistory)
@@ -6885,7 +6922,7 @@ export class CortexOrchestrator {
             const store = this.getDecisionStore();
             if (store) void store.recordEvent({
               sessionId: this.currentSessionId ?? 'unknown', kind: 'compaction',
-              detail: { mode: 'checkpoint', band, turn: this.turnNumber, tokens: currentTokens, threshold, resumeChars: text.length, helperModelId: r?.helperModelId ?? null, cost: Number(r?.cost ?? 0) },
+              detail: { mode: 'checkpoint', band, turn: this.turnNumber, tokens: currentTokens, threshold, estimateSource, anchorTokens, resumeChars: text.length, helperModelId: r?.helperModelId ?? null, cost: Number(r?.cost ?? 0) },
             }).catch(() => {});
           }
         } catch (e: any) {
@@ -6920,7 +6957,14 @@ export class CortexOrchestrator {
       );
 
       const removedCount = this.messageHistory.length - selectedMessages.length;
-      const newTokenCount = Math.max(1, Math.round((this.contextBudgetManager as any).estimateTotalTokens(selectedMessages) * requestRatio));
+      let newTokenCount = Math.max(1, Math.round((this.contextBudgetManager as any).estimateTotalTokens(selectedMessages) * requestRatio));
+      if (estimateSource === 'usage-anchored') {
+        // R132: the kept view shrank below the anchored request → scale the anchor (the next real usage re-anchors).
+        try {
+          const keptChars = approxCharsOf(this.convertToCanonicalMessages(selectedMessages));
+          newTokenCount = Math.max(1, anchoredRequestEstimate({ anchorTokens, anchorChars, currentChars: keptChars, heuristicTokens: newTokenCount }).tokens);
+        } catch { /* keep the heuristic tokensAfter */ }
+      }
 
       if (this.config.debug) {
         console.log(`[OK] Context managed: ${this.messageHistory.length} -> ${selectedMessages.length} messages`);
@@ -6997,7 +7041,7 @@ export class CortexOrchestrator {
         if (store) void store.recordEvent({
           sessionId: this.currentSessionId ?? 'unknown',
           kind: 'compaction',
-          detail: { mode: 'proactive', turn: this.turnNumber, tokensBefore: currentTokens, tokensAfter: newTokenCount,
+          detail: { mode: 'proactive', turn: this.turnNumber, tokensBefore: currentTokens, tokensAfter: newTokenCount, estimateSource, anchorTokens,
                     dropped: dropped.length, kept: selectedMessages.length, resumeChars: resumeText.length,
                     helperModelId: resumeHelper ?? null, cost: resumeCost, taskPinned: taskText.length > 0, memorySource,
                     workspaceStateChars: workspaceState.length, sessionPath: sessionPath ?? null },
@@ -7400,6 +7444,9 @@ export class CortexOrchestrator {
           subagentTypes: taskTools.map(t => String((t.input as any)?.subagent_type ?? '')),
           models: taskTools.map(t => String((t.input as any)?.model ?? 'inherit')),
           turn: this.turnNumber,
+          // R133 HB-SUBAGENT-TIMEOUT: the resolved per-dispatch timeout + the parent's residual budget at dispatch
+          timeoutMs: taskTools.map(t => this.resolveSubAgentTimeoutFor(t.input).timeoutMs),
+          remainingMs: this.remainingTurnMs(),
         },
       }).catch(() => {});
     }
@@ -7871,14 +7918,19 @@ export class CortexOrchestrator {
 
                   // Spawn the sub-agent as a child process
                   // This runs in parallel and doesn't consume parent's context window
+                  // R133 HB-SUBAGENT-TIMEOUT: derive the child's limit from the parent's remaining turn budget (or the
+                  // Task `timeout_ms`), and hand the child the SAME limit as its own turn deadline — it otherwise inherits
+                  // the parent's full CORTEX_TURN_DEADLINE_MS via process.env and never converges before the kill.
+                  const { timeoutMs, source: timeoutSource } = this.resolveSubAgentTimeoutFor(toolUse.input);
+                  if (this.config.debug) console.log(`[SubAgent] timeout ${timeoutMs}ms (${timeoutSource})`);
                   const subAgentResult = await processManager.spawnAgent(
                     agentDef,
                     taskPrompt,
                     {
                       modelOverride: resolvedModelId,
-                      timeoutMs: 300000, // 5 minutes default
+                      timeoutMs,
                       maxTurns: 50,
-                      envOverrides,
+                      envOverrides: { ...(timeoutSource === 'deadline' || timeoutSource === 'requested' ? { CORTEX_TURN_DEADLINE_MS: String(timeoutMs) } : {}), ...(envOverrides ?? {}) },
                       toolUseId: toolUse.id,
                     }
                   );
@@ -8166,11 +8218,14 @@ export class CortexOrchestrator {
         const progressListeners = this.setupSubAgentProgressListeners(eventEmitter, agentDef.name);
 
         try {
+          // R133 HB-SUBAGENT-TIMEOUT: see the handleToolCalls site — residual-derived limit, mirrored into the child's turn deadline.
+          const { timeoutMs, source: timeoutSource } = this.resolveSubAgentTimeoutFor(toolUse.input);
+          if (this.config.debug) console.log(`[SubAgent] timeout ${timeoutMs}ms (${timeoutSource})`);
           const subAgentResult = await processManager.spawnAgent(agentDef, taskPrompt, {
             modelOverride: resolvedModelId,
-            timeoutMs: 300000,
+            timeoutMs,
             maxTurns: 50,
-            envOverrides,
+            envOverrides: { ...(timeoutSource === 'deadline' || timeoutSource === 'requested' ? { CORTEX_TURN_DEADLINE_MS: String(timeoutMs) } : {}), ...(envOverrides ?? {}) },
             toolUseId: toolUse.id,
           });
 
@@ -8689,6 +8744,22 @@ export class CortexOrchestrator {
    * @param result SubAgentResult from completed sub-agent
    * @returns Formatted string for LLM
    */
+  /** R133: ms left in the active turn's wall-clock budget (0 when no deadline is set). */
+  private remainingTurnMs(): number {
+    if (!(this.turnDeadlineMsActive > 0) || !(this.turnLoopStartMs > 0)) return 0;
+    return Math.max(0, this.turnDeadlineMsActive - (Date.now() - this.turnLoopStartMs));
+  }
+
+  /** R133: the sub-agent timeout for one Task/Browse tool input (`timeout_ms` request → residual deadline → env → 5 min). */
+  private resolveSubAgentTimeoutFor(input: unknown): { timeoutMs: number; source: string } {
+    const requested = Number((input as { timeout_ms?: unknown } | undefined)?.timeout_ms);
+    return resolveSubAgentTimeoutMs({ requestedMs: Number.isFinite(requested) && requested > 0 ? requested : undefined, remainingMs: this.remainingTurnMs() });
+  }
+
+  /** R133: per-block lookup for resolveOuterToolDeadlineMs — a sub-agent-spawning block contributes its resolved timeout. */
+  private subAgentBlockTimeoutMs = (block: { name?: string; input?: unknown }): number | undefined =>
+    block?.name === 'Task' || block?.name === 'Browse' ? this.resolveSubAgentTimeoutFor(block.input).timeoutMs : undefined;
+
   private formatSubAgentResultForLLM(result: SubAgentResult): string {
     const lines: string[] = [];
 

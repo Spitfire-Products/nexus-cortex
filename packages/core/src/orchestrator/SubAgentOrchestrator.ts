@@ -19,6 +19,7 @@
 
 import type { CortexOrchestrator, OrchestratorConfig } from './CortexOrchestrator.js';
 import { createOrchestrator } from './OrchestratorFactory.js';
+import { DEFAULT_SUBAGENT_TIMEOUT_MS } from './subAgentTimeout.js';
 import type {
   SubAgentConfig,
   SubAgentContext,
@@ -171,7 +172,7 @@ export class SubAgentOrchestrator {
    */
   private async runAgenticExecution(taskPrompt: string): Promise<void> {
     const { config } = this.options;
-    const timeoutMs = config.timeoutMs ?? 300000; // 5 minutes default
+    const timeoutMs = config.timeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS; // 5 minutes default (R133: derived at dispatch)
     const loopStartTime = Date.now();
 
     // Check abort before starting

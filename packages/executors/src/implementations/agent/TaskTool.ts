@@ -18,6 +18,7 @@ export interface TaskParams {
   temperature?: number; // Optional per-subagent sampling temperature (clamped to the model's range)
   strategy?: string;    // Optional arm persona/strategy label — recorded with benchmarks for (model×temp×strategy) effectiveness scoring
   resume?: string;      // Optional session ID to resume
+  timeout_ms?: number;  // Optional wall-clock limit in ms (R133: default derives from the parent's remaining turn deadline)
 }
 
 /**
@@ -87,6 +88,10 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
         resume: {
           type: 'string' as const,
           description: 'Optional session ID to resume from'
+        },
+        timeout_ms: {
+          type: 'number' as const,
+          description: "Optional wall-clock limit for the sub-agent in ms. Default derives from the parent's remaining turn deadline (90% minus a 30 s margin) or 5 minutes when no deadline is set; a value below 60000 is raised to 60000."
         }
       },
       required: ['description' as const, 'prompt' as const, 'subagent_type' as const]

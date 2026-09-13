@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   resolveCompactionResume, extractFirstUserText, pickDropped, buildCompactionResumeReminder,
-  isCompactionResumeMessage, COMPACTION_RESUME_MARKER, coversAll, buildRollingSeedMessage, upsertMemoryIndex, memoryIndexLine, MEMORY_INDEX_HEADER, scaleEstimateToRequestView, approxCharsOf,
+  isCompactionResumeMessage, COMPACTION_RESUME_MARKER, coversAll, buildRollingSeedMessage, upsertMemoryIndex, memoryIndexLine, MEMORY_INDEX_HEADER, scaleEstimateToRequestView, approxCharsOf, anchoredRequestEstimate,
 } from '../compactionResume';
 
 const user = (text: string) => ({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
@@ -119,5 +119,35 @@ describe('4.108.5 — compaction judges the request view, not the raw history (R
     const n = approxCharsOf([a, b]);
     expect(n).toBeGreaterThanOrEqual(4 + 2 + JSON.stringify({ type: 'tool_result', content: 'zz' }).length);
     expect(approxCharsOf([{ message: { content: 'hello' } }])).toBe(5);
+  });
+});
+
+describe('R132 HB-COMPACTION-ESTIMATE — usage-anchored request estimate', () => {
+  it('anchor present: grows by the char delta / 4 on top of the real prompt_tokens', () => {
+    // last request: 150K real prompt tokens at 600K chars; history grew by 40K chars since → +10K tokens
+    expect(anchoredRequestEstimate({ anchorTokens: 150_000, anchorChars: 600_000, currentChars: 640_000, heuristicTokens: 900_000 }))
+      .toEqual({ tokens: 160_000, source: 'usage-anchored' });
+    // no growth → exactly the anchor
+    expect(anchoredRequestEstimate({ anchorTokens: 150_000, anchorChars: 600_000, currentChars: 600_000, heuristicTokens: 900_000 }))
+      .toEqual({ tokens: 150_000, source: 'usage-anchored' });
+    // odd delta rounds UP
+    expect(anchoredRequestEstimate({ anchorTokens: 10, anchorChars: 100, currentChars: 101, heuristicTokens: 999 }).tokens).toBe(11);
+  });
+  it('history shrank (post-compaction): scales the anchor proportionally', () => {
+    expect(anchoredRequestEstimate({ anchorTokens: 150_000, anchorChars: 600_000, currentChars: 300_000, heuristicTokens: 900_000 }))
+      .toEqual({ tokens: 75_000, source: 'usage-anchored' });
+    expect(anchoredRequestEstimate({ anchorTokens: 150_000, anchorChars: 600_000, currentChars: 0, heuristicTokens: 900_000 }))
+      .toEqual({ tokens: 0, source: 'usage-anchored' });
+  });
+  it('no anchor → the heuristic (R129 scaled estimate) is returned unchanged', () => {
+    expect(anchoredRequestEstimate({ anchorTokens: 0, anchorChars: 0, currentChars: 640_000, heuristicTokens: 900_000 }))
+      .toEqual({ tokens: 900_000, source: 'heuristic' });
+  });
+  it('anchor 0 tokens (streaming chat/completions synthesizes prompt_tokens 0) → heuristic, never anchored', () => {
+    expect(anchoredRequestEstimate({ anchorTokens: 0, anchorChars: 600_000, currentChars: 640_000, heuristicTokens: 900_000 }))
+      .toEqual({ tokens: 900_000, source: 'heuristic' });
+    // anchor chars 0 is equally unusable (no request view to diff against)
+    expect(anchoredRequestEstimate({ anchorTokens: 150_000, anchorChars: 0, currentChars: 640_000, heuristicTokens: 900_000 }))
+      .toEqual({ tokens: 900_000, source: 'heuristic' });
   });
 });

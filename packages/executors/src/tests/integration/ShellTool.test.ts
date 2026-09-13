@@ -670,3 +670,51 @@ describe('TOOL_TIMEOUT_MODE promote-at-deadline', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }, 10000);
 });
+
+// HB-TMUX-FALLBACK (R134, 2026-09-13): persistentSession without tmux degrades to
+// the run_in_background path (BashOutput-pollable) instead of erroring out.
+import { vi } from 'vitest';
+import { TmuxManager } from '../../utils/TmuxManager.js';
+describe('HB-TMUX-FALLBACK (R134): persistentSession without tmux', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('degrades to a detached background process with the [WARN] line and a bash_id', async () => {
+    vi.spyOn(TmuxManager.getInstance(), 'isAvailable').mockResolvedValue(false);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shell-tmux-fallback-'));
+    const t = new ShellTool({ workingDirectory: dir } as ExecutorConfig);
+    const res = await t.execute(
+      { command: 'echo monitor-started; sleep 2; echo monitor-finished', persistentSession: true },
+      new AbortController().signal,
+    );
+    expect(res.success).toBe(true);
+    const text = typeof res.llmContent === 'string' ? res.llmContent : JSON.stringify(res);
+    expect(text.split('\n')[0]).toBe(
+      '[WARN] tmux not available: persistentSession downgraded to a detached background process (state/cwd/env will not persist across calls); poll with BashOutput',
+    );
+    expect(text).toContain('Background process started with ID: bg-');
+    const id = res.metadata?.bash_id as string;
+    expect(id).toMatch(/^bg-/);
+    expect(res.metadata?.backgroundProcess).toBe(true);
+    expect(res.metadata?.persistentSessionDegraded).toBe(true);
+    const reg = BackgroundProcessRegistry.getInstance();
+    expect(reg.hasProcess(id)).toBe(true);
+    await new Promise((r) => setTimeout(r, 2800));
+    expect(reg.getOutput(id).join('\n')).toContain('monitor-finished');
+    reg.killProcess(id); reg.removeProcess(id);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }, 15000);
+
+  it('still errors when tmux is missing AND the background fallback cannot spawn', async () => {
+    vi.spyOn(TmuxManager.getInstance(), 'isAvailable').mockResolvedValue(false);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shell-tmux-fallback-'));
+    const t = new ShellTool({ workingDirectory: dir } as ExecutorConfig);
+    vi.spyOn(t as any, 'executeInBackground').mockReturnValue({
+      success: false, llmContent: 'Error: Failed to spawn background process.', error: 'Failed to spawn background process.',
+    });
+    const res = await t.execute({ command: 'true', persistentSession: true }, new AbortController().signal);
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('tmux is not available');
+    expect(res.error).toContain('Failed to spawn background process.');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});

@@ -117,6 +117,8 @@ export interface EnvironmentVariables {
   CORTEX_LIFT_PLAN_DOCTRINE?: string; // 'v1' | 'v2' — planner doctrine bullets (4.107.2 lever)
   CORTEX_ENDTURN_TIER?: string; // 'standard' | 'essential' — EndTurn discovery tier (4.107.2 lever)
   CORTEX_DELEGATION_HINT?: string; // 'true' | 'false' — DARK: boot-minimal clause naming the Task tool for delegation (4.108.1)
+  CORTEX_SUBAGENT_TIMEOUT_MS?: string; // Task sub-agent wall-clock limit (ms) when no parent turn deadline is set (R133; default 300000)
+  CORTEX_SUBAGENT_TIMEOUT_MAX_MS?: string; // upper cap (ms) on the deadline-derived Task sub-agent limit (R133; empty = no cap)
   CORTEX_COMPACTION_THRESHOLD_TOKENS?: string; // test/ops override of the compaction threshold in tokens (4.108.3); empty = card-derived
   CORTEX_STATE_DIR?: string; // explicit runtime-state root (4.108.6); empty = <project>/.cortex with writable-probe fallback
   CORTEX_COMPACTION_CHECKPOINT_PCT?: string; // fraction of the compaction threshold at which the first pre-compaction checkpoint is written (4.108.2; default 0.75)
@@ -432,6 +434,8 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_STATE_DIR: '',
   CORTEX_COMPACTION_CHECKPOINT_STEP: '',
   CORTEX_DELEGATION_HINT: '',
+  CORTEX_SUBAGENT_TIMEOUT_MS: '',
+  CORTEX_SUBAGENT_TIMEOUT_MAX_MS: '',
   CORTEX_ENDTURN_RESOLVER_REASONING: '',
   CORTEX_DEADLINE_EXIT_MENTOR_REASONING: '',
   CORTEX_LOOP_TOOL_BLOCK_REASONING: '',
@@ -857,6 +861,22 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     default: ''
   },
   {
+    key: 'CORTEX_SUBAGENT_TIMEOUT_MS',
+    displayName: 'Sub-agent timeout (ms)',
+    description: 'Task sub-agent wall-clock limit (ms) when no parent turn deadline is set; default 300000 (R133, HB-SUBAGENT-TIMEOUT).',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_SUBAGENT_TIMEOUT_MAX_MS',
+    displayName: 'Sub-agent timeout cap (ms)',
+    description: 'Upper cap (ms) on the deadline-derived Task sub-agent limit; unset = no cap (R133).',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
     key: 'CORTEX_COMPACTION_THRESHOLD_TOKENS',
     displayName: 'Compaction threshold override (tokens)',
     description: 'Test/ops override: a positive integer replaces the card-derived compaction threshold (and halves it as the kept-history budget) so the checkpoint rung and compaction fire in a short run. Empty = card-derived (4.108.3).',
@@ -866,7 +886,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
   },
   {
     key: 'CORTEX_STATE_DIR',
-    displayName: 'Compaction threshold override (tokens)',
+    displayName: 'Cortex state directory override',
     description: 'Explicit runtime-state root for sessions/artifacts/tmux/decisions (4.108.6); empty = <project>/.cortex, falling back to ~/.cortex/projects/<hash> then tmpdir when the project dir is not writable',
     type: 'string',
     category: 'training',

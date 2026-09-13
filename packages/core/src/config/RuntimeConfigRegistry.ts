@@ -65,6 +65,8 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   CORTEX_STATE_DIR: { tier: 'env' },
   CORTEX_COMPACTION_CHECKPOINT_STEP: { tier: 'env' },
   CORTEX_DELEGATION_HINT: { tier: 'env' },
+  CORTEX_SUBAGENT_TIMEOUT_MS: { tier: 'env' },
+  CORTEX_SUBAGENT_TIMEOUT_MAX_MS: { tier: 'env' },
   CORTEX_ENDTURN_RESOLVER_REASONING: { tier: 'env' },
   CORTEX_DEADLINE_EXIT_MENTOR_REASONING: { tier: 'env' },
   CORTEX_LOOP_TOOL_BLOCK_REASONING: { tier: 'env' },

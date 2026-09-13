@@ -10,6 +10,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { DEFAULT_SUBAGENT_TIMEOUT_MS } from './subAgentTimeout.js';
 import type {
   SubAgentEvents,
   ISubAgentEventEmitter,
@@ -361,7 +362,7 @@ export class SubAgentEventEmitter extends EventEmitter implements ISubAgentEvent
   /**
    * Wait for an agent to complete
    */
-  waitForCompletion(agentId: string, timeoutMs: number = 300000): Promise<SubAgentResult> {
+  waitForCompletion(agentId: string, timeoutMs: number = DEFAULT_SUBAGENT_TIMEOUT_MS): Promise<SubAgentResult> {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         cleanup();

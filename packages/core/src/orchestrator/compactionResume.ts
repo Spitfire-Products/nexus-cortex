@@ -181,6 +181,27 @@ export function scaleEstimateToRequestView(historyEstimate: number, rawChars: nu
   return Math.max(1, Math.round(historyEstimate * ratio));
 }
 
+/**
+ * R132 HB-COMPACTION-ESTIMATE (2026-09-13): the heuristic estimator (TokenCounter over the WHOLE stored Message — uuid,
+ * timestamp, timeline, usage, base64 — at chars/4 for non-OpenAI/Anthropic providers) over-read the request ~5-7x: compaction
+ * rows logged 760K..1.0M "tokens" vs a 733K threshold while the same session's API usage never exceeded prompt_tokens 151763.
+ * Anchor the estimate on the LAST REAL prompt_tokens instead: tokens = anchor + (chars grown since that request)/4; when the
+ * history SHRANK (post-compaction) scale the anchor proportionally. With no usable anchor (none yet, or a 0 usage such as
+ * the synthesized streaming chat/completions usage) fall back to the heuristic (R129 scaleEstimateToRequestView).
+ */
+export function anchoredRequestEstimate(input: {
+  anchorTokens: number; anchorChars: number; currentChars: number; heuristicTokens: number;
+}): { tokens: number; source: 'usage-anchored' | 'heuristic' } {
+  const { anchorTokens, anchorChars, currentChars, heuristicTokens } = input;
+  if (!(anchorTokens > 0) || !(anchorChars > 0) || !(currentChars >= 0)) {
+    return { tokens: Math.max(0, heuristicTokens | 0), source: 'heuristic' };
+  }
+  if (currentChars < anchorChars) {
+    return { tokens: Math.round(anchorTokens * (currentChars / anchorChars)), source: 'usage-anchored' };
+  }
+  return { tokens: anchorTokens + Math.max(0, Math.ceil((currentChars - anchorChars) / 4)), source: 'usage-anchored' };
+}
+
 /** Char size of a canonical/request-shaped message list, the same way pruneAgedForRequest measures it. */
 export function approxCharsOf(messages: any[]): number {
   let n = 0;

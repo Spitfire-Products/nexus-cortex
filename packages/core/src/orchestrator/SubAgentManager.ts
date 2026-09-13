@@ -25,6 +25,7 @@ import type {
 } from './SubAgentTypes.js';
 import { SubAgentEventEmitter, getGlobalSubAgentEmitter } from './SubAgentEventEmitter.js';
 import { SubAgentOrchestrator } from './SubAgentOrchestrator.js';
+import { DEFAULT_SUBAGENT_TIMEOUT_MS } from './subAgentTimeout.js';
 import { PauseController, createPauseControllerWithAbort } from './PauseController.js';
 import { ModelAliasResolver, getDefaultResolver } from '../models/registry/ModelAliasResolver.js';
 import { modelWithKeyFallback } from '../models/registry/modelKeyAvailability.js';
@@ -178,7 +179,7 @@ export class SubAgentManager implements ISubAgentManager {
       agentDefinition,
       taskPrompt: this.buildEnhancedPrompt(taskPrompt, options.additionalContext),
       modelId,
-      timeoutMs: options.timeoutMs ?? 300000,
+      timeoutMs: options.timeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS,
       maxTurns: options.maxTurns ?? 50,
     };
 

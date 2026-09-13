@@ -630,7 +630,9 @@ ISOLATION (worktree vs shared tree): agents that edit the SAME files, or that mu
 
 SHARED-TREE RULE: a shared-tree agent verifies ONLY its own files. A whole-project typecheck will pick up a peer's half-written state and report errors that aren't its own (a real, costly false alarm). Whole-project verification belongs to the orchestrator — one build at a time, after the agents report.
 
-VERIFY, DON'T ASSUME: tell the agent to check identifiers (tool names, ids, paths, exports) against the source of truth rather than trusting the ones you supplied — a compliant agent will faithfully ship your wrong name. And if an agent is killed mid-flight, inspect on-disk state before re-dispatching: its work may have landed fully, or half.`,
+VERIFY, DON'T ASSUME: tell the agent to check identifiers (tool names, ids, paths, exports) against the source of truth rather than trusting the ones you supplied — a compliant agent will faithfully ship your wrong name. And if an agent is killed mid-flight, inspect on-disk state before re-dispatching: its work may have landed fully, or half.
+
+TIME LIMIT: each agent runs under a wall-clock limit (timeout_ms, else derived from your remaining turn budget, else 5 minutes); a TIMEOUT result still reports Files Modified and the partial response, so inspect on-disk state rather than redoing the work.`,
     schema: {
       type: 'object',
       properties: {
@@ -653,6 +655,10 @@ VERIFY, DON'T ASSUME: tell the agent to check identifiers (tool names, ids, path
         resume: {
           type: 'string',
           description: 'Optional session ID to resume a previous sub-agent session'
+        },
+        timeout_ms: {
+          type: 'number',
+          description: "Optional wall-clock limit for the sub-agent in ms. Default derives from the parent's remaining turn deadline (90% minus a 30 s margin) or 5 minutes when no deadline is set; a value below 60000 is raised to 60000."
         }
       },
       required: ['description', 'prompt', 'subagent_type']
