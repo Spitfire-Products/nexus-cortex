@@ -434,3 +434,111 @@ describe('HB-CHUNKED-READS (R128) — sequential chunk reads of one file are a p
     }
   });
 });
+
+// R136 HB-NEARDUP-SCRIPT-SHAPE (2026-09-13): script identity dominates wrapper shape in the
+// SIMILARITY lens. Outcomes come from the REAL classifyToolOutcome pipeline (approachText +
+// commandIdentity) so the test exercises the production shape, not a hand-fed text.
+import { describe as d136, it as it136, expect as ex136, beforeEach as be136, afterEach as ae136 } from 'vitest';
+import { LoopLadder as LL136 } from '../loopLadder.js';
+import { classifyToolOutcome as classify136 } from '../toolOutcome.js';
+
+d136('R136 HB-NEARDUP-SCRIPT-SHAPE — different scripts under one shell wrapper are not near-duplicates', () => {
+  const prev = process.env.CORTEX_NEARDUP_BREAKER;
+  be136(() => { process.env.CORTEX_NEARDUP_BREAKER = 'true'; delete process.env.CORTEX_POLL_GUARD; delete process.env.NEARDUP_SIM_AT; delete process.env.NEARDUP_NUDGE_AT; });
+  ae136(() => { if (prev === undefined) delete process.env.CORTEX_NEARDUP_BREAKER; else process.env.CORTEX_NEARDUP_BREAKER = prev; });
+  const run = (command: string, exitCode = 0) => classify136('Bash', { command }, { content: exitCode ? 'Traceback: boom' : 'ok', metadata: { exitCode } });
+
+  // The mp-checkpoint-consolidation sequence (Terminal-Bench 4.0 validation): 5 different scripts +
+  // 4 different inline bodies under ONE `cd /app && timeout 300 python3 -u … 2>&1 | grep …` wrapper.
+  // The wrapper's grep filter is the realistic multi-pattern form (the backlog cites `2>&1 | grep -vE …`); with it the
+  // five script-file commands score whole-text Dice 0.92-0.98 against each other under the OLD lens (the -c runs 0.82-0.86).
+  const W = ' 2>&1 | grep -vE "UserWarning|FutureWarning|DeprecationWarning|warnings.warn"';
+  const PRE = "import torch, glob\nsd = torch.load('/app/ckpt/shard0.pt', map_location='cpu')\nprint(len(sd))\n";
+  const MP_CHECKPOINT = [
+    'cd /app && timeout 300 python3 -u /tmp/search.py 2>/dev/null',
+    `cd /app && timeout 300 python3 -u /tmp/unfused.py${W}`,
+    `cd /app && timeout 300 python3 -u /tmp/moe_search.py${W}`,
+    `cd /app && timeout 300 python3 -u /tmp/grad_diag.py${W}`,
+    `cd /app && timeout 300 python3 -u /tmp/fuse_check.py${W}`,
+    `cd /app && timeout 300 python3 -u -c "${PRE}for k, v in sd.items():\n    if 'expert' in k: print(k, tuple(v.shape))"${W}`,
+    `cd /app && timeout 300 python3 -u -c "${PRE}import numpy as np\nprint({k: float(v.float().norm()) for k, v in sd.items() if v.ndim == 2})"${W}`,
+    `cd /app && timeout 300 python3 -u -c "${PRE}keys = sorted(sd.keys())\nprint(keys[:20], len(keys))"${W}`,
+    `cd /app && timeout 300 python3 -u -c "${PRE}tot = sum(v.numel() for v in sd.values())\nprint('params', tot, 'GB', tot * 2 / 1e9)"${W}`,
+    `cd /app && timeout 300 python3 -u /tmp/search.py --topk 8${W}`,
+    `cd /app && timeout 300 python3 -u /tmp/final_merge.py${W}`,
+  ];
+
+  it136('the mp-checkpoint sequence fires NO diversify rung and NO neardup-similarity signal', () => {
+    const l = new LL136();
+    // 16 calls: under the OLD lens the 2nd-pass unfused.py is the 7th wrapper-similar call (diversify, trigger
+    // similarity). Bounded below 12 same-approachHash calls: normalizeApproachText collapses every /tmp/X.py into
+    // <path>, so the separate neardup-hash lens would fire at 12 — a sibling path, out of scope for R136.
+    for (const cmd of [...MP_CHECKPOINT, ...MP_CHECKPOINT.slice(0, 5)]) {
+      const r = l.observe('Bash', run(cmd));
+      ex136(r.action, cmd).toBe('none');
+      ex136(r.trigger).toBeUndefined();
+    }
+  });
+
+  it136('control: the same script 6x with the same flags and failing output still escalates remind → diversify → break', () => {
+    const l = new LL136();
+    const cmd = `cd /app && timeout 300 python3 -u /tmp/search.py${W}`;
+    const actions = [] as string[];
+    for (let i = 0; i < 6; i++) actions.push(l.observe('Bash', run(cmd, 1)).action);
+    ex136(actions).toEqual(['none', 'remind', 'remind', 'diversify', 'diversify', 'break']);
+  });
+
+  it136('control: the same script re-run 7x with tweaked flags/numbers still crosses the similarity rung', () => {
+    const l = new LL136();
+    let fired: any = null;
+    for (let i = 0; i < 7; i++) {
+      const r = l.observe('Bash', run(`cd /app && timeout ${300 + i * 60} python3 -u /tmp/search.py --seed ${i}${W}`));
+      if (r.family === 'neardup' && !fired) fired = r;
+    }
+    ex136(fired).not.toBeNull();
+    ex136(fired.trigger).toBe('similarity');
+    ex136(fired.action).toBe('diversify');
+  });
+
+  // R136b: the neardup-HASH lens + failure ladder key honor script identity too (R128's suffix pattern).
+  it136('R136b: 20 different scripts under one wrapper never fire the neardup-hash lens (12-in-30)', () => {
+    const l = new LL136();
+    for (let i = 0; i < 20; i++) {
+      const r = l.observe('Bash', run(`cd /app && timeout 300 python3 -u /tmp/exp_${String.fromCharCode(97 + i)}.py${W}`));
+      ex136(r.action, `call ${i}`).toBe('none');
+      ex136(r.trigger).toBeUndefined();
+    }
+  });
+
+  it136('R136b control: the same script 12x still fires the neardup-hash lens at its threshold', () => {
+    const l = new LL136();
+    let hashFired: any = null;
+    for (let i = 0; i < 12; i++) {
+      const r = l.observe('Bash', run(`cd /app && timeout 300 python3 -u /tmp/search.py${W}`));
+      if (r.trigger === 'hash' && !hashFired) hashFired = { ...r, at: i + 1 };
+    }
+    ex136(hashFired).not.toBeNull();
+    ex136(hashFired.at).toBe(12);
+    ex136(hashFired.action).toBe('diversify');
+  });
+
+  it136('R136b: commands without identity (ls/grep) keep the plain approachHash key', () => {
+    process.env.NEARDUP_NUDGE_AT = '3';
+    const l = new LL136();
+    l.observe('Bash', run('ls -la /app')); l.observe('Bash', run('ls -la /app'));
+    const r = l.observe('Bash', run('ls -la /app'));
+    ex136(r.trigger).toBe('hash');
+  });
+
+  it136('control: the gcode -c grind (minor edits of one inline body) still crosses the similarity rung', () => {
+    const l = new LL136();
+    const body = "import re, math; data = open('text.gcode').read(); lines = data.splitlines(); pts = [ln for ln in lines if ln.startswith('G1')]; print(len(pts))";
+    let fired: any = null;
+    for (let i = 0; i < 8; i++) {
+      const r = l.observe('Bash', run(`cd /app && python3 -c "${body} # v${i}"`));
+      if (r.family === 'neardup' && !fired) fired = r;
+    }
+    ex136(fired).not.toBeNull();
+    ex136(fired.trigger).toBe('similarity');
+  });
+});

@@ -16,6 +16,7 @@ import { createHash } from 'crypto';
 import { classifyErrorFamily } from './errorFamily.js';
 import { stableInputHash } from './DecisionStore.js';
 import { parseChunkReadInput, type ChunkRead } from './chunkReadProgression.js';
+import { extractCommandIdentity, type CommandIdentity } from './commandIdentity.js';
 
 export interface ToolOutcome {
   status: 'ok' | 'failed' | 'error';
@@ -33,6 +34,9 @@ export interface ToolOutcome {
    *  awk NR / Read offset+limit). The ladder keys a disjoint increasing progression over one file as
    *  a NEW approach instead of the digit-stripped hash the whole progression collides into. */
   chunkRead?: ChunkRead;
+  /** R136 HB-NEARDUP-SCRIPT-SHAPE: for Bash, the executed script paths / inline-code identity. The similarity
+   *  lens treats commands with a DIFFERENT identity as different approaches regardless of wrapper similarity. */
+  commandIdentity?: CommandIdentity;
 }
 
 export const EXEC_TOOLS = new Set(['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
@@ -203,6 +207,9 @@ export function classifyToolOutcome(
     exactHash,
     ...(EXEC_TOOLS.has(toolName) ? { approachText: approachText(toolName, input) } : {}),
     ...(chunkRead ? { chunkRead } : {}),
+    ...(toolName === 'Bash' && input && typeof input === 'object' && (input as Record<string, unknown>).command !== undefined
+      ? { commandIdentity: extractCommandIdentity(String((input as Record<string, unknown>).command)) }
+      : {}),
   };
 }
 

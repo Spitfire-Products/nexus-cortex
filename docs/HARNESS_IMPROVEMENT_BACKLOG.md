@@ -1357,7 +1357,7 @@ byte-identical N times AND the handle is not running. (2) Do not overwrite `tool
 `loopBreak` flag so the banked iteration count stays true and the decisions row says why the turn ended (`kind: loop_break`). Validation:
 replay the mp-checkpoint tail (5 identical BashOutput polls on a live job) → no break; 5 identical Bash calls with identical error output → break.
 
-## HB-NEARDUP-SCRIPT-SHAPE — the similarity lens blocks Bash on DISTINCT experiment scripts that share a wrapper shape (2026-09-13, TB4.0 validation mp-checkpoint-consolidation) — OPEN (R136)
+## HB-NEARDUP-SCRIPT-SHAPE — the similarity lens blocks Bash on DISTINCT experiment scripts that share a wrapper shape (2026-09-13, TB4.0 validation mp-checkpoint-consolidation) — BUILT 2026-09-13 → 4.108.12 (R136 similarity gate + R136b hash-lens/ladder key; digest = script paths only, inline bodies by Dice)
 Evidence (t4v session, 4.108.9): `cd /app && timeout N python3 -u /tmp/search.py`, `/tmp/unfused.py`, `/tmp/moe_search.py`, `/tmp/grad_diag.py`
 and several `python3 -u -c "<different code>"` runs — different experiments, one shell wrapper — scored as near-duplicates:
 `loop_escalation diversify` ×4 then `loop_tool_block trigger: neardup-similarity` ×3 (blockNumber 1..3 → "tool is disabled: repeated loop

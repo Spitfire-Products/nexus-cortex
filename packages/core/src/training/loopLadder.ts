@@ -7,6 +7,7 @@
  */
 import { diceSimilarity, type ToolOutcome } from './toolOutcome.js';
 import { isChunkProgression, type ChunkRead } from './chunkReadProgression.js';
+import { commandIdentityDiffers, commandIdentityDigest, type CommandIdentity } from './commandIdentity.js';
 
 export type LadderAction = 'none' | 'remind' | 'diversify' | 'break';
 
@@ -65,7 +66,9 @@ export class LoopLadder {
   // 7; no PASSING session did (max 6 = healthy test iteration). Diversify at NEARDUP_SIM_AT (7), break at 2×.
   private readonly nearDupSim: number;
   private readonly nearDupSimAt: number;
-  private readonly recentSim: Array<{ tool: string; text: string }> = [];
+  // R136 HB-NEARDUP-SCRIPT-SHAPE: each entry carries the command identity (script paths / inline body);
+  // a DIFFERENT identity is never a near-duplicate no matter how similar the shared shell wrapper is.
+  private readonly recentSim: Array<{ tool: string; text: string; identity?: CommandIdentity }> = [];
   private readonly simNudged = new Set<string>();
   private readonly recentKeys: string[] = [];
   private readonly nearDupNudged = new Set<string>();
@@ -97,11 +100,14 @@ export class LoopLadder {
     this.nearDupSim = Number.isFinite(sim) && sim > 0 && sim <= 1 ? sim : 0.9;
   }
 
-  /** HB-LOOP-NEARDUP: windowed similarity count for an executing tool's normalized text. */
-  private observeSimilar(toolName: string, text: string | undefined): LadderResult | null {
+  /** HB-LOOP-NEARDUP: windowed similarity count for an executing tool's normalized text. R136: script identity
+   *  dominates wrapper shape — entries whose identity differs are skipped before the text comparison. */
+  private observeSimilar(toolName: string, text: string | undefined, identity?: CommandIdentity): LadderResult | null {
     if (!this.nearDupEnabled || !text) return null;
-    const count = 1 + this.recentSim.filter((e) => e.tool === toolName && (e.text === text || diceSimilarity(e.text, text) >= this.nearDupSim)).length;
-    this.recentSim.push({ tool: toolName, text });
+    const count = 1 + this.recentSim.filter((e) =>
+      e.tool === toolName && !commandIdentityDiffers(e.identity, identity, this.nearDupSim) && (e.text === text || diceSimilarity(e.text, text) >= this.nearDupSim),
+    ).length;
+    this.recentSim.push({ tool: toolName, text, ...(identity ? { identity } : {}) });
     if (this.recentSim.length > this.nearDupWindow) this.recentSim.shift();
     if (count >= this.nearDupSimAt * 2) return { action: 'break', count, family: 'neardup', trigger: 'similarity' };
     const nudgeKey = `${toolName}\n${text.slice(0, 80)}`;
@@ -130,8 +136,12 @@ export class LoopLadder {
     return null;
   }
 
-  observe(toolName: string, outcome: Pick<ToolOutcome, 'status' | 'approachHash' | 'family' | 'approachText' | 'chunkRead'>): LadderResult {
+  observe(toolName: string, outcome: Pick<ToolOutcome, 'status' | 'approachHash' | 'family' | 'approachText' | 'chunkRead' | 'commandIdentity'>): LadderResult {
     let key = `${toolName}\n${outcome.approachHash}`;
+    // R136b: script identity (executed file / inline body) is part of the approach for the hash lens and the
+    // failure ladder — different scripts under one wrapper are different approaches; no identity = plain key.
+    const ident = commandIdentityDigest(outcome.commandIdentity);
+    if (ident) key += `\n@${ident}`;
     let progression = false;
     if (outcome.chunkRead) {
       const chunkKey = `${toolName}\n${outcome.chunkRead.file}`;
@@ -140,7 +150,7 @@ export class LoopLadder {
       if (progression) key += `\n${outcome.chunkRead.start}-${outcome.chunkRead.end}`;
     }
     const hashDup = this.observeNearDup(key);
-    const simDup = this.observeSimilar(toolName, progression ? undefined : outcome.approachText);
+    const simDup = this.observeSimilar(toolName, progression ? undefined : outcome.approachText, outcome.commandIdentity);
     // the more severe of the two near-dup lenses
     const nearDup = hashDup && simDup ? (RANK[simDup.action] >= RANK[hashDup.action] ? simDup : hashDup) : (simDup ?? hashDup);
     if (outcome.status === 'ok') {
