@@ -6,6 +6,7 @@ import {
   decideSliceBlock,
   SLICE_BLOCK_AT_DEFAULT,
   SLICE_BLOCK_MAX_DEFAULT,
+  sliceReadStep,
 } from '../sliceBlock.js';
 
 describe('sliceReadFile — extract the sliced file (same shape as applySliceNudge)', () => {
@@ -85,5 +86,38 @@ describe('decideSliceBlock — coercive, scoped, bounded', () => {
     expect(decideSliceBlock('/app/x.c', 3, 0, 3, 1).action).toBe('block'); // at=3
     expect(decideSliceBlock('/app/x.c', 2, 0, 3, 1).action).toBe('none');  // below custom at
     expect(decideSliceBlock('/app/x.c', 9, 1, 3, 1).action).toBe('none');  // priorBlocks >= custom max
+  });
+});
+
+describe('sliceReadStep — HB-CHUNKED-READS (R128): a chunk progression is not a re-read', () => {
+  const step = (cmds: string[]) => {
+    let count = 0; let last: any = undefined; const counts: number[] = [];
+    for (const cmd of cmds) {
+      const r = sliceReadStep(count, last, cmd);
+      count = r.count; if (r.chunk) last = r.chunk; counts.push(count);
+    }
+    return counts;
+  };
+
+  it('a 6-chunk sed -n progression never reaches the nudge (3) or block (5) thresholds', () => {
+    const cmds = Array.from({ length: 6 }, (_, i) => `sed -n '${i * 200 + 1},${(i + 1) * 200}p' /app/big.log`);
+    expect(step(cmds)).toEqual([1, 1, 1, 1, 1, 1]);
+  });
+
+  it('a 3x identical slice still counts to the nudge threshold', () => {
+    expect(step(["sed -n '1,200p' /app/x.c", "sed -n '1,200p' /app/x.c", "sed -n '1,200p' /app/x.c"])).toEqual([1, 2, 3]);
+  });
+
+  it('mixed chunk forms over one file (sed, head|tail, tail|head, awk) still progress', () => {
+    expect(step([
+      "sed -n '1,200p' /app/big.log",
+      'head -n 400 /app/big.log | tail -n 200',
+      'tail -n +401 /app/big.log | head -n 200',
+      "awk 'NR>=601 && NR<=800' /app/big.log",
+    ])).toEqual([1, 1, 1, 1]);
+  });
+
+  it('overlap / backwards / unparseable slices count as re-reads', () => {
+    expect(step(["sed -n '1,200p' /app/x.c", "sed -n '150,350p' /app/x.c", 'tail -n 20 /app/x.c', "sed -n '1,200p' /app/x.c"])).toEqual([1, 2, 3, 4]);
   });
 });

@@ -15,6 +15,7 @@
 import { createHash } from 'crypto';
 import { classifyErrorFamily } from './errorFamily.js';
 import { stableInputHash } from './DecisionStore.js';
+import { parseChunkReadInput, type ChunkRead } from './chunkReadProgression.js';
 
 export interface ToolOutcome {
   status: 'ok' | 'failed' | 'error';
@@ -28,6 +29,10 @@ export interface ToolOutcome {
    *  text the similarity near-dup lens compares (the approachHash is too fine: `python3 -c "…"` retries
    *  with an edited script never collide, the 12-in-30 rung was unreachable on every real loop replayed). */
   approachText?: string;
+  /** HB-CHUNKED-READS (R128): the file + line range when the call is a chunk read (sed -n / head|tail /
+   *  awk NR / Read offset+limit). The ladder keys a disjoint increasing progression over one file as
+   *  a NEW approach instead of the digit-stripped hash the whole progression collides into. */
+  chunkRead?: ChunkRead;
 }
 
 export const EXEC_TOOLS = new Set(['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
@@ -159,6 +164,7 @@ export function classifyToolOutcome(
 ): ToolOutcome {
   const exactHash = stableInputHash(input);
   const aHash = approachHash(toolName, input);
+  const chunkRead = parseChunkReadInput(toolName, input);
   const content = String(result.content ?? '');
 
   let status: ToolOutcome['status'];
@@ -196,6 +202,7 @@ export function classifyToolOutcome(
     approachHash: aHash,
     exactHash,
     ...(EXEC_TOOLS.has(toolName) ? { approachText: approachText(toolName, input) } : {}),
+    ...(chunkRead ? { chunkRead } : {}),
   };
 }
 

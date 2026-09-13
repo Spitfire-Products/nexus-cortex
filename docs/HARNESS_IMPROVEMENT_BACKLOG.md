@@ -1327,7 +1327,7 @@ before the run started). Reconcile's slice check only resolves `complete_pending
 task in the slice is banked; or (b) the supervisor sleeps ≥ one tick period (≥300 s, or until a probe) after COMPLETE
 so the tick can bank the beat — (a) is cheaper and touch-free.
 
-## HB-CHUNKED-READS — the anti-loop stack fights legitimate sequential chunk reads of a large file (2026-09-12, compaction proof run 5)
+## HB-CHUNKED-READS — the anti-loop stack fights legitimate sequential chunk reads of a large file (2026-09-12, compaction proof run 5) — BUILT 2026-09-13 → 4.108.9, validation cell pending (R128; tb4-flash-v1: 25/92 loop-guard events followed a chunk read)
 **Evidence (`/tmp/claude-1000/cmp-test`, deepseek-flash, 4.108.3 tree, task = read a 1200-line file in ≤200-line `sed -n 'A,Bp'` chunks):**
 decisions.jsonl shows the ladder counting every chunk read as ONE approach (`loop_escalation rung=remind count=4`, `rung=diversify count=12`,
 same `approachHash f639aa85…` — the hash strips digits, so `sed -n '1,200p'` ≡ `sed -n '201,400p'`), `steering_injected {kind: slice_read,

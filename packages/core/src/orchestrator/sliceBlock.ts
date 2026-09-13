@@ -20,6 +20,8 @@
  * PURE + deterministic — all state (per-file slice count, per-file block count) lives in the orchestrator.
  */
 
+import { parseChunkRead, isChunkProgression, type ChunkRead } from '../training/chunkReadProgression.js';
+
 export type SliceBlockAction = 'block' | 'none';
 
 export interface SliceBlockDecision {
@@ -82,4 +84,22 @@ export function decideSliceBlock(
     `ONCE with the Read tool (use offset/limit for long files) instead of another slice. ` +
     `${file} can be sliced again next turn.`;
   return { action: 'block', message };
+}
+
+/**
+ * HB-CHUNKED-READS (R128): one step of the per-file slice-read counter. A slice that is the next
+ * DISJOINT, INCREASING chunk of the same file (sed -n 'A,Bp' / head|tail / tail|head / awk NR) is a
+ * progression, not a re-read: the count does NOT advance (so neither the slice_read nudge at 3 nor the
+ * slice block at 5 fires across a chunked read), but the chunk is remembered as the new `lastChunk`.
+ * An identical / overlapping / backwards range, or a slice with no parseable range, counts as before.
+ * PURE — the orchestrator keeps both maps (count per file, last chunk per file).
+ */
+export function sliceReadStep(
+  priorCount: number,
+  lastChunk: ChunkRead | undefined,
+  cmd: string,
+): { count: number; progression: boolean; chunk: ChunkRead | null } {
+  const chunk = parseChunkRead(cmd);
+  const progression = isChunkProgression(lastChunk, chunk);
+  return { count: progression ? priorCount : priorCount + 1, progression, chunk };
 }

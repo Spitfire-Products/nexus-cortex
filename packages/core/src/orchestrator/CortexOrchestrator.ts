@@ -68,7 +68,8 @@ import type { AgentDefinition, SubAgentResult, ISubAgentEventEmitter } from './S
 // Phase 1: Tool Architecture Refactor - Unified Tool Registry
 import { toolFactory } from '../tools/ToolFactory.js';
 import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveLiftPlan, resolveEndTurnResolver, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked, resolveVisionHelperModel, resolveVisionHandoffMax, resolveSliceNudge, resolveSliceBlock, resolveSliceBlockAt, resolveSliceBlockMax } from '../tools/ToolProfile.js';
-import { sliceReadFile, decideSliceBlock } from './sliceBlock.js';
+import { sliceReadFile, decideSliceBlock, sliceReadStep } from './sliceBlock.js';
+import type { ChunkRead } from '../training/chunkReadProgression.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
 import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage, memoryIndexLine, upsertMemoryIndex, scaleEstimateToRequestView, approxCharsOf, anchoredRequestEstimate } from './compactionResume.js';
 import { renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBand, resolveRearmBand } from './compactionResumeTemplate.js';
@@ -8940,6 +8941,9 @@ export class CortexOrchestrator {
   private visionHandoffsThisTurn = 0;
   /** Per-session bash slice-read counts per file (CORTEX_SLICE_NUDGE). */
   private sliceReads = new Map<string, number>();
+  /** HB-CHUNKED-READS (R128): last parsed chunk (line range) per file — a disjoint increasing
+   *  progression over one file is NOT a re-read for the slice nudge/block (sliceReadStep). */
+  private lastSliceChunk = new Map<string, ChunkRead>();
   /** Per-session coercive-block counts per file (CORTEX_SLICE_BLOCK — HB-SLICE-BLOCK). */
   private sliceBlockCounts = new Map<string, number>();
 
@@ -8970,9 +8974,13 @@ export class CortexOrchestrator {
   /** CORTEX_SLICE_NUDGE: after the 3rd bash slice-read of the same file, append a one-line Read reminder. */
   private applySliceNudge(toolUse: { name: string; input: any }, result: { content: any; is_error?: boolean }): void {
     if (toolUse.name !== 'Bash' || result.is_error || !resolveSliceNudge(process.env)) return;
-    const file = sliceReadFile(String(toolUse.input?.command ?? ''));
+    const cmd = String(toolUse.input?.command ?? '');
+    const file = sliceReadFile(cmd);
     if (!file) return;
-    const n = (this.sliceReads.get(file) ?? 0) + 1;
+    const step = sliceReadStep(this.sliceReads.get(file) ?? 0, this.lastSliceChunk.get(file), cmd);
+    if (step.chunk) this.lastSliceChunk.set(file, step.chunk);
+    if (step.progression) return; // next chunk of the same file (HB-CHUNKED-READS): not a re-read
+    const n = step.count;
     this.sliceReads.set(file, n);
     if (n !== 3) return;
     if (typeof result.content === 'string') {
@@ -8993,8 +9001,12 @@ export class CortexOrchestrator {
     toolUse: { id: string; name: string; input: any },
   ): { tool_use_id: string; tool_name: string; content: string; is_error: boolean; metadata?: any } | null {
     if (toolUse.name !== 'Bash' || !resolveSliceBlock(process.env)) return null;
-    const file = sliceReadFile(String(toolUse.input?.command ?? ''));
+    const cmd = String(toolUse.input?.command ?? '');
+    const file = sliceReadFile(cmd);
     if (!file) return null;
+    // HB-CHUNKED-READS (R128): the next disjoint chunk of a file the model is reading sequentially is
+    // never blocked (peek only — applySliceNudge records the chunk after execution).
+    if (sliceReadStep(0, this.lastSliceChunk.get(file), cmd).progression) return null;
     const priorSlices = this.sliceReads.get(file) ?? 0;
     const priorBlocks = this.sliceBlockCounts.get(file) ?? 0;
     const decision = decideSliceBlock(

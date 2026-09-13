@@ -295,3 +295,52 @@ describe('HB-LOOP-NEARDUP — similarity lens on executing tools (2026-09-10)', 
     expect(l.observe('Bash', bash(cmd, 2)).action).toBe('diversify');
   });
 });
+
+describe('HB-CHUNKED-READS (R128) — sequential chunk reads of one file are a progression, not a loop', () => {
+  const prevN = process.env.CORTEX_NEARDUP_BREAKER, prevP = process.env.CORTEX_POLL_GUARD, prevAt = process.env.NEARDUP_NUDGE_AT;
+  beforeEach(() => { process.env.CORTEX_NEARDUP_BREAKER = 'true'; process.env.CORTEX_POLL_GUARD = 'true'; process.env.NEARDUP_NUDGE_AT = '3'; });
+  afterEach(() => {
+    for (const [k, v] of [['CORTEX_NEARDUP_BREAKER', prevN], ['CORTEX_POLL_GUARD', prevP], ['NEARDUP_NUDGE_AT', prevAt]] as const) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  });
+  // every chunk collides into ONE digit-stripped approachHash (the real classifyToolOutcome shape)
+  const sedChunk = (start: number, end: number) => ({
+    status: 'ok' as const, approachHash: 'sed-n-chunk', exactHash: `${start}-${end}`, approachText: '',
+    chunkRead: { file: '/app/big.log', start, end, kind: 'sed' as const },
+  });
+
+  it('a 6-chunk sed -n progression fires NOTHING (no neardup hash nudge, no poll remind)', () => {
+    const l = new LoopLadder();
+    for (let i = 0; i < 6; i++) {
+      const r = l.observe('Bash', sedChunk(i * 200 + 1, (i + 1) * 200));
+      expect(r.action).toBe('none');
+    }
+  });
+
+  it('a 3x IDENTICAL range on the same file still fires the near-dup hash lens', () => {
+    const l = new LoopLadder();
+    expect(l.observe('Bash', sedChunk(1, 200)).action).toBe('none');
+    expect(l.observe('Bash', sedChunk(1, 200)).action).toBe('none');
+    const r = l.observe('Bash', sedChunk(1, 200));
+    expect(r.action).toBe('diversify');
+    expect(r.family).toBe('neardup');
+    expect(r.trigger).toBe('hash');
+  });
+
+  it('overlapping / backwards re-reads count as repeats (real loop detection intact)', () => {
+    const l = new LoopLadder();
+    l.observe('Bash', sedChunk(1, 200));
+    l.observe('Bash', sedChunk(150, 350));   // overlap → same key
+    expect(l.observe('Bash', sedChunk(1, 200)).action).toBe('diversify'); // backwards → same key, 3-in-window
+  });
+
+  it('Read-tool paging (offset/limit) over one file is a progression too', () => {
+    const l = new LoopLadder();
+    for (let i = 0; i < 6; i++) {
+      const start = i * 200 + 1;
+      const r = l.observe('Read', { status: 'ok', approachHash: 'read-page', exactHash: `r${i}`, chunkRead: { file: '/app/big.log', start, end: start + 199, kind: 'read' } });
+      expect(r.action).toBe('none');
+    }
+  });
+});

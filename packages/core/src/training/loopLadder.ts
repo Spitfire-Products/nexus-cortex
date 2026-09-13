@@ -6,6 +6,7 @@
  * detector remains as the fast path for byte-identical spam.)
  */
 import { diceSimilarity, type ToolOutcome } from './toolOutcome.js';
+import { isChunkProgression, type ChunkRead } from './chunkReadProgression.js';
 
 export type LadderAction = 'none' | 'remind' | 'diversify' | 'break';
 
@@ -68,6 +69,10 @@ export class LoopLadder {
   private readonly simNudged = new Set<string>();
   private readonly recentKeys: string[] = [];
   private readonly nearDupNudged = new Set<string>();
+  // HB-CHUNKED-READS (R128): last chunk read per (tool, file). A disjoint increasing progression
+  // gets a range-suffixed key (a NEW approach for the hash lens, poll guard and failure ladder) and
+  // skips the similarity lens; an identical/overlapping/backwards range keeps the plain hash key.
+  private readonly lastChunk = new Map<string, ChunkRead>();
 
   constructor(thresholds: LoopLadderThresholds = {}) {
     this.remindAt = thresholds.remindAt ?? envInt('LOOP_REMIND_AT', 2);
@@ -125,10 +130,17 @@ export class LoopLadder {
     return null;
   }
 
-  observe(toolName: string, outcome: Pick<ToolOutcome, 'status' | 'approachHash' | 'family' | 'approachText'>): LadderResult {
-    const key = `${toolName}\n${outcome.approachHash}`;
+  observe(toolName: string, outcome: Pick<ToolOutcome, 'status' | 'approachHash' | 'family' | 'approachText' | 'chunkRead'>): LadderResult {
+    let key = `${toolName}\n${outcome.approachHash}`;
+    let progression = false;
+    if (outcome.chunkRead) {
+      const chunkKey = `${toolName}\n${outcome.chunkRead.file}`;
+      progression = isChunkProgression(this.lastChunk.get(chunkKey), outcome.chunkRead);
+      this.lastChunk.set(chunkKey, outcome.chunkRead);
+      if (progression) key += `\n${outcome.chunkRead.start}-${outcome.chunkRead.end}`;
+    }
     const hashDup = this.observeNearDup(key);
-    const simDup = this.observeSimilar(toolName, outcome.approachText);
+    const simDup = this.observeSimilar(toolName, progression ? undefined : outcome.approachText);
     // the more severe of the two near-dup lenses
     const nearDup = hashDup && simDup ? (RANK[simDup.action] >= RANK[hashDup.action] ? simDup : hashDup) : (simDup ?? hashDup);
     if (outcome.status === 'ok') {
