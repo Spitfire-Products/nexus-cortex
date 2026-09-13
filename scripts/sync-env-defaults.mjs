@@ -73,6 +73,14 @@ function stripLocalOnly(content) {
 /** Build the mirror content from the master; exit 1 if a secret carries a value. The
  *  secret assert runs on the FULL master (LOCAL-ONLY section included). */
 function generate(masterContent) {
+  // 🔴 2026-09-12: the master was found APPENDED TO ITSELF (16 copies, 37K lines) by an as-yet-unidentified writer; the mirror
+  // looked sane only because stripLocalOnly cut at the FIRST LOCAL-ONLY title. A duplicated master must fail the build/deploy
+  // loudly instead of shipping silently.
+  const headerCount = masterContent.split('\n').filter(l => l.startsWith('# Nexus Cortex — Complete Environment Configuration Reference')).length;
+  if (headerCount > 1) {
+    console.error(`[sync-env-defaults] REFUSE — the master .env contains its header ${headerCount} times (file appended to itself). Restore the single copy.`);
+    process.exit(1);
+  }
   const offenders = [];
   for (const raw of masterContent.split('\n')) {
     const t = raw.trim();

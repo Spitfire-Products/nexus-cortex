@@ -1,4 +1,5 @@
 import { BaseTool } from '../../base/BaseTool.js';
+import { resolveCortexStateDir } from '@nexus-cortex/core';
 import type { ToolResult } from '../../base/ToolResult.js';
 import { spawn, ChildProcess } from 'child_process';
 import { promises as fs } from 'fs';
@@ -283,7 +284,7 @@ export class CreateArtifactToolExecutor extends BaseTool<CreateArtifactToolParam
 
     this.workingDirectory = config.workingDirectory;
     // Use unified artifacts directory structure
-    this.artifactDir = join(config.workingDirectory, '.cortex', 'artifacts');
+    this.artifactDir = join(resolveCortexStateDir(config.workingDirectory).dir, 'artifacts');   // 4.108.6 (R131)
 
     // Initialize unified artifact registry (singleton)
     const registry = ArtifactRegistry.getInstance(config.workingDirectory);

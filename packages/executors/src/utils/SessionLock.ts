@@ -13,6 +13,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { resolveCortexStateDir } from '@nexus-cortex/core';
 
 export interface LockInfo {
   sessionId: string;
@@ -41,8 +42,9 @@ export class SessionLock {
 
   constructor(projectPath?: string) {
     const basePath = projectPath || process.cwd();
-    this.lockDir = path.join(basePath, '.cortex', 'tmux-sessions', 'locks');
-    this.ensureLockDir();
+    // 4.108.6 (R131): writable state root; never fatal
+    this.lockDir = path.join(resolveCortexStateDir(basePath).dir, 'tmux-sessions', 'locks');
+    try { this.ensureLockDir(); } catch (e: any) { console.warn('[WARN] tmux lock dir unavailable:', e?.message ?? e); }
   }
 
   /**

@@ -62,6 +62,7 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   CORTEX_COMPACTION_RESUME: { tier: 'env' },
   CORTEX_COMPACTION_CHECKPOINT_PCT: { tier: 'env' },
   CORTEX_COMPACTION_THRESHOLD_TOKENS: { tier: 'env' },
+  CORTEX_STATE_DIR: { tier: 'env' },
   CORTEX_COMPACTION_CHECKPOINT_STEP: { tier: 'env' },
   CORTEX_DELEGATION_HINT: { tier: 'env' },
   CORTEX_ENDTURN_RESOLVER_REASONING: { tier: 'env' },

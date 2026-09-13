@@ -12,3 +12,4 @@ export * from './TokenCounter.js';
 export * from './ErrorDetector.js';
 export * from './ContextResolver.js';
 export * from './DiffParser.js';
+export * from './stateDir.js';

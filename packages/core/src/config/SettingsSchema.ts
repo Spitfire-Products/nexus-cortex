@@ -118,6 +118,7 @@ export interface EnvironmentVariables {
   CORTEX_ENDTURN_TIER?: string; // 'standard' | 'essential' — EndTurn discovery tier (4.107.2 lever)
   CORTEX_DELEGATION_HINT?: string; // 'true' | 'false' — DARK: boot-minimal clause naming the Task tool for delegation (4.108.1)
   CORTEX_COMPACTION_THRESHOLD_TOKENS?: string; // test/ops override of the compaction threshold in tokens (4.108.3); empty = card-derived
+  CORTEX_STATE_DIR?: string; // explicit runtime-state root (4.108.6); empty = <project>/.cortex with writable-probe fallback
   CORTEX_COMPACTION_CHECKPOINT_PCT?: string; // fraction of the compaction threshold at which the first pre-compaction checkpoint is written (4.108.2; default 0.75)
   CORTEX_COMPACTION_CHECKPOINT_STEP?: string; // checkpoint refresh band width as a fraction of the threshold (4.108.2; default 0.10)
   CORTEX_COMPACTION_RESUME?: string; // 'true' | 'false' — resume memory + task pin injected after proactive compaction (4.108.0)
@@ -428,6 +429,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_COMPACTION_RESUME: '',
   CORTEX_COMPACTION_CHECKPOINT_PCT: '',
   CORTEX_COMPACTION_THRESHOLD_TOKENS: '',
+  CORTEX_STATE_DIR: '',
   CORTEX_COMPACTION_CHECKPOINT_STEP: '',
   CORTEX_DELEGATION_HINT: '',
   CORTEX_ENDTURN_RESOLVER_REASONING: '',
@@ -858,6 +860,14 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_COMPACTION_THRESHOLD_TOKENS',
     displayName: 'Compaction threshold override (tokens)',
     description: 'Test/ops override: a positive integer replaces the card-derived compaction threshold (and halves it as the kept-history budget) so the checkpoint rung and compaction fire in a short run. Empty = card-derived (4.108.3).',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_STATE_DIR',
+    displayName: 'Compaction threshold override (tokens)',
+    description: 'Explicit runtime-state root for sessions/artifacts/tmux/decisions (4.108.6); empty = <project>/.cortex, falling back to ~/.cortex/projects/<hash> then tmpdir when the project dir is not writable',
     type: 'string',
     category: 'training',
     default: ''

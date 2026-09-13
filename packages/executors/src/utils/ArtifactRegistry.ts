@@ -17,6 +17,7 @@
  */
 
 import { promises as fs } from 'fs';
+import { resolveCortexStateDir } from '@nexus-cortex/core';
 import { join } from 'path';
 
 export type ArtifactType = 'web-app' | 'cli-tool' | 'script' | 'service';
@@ -86,7 +87,7 @@ export class ArtifactRegistry {
   private initialized: boolean = false;
 
   private constructor(projectRoot: string) {
-    this.artifactsDir = join(projectRoot, '.cortex', 'artifacts');
+    this.artifactsDir = join(resolveCortexStateDir(projectRoot).dir, 'artifacts');   // 4.108.6 (R131): writable state root
     this.registryPath = join(this.artifactsDir, 'registry.json');
     this.registry = {
       version: '2.0.0',

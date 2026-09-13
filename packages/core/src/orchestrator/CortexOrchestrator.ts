@@ -71,6 +71,7 @@ import { sliceReadFile, decideSliceBlock } from './sliceBlock.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
 import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage, memoryIndexLine, upsertMemoryIndex, scaleEstimateToRequestView, approxCharsOf } from './compactionResume.js';
 import { renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBand, resolveRearmBand } from './compactionResumeTemplate.js';
+import { resolveCortexStateDir, cortexStatePath } from '../utils/stateDir.js';
 import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig } from '../training/judgeEvidence.js';
 import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, mentorSurfaceTimeoutMs, type MentorCallMeta } from '../training/mentorRole.js';
 import { resolveOuterToolDeadlineMs } from './outerToolTimeout.js';
@@ -2828,7 +2829,7 @@ export class CortexOrchestrator {
               // orchestrator (config.projectPath is unset there → was landing
               // at the server's cwd).
               const recRoot = process.env.PROJECT_ROOT || this.config.projectPath || this.config.workingDirectory || process.cwd();
-              const recPath = pathJoin(recRoot, '.cortex', 'training', 'cortex-samples.jsonl');
+              const recPath = cortexStatePath(recRoot, 'training', 'cortex-samples.jsonl');
               appendJsonlRotating(recPath, JSON.stringify(sample));
             } catch (recErr) {
               if (this.config.debug) console.warn('[Orchestrator] cortex review-record emit failed (non-fatal):', recErr);
@@ -6779,7 +6780,7 @@ export class CortexOrchestrator {
   /** HB-COMPACTION-RESUME: best-effort write of the resume memory to .cortex/memory/resume-<session>.md (synchronous fs). */
   private writeResumeMemoryFile(text: string, why: string): void {
     try {
-      const cortexDir = pathJoin(this.config.projectPath || process.cwd(), '.cortex');
+      const cortexDir = resolveCortexStateDir(this.config.projectPath || process.cwd()).dir;
       const dir = pathJoin(cortexDir, 'memory');
       mkdirSync(dir, { recursive: true });
       const name = `resume-${this.currentSessionId}`;
@@ -9076,7 +9077,8 @@ export class CortexOrchestrator {
     }
     if (!this.decisionStore) {
       const root = this.config.projectPath || process.cwd();
-      const storePath = `${root}/.cortex/decisions.jsonl`;
+      // 4.108.6 (R131): state root resolves to a WRITABLE location (read-only workdirs fall back; never fatal)
+      const storePath = cortexStatePath(root, 'decisions.jsonl');
       this.decisionStore = new DecisionStore(storePath);
     }
     return this.decisionStore;

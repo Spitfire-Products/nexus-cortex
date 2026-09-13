@@ -12,6 +12,7 @@
 import { join, dirname, resolve } from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
+import { resolveCortexStateDir } from './stateDir.js';
 
 /**
  * Storage configuration for a given context
@@ -222,7 +223,7 @@ export class ContextResolver {
    */
   private createWorkspaceConfig(workspaceRoot: string): StorageConfig {
     return {
-      sessionsDir: join(workspaceRoot, '.cortex', 'sessions'),
+      sessionsDir: join(resolveCortexStateDir(workspaceRoot).dir, 'sessions'),   // 4.108.6 (R131): writable root, never fatal
       systemMessagesDir: join(workspaceRoot, '.cortex', 'system-messages'),
       contextLevel: 'workspace',
       contextRoot: workspaceRoot
@@ -244,7 +245,7 @@ export class ContextResolver {
    */
   private createProjectConfig(projectDir: string): StorageConfig {
     return {
-      sessionsDir: join(projectDir, '.cortex', 'sessions'),
+      sessionsDir: join(resolveCortexStateDir(projectDir).dir, 'sessions'),   // 4.108.6 (R131)
       systemMessagesDir: join(projectDir, '.cortex', 'system-messages'),
       contextLevel: 'project',
       contextRoot: projectDir

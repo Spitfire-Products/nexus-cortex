@@ -1355,6 +1355,16 @@ utilization. Fix: scale the estimate by the pruned-view/raw char ratio (`scaleEs
 confirm the helper adapter's own truncation keeps that call bounded (the VM run showed ~$0.006–0.01 per call, so it is); (b) `selectMessages`
 still measures raw sizes when choosing what to keep — the kept set is now sized against the scaled budget only via the threshold comparison.
 
+## HB-READONLY-WORKDIR — the server crashes at boot when the project dir is not writable (2026-09-12, TB4.0 risk-scorer-replay) — OPEN (R131)
+Evidence (VM job dir, 4.108.5): `Failed to start server: Error: EACCES: permission denied, mkdir '/app/.cortex/tmux-sessions/metadata'` from
+`SessionPersistence.ensureMetadataDir` ← `new ShellTool` ← `ExecutorRegistry.registerAllExecutors` ← `createOrchestrator` ← `CortexV4Server.start`.
+The task image runs the agent as uid 65534 (`nobody`) with `/app` root-owned 755 — deliberate. Every `.cortex/*` write rooted at the cwd
+(tmux metadata, artifacts registry, sessions JSONL, decisions.jsonl, training samples, memory) fails the same way; the first one is fatal.
+Fix: a single `resolveCortexStateDir(projectPath)` in core — probe `<projectPath>/.cortex` writable (mkdir + touch), else fall back to
+`~/.cortex/projects/<sha1(projectPath)>` then `os.tmpdir()/nexus-cortex/<hash>`; log one WARN naming the fallback; report it in
+`/health/config`. Route every writer through it; constructors must never throw on state-dir failure (degrade to in-memory). Verify by running
+the server as `nobody` in a root-owned cwd (docker probe on the VM: `docker run --rm --entrypoint sh <risk-scorer image> -c 'id; touch /app/x'`).
+
 ## HB-MENTOR-BUDGET — thinking-ON mentor calls return EMPTY output because reasoning shares `max_tokens` (2026-09-10, cell-m pilot)
 **STATUS: SHIPPED 4.106.0 (commit bd6438612e, tag v4.106.0, 2026-09-10 22:05Z).** Built as specified below: allowance table +
 `CORTEX_MENTOR_REASONING_ALLOWANCE`, finish_reason/reasoning_tokens read, one thinking-off retry on blank, call meta banked on every

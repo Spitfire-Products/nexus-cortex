@@ -4,6 +4,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { resolveCortexStateDir } from '@nexus-cortex/core';
 import { TmuxSessionMetadata } from './TmuxManager.js';
 
 export class SessionPersistence {
@@ -11,8 +12,9 @@ export class SessionPersistence {
 
   constructor(projectPath?: string) {
     const basePath = projectPath || process.cwd();
-    this.metadataDir = path.join(basePath, '.cortex', 'tmux-sessions', 'metadata');
-    this.ensureMetadataDir();
+    // 4.108.6 (R131): the state root is probed for writability (read-only workdir → fallback); the ctor never throws.
+    this.metadataDir = path.join(resolveCortexStateDir(basePath).dir, 'tmux-sessions', 'metadata');
+    try { this.ensureMetadataDir(); } catch (e: any) { console.warn('[WARN] tmux session metadata dir unavailable:', e?.message ?? e); }
   }
 
   /**
