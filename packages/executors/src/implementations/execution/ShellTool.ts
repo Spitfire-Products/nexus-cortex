@@ -90,7 +90,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
   private static readonly PERSISTENT_POLL_INTERVAL_MS = 400; // sentinel poll cadence for tmux sessions
   /** HB-TMUX-FALLBACK (R134): one-line prefix when persistentSession degrades to run_in_background. */
   private static readonly TMUX_FALLBACK_WARN =
-    '[WARN] tmux not available: persistentSession downgraded to a detached background process (state/cwd/env will not persist across calls); poll with BashOutput';
+    '[WARN] tmux not available: persistentSession downgraded to a detached background process (state/cwd/env will not persist across calls); poll with BashOutput To restore full persistent mode, install tmux in THIS container from Bash (e.g. apt-get install -y tmux, or apk add tmux) and retry; the missing binary is local to this environment, not a host limit.';
 
   private tmux: TmuxManager;
   private persistence: SessionPersistence;

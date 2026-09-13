@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveOuterToolDeadlineMs } from '../outerToolTimeout.js';
+import { resolveOuterToolDeadlineMs, resolveOuterToolTimeoutFloorMs } from '../outerToolTimeout.js';
 
 const T = 120_000; // TOOL_TIMEOUT_MS
 const G = 30_000; // OUTER_TIMEOUT_GRACE_MS
@@ -60,6 +60,36 @@ describe('resolveOuterToolDeadlineMs (D-A)', () => {
     it('ignores garbage resolver values', () => {
       expect(resolveOuterToolDeadlineMs([{ name: 'Task', input: {} }], T, G, () => NaN)).toBe(150_000);
       expect(resolveOuterToolDeadlineMs([{ name: 'Task', input: {} }], T, G, () => -1)).toBe(150_000);
+    });
+  });
+
+  // CORTEX_OUTER_TOOL_TIMEOUT_MS: a FLOOR for the outer batch deadline — non-Bash tools with no limit of
+  // their own (CreateArtifactTool persistent launches, ctr-optimization) were killed at the static 150s.
+  describe('CORTEX_OUTER_TOOL_TIMEOUT_MS floor', () => {
+    it('resolveOuterToolTimeoutFloorMs: unset / 0 / junk / negative → 0 (no floor)', () => {
+      expect(resolveOuterToolTimeoutFloorMs({})).toBe(0);
+      expect(resolveOuterToolTimeoutFloorMs({ CORTEX_OUTER_TOOL_TIMEOUT_MS: '' })).toBe(0);
+      expect(resolveOuterToolTimeoutFloorMs({ CORTEX_OUTER_TOOL_TIMEOUT_MS: '0' })).toBe(0);
+      expect(resolveOuterToolTimeoutFloorMs({ CORTEX_OUTER_TOOL_TIMEOUT_MS: 'junk' })).toBe(0);
+      expect(resolveOuterToolTimeoutFloorMs({ CORTEX_OUTER_TOOL_TIMEOUT_MS: '-5' })).toBe(0);
+      expect(resolveOuterToolTimeoutFloorMs({ CORTEX_OUTER_TOOL_TIMEOUT_MS: ' 600000 ' })).toBe(600_000);
+      expect(resolveOuterToolTimeoutFloorMs({ CORTEX_OUTER_TOOL_TIMEOUT_MS: '600000.9' })).toBe(600_000);
+    });
+    it('floor unset (undefined / 0) → deadline unchanged', () => {
+      expect(resolveOuterToolDeadlineMs([{ name: 'Read', input: {} }], T, G, undefined, undefined)).toBe(150_000);
+      expect(resolveOuterToolDeadlineMs([{ name: 'Read', input: {} }], T, G, undefined, 0)).toBe(150_000);
+    });
+    it('floor 600000 with a plain non-Bash block → deadline = floor + grace', () => {
+      expect(resolveOuterToolDeadlineMs([{ name: 'CreateArtifact', input: {} }], T, G, undefined, 600_000)).toBe(630_000);
+    });
+    it('floor below the computed value → computed wins', () => {
+      expect(resolveOuterToolDeadlineMs([{ name: 'Bash', input: { timeout: 400_000 } }], T, G, undefined, 200_000)).toBe(430_000);
+      expect(resolveOuterToolDeadlineMs([{ name: 'Task', input: {} }], T, G, () => 3_210_000, 200_000)).toBe(3_240_000);
+      expect(resolveOuterToolDeadlineMs([{ name: 'Read', input: {} }], T, G, undefined, 100_000)).toBe(150_000);
+    });
+    it('junk / negative floor → no floor', () => {
+      expect(resolveOuterToolDeadlineMs([{ name: 'Read', input: {} }], T, G, undefined, NaN)).toBe(150_000);
+      expect(resolveOuterToolDeadlineMs([{ name: 'Read', input: {} }], T, G, undefined, -1)).toBe(150_000);
     });
   });
 });

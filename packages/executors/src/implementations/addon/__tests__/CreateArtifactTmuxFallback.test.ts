@@ -46,7 +46,7 @@ describe('HB-TMUX-FALLBACK (R134): CreateArtifactTool persistent mode without tm
     expect(res.success).toBe(true);
     expect(createSession).not.toHaveBeenCalled();
     const text = typeof res.llmContent === 'string' ? res.llmContent : JSON.stringify(res);
-    expect(text.split('\n')[0]).toBe(WARN_LINE);
+    expect(text.split('\n')[0].startsWith(WARN_LINE)).toBe(true);
     expect(text).not.toContain('tmux is not installed');
     expect(res.metadata?.status).toBe('running');
     expect(res.metadata?.mode).toBe('persistent');

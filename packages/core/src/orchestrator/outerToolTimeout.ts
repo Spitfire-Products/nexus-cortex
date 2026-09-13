@@ -17,17 +17,32 @@ const SHELL_MAX_TIMEOUT_MS = 600_000; // mirrors ShellTool.MAX_TIMEOUT_MS (reque
 export type ToolUseBlockLike = { name?: string; input?: unknown };
 
 /**
+ * CORTEX_OUTER_TOOL_TIMEOUT_MS (2026-09-13): a FLOOR (ms) for the outer batch deadline. Non-Bash tools
+ * without a limit of their own (CreateArtifactTool persistent launches, ctr-optimization) and Task
+ * sub-agents mid-turn were still killed at the static ~150s (5 TB4.0 kills). With the floor set the
+ * deadline becomes max(computed, floor + grace). Unset / 0 / junk = no floor (behaviour unchanged).
+ */
+export function resolveOuterToolTimeoutFloorMs(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(String(env.CORTEX_OUTER_TOOL_TIMEOUT_MS ?? '').trim() || 0);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+/**
  * R133 HB-SUBAGENT-TIMEOUT (2026-09-13): a Task batch was aborted at this same ~150s, BELOW the sub-agent's
  * own timeout (300s hardcoded then; now derived from the parent's remaining turn budget). The optional
  * `blockTimeoutMs` lookup lets the caller contribute a per-block resolved timeout (Task → resolveSubAgentTimeoutMs)
  * so the batch abort is >= the sub-agent timeout + grace. Not clamped to the shell ceiling — a sub-agent
  * legitimately runs for hours under a long turn deadline.
+ *
+ * `floorMs` (CORTEX_OUTER_TOOL_TIMEOUT_MS, resolved by the caller once per turn) lifts the deadline to at
+ * least floor + grace; 0 / undefined / non-finite = no floor.
  */
 export function resolveOuterToolDeadlineMs(
   toolUseBlocks: ReadonlyArray<ToolUseBlockLike>,
   toolTimeoutMs: number,
   graceMs: number,
   blockTimeoutMs?: (block: ToolUseBlockLike, index: number) => number | undefined,
+  floorMs?: number,
 ): number {
   let maxRequested = 0;
   let maxResolved = 0;
@@ -43,5 +58,6 @@ export function resolveOuterToolDeadlineMs(
     if (Number.isFinite(t) && t > maxRequested) maxRequested = t;
   }
   const honored = Math.max(Math.min(maxRequested, SHELL_MAX_TIMEOUT_MS), maxResolved);
-  return Math.max(toolTimeoutMs, honored) + graceMs;
+  const floor = Number.isFinite(floorMs) && (floorMs as number) > 0 ? (floorMs as number) : 0;
+  return Math.max(toolTimeoutMs, honored, floor) + graceMs;
 }

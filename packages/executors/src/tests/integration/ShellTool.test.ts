@@ -688,8 +688,8 @@ describe('HB-TMUX-FALLBACK (R134): persistentSession without tmux', () => {
     );
     expect(res.success).toBe(true);
     const text = typeof res.llmContent === 'string' ? res.llmContent : JSON.stringify(res);
-    expect(text.split('\n')[0]).toBe(
-      '[WARN] tmux not available: persistentSession downgraded to a detached background process (state/cwd/env will not persist across calls); poll with BashOutput',
+    expect(text.split('\n')[0]).toMatch(
+      /^\[WARN\] tmux not available: persistentSession downgraded to a detached background process \(state\/cwd\/env will not persist across calls\); poll with BashOutput/,
     );
     expect(text).toContain('Background process started with ID: bg-');
     const id = res.metadata?.bash_id as string;

@@ -26,6 +26,21 @@ describe('R133 sub-agent timeout levers are registered the canonical way', () =>
     expect(find({}, 'CORTEX_SUBAGENT_TIMEOUT_MS')!.codeDefault).toBe('300000');
   });
 
+  it('CORTEX_OUTER_TOOL_TIMEOUT_MS (outer batch abort floor) is registered alongside, in the Loop control group', () => {
+    const key = 'CORTEX_OUTER_TOOL_TIMEOUT_MS';
+    const off = find({}, key);
+    expect(off).toBeDefined();
+    expect(off!.source).toBe('code-default');
+    const on = find({ [key]: '600000' }, key);
+    expect(on!.source).toBe('env');
+    expect(on!.effective).toBe('600000');
+    const group = collectEffectiveConfig({}).find((g) => g.levers.some((l) => l.key === key));
+    expect(group?.group).toBe('Loop control');
+    expect((DEFAULT_SETTINGS as Record<string, unknown>)[key]).toBe('');
+    expect(SETTINGS_METADATA.find((m) => m.key === key)).toBeDefined();
+    expect(getRuntimeConfigEntry(key)?.tier).toBe('env');
+  });
+
   it('SettingsSchema declares an empty default + a schema entry, and the runtime registry tiers them as env', () => {
     for (const key of KEYS) {
       expect((DEFAULT_SETTINGS as Record<string, unknown>)[key], key).toBe('');

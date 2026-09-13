@@ -1345,6 +1345,12 @@ the model emitted a tool call the parser did not lift, so the turn ended with it
 whether the DSML parser (HB-DSML-PARSE, canary-passed 09-09) handles the `string="true|false"` attribute form and the `<｜｜DSML｜｜` double-bar
 variant; if not, extend the grammar + canary. Bench signature to grep in trajectories: final assistant text containing `DSML｜｜ calls`.
 
+## HB-OUTER-TOOL-FLOOR — every non-Bash tool is killed by the 150 s outer batch abort (2026-09-13, TB4.0) — BUILT 2026-09-13 → 4.108.10 (R133b)
+Evidence: 5 `Tool execution timeout after 150000ms` in the tb4-flash-v1 server logs (3 Task delegates mid-turn, 2 CreateArtifactTool persistent
+launches). `resolveOuterToolDeadlineMs` honored only Bash's requested timeout. Fix: `CORTEX_OUTER_TOOL_TIMEOUT_MS` floor
+(deadline = max(computed, floor) + 30 s grace; unset = unchanged); Task/Browse already contribute their resolved limit (R133). Bench COMMON: 600000
+under 8-h budgets. Companion: the tmux fallback WARN names `apt-get install -y tmux` as the local remedy; the adapter installs tmux at agent setup.
+
 ## HB-TMUX-FALLBACK — persistent execution hard-requires tmux; tmux-less images lose long-running monitors (2026-09-13, TB4.0 ctr-optimization) — BUILT 2026-09-13 → 4.108.8, validation cell pending (R134)
 Evidence: `CreateArtifactTool.ts:852` throws `tmux is not installed. Persistent mode requires tmux for session management.`; `ShellTool.ts:639-645`
 returns `tmux is not available. Persistent sessions require tmux to be installed.` The ctr-optimization image has no tmux; the model needed a

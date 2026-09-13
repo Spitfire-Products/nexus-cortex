@@ -138,7 +138,7 @@ export class CreateArtifactToolExecutor extends BaseTool<CreateArtifactToolParam
   private artifactDir: string;
   /** HB-TMUX-FALLBACK (R134): one-line prefix when persistent/dev mode runs without tmux. */
   private static readonly TMUX_FALLBACK_WARN =
-    '[WARN] tmux not available: persistent mode downgraded to a detached background process (attach/reconnect and dashboard restart are not available); poll with BashOutput';
+    '[WARN] tmux not available: persistent mode downgraded to a detached background process (attach/reconnect and dashboard restart are not available); poll with BashOutput To restore full persistent mode, install tmux in THIS container from Bash (e.g. apt-get install -y tmux, or apk add tmux) and retry; the missing binary is local to this environment, not a host limit.';
   private workingDirectory: string;
 
   constructor(config: { workingDirectory: string }) {

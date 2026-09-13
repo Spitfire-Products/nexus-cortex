@@ -76,7 +76,7 @@ import { renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBa
 import { resolveCortexStateDir, cortexStatePath } from '../utils/stateDir.js';
 import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig } from '../training/judgeEvidence.js';
 import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, mentorSurfaceTimeoutMs, type MentorCallMeta } from '../training/mentorRole.js';
-import { resolveOuterToolDeadlineMs } from './outerToolTimeout.js';
+import { resolveOuterToolDeadlineMs, resolveOuterToolTimeoutFloorMs } from './outerToolTimeout.js';
 import { resolveSubAgentTimeoutMs } from './subAgentTimeout.js';
 import { resolveTurnDeadlineMs, timeBudgetState, timeBudgetWarnNudge } from './timeBudget.js';
 import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
@@ -2114,6 +2114,7 @@ export class CortexOrchestrator {
     }
     const MAX_TOOL_ITERATIONS = loopDefaults.maxToolIterations;
     const TOOL_TIMEOUT_MS = loopDefaults.toolTimeoutMs;
+    const OUTER_TOOL_TIMEOUT_FLOOR_MS = loopDefaults.outerToolTimeoutFloorMs;
     const MAX_CONSECUTIVE_ERRORS = loopDefaults.maxConsecutiveErrors;
     const MAX_LOOP_REPETITIONS = loopDefaults.maxLoopRepetitions;
     const TOOL_BUDGET_SOFT = loopDefaults.toolBudgetSoft; // R29b brake
@@ -2929,7 +2930,7 @@ export class CortexOrchestrator {
         const abortController = new AbortController();
         // D-A (2026-09-04): outer cap must sit ABOVE the model's REQUESTED Bash timeout, not a static
         // ~150s, or a legit `Bash({ timeout: 250000 })` is killed before ShellTool's own promote-at-deadline.
-        const outerDeadlineMs = resolveOuterToolDeadlineMs(toolUseBlocks, TOOL_TIMEOUT_MS, OUTER_TIMEOUT_GRACE_MS, this.subAgentBlockTimeoutMs);
+        const outerDeadlineMs = resolveOuterToolDeadlineMs(toolUseBlocks, TOOL_TIMEOUT_MS, OUTER_TIMEOUT_GRACE_MS, this.subAgentBlockTimeoutMs, OUTER_TOOL_TIMEOUT_FLOOR_MS);
         const timeoutId = setTimeout(() => {
           console.warn(`[Orchestrator Phase 2.5] Tool execution timeout after ${outerDeadlineMs}ms`);
           abortController.abort();
@@ -4574,6 +4575,7 @@ export class CortexOrchestrator {
     const MAX_CONSECUTIVE_ERRORS = loopDefaults.maxConsecutiveErrors;
     const MAX_LOOP_REPETITIONS = loopDefaults.maxLoopRepetitions;
     const TOOL_TIMEOUT_MS = loopDefaults.toolTimeoutMs;
+    const OUTER_TOOL_TIMEOUT_FLOOR_MS = loopDefaults.outerToolTimeoutFloorMs;
     const TOOL_BUDGET_SOFT = loopDefaults.toolBudgetSoft; // R29b brake
     // R64: TOOL_BUDGET_SOFT <= 0 disables the budget-pressure system entirely
     // (no reminders, no force-synthesis cap). Runaway protection then rests on
@@ -4973,7 +4975,7 @@ export class CortexOrchestrator {
       // see the non-stream site: ShellTool's promote-at-deadline must win the race; 4.90.1)
       const abortController = new AbortController();
       // D-A (2026-09-04): outer cap sits above the requested Bash timeout (see the non-stream site).
-      const outerDeadlineMs = resolveOuterToolDeadlineMs(toolUseBlocks, TOOL_TIMEOUT_MS, OUTER_TIMEOUT_GRACE_MS, this.subAgentBlockTimeoutMs);
+      const outerDeadlineMs = resolveOuterToolDeadlineMs(toolUseBlocks, TOOL_TIMEOUT_MS, OUTER_TIMEOUT_GRACE_MS, this.subAgentBlockTimeoutMs, OUTER_TOOL_TIMEOUT_FLOOR_MS);
       const timeoutId = setTimeout(() => {
         if (this.config.debug) {
           console.warn(`[Orchestrator Streaming] Tool execution timeout after ${outerDeadlineMs}ms`);
@@ -6090,6 +6092,7 @@ export class CortexOrchestrator {
     maxConsecutiveErrors: number;
     toolBudgetSoft: number;
     toolTimeoutMs: number;
+    outerToolTimeoutFloorMs: number;
     maxLoopRepetitions: number;
     turnDeadlineMs: number;
     emptyTurnContinue: boolean;
@@ -6106,6 +6109,8 @@ export class CortexOrchestrator {
       // coercion silently replaced an explicit 0 with 15.
       toolBudgetSoft: Number.isFinite(softRaw) && (softRaw as number) >= 0 ? (softRaw as number) : 400,
       toolTimeoutMs: this.config.loopControl?.toolTimeoutMs ?? 120000,
+      // CORTEX_OUTER_TOOL_TIMEOUT_MS: floor for the outer per-batch abort (0 = no floor, byte-identical).
+      outerToolTimeoutFloorMs: resolveOuterToolTimeoutFloorMs(),
       maxLoopRepetitions: this.config.loopControl?.maxLoopRepetitions ?? 5,
       // #2 wall-clock deadline: opt-in (0 = disabled), env CORTEX_TURN_DEADLINE_MS is the fallback.
       turnDeadlineMs: resolveTurnDeadlineMs(this.config.loopControl?.turnDeadlineMs),
