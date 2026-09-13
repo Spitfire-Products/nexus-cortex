@@ -50,6 +50,13 @@ describe('DecisionStore.recordEvent', () => {
     expect(events[0].detail).toEqual({ tool: 'Bash', matchCount: 5, iteration: 7 });
   });
 
+  it('accepts the R135 poll_steer kind (poll-and-wait steering fired) with its detail', async () => {
+    await store.recordEvent({ sessionId: 's1', kind: 'poll_steer', toolName: 'Bash', detail: { probe: 'curl localhost:5000/api/v1/config', waits: 3, waitSec: 120, iteration: 9 } });
+    const events = await store.readEvents('poll_steer');
+    expect(events).toHaveLength(1);
+    expect(events[0].detail).toEqual({ probe: 'curl localhost:5000/api/v1/config', waits: 3, waitSec: 120, iteration: 9 });
+  });
+
   it('readEvents filters by kind', async () => {
     await store.recordEvent({ sessionId: 's1', kind: 'steering_injected', detail: { kinds: ['budget'] } });
     await store.recordEvent({ sessionId: 's1', kind: 'inaction_nudge' });

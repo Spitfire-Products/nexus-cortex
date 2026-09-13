@@ -9,7 +9,7 @@ import { diceSimilarity, type ToolOutcome } from './toolOutcome.js';
 import { isChunkProgression, type ChunkRead } from './chunkReadProgression.js';
 import { commandIdentityDiffers, commandIdentityDigest, type CommandIdentity } from './commandIdentity.js';
 
-export type LadderAction = 'none' | 'remind' | 'diversify' | 'break';
+export type LadderAction = 'none' | 'remind' | 'diversify' | 'break' | 'poll_steer';
 
 export interface LadderResult {
   action: LadderAction;
@@ -18,9 +18,11 @@ export interface LadderResult {
   family?: string;
   /** Which lens produced a 'neardup' result: 'hash' (approachHash equality) or 'similarity' (HB-LOOP-NEARDUP). */
   trigger?: 'hash' | 'similarity';
+  /** R135 HB-POLL-LOOP: set on a 'poll_steer' result — the probe identity and the consecutive poll streak. */
+  poll?: { probe: string; waits: number; waitSec?: number };
 }
 
-const RANK: Record<LadderAction, number> = { none: 0, remind: 1, diversify: 2, break: 3 };
+const RANK: Record<LadderAction, number> = { none: 0, remind: 1, diversify: 2, break: 3, poll_steer: 1 };
 
 export interface LoopLadderThresholds {
   remindAt?: number;
@@ -76,6 +78,17 @@ export class LoopLadder {
   // gets a range-suffixed key (a NEW approach for the hash lens, poll guard and failure ladder) and
   // skips the similarity lens; an identical/overlapping/backwards range keeps the plain hash key.
   private readonly lastChunk = new Map<string, ChunkRead>();
+  // R135 HB-POLL-LOOP (2026-09-13): an OK poll-and-wait (sleep N; read-only probe — classifyToolOutcome's
+  // outcome.poll) is monitoring, not a stuck approach. It feeds NEITHER near-dup lens NOR the failure
+  // ladder; consecutive same-probe polls are counted here and answered with a 'poll_steer' nudge at the
+  // 3rd (then every 10th): move the wait into a background job + BashOutput. A bare read-only probe that
+  // immediately repeats the previous probe of the same tool is a poll too. Failing polls (curl exit 7)
+  // still climb the failure ladder as before. The old CORTEX_POLL_GUARD busy-wait remind is untouched.
+  private lastPollKey: string | null = null;
+  private pollStreak = 0;
+  private pollWaitSum = 0;
+  private pollWaitN = 0;
+  private readonly lastProbe = new Map<string, string>();
 
   constructor(thresholds: LoopLadderThresholds = {}) {
     this.remindAt = thresholds.remindAt ?? envInt('LOOP_REMIND_AT', 2);
@@ -136,7 +149,15 @@ export class LoopLadder {
     return null;
   }
 
-  observe(toolName: string, outcome: Pick<ToolOutcome, 'status' | 'approachHash' | 'family' | 'approachText' | 'chunkRead' | 'commandIdentity'>): LadderResult {
+  /** R135: true when this observation is a poll (a wait + read-only probe, or a bare probe repeating the tool's previous probe). */
+  private notePoll(toolName: string, poll: ToolOutcome['poll']): boolean {
+    const probe = poll?.probe;
+    const bareRepeat = !!poll && !poll.isPoll && !!probe && this.lastProbe.get(toolName) === probe;
+    if (probe) this.lastProbe.set(toolName, probe); else this.lastProbe.delete(toolName);
+    return !!poll && (poll.isPoll || bareRepeat);
+  }
+
+  observe(toolName: string, outcome: Pick<ToolOutcome, 'status' | 'approachHash' | 'family' | 'approachText' | 'chunkRead' | 'commandIdentity' | 'poll'>): LadderResult {
     let key = `${toolName}\n${outcome.approachHash}`;
     // R136b: script identity (executed file / inline body) is part of the approach for the hash lens and the
     // failure ladder — different scripts under one wrapper are different approaches; no identity = plain key.
@@ -149,6 +170,23 @@ export class LoopLadder {
       this.lastChunk.set(chunkKey, outcome.chunkRead);
       if (progression) key += `\n${outcome.chunkRead.start}-${outcome.chunkRead.end}`;
     }
+    const isPoll = this.notePoll(toolName, outcome.poll);
+    if (isPoll && outcome.status === 'ok') {
+      this.counts.delete(key); // an ok still resets the failure rung of this approach
+      const pkey = `${toolName}\n${outcome.poll!.probe}`;
+      if (pkey === this.lastPollKey) this.pollStreak += 1;
+      else { this.lastPollKey = pkey; this.pollStreak = 1; this.pollWaitSum = 0; this.pollWaitN = 0; }
+      if (typeof outcome.poll!.waitSec === 'number') { this.pollWaitSum += outcome.poll!.waitSec; this.pollWaitN += 1; }
+      if (this.pollStreak === 3 || (this.pollStreak > 3 && this.pollStreak % 10 === 0)) {
+        return {
+          action: 'poll_steer', count: this.pollStreak, family: 'poll',
+          poll: { probe: outcome.poll!.probe!, waits: this.pollStreak, ...(this.pollWaitN ? { waitSec: Math.round(this.pollWaitSum / this.pollWaitN) } : {}) },
+        };
+      }
+      return { action: 'none', count: 0 };
+    }
+    // A non-poll call of the same tool ends the consecutive streak (a failing poll keeps it).
+    if (!isPoll && this.lastPollKey?.startsWith(`${toolName}\n`)) this.lastPollKey = null;
     const hashDup = this.observeNearDup(key);
     const simDup = this.observeSimilar(toolName, progression ? undefined : outcome.approachText, outcome.commandIdentity);
     // the more severe of the two near-dup lenses
@@ -195,6 +233,16 @@ export class LoopLadder {
  * already cover the remind rung; the ladder speaks only when it must.
  */
 export function formatLadderSignal(toolName: string, result: LadderResult): string | null {
+  // R135 HB-POLL-LOOP: a poll-and-wait streak — steer the wait off the turn; the executor stays available.
+  if (result.action === 'poll_steer') {
+    const p = result.poll;
+    const waits = p?.waitSec !== undefined ? `${p.waits} waits of ~${p.waitSec} s on ${p.probe}` : `${p?.waits ?? result.count} repeats of ${p?.probe ?? toolName}`;
+    return (
+      `<system-reminder>\nPolling pattern detected (${waits}). Move the wait off the turn: launch the probe loop with ` +
+      `run_in_background (or \`persistentSession\`) and read it with BashOutput when you need it; keep any foreground wait <= 60 s. ` +
+      `${toolName} stays available.\n</system-reminder>`
+    );
+  }
   // Poll guard (run3 busy-wait class): a remind with family 'poll' is a
   // SUCCEEDING-repeat nudge, not a failure escalation — inject its own text.
   if (result.action === 'remind' && result.family === 'poll') {
@@ -288,12 +336,14 @@ export class ExactRepeatTracker {
   private resultStreak = 0;
   /** A poll was observed and its result has not been reported yet (noteResult never called). */
   private pendingResult = false;
+  /** R135b: the current key is poll-shaped — a POLL_TOOL_NAMES tool, or a Bash poll-and-wait (observe hint). */
+  private lastIsPoll = false;
 
   /** Returns the CONSECUTIVE occurrence count for this exact call. For poll tools
    *  (POLL_TOOL_NAMES) the count is the trailing run of byte-identical stalled results + 1 —
    *  a live process or changing output never accumulates (falls back to the raw consecutive
    *  count when results were never reported via noteResult). */
-  observe(toolName: string, inputHash: string): number {
+  observe(toolName: string, inputHash: string, opts?: { isPoll?: boolean }): number {
     const key = `${toolName}\u0000${inputHash}`;
     if (key === this.lastKey) {
       this.count += 1;
@@ -304,16 +354,18 @@ export class ExactRepeatTracker {
       this.resultStreak = 0;
       this.pendingResult = false;
     }
-    if (!POLL_TOOL_NAMES.has(toolName)) return this.count;
+    // R135b HB-POLL-LOOP: a Bash poll-and-wait (outcome.poll.isPoll, hinted by the caller) gets the same
+    // result-aware count as BashOutput — identical polls with CHANGING results are progress, not a repeat.
+    this.lastIsPoll = POLL_TOOL_NAMES.has(toolName) || opts?.isPoll === true;
+    if (!this.lastIsPoll) return this.count;
     const effective = this.count > 1 && this.pendingResult ? this.count : this.resultStreak + 1;
     this.pendingResult = true;
     return effective;
   }
 
-  /** Report the RESULT of the most recently observed call (poll tools only; other keys are ignored). */
+  /** Report the RESULT of the most recently observed call (poll-shaped keys only; other keys are ignored). */
   noteResult(toolName: string, inputHash: string, content: string, metadata?: Record<string, unknown>): void {
-    if (!POLL_TOOL_NAMES.has(toolName)) return;
-    if (`${toolName}\u0000${inputHash}` !== this.lastKey) return;
+    if (`${toolName}\u0000${inputHash}` !== this.lastKey || !this.lastIsPoll) return;
     this.pendingResult = false;
     if (isPollResultRunning(toolName, content, metadata)) {
       this.lastResultHash = null;
@@ -326,9 +378,9 @@ export class ExactRepeatTracker {
   }
 }
 
-/** Orchestrator glue (both tool loops): feed a batch's results back to the tracker. Non-poll
- *  tools are ignored inside noteResult; the inputHash must be the same JSON.stringify(input)
- *  the observe() call used. */
+/** Orchestrator glue (both tool loops): feed a batch's results back to the tracker. Non-poll keys
+ *  (neither a POLL_TOOL_NAMES tool nor a Bash poll hinted at observe) are ignored inside noteResult;
+ *  the inputHash must be the same JSON.stringify(input) the observe() call used. */
 export function notePollResults(
   tracker: ExactRepeatTracker,
   toolUseBlocks: ReadonlyArray<{ id: string; name: string; input: unknown }>,
@@ -336,7 +388,7 @@ export function notePollResults(
 ): void {
   const inputById = new Map(toolUseBlocks.map((b) => [b.id, b.input]));
   for (const tr of toolResults) {
-    if (!POLL_TOOL_NAMES.has(tr.tool_name)) continue;
+    if (!POLL_TOOL_NAMES.has(tr.tool_name) && tr.tool_name !== 'Bash') continue;
     if (!inputById.has(tr.tool_use_id)) continue;
     tracker.noteResult(tr.tool_name, JSON.stringify(inputById.get(tr.tool_use_id)), tr.content ?? '', tr.metadata);
   }

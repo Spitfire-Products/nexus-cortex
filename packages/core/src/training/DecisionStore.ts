@@ -71,6 +71,7 @@ export type SteeringEventKind =
   | 'deadline_exit_mentor' // deadlineExitMentor: mentor-as-deadline-checkpoint at the warn rung (detail carries {decision: continue|finish|action|retire})
   | 'deadline_exit_break' // deadlineExitMentor decided FINISH/RETIRE → the tool loop broke early for a clean synthesis exit
   | 'loop_tool_block' // CORTEX_LOOP_TOOL_BLOCK: the looping tool's executor was disabled for a turn + a redirect error returned (detail carries {blockNumber, redirectTools})
+  | 'poll_steer' // R135 HB-POLL-LOOP: a poll-and-wait streak got the background+BashOutput steering instead of a loop block (detail carries {probe, waits, waitSec, iteration})
   // Item 10: doctrine-curation provenance (helper-curated CORTEX.md refresh
   // at session-start/lift boundaries; timeout = fail-open to previous doc).
   | 'doctrine_curation'

@@ -1368,7 +1368,7 @@ a hash of inline `-c` code) far above the wrapper (`cd … && timeout N python3 
 different inline bodies are different approaches even when the wrapper is identical. Keep true repeats (same file/body, same args) blockable.
 Validation: replay the mp-checkpoint session — expect 0 loop_tool_block on that sequence; TB2.1 loop set unchanged.
 
-## HB-POLL-LOOP — the loop stack blocks Bash on a legitimate poll-and-wait, stranding a monitoring task (2026-09-13, TB4.0 ctr-optimization) — OPEN (R135)
+## HB-POLL-LOOP — the loop stack blocks Bash on a legitimate poll-and-wait, stranding a monitoring task (2026-09-13, TB4.0 ctr-optimization) — BUILT 2026-09-13 → 4.108.13 (R135 poll_steer + block guards; R135b exact-repeat exemption for polls; failing polls still climb the soft ladder, never hard-blocked)
 Evidence (t4y session + decisions): a 48-sim-hour task (1 sim hour = 6 real minutes) requires setting a config and then observing an eval
 window hours later. The model polled with `sleep 115; curl …/config | python3 -c …` — the only way to wait without a monitor — and the
 near-dup similarity lens scored every poll as a repeat: steering diversity/ladder → `loop_escalation diversify` ×3 → `loop_tool_block

@@ -103,7 +103,8 @@ import { resolveThrashState, resolveThrashConfig } from '../training/thrashDetec
 import { classifyErrorFamily } from '../training/errorFamily.js';
 import { classifyToolOutcome } from '../training/toolOutcome.js';
 import { LoopLadder, formatLadderSignal } from '../training/loopLadder.js';
-import { decideLoopBlock, isLoopBlockTrigger } from './loopToolBlock.js';
+import { detectPollPattern } from '../training/pollPattern.js';
+import { decideLoopBlock, isLoopBlockTrigger, shouldArmLoopBlock, hasAlternativeExecutor } from './loopToolBlock.js';
 import { resolveLoopExitConfig, parseLoopExitVerdict } from '../training/loopExitPlanner.js';
 import { shouldNudgeInaction, formatInactionNudge } from './inactionGuard.js';
 import { applyImageTtlForRequest } from './imageTtl.js';
@@ -2203,6 +2204,7 @@ export class CortexOrchestrator {
     const loopLadder = new LoopLadder();
     let ladderBreak: string | null = null;
     let ladderSignal: string | null = null;
+    let ladderPollSteer = false; // R135: the pending ladderSignal is a poll_steer (banked under its own steering kind)
 
     // Track all tool uses across iterations for response
     const allExecutedToolUses: Array<{ id: string; name: string; input: any }> = [];
@@ -2903,7 +2905,7 @@ export class CortexOrchestrator {
           // CONSECUTIVE byte-identical repeats only (2026-08-26 fix — the old
           // whole-turn occurrence count killed legitimate scattered repeats,
           // e.g. identical `npm test` after each fix; see ExactRepeatTracker).
-          const matchCount = exactRepeatTracker.observe(toolUse.name, inputHash);
+          const matchCount = exactRepeatTracker.observe(toolUse.name, inputHash, this.pollHint(toolUse)); // R135b: Bash polls count only on identical results
 
           if (matchCount >= MAX_LOOP_REPETITIONS) {
             console.warn(
@@ -2963,14 +2965,18 @@ export class CortexOrchestrator {
               if (input === undefined) continue;
               const outcome = classifyToolOutcome(tr.tool_name, input, tr);
               const ladder = loopLadder.observe(tr.tool_name, outcome);
-              this.armLoopBlock(tr.tool_name, ladder);
+              this.armLoopBlock(tr.tool_name, ladder, outcome);
               const sig = formatLadderSignal(tr.tool_name, ladder);
-              if (sig) ladderSignal = sig;
+              if (sig) { ladderSignal = sig; ladderPollSteer = ladder.action === 'poll_steer'; }
               if (ladder.action === 'break') ladderBreak = sig;
               // Observability (backlog item 3): escalations are invisible in
               // the session record (signals inject post-persist) — bank each
               // rung as a decision-store event for the distiller.
-              if (ladder.action !== 'none') {
+              if (ladder.action === 'poll_steer') {
+                // R135: bank the poll steering under its own kind (detail = probe identity + streak), never as a rung.
+                const store = this.getDecisionStore();
+                if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'poll_steer', toolName: tr.tool_name, detail: { probe: ladder.poll?.probe, waits: ladder.poll?.waits, waitSec: ladder.poll?.waitSec, iteration: toolCallIteration } }).catch(() => {});
+              } else if (ladder.action !== 'none') {
                 const store = this.getDecisionStore();
                 if (store) {
                   void store
@@ -3253,7 +3259,7 @@ export class CortexOrchestrator {
             const kinds = [
               budgetSignal ? 'budget' : null,
               diversityWarning ? 'diversity' : null,
-              ladderSignal ? 'ladder' : null,
+              ladderSignal ? (ladderPollSteer ? 'poll_steer' : 'ladder') : null,
               timeSignal ? 'time' : null,
             ].filter(Boolean);
             void store
@@ -4539,6 +4545,7 @@ export class CortexOrchestrator {
     const loopLadder = new LoopLadder();
     let ladderBreak: string | null = null;
     let ladderSignal: string | null = null;
+    let ladderPollSteer = false; // R135: the pending ladderSignal is a poll_steer (banked under its own steering kind)
     const allExecutedToolUses: any[] = [];
     const toolCallCounts = new Map<string, number>();
 
@@ -4959,7 +4966,7 @@ export class CortexOrchestrator {
 
         // CONSECUTIVE byte-identical repeats only (2026-08-26 fix — parity
         // with the sendMessage loop; see ExactRepeatTracker).
-        const matchCount = streamRepeatTracker.observe(toolUse.name, inputHash);
+        const matchCount = streamRepeatTracker.observe(toolUse.name, inputHash, this.pollHint(toolUse)); // R135b: Bash polls count only on identical results
 
         if (matchCount >= MAX_LOOP_REPETITIONS) {
           if (this.config.debug) {
@@ -5014,13 +5021,17 @@ export class CortexOrchestrator {
             if (input === undefined) continue;
             const outcome = classifyToolOutcome(tr.tool_name, input, tr);
             const ladder = loopLadder.observe(tr.tool_name, outcome);
-            this.armLoopBlock(tr.tool_name, ladder);
+            this.armLoopBlock(tr.tool_name, ladder, outcome);
             const sig = formatLadderSignal(tr.tool_name, ladder);
-            if (sig) ladderSignal = sig;
+            if (sig) { ladderSignal = sig; ladderPollSteer = ladder.action === 'poll_steer'; }
             if (ladder.action === 'break') ladderBreak = sig;
             // Observability (backlog item 3): streaming parity — bank each
             // escalation rung as a decision-store event.
-            if (ladder.action !== 'none') {
+            if (ladder.action === 'poll_steer') {
+              // R135: bank the poll steering under its own kind (detail = probe identity + streak), never as a rung.
+              const store = this.getDecisionStore();
+              if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'poll_steer', toolName: tr.tool_name, detail: { probe: ladder.poll?.probe, waits: ladder.poll?.waits, waitSec: ladder.poll?.waitSec, iteration: toolCallIteration } }).catch(() => {});
+            } else if (ladder.action !== 'none') {
               const store = this.getDecisionStore();
               if (store) {
                 void store
@@ -5245,7 +5256,7 @@ export class CortexOrchestrator {
               const kinds = [
                 budgetSignal ? 'budget' : null,
                 diversityWarning ? 'diversity' : null,
-                ladderSignal ? 'ladder' : null,
+                ladderSignal ? (ladderPollSteer ? 'poll_steer' : 'ladder') : null,
               ].filter(Boolean);
               void store
                 .recordEvent({
@@ -9394,17 +9405,49 @@ export class CortexOrchestrator {
     return { success: true, llmContent: hint, metadata: { source: 'mentor-consult', rung, helperModel: this.config.reactiveMentorship?.helperModelId } };
   }
 
+  /** R135b: ExactRepeatTracker hint — a Bash poll-and-wait is result-aware like BashOutput (see detectPollPattern). */
+  private pollHint(toolUse: { name: string; input: any }): { isPoll: boolean } | undefined {
+    if (toolUse.name !== 'Bash' || typeof toolUse.input?.command !== 'string') return undefined;
+    return { isPoll: detectPollPattern(toolUse.input.command).isPoll };
+  }
+
+  /** R135: canonical names of the base tools the model can reach this turn (allowlist + tool profile),
+   *  for the last-executor guard. MCP tools are never executors, so they are not consulted. */
+  private executorToolNames(): string[] {
+    return this.applyBaseToolAllowlist(toolFactory.getAllTools())
+      .map((t) => t.name)
+      .filter((n) => isToolAllowedByProfile(n, (x) => toolFactory.getTool(x)?.discoveryTier, this.effectiveGuardProfile()));
+  }
+
   /** CORTEX_LOOP_TOOL_BLOCK — arm the hard intervention when the ladder flags a
    *  non-converging same-approach loop (diversify/break). If this tool has
    *  already been blocked twice, request a mentor escalation instead of a 3rd
    *  block. Called from the turn loop where the ladder result is computed. */
   private loopBlockTrigger: string = ''; // HB-LOOP-NEARDUP: which lens armed the block (ladder | neardup-hash | neardup-similarity)
-  private armLoopBlock(toolName: string, ladder: { action: string; family?: string; trigger?: string }): void {
+  private armLoopBlock(
+    toolName: string,
+    ladder: { action: string; family?: string; trigger?: string },
+    outcome?: { status?: string; poll?: { isPoll: boolean } },
+  ): void {
     if ((process.env.CORTEX_LOOP_TOOL_BLOCK ?? '').trim().toLowerCase() !== 'true') return;
     if (!isLoopBlockTrigger(ladder.action)) return;
+    // R135 HB-POLL-LOOP: a poll-and-wait outcome never arms the block, even when a lens fired on it.
+    if (!shouldArmLoopBlock(ladder, outcome)) {
+      if (this.config.debug) console.log(`[LoopBlock] ${toolName} ${ladder.action} on a poll-and-wait outcome - not arming (R135)`);
+      return;
+    }
     this.loopBlockTrigger = ladder.family === 'neardup' ? `neardup-${ladder.trigger ?? 'hash'}` : 'ladder';
     if (this.loopBlockEscalate) return; // already pending
     const prior = this.loopBlockCounts.get(toolName) ?? 0;
+    // R135 last-executor guard: never disable the ONLY execution tool in the current tool set (Bash with
+    // no Task/Skill alternative) — the ladder's diversify/break reminder (already injected this turn) is
+    // the remind-level steering instead. Banked so the downgrade is visible to the distiller.
+    if (!hasAlternativeExecutor(toolName, this.executorToolNames())) {
+      const store = this.getDecisionStore();
+      if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'steering_injected', toolName, detail: { kind: 'loop_block_downgraded', reason: 'last-executor', trigger: this.loopBlockTrigger, wouldBeBlock: prior + 1 } }).catch(() => {});
+      if (this.config.debug) console.log(`[LoopBlock] ${toolName} is the only executor in the tool set - downgraded block #${prior + 1} to the ladder reminder (R135)`);
+      return;
+    }
     const decision = decideLoopBlock(toolName, prior);
     if (decision.action === 'escalate') {
       // Arm the tool AND the escalation flag: the next call to this tool

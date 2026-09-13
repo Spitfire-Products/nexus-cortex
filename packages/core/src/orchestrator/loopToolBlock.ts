@@ -83,3 +83,25 @@ export function decideLoopBlock(tool: string, priorBlocks: number): LoopBlockDec
 export function isLoopBlockTrigger(action: string | undefined): boolean {
   return action === 'diversify' || action === 'break';
 }
+
+/** R135 HB-POLL-LOOP: the execution tools. Blocking one of them must leave another in the tool set —
+ *  "last executor removed" was the damage mode in both R135 (poll loop) and R136 (script-shape). */
+export const EXECUTOR_TOOLS: ReadonlySet<string> = new Set(['Bash', 'Task', 'Skill']);
+
+/** Whether a ladder result may arm the hard block for the outcome that produced it: a diversify/break
+ *  rung, and NEVER a poll-and-wait outcome (any status) even when a near-dup lens fired on it. */
+export function shouldArmLoopBlock(
+  ladder: { action: string },
+  outcome?: { status?: string; poll?: { isPoll: boolean } },
+): boolean {
+  if (!isLoopBlockTrigger(ladder.action)) return false;
+  if (outcome?.poll?.isPoll) return false;
+  return true;
+}
+
+/** True unless `tool` is an executor and no OTHER executor is in `availableTools` (then a block would
+ *  remove the only way to run anything — downgrade to the soft reminder instead). */
+export function hasAlternativeExecutor(tool: string, availableTools: ReadonlyArray<string>): boolean {
+  if (!EXECUTOR_TOOLS.has(tool)) return true;
+  return availableTools.some((n) => n !== tool && EXECUTOR_TOOLS.has(n));
+}

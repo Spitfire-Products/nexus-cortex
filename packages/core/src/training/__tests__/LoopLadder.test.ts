@@ -542,3 +542,154 @@ d136('R136 HB-NEARDUP-SCRIPT-SHAPE — different scripts under one shell wrapper
     ex136(fired.trigger).toBe('similarity');
   });
 });
+
+// R135 HB-POLL-LOOP (2026-09-13): a poll-and-wait (sleep N; read-only probe) is MONITORING, not a stuck
+// approach. Ok polls bypass both near-dup lenses and the failure ladder and get a `poll_steer` nudge
+// (3rd consecutive same-probe poll, then every 10th); failing polls still climb the failure ladder.
+import { describe as d135, it as it135, expect as ex135, beforeEach as be135, afterEach as ae135 } from 'vitest';
+import { LoopLadder as LL135, formatLadderSignal as fmt135 } from '../loopLadder.js';
+import { classifyToolOutcome as classify135 } from '../toolOutcome.js';
+
+d135('R135 HB-POLL-LOOP — poll-and-wait never feeds the loop lenses; poll_steer instead of block', () => {
+  const prev = process.env.CORTEX_NEARDUP_BREAKER;
+  be135(() => {
+    process.env.CORTEX_NEARDUP_BREAKER = 'true';
+    delete process.env.CORTEX_POLL_GUARD;
+    process.env.NEARDUP_SIM_AT = '3'; // sensitive lenses: any leak would fire
+    process.env.NEARDUP_NUDGE_AT = '3';
+  });
+  ae135(() => {
+    if (prev === undefined) delete process.env.CORTEX_NEARDUP_BREAKER; else process.env.CORTEX_NEARDUP_BREAKER = prev;
+    delete process.env.NEARDUP_SIM_AT; delete process.env.NEARDUP_NUDGE_AT;
+  });
+  const CFG = 'http://localhost:5000/api/v1/config';
+  const run = (command: string, exitCode = 0) => classify135('Bash', { command }, { content: exitCode ? 'curl: (7) Failed to connect' : '{"eval_window":3}', metadata: { exitCode } });
+  // The ctr-optimization poll sequence: varied waits + pipe consumers, ONE probe.
+  const POLLS = [
+    `sleep 115; curl -s ${CFG} | python3 -c "import sys,json;print(json.load(sys.stdin)['eval_window'])"`,
+    `sleep 130; curl -s ${CFG}`,
+    `sleep 115; echo t1; sleep 115; curl -s ${CFG}`,
+    `sleep 120; curl -s ${CFG} | python3 -c "import sys,json;print(json.load(sys.stdin)['ctr'])"`,
+    `sleep 130; curl -s ${CFG}`,
+    `sleep 115; curl -s ${CFG}`,
+  ];
+
+  it135('6 ok polls of the same probe: no near-dup trigger, no failure rung, poll_steer at the 3rd', () => {
+    const l = new LL135();
+    const results = POLLS.map((c) => l.observe('Bash', run(c)));
+    ex135(results.some((r) => r.family === 'neardup')).toBe(false);
+    ex135(results.some((r) => r.action === 'remind' || r.action === 'diversify' || r.action === 'break')).toBe(false);
+    ex135(results.map((r) => r.action)).toEqual(['none', 'none', 'poll_steer', 'none', 'none', 'none']);
+    const steer = results[2]!;
+    ex135(steer.family).toBe('poll');
+    ex135(steer.count).toBe(3);
+    ex135(steer.poll?.probe).toContain('localhost:5000/api/v1/config');
+    ex135(steer.poll?.waits).toBe(3);
+    ex135(steer.poll?.waitSec).toBeGreaterThan(100);
+  });
+
+  it135('poll_steer fires again every 10th consecutive poll (3, 10, 20)', () => {
+    const l = new LL135();
+    const fired: number[] = [];
+    for (let i = 1; i <= 20; i++) if (l.observe('Bash', run(POLLS[i % POLLS.length]!)).action === 'poll_steer') fired.push(i);
+    ex135(fired).toEqual([3, 10, 20]);
+  });
+
+  it135('the same 6 polls with ERROR results still climb the failure ladder (remind 2 / diversify 4 / break 6)', () => {
+    delete process.env.NEARDUP_SIM_AT; delete process.env.NEARDUP_NUDGE_AT; // default lenses: the failure ladder is what is under test
+    const l = new LL135();
+    const same = [`sleep 115; curl -s ${CFG}`, `sleep 130; curl -s ${CFG}`, `sleep 120; curl -s ${CFG}`, `sleep 115; curl -s ${CFG}`, `sleep 130; curl -s ${CFG}`, `sleep 115; curl -s ${CFG}`];
+    const actions = same.map((c) => l.observe('Bash', run(c, 7)).action);
+    ex135(actions).toEqual(['none', 'remind', 'remind', 'diversify', 'diversify', 'break']);
+  });
+
+  it135('a repeated BARE read-only probe (no wait) after the same probe is a poll too', () => {
+    const l = new LL135();
+    const results = Array.from({ length: 6 }, () => l.observe('Bash', run(`curl -s ${CFG}`)));
+    ex135(results.some((r) => r.family === 'neardup')).toBe(false); // would fire at 3 via the hash lens without R135
+    ex135(results.some((r) => r.action === 'poll_steer')).toBe(true);
+  });
+
+  it135('polls interleaved with real work do not blunt R136/R136b: the grind still crosses its rungs', () => {
+    const l = new LL135();
+    const body = "import re, math; data = open('text.gcode').read(); lines = data.splitlines(); pts = [ln for ln in lines if ln.startswith('G1')]; print(len(pts))";
+    let sim: any = null;
+    for (let i = 0; i < 6; i++) {
+      l.observe('Bash', run(`sleep 30; curl -s ${CFG}`));
+      const r = l.observe('Bash', run(`cd /app && python3 -c "${body} # v${i}"`));
+      if (r.family === 'neardup' && !sim) sim = r;
+    }
+    ex135(sim).not.toBeNull();
+    ex135(sim.trigger).toBe('similarity');
+    delete process.env.NEARDUP_SIM_AT; // hash-lens half (as R136b): at a rank tie the similarity lens would win the trigger label
+    const l2 = new LL135();
+    let hash: any = null;
+    for (let i = 0; i < 4; i++) {
+      l2.observe('Bash', run(`sleep 30; curl -s ${CFG}`));
+      const r = l2.observe('Bash', run('ls -la /app'));
+      if (r.trigger === 'hash' && !hash) hash = r;
+    }
+    ex135(hash).not.toBeNull();
+  });
+
+  it135('formatLadderSignal renders the poll_steer text (background + BashOutput, Bash stays available)', () => {
+    const text = fmt135('Bash', { action: 'poll_steer', count: 3, family: 'poll', poll: { probe: 'curl localhost:5000/api/v1/config', waits: 3, waitSec: 120 } });
+    ex135(text).toContain('Polling pattern detected (3 waits of ~120 s on curl localhost:5000/api/v1/config)');
+    ex135(text).toContain('run_in_background');
+    ex135(text).toContain('BashOutput');
+    ex135(text).toContain('Bash stays available');
+  });
+});
+
+// R135b (2026-09-13): a Bash POLL (outcome.poll.isPoll) is exempt from the exact-repeat killer like BashOutput —
+// byte-identical polls count toward MAX_LOOP_REPETITIONS only when the RESULT is byte-identical to the previous
+// poll's result (a changing probe result is progress). Non-poll Bash keeps the plain consecutive count.
+import { describe as d135b, it as it135b, expect as ex135b } from 'vitest';
+import { ExactRepeatTracker as ERT135b, notePollResults as note135b } from '../loopLadder.js';
+
+d135b('ExactRepeatTracker Bash poll exemption (R135b)', () => {
+  const poll = { command: 'sleep 115; curl -s http://localhost:5000/api/v1/config' };
+  const pollInput = JSON.stringify(poll);
+
+  it135b('6 identical polls with CHANGING results never trip', () => {
+    const t = new ERT135b();
+    let max = 0;
+    for (let i = 0; i < 6; i++) {
+      max = Math.max(max, t.observe('Bash', pollInput, { isPoll: true }));
+      t.noteResult('Bash', pollInput, `{"eval_window":${i}}`);
+    }
+    ex135b(max).toBeLessThan(6);
+    ex135b(max).toBeLessThanOrEqual(2);
+  });
+
+  it135b('6 identical polls with byte-identical results trip at 6', () => {
+    const t = new ERT135b();
+    let last = 0;
+    for (let i = 0; i < 6; i++) {
+      last = t.observe('Bash', pollInput, { isPoll: true });
+      t.noteResult('Bash', pollInput, '{"eval_window":3}');
+    }
+    ex135b(last).toBe(6);
+  });
+
+  it135b('6 identical NON-poll Bash commands trip as before (no result consultation)', () => {
+    const t = new ERT135b();
+    const input = JSON.stringify({ command: 'python3 train.py' });
+    let last = 0;
+    for (let i = 0; i < 6; i++) {
+      last = t.observe('Bash', input);
+      t.noteResult('Bash', input, `epoch ${i}`); // ignored for non-poll Bash
+    }
+    ex135b(last).toBe(6);
+  });
+
+  it135b('notePollResults feeds Bash poll results through the orchestrator glue', () => {
+    const t = new ERT135b();
+    let max = 0;
+    for (let i = 0; i < 6; i++) {
+      max = Math.max(max, t.observe('Bash', pollInput, { isPoll: true }));
+      note135b(t, [{ id: `u${i}`, name: 'Bash', input: poll }], [{ tool_use_id: `u${i}`, tool_name: 'Bash', content: `tick ${i}` }]);
+    }
+    ex135b(max).toBeLessThanOrEqual(2);
+  });
+});

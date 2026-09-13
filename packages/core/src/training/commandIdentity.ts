@@ -60,8 +60,8 @@ function normalizeText(text: string, cap = 400): string {
   return text.replace(/\d+/g, '#').replace(/\s+/g, ' ').trim().slice(0, cap);
 }
 
-/** Split on unquoted `&&`, `||`, `;`, `|`, newline. Quotes ('…', "…", backslash) are respected. */
-function splitSegments(cmd: string): string[] {
+/** Split on unquoted `&&`, `||`, `;`, `|`, newline. Quotes ('…', "…", backslash) are respected. (Shared with pollPattern.) */
+export function splitSegments(cmd: string): string[] {
   const out: string[] = [];
   let cur = '';
   let quote: string | null = null;
