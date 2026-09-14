@@ -4,8 +4,28 @@
 
 export * from './SchemaValidator.js';
 export * from './FileUtils.js';
-export { TmuxManager, TMUX_SEND_KEYS_MAX_CHARS, needsPasteBuffer } from './TmuxManager.js';
-export type { TmuxSessionMetadata, TmuxExecFn, TmuxExecResult, TmuxSendOptions } from './TmuxManager.js';
+export {
+  TmuxManager,
+  TMUX_SEND_KEYS_MAX_CHARS,
+  TMUX_INSTALL_STEP_TIMEOUT_MS,
+  TMUX_DEFAULT_HISTORY_LIMIT,
+  TMUX_DEFAULT_PANE_SIZE,
+  needsPasteBuffer,
+  readTmuxAutoInstallLever,
+  readTmuxHistoryLimit,
+  readTmuxPaneSize,
+} from './TmuxManager.js';
+export type {
+  TmuxSessionMetadata,
+  TmuxExecFn,
+  TmuxExecResult,
+  TmuxExecOptions,
+  TmuxSendOptions,
+  TmuxInstallExecFn,
+  TmuxInstallExecResult,
+  TmuxEnsureOptions,
+  TmuxEnsureResult,
+} from './TmuxManager.js';
 export {
   HerdrTerminalBackend,
   TmuxTerminalBackend,

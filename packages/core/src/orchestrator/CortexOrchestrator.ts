@@ -71,7 +71,7 @@ import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLift
 import { sliceReadFile, decideSliceBlock, sliceReadStep } from './sliceBlock.js';
 import type { ChunkRead } from '../training/chunkReadProgression.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
-import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage, memoryIndexLine, upsertMemoryIndex, scaleEstimateToRequestView, approxCharsOf, anchoredRequestEstimate } from './compactionResume.js';
+import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage, memoryIndexLine, upsertMemoryIndex, scaleEstimateToRequestView, approxCharsOf, anchoredRequestEstimate, resolveCompactionHandoffQA, resolveHandoffQAMaxQuestions, runHandoffQA, type HandoffQAResult } from './compactionResume.js';
 import { renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBand, resolveRearmBand } from './compactionResumeTemplate.js';
 import { resolveCortexStateDir, cortexStatePath } from '../utils/stateDir.js';
 import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig } from '../training/judgeEvidence.js';
@@ -524,7 +524,7 @@ export class CortexOrchestrator {
   private turnNumber: number = 0;
   /** HB-COMPACTION-RESUME v2: pressure-rung checkpoint state (once per band; reused at compaction). */
   private lastCheckpointBand = 0;
-  private lastResumeMemory: { text: string; tokensAt: number; turn: number; helperModelId?: string; cost: number; covered: WeakSet<object> } | null = null;
+  private lastResumeMemory: { text: string; tokensAt: number; turn: number; helperModelId?: string; cost: number; covered: WeakSet<object>; handoffQA?: HandoffQAResult } | null = null;
   private pinnedTaskText = '';
   /** 4.108.4: session start — the mtime floor for the non-git workspace delta at compaction. */
   private readonly sessionStartMs = Date.now();
@@ -6856,6 +6856,32 @@ export class CortexOrchestrator {
     } catch { /* best-effort */ }
   }
 
+  /**
+   * R143 HB-HANDOFF-QA-SUMMARY: the Terminus-style gap-question round on a freshly written resume memory. Dark behind
+   * CORTEX_COMPACTION_HANDOFF_QA (default off = the memory is returned byte-identical, no helper call). Two bounded helper
+   * calls through the same summarizeForResume rail (helper budget/timeout levers apply): (1) NO history — task + memory +
+   * workspace state -> questions; (2) the covered history -> answers. Never throws; a failure keeps the plain memory and
+   * the row banks handoffQA.error.
+   */
+  private async runCompactionHandoffQA(summary: string, covering: any[], model: ModelConfig, threshold: number, workspaceState?: string): Promise<{ text: string; handoffQA?: HandoffQAResult }> {
+    try {
+      const enabled = resolveCompactionHandoffQA();
+      if (!enabled) return { text: summary };
+      const summarize = (messages: any[], m: any, tgt: number, prompt: string) => (this.helperMiddleware as any).summarizeForResume(messages, m, tgt, prompt);
+      const r = await runHandoffQA({
+        enabled, summarize, model, summary, history: covering,
+        task: resolveTaskText(this.messageHistory, this.pinnedTaskText),
+        workspaceState: workspaceState ?? this.buildCompactionWorkspaceState(),
+        maxQuestions: resolveHandoffQAMaxQuestions(),
+        answerTargetTokens: Math.min(1500, resumeMemoryTargetTokens(threshold)),
+      });
+      if (this.config.debug && r.handoffQA) console.log(`[Orchestrator Context] handoff QA: ${JSON.stringify(r.handoffQA)}`);
+      return r;
+    } catch (e: any) {
+      return { text: summary, handoffQA: { questions: 0, answered: 0, notRecorded: 0, cost: 0, error: String(e?.message ?? e) } };
+    }
+  }
+
   /** 4.108.4: the working tree as it is RIGHT NOW — git state when the workspace is a repo (forced past the per-turn lever), else
    *  the mtime-based file delta since session start. Read from disk at compaction; capped so it cannot crowd the kept history. */
   private buildCompactionWorkspaceState(): string {
@@ -6959,17 +6985,22 @@ export class CortexOrchestrator {
         this.lastCheckpointBand = band;
         try {
           const tgt = resumeMemoryTargetTokens(threshold);
+          const covering = this.convertToCanonicalMessages([...this.messageHistory]);
           const r = await (this.helperMiddleware as any).summarizeForResume(
-            this.convertToCanonicalMessages([...this.messageHistory]), model, tgt, renderResumeMemoryPrompt('{{CONVERSATION}}', tgt));
-          const text = String(r?.summary ?? '');
+            covering, model, tgt, renderResumeMemoryPrompt('{{CONVERSATION}}', tgt));
+          let text = String(r?.summary ?? '');
+          let handoffQA: HandoffQAResult | undefined;
           if (text.trim()) {
+            // R143: the gap-question round (dark lever) — the memory gains a GAPS (Q/A) section before it is stored/reused.
+            ({ text, handoffQA } = await this.runCompactionHandoffQA(text, covering, model, threshold));
             this.lastResumeMemory = { text, tokensAt: currentTokens, turn: this.turnNumber, helperModelId: r?.helperModelId, cost: Number(r?.cost ?? 0),
-              covered: new WeakSet<object>(this.messageHistory as unknown as object[]) };
+              covered: new WeakSet<object>(this.messageHistory as unknown as object[]), handoffQA };
             this.writeResumeMemoryFile(text, `checkpoint band ${band} (${currentTokens}/${threshold} tokens, turn ${this.turnNumber})`);
             const store = this.getDecisionStore();
             if (store) void store.recordEvent({
               sessionId: this.currentSessionId ?? 'unknown', kind: 'compaction',
-              detail: { mode: 'checkpoint', band, turn: this.turnNumber, tokens: currentTokens, threshold, estimateSource, anchorTokens, resumeChars: text.length, helperModelId: r?.helperModelId ?? null, cost: Number(r?.cost ?? 0) },
+              detail: { mode: 'checkpoint', band, turn: this.turnNumber, tokens: currentTokens, threshold, estimateSource, anchorTokens, resumeChars: text.length, helperModelId: r?.helperModelId ?? null, cost: Number(r?.cost ?? 0),
+                        ...(handoffQA ? { handoffQA } : {}) },
             }).catch(() => {});
           }
         } catch (e: any) {
@@ -7032,26 +7063,33 @@ export class CortexOrchestrator {
       let resumeHelper: string | undefined;
       let resumeCost = 0;
       let memorySource: 'checkpoint' | 'dropped' | 'rolled' | 'none' = 'none';
+      let handoffQA: HandoffQAResult | undefined;
+      // 4.108.4 workspace state (git / mtime delta read from disk NOW) — computed before the summary so the R143 gap-question round can see it.
+      const workspaceState = compactionResume && dropped.length > 0 ? this.buildCompactionWorkspaceState() : '';
       // v3 (4.108.3): reuse the checkpoint only if it already covered every message being dropped. The v2 token-distance test went
       // negative after the first compaction and replayed one stale checkpoint forever (the hardened live proof: 27 compactions, 0 fresh memories).
       if (compactionResume && this.lastResumeMemory && coversAll(this.lastResumeMemory.covered, dropped)) {
         resumeText = this.lastResumeMemory.text; resumeHelper = this.lastResumeMemory.helperModelId; resumeCost = 0; memorySource = 'checkpoint';
+        handoffQA = this.lastResumeMemory.handoffQA; // the checkpoint's own QA round, if the lever ran it
       } else if (compactionResume && dropped.length > 0 && this.config.useHelperModels && typeof (this.helperMiddleware as any)?.summarizeForResume === 'function') {
         try {
           const tgt = resumeMemoryTargetTokens(threshold);
           // v3: roll the prior memory forward — the helper summarizes [prior memory, ...newly dropped] into ONE memory.
           const prior = this.lastResumeMemory;
           const seed = prior && prior.text.trim() ? [buildRollingSeedMessage(prior.text)] : [];
+          const covering = this.convertToCanonicalMessages([...seed, ...dropped] as any);
           const r = await (this.helperMiddleware as any).summarizeForResume(
-            this.convertToCanonicalMessages([...seed, ...dropped] as any), model, tgt, renderResumeMemoryPrompt('{{CONVERSATION}}', tgt));
+            covering, model, tgt, renderResumeMemoryPrompt('{{CONVERSATION}}', tgt));
           resumeText = String(r?.summary ?? '');
           resumeHelper = r?.helperModelId;
           resumeCost = Number(r?.cost ?? 0);
           memorySource = resumeText.trim() ? (seed.length ? 'rolled' : 'dropped') : 'none';
           if (resumeText.trim()) {
+            // R143: gap-question round on the rolled/fresh memory (same covered set the summarizer saw; dark lever).
+            ({ text: resumeText, handoffQA } = await this.runCompactionHandoffQA(resumeText, covering, model, threshold, workspaceState));
             const covered = prior?.covered ?? new WeakSet<object>();
             for (const m of dropped) if (m && typeof m === 'object') covered.add(m as object);
-            this.lastResumeMemory = { text: resumeText, tokensAt: currentTokens, turn: this.turnNumber, helperModelId: resumeHelper, cost: resumeCost, covered };
+            this.lastResumeMemory = { text: resumeText, tokensAt: currentTokens, turn: this.turnNumber, helperModelId: resumeHelper, cost: resumeCost, covered, handoffQA };
           }
         } catch (e: any) {
           console.error('[Orchestrator Context] resume memory summary failed (degrading to task-only reminder):', e?.message ?? e);
@@ -7065,7 +7103,6 @@ export class CortexOrchestrator {
         // v3: re-arm the checkpoint rung relative to the post-compaction level so a fresh whole-conversation memory is written
         // again as the context climbs (v2 left lastCheckpointBand at its pre-compaction high-water mark → the rung never re-fired).
         this.lastCheckpointBand = resolveRearmBand(newTokenCount, threshold);
-        const workspaceState = this.buildCompactionWorkspaceState();
         let sessionPath: string | undefined;
         try { sessionPath = this.currentSessionId ? this.historyStore.getSessionPath(this.currentSessionId) : undefined; } catch { sessionPath = undefined; }
         const text = buildCompactionResumeReminder({
@@ -7091,7 +7128,7 @@ export class CortexOrchestrator {
           detail: { mode: 'proactive', turn: this.turnNumber, tokensBefore: currentTokens, tokensAfter: newTokenCount, estimateSource, anchorTokens,
                     dropped: dropped.length, kept: selectedMessages.length, resumeChars: resumeText.length,
                     helperModelId: resumeHelper ?? null, cost: resumeCost, taskPinned: taskText.length > 0, memorySource,
-                    workspaceStateChars: workspaceState.length, sessionPath: sessionPath ?? null },
+                    workspaceStateChars: workspaceState.length, sessionPath: sessionPath ?? null, ...(handoffQA ? { handoffQA } : {}) },
         }).catch(() => {});
         if (this.config.debug) console.log(`[Orchestrator Context] resume reminder injected (${resumeText.length} chars memory, task pinned=${taskText.length > 0})`);
       }

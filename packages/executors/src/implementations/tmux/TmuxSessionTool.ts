@@ -8,7 +8,7 @@
 import { BaseTool, type ToolResult } from '../../base/index.js';
 import { SchemaValidator } from '../../utils/SchemaValidator.js';
 import { TmuxManager, SessionPersistence, SessionLock, TmuxCapture } from '../../utils/index.js';
-import { resolveTerminalBackend, TmuxTerminalBackend, type TerminalBackend } from '../../utils/TerminalBackend.js';
+import { resolveTerminalBackend, TmuxTerminalBackend, truncateMiddle, type TerminalBackend } from '../../utils/TerminalBackend.js';
 import { TmuxViewServer } from './TmuxViewServer.js';
 import { SandboxViewServer } from '../addon/SandboxViewServer.js';
 import type { ExecutorConfig } from '../../base/ToolRegistry.js';
@@ -46,6 +46,9 @@ export interface TmuxSessionParams {
    * Capture entire scrollback history (optional for 'capture' action)
    */
   captureHistory?: boolean;
+
+  /** R141: return only the last N lines of a capture (capture action). */
+  lines?: number;
 
   /**
    * Include visual screenshot (optional for 'snapshot' action)
@@ -118,6 +121,10 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
             type: 'boolean',
             description: 'Capture entire scrollback history (optional for capture action)',
             default: false
+          },
+          lines: {
+            type: 'number',
+            description: 'Return only the last N lines of the capture (capture action). Every capture is capped at 10 KB with the middle omitted, so ask for the lines you need.'
           },
           includeScreenshot: {
             type: 'boolean',
@@ -197,6 +204,13 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
         break;
 
       case 'capture':
+        if (params.lines !== undefined && (!Number.isInteger(params.lines) || params.lines <= 0)) {
+          return 'lines must be a positive integer';
+        }
+        if (!params.sessionId) {
+          return 'sessionId is required for capture action';
+        }
+        break;
       case 'kill':
       case 'snapshot':
         if (!params.sessionId) {
@@ -271,8 +285,8 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
       }
     }
 
-    // Check tmux availability
-    if (!(await this.tmux.isAvailable())) {
+    // Check tmux availability (R138: the first request may install it; lever CORTEX_TMUX_AUTO_INSTALL)
+    if (!(await this.tmux.ensureTmux()).available) {
       return this.createErrorResult(
         'tmux is not installed. Please install tmux to use persistent terminal sessions.\n\n' +
         'Installation:\n' +
@@ -400,7 +414,7 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
         const id = resolve(params.sessionId!);
         if (!(await exists(id))) return this.createErrorResult(`Session '${params.sessionId}' does not exist`);
         updateOutput?.(`Capturing output from herdr pane ${id}...\n`);
-        const output = await backend.read(id, { history: params.captureHistory });
+        const output = await backend.read(id, { history: params.captureHistory, lines: params.lines });
         return this.createSuccessResult(
           `${info}\n` +
           `Captured output from herdr pane '${id}':\n\n` +
@@ -550,8 +564,11 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
 
     updateOutput?.(`Capturing output from session ${sessionId}...\n`);
 
-    const startLine = params.captureHistory ? -3000 : undefined;
-    const output = await this.tmux.capturePane(sessionId, startLine);
+    // R141: `lines` = the last N lines; every capture is 10 KB middle-omitted.
+    const startLine = params.captureHistory ? -3000 : params.lines ? -params.lines : undefined;
+    let output = await this.tmux.capturePane(sessionId, startLine);
+    if (params.lines) output = output.split('\n').slice(-params.lines).join('\n');
+    output = truncateMiddle(output);
 
     // Update lastUsed timestamp
     await this.persistence.touchSession(sessionId);
@@ -679,8 +696,8 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
           waitTime: 1500
         });
 
-        // Also capture text for comparison
-        const textOutput = await this.tmux.capturePane(sessionId);
+        // Also capture text for comparison (R141: capped)
+        const textOutput = truncateMiddle(await this.tmux.capturePane(sessionId));
 
         // Update lastUsed timestamp
         await this.persistence.touchSession(sessionId);
@@ -703,8 +720,8 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
         updateOutput?.(`Visual screenshot failed: ${error.message}\n`);
         updateOutput?.('Falling back to text capture...\n');
 
-        // Fall back to text capture
-        const output = await this.tmux.capturePane(sessionId);
+        // Fall back to text capture (R141: capped)
+        const output = truncateMiddle(await this.tmux.capturePane(sessionId));
         await this.persistence.touchSession(sessionId);
 
         return this.createSuccessResult(
@@ -715,8 +732,8 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
         );
       }
     } else {
-      // Text-only snapshot
-      const output = await this.tmux.capturePane(sessionId);
+      // Text-only snapshot (R141: capped)
+      const output = truncateMiddle(await this.tmux.capturePane(sessionId));
       await this.persistence.touchSession(sessionId);
 
       return this.createSuccessResult(

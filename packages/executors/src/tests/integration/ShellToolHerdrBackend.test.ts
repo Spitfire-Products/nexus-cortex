@@ -147,6 +147,7 @@ describe('R146: persistentSession backend routing', () => {
   it('uses the tmux path when herdr is absent', async () => {
     const tmux = TmuxManager.getInstance();
     vi.spyOn(tmux, 'isAvailable').mockResolvedValue(true);
+    vi.spyOn(tmux, 'waitForChannel').mockResolvedValue({ signaled: true }); // R139: no real wait-for
     vi.spyOn(tmux, 'sessionExists').mockResolvedValue(false);
     vi.spyOn(tmux, 'createSession').mockImplementation(async (id) => id || 'x');
     let sent = '';
@@ -165,6 +166,7 @@ describe('R146: persistentSession backend routing', () => {
 
   it('degrades to the R134 detached fallback when both herdr and tmux are absent', async () => {
     vi.spyOn(TmuxManager.getInstance(), 'isAvailable').mockResolvedValue(false);
+    vi.spyOn(TmuxManager.getInstance(), 'ensureTmux').mockResolvedValue({ available: false, tried: [] });
     const t = mkTool();
     const res = await t.execute({ command: 'echo detached-path', persistentSession: true }, new AbortController().signal);
     expect(res.success).toBe(true);

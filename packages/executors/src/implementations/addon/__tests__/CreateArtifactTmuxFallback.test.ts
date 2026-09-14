@@ -24,6 +24,7 @@ describe('HB-TMUX-FALLBACK (R134): CreateArtifactTool persistent mode without tm
 
   it('creates a detached process artifact with the [WARN] line instead of throwing', async () => {
     vi.spyOn(TmuxManager.getInstance(), 'isAvailable').mockResolvedValue(false);
+    vi.spyOn(TmuxManager.getInstance(), 'ensureTmux').mockResolvedValue({ available: false, tried: [] });
     const createSession = vi.spyOn(TmuxManager.getInstance(), 'createSession');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'artifact-tmux-fallback-'));
     dirs.push(dir);

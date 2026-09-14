@@ -18,7 +18,7 @@ import { spawn } from 'child_process';
 import { BaseTool, type ToolResult } from '../../base/index.js';
 import { SchemaValidator } from '../../utils/SchemaValidator.js';
 import { TmuxManager, SessionPersistence } from '../../utils/index.js';
-import { resolveTerminalBackend, registerPaneOutputHandle, outputAfterCommandEcho, type TerminalBackend } from '../../utils/TerminalBackend.js';
+import { resolveTerminalBackend, registerPaneOutputHandle, outputAfterCommandEcho, truncateMiddle, type TerminalBackend } from '../../utils/TerminalBackend.js';
 import { stripAnsi } from '../../utils/TextUtils.js';
 import { BackgroundProcessRegistry } from './BackgroundProcessRegistry.js';
 import type { ExecutorConfig } from '../../base/ToolRegistry.js';
@@ -95,7 +95,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
   private static readonly MAX_TIMEOUT_MS = 600000; // 10 minutes — hard ceiling, requested timeouts are clamped
   private static readonly OUTPUT_UPDATE_INTERVAL_MS = 1000; // 1 second
   private static readonly MAX_OUTPUT_LENGTH = 30000; // ~30KB max to prevent context overflow
-  private static readonly PERSISTENT_POLL_INTERVAL_MS = 400; // sentinel poll cadence for tmux sessions
+  private static readonly PERSISTENT_POLL_INTERVAL_MS = 400; // screen poll cadence — R142 wait_for regex only (R139: completion uses tmux wait-for)
   /** HB-TMUX-FALLBACK (R134): one-line prefix when persistentSession degrades to run_in_background. */
   private static readonly TMUX_FALLBACK_WARN =
     '[WARN] tmux not available: persistentSession downgraded to a detached background process (state/cwd/env will not persist across calls); poll with BashOutput To restore full persistent mode, install tmux in THIS container from Bash (e.g. apt-get install -y tmux, or apk add tmux) and retry; the missing binary is local to this environment, not a host limit.';
@@ -678,11 +678,13 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
       return this.executeInHerdrSession(params, signal, backend, startTime, updateOutput);
     }
 
-    // Check tmux availability. HB-TMUX-FALLBACK (R134): task images without tmux
-    // used to lose long-running monitors entirely (hard error). Degrade to the
-    // run_in_background machinery instead (same BackgroundProcessRegistry handle,
-    // BashOutput-pollable); keep the error only if that fallback itself fails.
-    if (!(await this.tmux.isAvailable())) {
+    // Check tmux availability. HB-TMUX-SELF-INSTALL (R138): the first persistent request
+    // may install tmux (package manager / static URL, lever CORTEX_TMUX_AUTO_INSTALL).
+    // HB-TMUX-FALLBACK (R134): task images without tmux used to lose long-running
+    // monitors entirely (hard error). Degrade to the run_in_background machinery instead
+    // (same BackgroundProcessRegistry handle, BashOutput-pollable); keep the error only
+    // if that fallback itself fails.
+    if (!(await this.tmux.ensureTmux()).available) {
       const fallback = this.executeInBackground(params, signal);
       if (fallback.success) {
         return {
@@ -739,41 +741,63 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
       // R140: TmuxManager.sendKeys delivers the text argv-verbatim (paste buffer for
       // multi-line/oversize input), so `$?` needs no host-shell escaping; a multi-line
       // command gets the sentinel on its OWN line (never glued to a heredoc terminator).
+      // HB-TMUX-WAIT-FOR (R139): the command also signals its own tmux wait-for channel
+      // after the sentinel; a blocking run waits on that channel under the cap (Terminus
+      // send_keys(block)) — no screen poll. The absolute tmux path survives a session PATH
+      // without the binary (R138 static drop).
       updateOutput?.(`Sending command: ${params.command}\n`);
-      const sentinel = `__CORTEX_DONE_${crypto.randomBytes(4).toString('hex')}`;
-      const marker = `printf '${sentinel}_%d\\n' $?`;
+      const token = crypto.randomBytes(4).toString('hex');
+      const sentinel = `__CORTEX_DONE_${token}`;
+      const channel = `cortex-wf-${token}`;
+      const marker = `printf '${sentinel}_%d\\n' $?; ${this.tmux.getBinaryPath()} wait-for -S ${channel}`;
       await this.tmux.sendKeys(
         sessionId,
         params.command.includes('\n') ? `${params.command}\n${marker}` : `${params.command}; ${marker}`,
       );
 
-      // Poll pane until the sentinel appears, wait_for matches (R142), or the timeout elapses
       const timeout = this.resolveTimeoutMs(params);
-      const deadline = Date.now() + timeout;
       const startLine = params.captureHistory ? -3000 : undefined;
-      const waitRe = params.wait_for ? new RegExp(params.wait_for) : null;
       let output = '';
       let completed = false;
       let waitMatched = false;
       let sessionExitCode: number | null = null;
-      while (Date.now() < deadline && !signal.aborted) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, ShellTool.PERSISTENT_POLL_INTERVAL_MS),
-        );
-        output = await this.tmux.capturePane(sessionId, startLine);
-        const parsed = ShellTool.parseSentinel(output, sentinel);
-        if (parsed.done) {
-          completed = true;
-          sessionExitCode = parsed.exitCode;
-          break;
+      if (params.wait_for) {
+        // R142: a wait_for regex needs the screen — poll until the sentinel, a match, or the cap.
+        const deadline = Date.now() + timeout;
+        const waitRe = new RegExp(params.wait_for);
+        while (Date.now() < deadline && !signal.aborted) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, ShellTool.PERSISTENT_POLL_INTERVAL_MS),
+          );
+          output = await this.tmux.capturePane(sessionId, startLine);
+          const parsed = ShellTool.parseSentinel(output, sentinel);
+          if (parsed.done) {
+            completed = true;
+            sessionExitCode = parsed.exitCode;
+            break;
+          }
+          // Only text AFTER the echoed command line counts (stale screen text never matches).
+          if (waitRe.test(ShellTool.stripSentinelLines(outputAfterCommandEcho(output, token), sentinel))) {
+            waitMatched = true;
+            break;
+          }
         }
-        // R142: only text AFTER the echoed command line counts (stale screen text never matches).
-        if (waitRe && waitRe.test(ShellTool.stripSentinelLines(outputAfterCommandEcho(output, sentinel.slice('__CORTEX_DONE_'.length)), sentinel))) {
-          waitMatched = true;
-          break;
+      } else {
+        const waited = await this.waitForChannelOrAbort(channel, timeout, signal);
+        if (!signal.aborted) {
+          output = await this.tmux.capturePane(sessionId, startLine);
+          let parsed = ShellTool.parseSentinel(output, sentinel);
+          if (waited.signaled && !parsed.done && !params.captureHistory) {
+            // The sentinel scrolled past the visible pane: read the scrollback once.
+            output = await this.tmux.capturePane(sessionId, -3000);
+            parsed = ShellTool.parseSentinel(output, sentinel);
+          }
+          completed = parsed.done || waited.signaled;
+          sessionExitCode = parsed.exitCode;
         }
       }
-      const cleanedOutput = ShellTool.stripSentinelLines(output, sentinel);
+      // R141: tmux captures are 10 KB middle-omitted (command echo + result survive).
+      const cleanedOutput = truncateMiddle(ShellTool.stripSentinelLines(output, sentinel));
 
       const statusLine = completed
         ? `Command completed with exit code ${sessionExitCode}.`
@@ -805,6 +829,18 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
       }
       return this.createErrorResult(`Failed to execute in persistent session: ${error.message}`);
     }
+  }
+
+  /** R139: block on the tmux wait-for channel, but return early (unsignaled) when the turn aborts. */
+  private waitForChannelOrAbort(channel: string, timeoutMs: number, signal: AbortSignal): Promise<{ signaled: boolean }> {
+    if (signal.aborted) return Promise.resolve({ signaled: false });
+    return new Promise((resolve) => {
+      const onAbort = () => resolve({ signaled: false });
+      signal.addEventListener('abort', onAbort, { once: true });
+      this.tmux.waitForChannel(channel, timeoutMs)
+        .then(resolve, () => resolve({ signaled: false }))
+        .finally(() => signal.removeEventListener('abort', onAbort));
+    });
   }
 
   /**

@@ -874,7 +874,8 @@ if __name__ == '__main__':
     } catch (error: any) {
       console.warn(`[WARN] terminal backend resolution failed (${error?.message ?? error}); using the tmux/detached path`);
     }
-    const tmuxAvailable = herdrBackend ? false : await tmuxManager.isAvailable();
+    // R138: the first persistent artifact may install tmux (lever CORTEX_TMUX_AUTO_INSTALL).
+    const tmuxAvailable = herdrBackend ? false : (await tmuxManager.ensureTmux()).available;
     let tmuxSessionId: string | undefined;
     let herdrPaneId: string | undefined;
     let detachedProcess: ChildProcess | undefined;

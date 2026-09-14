@@ -1382,24 +1382,24 @@ nexus-cortex is NOT a recognized agent today (Claude Code, Codex, Grok CLI, … 
   restarts, so monitors do not die with the session and a stuck lane can be taken over instead of re-bootstrapped.
 Order: R144 → R145 → R146 → R147 → R148. Not installed anywhere yet (2026-09-13); binary install from herdr.dev (or `cargo install herdr`).
 
-## HB-TERMINUS-LESSONS — six mechanics from the Terminal-Bench reference agent (harbor `agents/terminus_2`, read 2026-09-13) — OPEN (R138-R143)
+## HB-TERMINUS-LESSONS — six mechanics from the Terminal-Bench reference agent (harbor `agents/terminus_2`, read 2026-09-13) — ALL BUILT 2026-09-13 (R140/R142 → 4.108.18; R138/R139/R141/R143 → 4.108.19; R143 dark pending A/B)
 Source: `tmux_session.py` + `terminus_2.py` in the harbor 0.23.0 install on the bench executor. Ours: `packages/executors/src/utils/TmuxManager.ts`,
 `implementations/tmux/TmuxSessionTool.ts`, `implementations/execution/ShellTool.ts` (persistentSession), `core/.../compactionResume.ts`.
-- **R138 HB-TMUX-SELF-INSTALL** — Terminus `_attempt_tmux_installation` / `_get_combined_install_command` (apt/apk/yum) / `_build_tmux_from_source`,
+- **R138 HB-TMUX-SELF-INSTALL** (BUILT 2026-09-13 → 4.108.19) — Terminus `_attempt_tmux_installation` / `_get_combined_install_command` (apt/apk/yum) / `_build_tmux_from_source`,
   each step time-bounded. Ours only checks `isAvailable()`. On the first persistent-mode request: package manager → static build → R134 degrade.
-- **R139 HB-TMUX-WAIT-FOR** — Terminus `send_keys(block, min_timeout_sec, max_timeout_sec=180)`: blocking sends append `tmux wait-for` and the
+- **R139 HB-TMUX-WAIT-FOR** (BUILT 2026-09-13 → 4.108.19) — Terminus `send_keys(block, min_timeout_sec, max_timeout_sec=180)`: blocking sends append `tmux wait-for` and the
   harness waits on `tmux wait done` under a hard cap; non-blocking sends settle for `min_timeout_sec`. Ours polls a sentinel string every 400 ms
   (`ShellTool.ts:90/:697`). Replace the sentinel with the wait-for channel; keep the cap; report "still running" honestly.
 - **R140 HB-TMUX-PASTE-BUFFER** (BUILT 2026-09-13 → 4.108.18) — Terminus batches keys to the send-keys size limit and pastes oversize input via `load-buffer`/`paste-buffer`
   (`tmux_session.py:661-687`). Ours is one `send-keys` per command (`TmuxManager.sendKeys`); long heredocs / `python3 -c` bodies are exactly
   what TB4.0 sessions send (rs-archive-clone's heredoc "unexpected end of file"). Port batching + paste fallback.
-- **R141 HB-TMUX-CAPTURE-CAP** — Terminus raises `history-limit`, captures a fixed 160x40 pane and truncates each capture to 10 KB with the
+- **R141 HB-TMUX-CAPTURE-CAP** (BUILT 2026-09-13 → 4.108.19) — Terminus raises `history-limit`, captures a fixed 160x40 pane and truncates each capture to 10 KB with the
   MIDDLE omitted (`_limit_output_length`) so command echo + result survive. Our `TmuxSessionTool` capture/captureHistory has no cap; ShellTool's
   30 KB head/tail cap does not apply to tmux captures. Add middle-omission + pane size/lines parameters.
 - **R142 HB-WAIT-PRIMITIVE** (BUILT 2026-09-13 → 4.108.18: BashOutput wait_seconds/wait_for, Bash persistent wait_for, TmuxSession wait) — Terminus `{"keystrokes": "", "duration": N}` = a side-effect-free wait; its timeout template says "it may still
   be running — do nothing". Give our model the same: `BashOutput`/persistent session `wait_seconds` (or a `Wait` action) so "wait N then show
   the screen" is never a repeated command (closes the R135/R137 class at the source; `poll_steer` should name it).
-- **R143 HB-HANDOFF-QA-SUMMARY** — Terminus `_summarize` (terminus_2.py:865+): summary → a FRESH sub-agent asks what is missing given the
+- **R143 HB-HANDOFF-QA-SUMMARY** (BUILT 2026-09-13 → 4.108.19) — Terminus `_summarize` (terminus_2.py:865+): summary → a FRESH sub-agent asks what is missing given the
   task + current screen → a full-context sub-agent answers → history := [system, summary+questions, answers]. Ours writes one checkpoint memory.
   A/B the question/answer round on the compaction proof task (one extra helper call per compaction).
 Not copied on purpose: screen-scraping as the only I/O, unbounded episodes, no loop guards.

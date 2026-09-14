@@ -104,6 +104,7 @@ describe('resolveTerminalBackend order + lever', () => {
 
   it('falls to detached when neither herdr nor tmux is available', async () => {
     vi.spyOn(TmuxManager.getInstance(), 'isAvailable').mockResolvedValue(false);
+    vi.spyOn(TmuxManager.getInstance(), 'ensureTmux').mockResolvedValue({ available: false, tried: [] });
     const { exec } = makeExec(() => ok(listJson()));
     const backend = await resolveTerminalBackend({ PATH: '/nonexistent' }, { exec });
     expect(backend.kind).toBe('detached');
@@ -367,8 +368,8 @@ describe('TmuxTerminalBackend paste path (R140 HB-TMUX-PASTE-BUFFER)', () => {
       return `$ cat <<EOF > f.txt\n> line\n> EOF\nline\n__CORTEX_DONE_${token}_0__\n$ `;
     });
     const res = await backend.run('s1', 'cat <<EOF > f.txt\nline\nEOF', { block: true, timeoutMs: 3000 });
-    expect(pasted).toMatch(/^cat <<EOF > f\.txt\nline\nEOF\nprintf '__CORTEX_DONE_[0-9a-f]+_%d__\\n' \$\?$/);
-    expect(calls.map((c) => c[0])).toEqual(['-V', 'load-buffer', 'paste-buffer', 'send-keys']);
+    expect(pasted).toMatch(/^cat <<EOF > f\.txt\nline\nEOF\nprintf '__CORTEX_DONE_[0-9a-f]+_%d__\\n' \$\?; \S*tmux wait-for -S cortex-wf-[0-9a-f]+$/);
+    expect(calls.map((c) => c[0])).toEqual(['-V', 'load-buffer', 'paste-buffer', 'send-keys', 'wait-for']); // R139: channel wait after Enter
     expect(calls[2].slice(0, 3)).toEqual(['paste-buffer', '-d', '-p']);
     expect(calls[3]).toEqual(['send-keys', '-t', 's1', 'Enter']);
     expect(res.completed).toBe(true);
@@ -384,7 +385,7 @@ describe('TmuxTerminalBackend paste path (R140 HB-TMUX-PASTE-BUFFER)', () => {
     await backend.run('s1', 'true', { block: false });
     expect(calls.map((c) => c[0])).toEqual(['send-keys', 'send-keys']);
     expect(calls[0].slice(0, 4)).toEqual(['send-keys', '-t', 's1', '-l']);
-    expect(calls[0][4]).toMatch(/^true; printf '__CORTEX_DONE_[0-9a-f]+_%d__\\n' \$\?$/);
+    expect(calls[0][4]).toMatch(/^true; printf '__CORTEX_DONE_[0-9a-f]+_%d__\\n' \$\?; \S*tmux wait-for -S cortex-wf-[0-9a-f]+$/);
   });
 
   it('sendText is Enter-less (bracketed paste for multi-line); sendKeys sends tmux key names raw', async () => {
@@ -414,4 +415,90 @@ describe('DetachedTerminalBackend (BackgroundProcessRegistry)', () => {
     expect(reg.hasProcess(id)).toBe(false);
     await expect(backend.sendKeys(id, ['C-c'])).rejects.toThrow(/detached/);
   }, 10000);
+});
+
+// HB-TMUX-WAIT-FOR (R139) + HB-TMUX-CAPTURE-CAP (R141) on the tmux backend: blocking runs
+// signal a tmux wait-for channel after the exit-code sentinel and block on `wait-for`
+// under the cap (no 400 ms poll loop); cap expiry = timedOut, process left running; the
+// R142 waitFor regex keeps the poll; every read is capped at 10 KB middle-omitted.
+describe('TmuxTerminalBackend wait-for + capture cap (R139/R141)', () => {
+  const mk = (opts: { waitKilled?: boolean } = {}) => {
+    const calls: { args: string[]; timeoutMs?: number }[] = [];
+    const tmux = TmuxManager.createWithExec(async (_bin, args, o) => {
+      calls.push({ args, timeoutMs: o?.timeoutMs });
+      if (args[0] === '-V') return { stdout: 'tmux 3.5a', stderr: '' };
+      if (args[0] === 'wait-for' && opts.waitKilled) { const e: any = new Error('killed'); e.killed = true; throw e; }
+      return { stdout: '', stderr: '' };
+    });
+    return { tmux, calls, backend: new TmuxTerminalBackend(tmux) };
+  };
+  const tokenOf = (sent: string) => sent.match(/__CORTEX_DONE_([0-9a-f]+)_/)![1];
+
+  it('blocking run: command ends with `; <tmux> wait-for -S cortex-wf-<token>`, waits on the channel with the cap, captures ONCE, parses rc', async () => {
+    const { tmux, calls, backend } = mk();
+    let sent = '';
+    vi.spyOn(tmux, 'sendKeys').mockImplementation(async (_id, text) => { sent = text; });
+    const cap = vi.spyOn(tmux, 'capturePane').mockImplementation(async () => `$ false; ...\nsome output\n__CORTEX_DONE_${tokenOf(sent)}_3__\n$ `);
+    const res = await backend.run('s1', 'false', { block: true, timeoutMs: 7000 });
+    const token = tokenOf(sent);
+    expect(sent).toMatch(new RegExp(`^false; printf '__CORTEX_DONE_${token}_%d__\\\\n' \\$\\?; \\S*tmux wait-for -S cortex-wf-${token}$`));
+    const wait = calls.find((c) => c.args[0] === 'wait-for')!;
+    expect(wait.args).toEqual(['wait-for', `cortex-wf-${token}`]);
+    expect(wait.timeoutMs).toBe(7000);
+    expect(cap).toHaveBeenCalledTimes(1);
+    expect(res).toMatchObject({ completed: true, exitCode: 3 });
+    expect(res.timedOut).toBeFalsy();
+    expect(res.output).toContain('some output');
+    expect(res.output).not.toContain('__CORTEX_DONE_');
+  });
+
+  it('cap expiry: timedOut:true, completed:false, output = current screen, nothing killed', async () => {
+    const { tmux, calls, backend } = mk({ waitKilled: true });
+    vi.spyOn(tmux, 'sendKeys').mockResolvedValue();
+    vi.spyOn(tmux, 'capturePane').mockResolvedValue('$ sleep 999; ...\nstill going');
+    const kill = vi.spyOn(tmux, 'killSession');
+    const raw = vi.spyOn(tmux, 'sendRawKeys');
+    const res = await backend.run('s1', 'sleep 999', { block: true, timeoutMs: 1000 });
+    expect(res).toMatchObject({ completed: false, timedOut: true, exitCode: null });
+    expect(res.output).toContain('still going');
+    expect(calls.find((c) => c.args[0] === 'wait-for')!.timeoutMs).toBe(1000);
+    expect(kill).not.toHaveBeenCalled();
+    expect(raw).not.toHaveBeenCalled();
+  });
+
+  it('non-blocking run submits and returns without waiting on the channel', async () => {
+    const { tmux, calls, backend } = mk();
+    vi.spyOn(tmux, 'sendKeys').mockResolvedValue();
+    const res = await backend.run('s1', 'node server.js', { block: false });
+    expect(res).toEqual({ output: '', completed: false, exitCode: null });
+    expect(calls.some((c) => c.args[0] === 'wait-for')).toBe(false);
+  });
+
+  it('R142 waitFor regex keeps the screen poll (no wait-for call) and still reports waitMatched', async () => {
+    const { tmux, calls, backend } = mk();
+    let sent = '';
+    vi.spyOn(tmux, 'sendKeys').mockImplementation(async (_id, text) => { sent = text; });
+    let n = 0;
+    vi.spyOn(tmux, 'capturePane').mockImplementation(async () =>
+      `$ node server.js; printf '__CORTEX_DONE_${tokenOf(sent)}_%d__\\n' $?; tmux wait-for -S x\nstarting${++n >= 2 ? '\nlistening on port 8080' : ''}`);
+    const res = await backend.run('s1', 'node server.js', { block: true, timeoutMs: 5000, waitFor: { regex: 'listening on port \\d+' } });
+    expect(res).toMatchObject({ completed: false, waitMatched: true });
+    expect(n).toBeGreaterThanOrEqual(2);
+    expect(calls.some((c) => c.args[0] === 'wait-for')).toBe(false);
+  });
+
+  it('read caps every capture at 10 KB middle-omitted and honors lines as a tail', async () => {
+    const { tmux, backend } = mk();
+    const big = Array.from({ length: 400 }, (_, i) => `line-${i} ` + 'x'.repeat(40)).join('\n');
+    const cap = vi.spyOn(tmux, 'capturePane').mockResolvedValue(big);
+    const out = await backend.read('s1');
+    expect(out.length).toBeLessThanOrEqual(HERDR_READ_CAP_CHARS + 80);
+    expect(out.startsWith('line-0 ')).toBe(true);
+    expect(out.endsWith('x'.repeat(40))).toBe(true);
+    expect(out).toMatch(/\.\.\. \[\d+ chars omitted\] \.\.\./);
+    const tail = await backend.read('s1', { lines: 3 });
+    expect(cap).toHaveBeenLastCalledWith('s1', -3);
+    expect(tail.split('\n')).toHaveLength(3);
+    expect(tail.startsWith('line-397 ')).toBe(true);
+  });
 });

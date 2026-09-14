@@ -151,3 +151,103 @@ describe('R132 HB-COMPACTION-ESTIMATE — usage-anchored request estimate', () =
       .toEqual({ tokens: 900_000, source: 'heuristic' });
   });
 });
+
+// R143 HB-HANDOFF-QA-SUMMARY (2026-09-14): the Terminus `_summarize` gap-question round, dark behind CORTEX_COMPACTION_HANDOFF_QA.
+import {
+  resolveCompactionHandoffQA, resolveHandoffQAMaxQuestions, buildGapQuestionPrompt, parseGapQuestions,
+  buildGapAnswerPrompt, parseGapAnswers, mergeHandoffMemory, runHandoffQA, HANDOFF_GAPS_HEADER,
+} from '../compactionResume';
+
+describe('R143 HB-HANDOFF-QA-SUMMARY: gap-question round on the resume memory', () => {
+  it('lever is DARK by default; only explicit true/1/on enables; max questions defaults to 6 and is clamped', () => {
+    expect(resolveCompactionHandoffQA({})).toBe(false);
+    expect(resolveCompactionHandoffQA({ CORTEX_COMPACTION_HANDOFF_QA: '' })).toBe(false);
+    expect(resolveCompactionHandoffQA({ CORTEX_COMPACTION_HANDOFF_QA: 'false' })).toBe(false);
+    expect(resolveCompactionHandoffQA({ CORTEX_COMPACTION_HANDOFF_QA: 'true' })).toBe(true);
+    expect(resolveCompactionHandoffQA({ CORTEX_COMPACTION_HANDOFF_QA: ' ON ' })).toBe(true);
+    expect(resolveCompactionHandoffQA({ CORTEX_COMPACTION_HANDOFF_QA: '1' })).toBe(true);
+    expect(resolveHandoffQAMaxQuestions({})).toBe(6);
+    expect(resolveHandoffQAMaxQuestions({ CORTEX_COMPACTION_HANDOFF_QA_MAX_QUESTIONS: '3' })).toBe(3);
+    expect(resolveHandoffQAMaxQuestions({ CORTEX_COMPACTION_HANDOFF_QA_MAX_QUESTIONS: 'junk' })).toBe(6);
+    expect(resolveHandoffQAMaxQuestions({ CORTEX_COMPACTION_HANDOFF_QA_MAX_QUESTIONS: '0' })).toBe(6);
+    expect(resolveHandoffQAMaxQuestions({ CORTEX_COMPACTION_HANDOFF_QA_MAX_QUESTIONS: '500' })).toBe(20);
+  });
+  it('gap-question prompt is history-free (no {{CONVERSATION}}), carries task + summary + workspace state + the cap', () => {
+    const p = buildGapQuestionPrompt({ task: 'Build /app/widget', summary: '## 1. STATE — DONE\n- wrote /app/a.py', workspaceState: 'M app/a.py', maxQuestions: 4 });
+    expect(p).not.toContain('{{CONVERSATION}}');
+    expect(p).toContain('Build /app/widget'); expect(p).toContain('wrote /app/a.py'); expect(p).toContain('M app/a.py');
+    expect(p).toContain('at most 4'); expect(p).toContain('NONE');
+    const q = buildGapQuestionPrompt({ task: 't', summary: 's', maxQuestions: 2 });
+    expect(q).not.toContain('WORKSPACE STATE');
+  });
+  it('parseGapQuestions: numbered/bulleted lines only, markers + bold stripped, junk dropped, deduped, capped, NONE → []', () => {
+    const text = 'Here are the questions the next agent needs:\n1. What is the exact path of the config file?\n2) **Which port** did the server bind to?\n- What was the verbatim error from pytest?\n\nShort?\n3. What is the exact path of the config file?\nThanks.';
+    expect(parseGapQuestions(text, 6)).toEqual([
+      'What is the exact path of the config file?',
+      'Which port did the server bind to?',
+      'What was the verbatim error from pytest?',
+    ]);
+    expect(parseGapQuestions(text, 2)).toHaveLength(2);
+    expect(parseGapQuestions('NONE', 6)).toEqual([]);
+    expect(parseGapQuestions('', 6)).toEqual([]);
+    expect(parseGapQuestions('The summary looks complete to me.', 6)).toEqual([]);
+  });
+  it('answer prompt numbers the questions, demands verbatim values + "not recorded", and carries the history placeholder', () => {
+    const p = buildGapAnswerPrompt({ questions: ['Which port?', 'Which file?'] });
+    expect(p).toContain('{{CONVERSATION}}'); expect(p).toContain('1. Which port?'); expect(p).toContain('2. Which file?');
+    expect(p).toContain('not recorded'); expect(p.toLowerCase()).toContain('verbatim');
+  });
+  it('parseGapAnswers aligns answers to the question count and pads the missing ones as "not recorded"', () => {
+    expect(parseGapAnswers('1. 8080\n2. not recorded\n', 3)).toEqual(['8080', 'not recorded', 'not recorded']);
+    expect(parseGapAnswers('A1: /app/x.py\nA2: Not Recorded (never printed)', 2)).toEqual(['/app/x.py', 'Not Recorded (never printed)']);
+    expect(parseGapAnswers('1. line one\ncontinued here\n2. two', 2)).toEqual(['line one\ncontinued here', 'two']);
+    expect(parseGapAnswers('', 2)).toEqual(['not recorded', 'not recorded']);
+  });
+  it('mergeHandoffMemory appends one GAPS (Q/A) section after the template sections and replaces a stale one', () => {
+    const summary = '## 0. WORK ORDER\nx\n\n## 6. CURRENT WORK\nlast step\n';
+    const m = mergeHandoffMemory(summary, ['Which port?', 'Which file?'], ['8080', 'not recorded']);
+    expect(m.startsWith('## 0. WORK ORDER\nx\n\n## 6. CURRENT WORK\nlast step')).toBe(true);
+    expect(m).toContain(HANDOFF_GAPS_HEADER);
+    expect(m).toContain('Q1: Which port?\nA1: 8080'); expect(m).toContain('Q2: Which file?\nA2: not recorded');
+    expect(m.split(HANDOFF_GAPS_HEADER)).toHaveLength(2);
+    const again = mergeHandoffMemory(m, ['New?'], ['yes']);
+    expect(again.split(HANDOFF_GAPS_HEADER)).toHaveLength(2); expect(again).not.toContain('Q1: Which port?'); expect(again).toContain('Q1: New?');
+    expect(mergeHandoffMemory(summary, [], [])).toBe(summary);
+  });
+  it('runHandoffQA: lever OFF = byte-identical memory and zero helper calls', async () => {
+    const calls: any[] = [];
+    const summarize = async (...a: any[]) => { calls.push(a); return { summary: 'ignored', cost: 1 }; };
+    const r = await runHandoffQA({ enabled: false, summarize, model: {}, task: 't', summary: 'MEMORY', history: [user('h')], maxQuestions: 6, answerTargetTokens: 500 });
+    expect(r.text).toBe('MEMORY'); expect(r.handoffQA).toBeUndefined(); expect(calls).toHaveLength(0);
+  });
+  it('runHandoffQA: lever ON = fresh history-free question call, then an answer call WITH the covered history; GAPS section + counts banked', async () => {
+    const calls: any[] = [];
+    const history = [user('task'), assistant('bound port 8080')];
+    const summarize = async (messages: any[], _model: any, tgt: number, prompt: string) => {
+      calls.push({ messages, tgt, prompt });
+      if (calls.length === 1) return { summary: '1. Which port did the server bind to?\n2. Where is the log file?\n3. What was the test exit code?', helperModelId: 'h', cost: 0.001 };
+      return { summary: '1. 8080\n2. not recorded\n3. 0', helperModelId: 'h', cost: 0.002 };
+    };
+    const r = await runHandoffQA({ enabled: true, summarize, model: { id: 'm' }, task: 'Run the server', summary: 'MEMORY', workspaceState: 'M a.py', history, maxQuestions: 6, answerTargetTokens: 500 });
+    expect(calls).toHaveLength(2);
+    expect(calls[0].messages).toEqual([]); expect(calls[0].prompt).toContain('Run the server'); expect(calls[0].prompt).toContain('M a.py'); expect(calls[0].prompt).not.toContain('{{CONVERSATION}}');
+    expect(calls[1].messages).toBe(history); expect(calls[1].prompt).toContain('{{CONVERSATION}}'); expect(calls[1].prompt).toContain('1. Which port did the server bind to?'); expect(calls[1].tgt).toBe(500);
+    expect(r.text.startsWith('MEMORY')).toBe(true); expect(r.text).toContain(HANDOFF_GAPS_HEADER); expect(r.text).toContain('A1: 8080'); expect(r.text).toContain('A2: not recorded');
+    expect(r.handoffQA).toEqual({ questions: 3, answered: 2, notRecorded: 1, cost: 0.003, helperModelId: 'h' });
+  });
+  it('runHandoffQA: no questions (NONE) = memory unchanged, one call, questions 0', async () => {
+    let n = 0;
+    const summarize = async () => { n++; return { summary: 'NONE', cost: 0.001 }; };
+    const r = await runHandoffQA({ enabled: true, summarize, model: {}, task: 't', summary: 'MEMORY', history: [], maxQuestions: 6, answerTargetTokens: 500 });
+    expect(n).toBe(1); expect(r.text).toBe('MEMORY'); expect(r.handoffQA).toEqual({ questions: 0, answered: 0, notRecorded: 0, cost: 0.001, helperModelId: undefined });
+  });
+  it('runHandoffQA: a helper failure keeps the plain memory and banks the error — never throws', async () => {
+    const summarize = async () => { throw new Error('helper 503'); };
+    const r = await runHandoffQA({ enabled: true, summarize, model: {}, task: 't', summary: 'MEMORY', history: [], maxQuestions: 6, answerTargetTokens: 500 });
+    expect(r.text).toBe('MEMORY'); expect(r.handoffQA).toEqual({ questions: 0, answered: 0, notRecorded: 0, cost: 0, error: 'helper 503' });
+    let n = 0;
+    const flaky = async () => { n++; if (n === 2) throw new Error('answer step died'); return { summary: '1. Which port?', cost: 0.5 }; };
+    const r2 = await runHandoffQA({ enabled: true, summarize: flaky, model: {}, task: 't', summary: 'MEMORY', history: [], maxQuestions: 6, answerTargetTokens: 500 });
+    expect(r2.text).toBe('MEMORY'); expect(r2.handoffQA).toEqual({ questions: 1, answered: 0, notRecorded: 0, cost: 0.5, error: 'answer step died' });
+  });
+});

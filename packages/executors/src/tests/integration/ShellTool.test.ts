@@ -680,6 +680,7 @@ describe('HB-TMUX-FALLBACK (R134): persistentSession without tmux', () => {
 
   it('degrades to a detached background process with the [WARN] line and a bash_id', async () => {
     vi.spyOn(TmuxManager.getInstance(), 'isAvailable').mockResolvedValue(false);
+    vi.spyOn(TmuxManager.getInstance(), 'ensureTmux').mockResolvedValue({ available: false, tried: [] });
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shell-tmux-fallback-'));
     const t = new ShellTool({ workingDirectory: dir } as ExecutorConfig);
     const res = await t.execute(
@@ -706,6 +707,7 @@ describe('HB-TMUX-FALLBACK (R134): persistentSession without tmux', () => {
 
   it('still errors when tmux is missing AND the background fallback cannot spawn', async () => {
     vi.spyOn(TmuxManager.getInstance(), 'isAvailable').mockResolvedValue(false);
+    vi.spyOn(TmuxManager.getInstance(), 'ensureTmux').mockResolvedValue({ available: false, tried: [] });
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shell-tmux-fallback-'));
     const t = new ShellTool({ workingDirectory: dir } as ExecutorConfig);
     vi.spyOn(t as any, 'executeInBackground').mockReturnValue({
@@ -791,5 +793,70 @@ d142('R142 HB-WAIT-PRIMITIVE: wait_for on the tmux persistent path', () => {
     const res = await tool.execute({ command: 'true', persistentSession: true, wait_for: '(' }, new AbortController().signal);
     ex142(res.success).toBe(false);
     ex142(res.error).toMatch(/wait_for/);
+  });
+});
+
+// HB-TMUX-WAIT-FOR (R139, 2026-09-14): the Bash persistentSession tmux path blocks on the
+// command's own `tmux wait-for` channel (no 400 ms sentinel poll) under the timeout cap;
+// cap expiry reports "did NOT complete" with the command left running. The R142 wait_for
+// regex path above still polls the screen. Captures are 10 KB middle-capped (R141).
+import { describe as d139, it as it139, expect as ex139, afterEach as ae139, vi as vi139 } from 'vitest';
+
+d139('R139 HB-TMUX-WAIT-FOR: blocking persistentSession on tmux', () => {
+  const dirs: string[] = [];
+  ae139(() => { vi139.restoreAllMocks(); reset142(); for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true }); });
+
+  const mock = (opts: { signaled: boolean; screen: (sent: string) => string }) => {
+    const tmux = TmuxManager.getInstance();
+    vi139.spyOn(tmux, 'isAvailable').mockResolvedValue(true);
+    vi139.spyOn(tmux, 'ensureTmux').mockResolvedValue({ available: true, tried: [] });
+    vi139.spyOn(tmux, 'sessionExists').mockResolvedValue(true);
+    let sent = '';
+    vi139.spyOn(tmux, 'sendKeys').mockImplementation(async (_id, cmd) => { sent = cmd; });
+    const wait = vi139.spyOn(tmux, 'waitForChannel').mockResolvedValue({ signaled: opts.signaled });
+    const cap = vi139.spyOn(tmux, 'capturePane').mockImplementation(async () => opts.screen(sent));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shell-waitfor-'));
+    dirs.push(dir);
+    return { tool: new ShellTool({ workingDirectory: dir } as ExecutorConfig), sentRef: () => sent, wait, cap };
+  };
+  const sentinelOf = (sent: string) => sent.match(/__CORTEX_DONE_[0-9a-f]+/)![0];
+
+  it139('appends `; <tmux> wait-for -S cortex-wf-<token>` after the sentinel, waits once under the cap, captures once, reports rc', async () => {
+    const { tool, sentRef, wait, cap } = mock({ signaled: true, screen: (sent) => `$ false; ...\nout\n${sentinelOf(sent)}_2\n$ ` });
+    const res = await tool.execute({ command: 'false', persistentSession: true, sessionId: 'wf1', timeout: 4000 }, new AbortController().signal);
+    ex139(res.success).toBe(true);
+    const sent = sentRef();
+    const token = sentinelOf(sent).slice('__CORTEX_DONE_'.length);
+    ex139(sent).toMatch(new RegExp(`^false; printf '__CORTEX_DONE_${token}_%d\\\\n' \\$\\?; \\S*tmux wait-for -S cortex-wf-${token}$`));
+    ex139(wait).toHaveBeenCalledTimes(1);
+    ex139(wait).toHaveBeenCalledWith(`cortex-wf-${token}`, 4000);
+    ex139(cap).toHaveBeenCalledTimes(1);
+    ex139(res.metadata?.completed).toBe(true);
+    ex139(res.metadata?.exitCode).toBe(2);
+    ex139(res.llmContent as string).toContain('Command completed with exit code 2');
+    ex139(res.llmContent as string).not.toContain('__CORTEX_DONE_');
+  });
+
+  it139('cap expiry: reports did NOT complete / may still be running, completed:false, no kill', async () => {
+    const { tool } = mock({ signaled: false, screen: () => '$ sleep 999; ...\nstill going' });
+    const kill = vi139.spyOn(TmuxManager.getInstance(), 'killSession');
+    const res = await tool.execute({ command: 'sleep 999', persistentSession: true, sessionId: 'wf2', timeout: 1000 }, new AbortController().signal);
+    ex139(res.success).toBe(true);
+    ex139(res.metadata?.completed).toBe(false);
+    ex139(res.metadata?.exitCode).toBeNull();
+    ex139(res.llmContent as string).toContain('did NOT complete within 1000ms');
+    ex139(res.llmContent as string).toContain('still going');
+    ex139(kill).not.toHaveBeenCalled();
+  });
+
+  it139('a > 10 KB capture is middle-omitted (R141) with head and tail kept', async () => {
+    const big = Array.from({ length: 600 }, (_, i) => `row-${i} ` + 'z'.repeat(40)).join('\n');
+    const { tool } = mock({ signaled: true, screen: (sent) => `${big}\n${sentinelOf(sent)}_0` });
+    const res = await tool.execute({ command: 'seq 1 600', persistentSession: true, sessionId: 'wf3' }, new AbortController().signal);
+    const text = res.llmContent as string;
+    ex139(text).toContain('row-0 ');
+    ex139(text).toContain('row-599 ');
+    ex139(text).toMatch(/\.\.\. \[\d+ chars omitted\] \.\.\./);
+    ex139(text).not.toContain('row-300 ');
   });
 });

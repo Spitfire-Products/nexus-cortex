@@ -6,7 +6,7 @@
  *
  *   herdr    HERDR_ENV=1 + binary resolvable (core resolveHerdrReporting order:
  *            CORTEX_HERDR_BIN -> HERDR_BIN_PATH -> PATH) + `herdr pane list` succeeds
- *   tmux     TmuxManager.isAvailable()
+ *   tmux     TmuxManager.ensureTmux() (R138: may install tmux on the first request)
  *   detached the R134 BackgroundProcessRegistry path (no real session semantics)
  *
  * Lever: CORTEX_TERMINAL_BACKEND=auto|herdr|tmux|detached (auto default). An explicit
@@ -404,10 +404,15 @@ export class HerdrTerminalBackend implements TerminalBackend {
 }
 
 /**
- * Thin wrapper over TmuxManager — the existing sentinel-poll behavior is preserved.
+ * Thin wrapper over TmuxManager.
  * R140: multi-line / oversize commands reach the session through TmuxManager's
  * load-buffer/paste-buffer path (sentinel on its own line so a heredoc terminator
  * is never glued to `; printf`); sendText is Enter-less, sendKeys sends key names.
+ * R139 (HB-TMUX-WAIT-FOR): the command signals its own `tmux wait-for` channel right
+ * after the exit-code sentinel; a blocking run waits on that channel under the cap
+ * (Terminus send_keys(block) — no 400 ms screen poll) and captures the pane ONCE for the
+ * rc. The poll survives only for the R142 waitFor regex, which needs the screen.
+ * R141 (HB-TMUX-CAPTURE-CAP): every read is 10 KB middle-omitted; `lines` is a tail.
  */
 export class TmuxTerminalBackend implements TerminalBackend {
   readonly kind = 'tmux' as const;
@@ -417,8 +422,9 @@ export class TmuxTerminalBackend implements TerminalBackend {
     return 'tmux backend (TmuxManager)';
   }
 
-  isAvailable(): Promise<boolean> {
-    return this.tmux.isAvailable();
+  /** R138: the first persistent request may install tmux (lever CORTEX_TMUX_AUTO_INSTALL). */
+  async isAvailable(): Promise<boolean> {
+    return (await this.tmux.ensureTmux()).available;
   }
 
   async createSession(opts: TerminalSessionOptions): Promise<{ id: string }> {
@@ -430,26 +436,47 @@ export class TmuxTerminalBackend implements TerminalBackend {
     const block = opts.block !== false;
     const timeoutMs = opts.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
     const token = crypto.randomBytes(4).toString('hex');
+    const channel = `cortex-wf-${token}`;
     // TmuxManager.sendKeys delivers argv-verbatim (R140), so `$?` needs no host-shell escaping.
-    const marker = `printf '__CORTEX_DONE_${token}_%d__\\n' $?`;
+    // The absolute tmux path survives a session PATH that lacks the binary (R138 static drop).
+    const marker = `printf '__CORTEX_DONE_${token}_%d__\\n' $?; ${this.tmux.getBinaryPath()} wait-for -S ${channel}`;
     await this.tmux.sendKeys(id, command.includes('\n') ? `${command}\n${marker}` : `${command}; ${marker}`);
     if (!block) return { output: '', completed: false, exitCode: null };
-    const deadline = Date.now() + timeoutMs;
     const re = new RegExp(sentinelRegex(token));
     const extraSrc = waitForRegexSource(opts.waitFor);
-    const extra = extraSrc ? new RegExp(extraSrc) : null;
+    const finish = (output: string, rest: Omit<TerminalRunResult, 'output'>): TerminalRunResult =>
+      ({ output: truncateMiddle(stripSentinel(output, token)), ...rest });
+
+    if (!extraSrc) {
+      // R139: block on the channel; the signal is remembered by tmux if it arrived first.
+      const waited = await this.tmux.waitForChannel(channel, timeoutMs);
+      let output = await this.tmux.capturePane(id);
+      let m = output.match(re);
+      if (waited.signaled && !m) {
+        // The sentinel scrolled past the visible pane (very long tail output): read history.
+        output = await this.tmux.capturePane(id, -HERDR_HISTORY_READ_LINES);
+        m = output.match(re);
+      }
+      if (m) return finish(output, { completed: true, exitCode: Number(m[1]) });
+      if (waited.signaled) return finish(output, { completed: true, exitCode: null });
+      return finish(output, { completed: false, timedOut: true, exitCode: null });
+    }
+
+    // R142: a waitFor target needs the screen — bounded poll until sentinel, match, or cap.
+    const deadline = Date.now() + timeoutMs;
+    const extra = new RegExp(extraSrc);
     let output = '';
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, TMUX_POLL_INTERVAL_MS));
       output = await this.tmux.capturePane(id);
       const m = output.match(re);
-      if (m) return { output: stripSentinel(output, token), completed: true, exitCode: Number(m[1]) };
-      // R142: only text after the echoed command line counts toward waitFor.
-      if (extra && extra.test(outputAfterCommandEcho(output, token))) {
-        return { output: stripSentinel(output, token), completed: false, exitCode: null, waitMatched: true };
+      if (m) return finish(output, { completed: true, exitCode: Number(m[1]) });
+      // Only text after the echoed command line counts toward waitFor.
+      if (extra.test(outputAfterCommandEcho(output, token))) {
+        return finish(output, { completed: false, exitCode: null, waitMatched: true });
       }
     }
-    return { output: stripSentinel(output, token), completed: false, timedOut: true, exitCode: null };
+    return finish(output, { completed: false, timedOut: true, exitCode: null });
   }
 
   /** Enter-less text (R140: bracketed paste via load-buffer/paste-buffer when multi-line or oversize). */
@@ -461,8 +488,11 @@ export class TmuxTerminalBackend implements TerminalBackend {
     return this.tmux.sendRawKeys(id, keys);
   }
 
-  read(id: string, opts: TerminalReadOptions = {}): Promise<string> {
-    return this.tmux.capturePane(id, opts.history ? -HERDR_HISTORY_READ_LINES : opts.lines ? -opts.lines : undefined);
+  /** R141: capped at 10 KB middle-omitted; `lines` = the last N lines (history reads the scrollback). */
+  async read(id: string, opts: TerminalReadOptions = {}): Promise<string> {
+    const raw = await this.tmux.capturePane(id, opts.history ? -HERDR_HISTORY_READ_LINES : opts.lines ? -opts.lines : undefined);
+    const text = opts.lines && !opts.history ? raw.split('\n').slice(-opts.lines).join('\n') : raw;
+    return truncateMiddle(text);
   }
 
   async waitOutput(id: string, opts: TerminalWaitOptions): Promise<{ matched: boolean; output: string }> {

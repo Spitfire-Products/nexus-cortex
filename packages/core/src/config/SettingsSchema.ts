@@ -123,9 +123,15 @@ export interface EnvironmentVariables {
   CORTEX_HERDR_REPORTING?: string; // 'false' disables herdr lifecycle reporting inside a herdr pane (R145; default on when HERDR_ENV=1)
   CORTEX_HERDR_AGENT_NAME?: string; // agent label reported to herdr (R145; default cortex)
   CORTEX_TERMINAL_BACKEND?: string; // auto | herdr | tmux | detached — persistent-session backend under Bash/TmuxSession/CreateArtifact (R146; auto = herdr > tmux > detached)
+  CORTEX_TMUX_AUTO_INSTALL?: string; // 'false' disables the R138 tmux self-install on the first persistent request (default on: apt-get/apk/dnf/yum/brew, then CORTEX_TMUX_STATIC_URL, then R134 degrade)
+  CORTEX_TMUX_STATIC_URL?: string; // URL of a prebuilt tmux binary dropped into ~/.local/bin/tmux by the R138 self-install when package managers fail (unset = skipped)
+  CORTEX_TMUX_HISTORY_LIMIT?: string; // scrollback lines per harness-created tmux pane (R141; default 50000)
+  CORTEX_TMUX_PANE_SIZE?: string; // fixed geometry WxH for harness-created tmux sessions (R141; default 160x40)
   CORTEX_SUBAGENT_RUNTIME?: string; // auto | process | herdr — where Task sub-agents run (R147; auto = herdr pane when HERDR_ENV=1 + backend resolves + parent auto-approves, else forked IPC child)
   CORTEX_HERDR_KEEP_DELEGATE_PANES?: string; // '0'/'false' closes a herdr delegate pane when it finishes (R147; default keep for operator inspection)
   CORTEX_COMPACTION_THRESHOLD_TOKENS?: string; // test/ops override of the compaction threshold in tokens (4.108.3); empty = card-derived
+  CORTEX_COMPACTION_HANDOFF_QA?: string; // 'true' | 'false' — Terminus-style gap-question round appended to the resume memory as a GAPS (Q/A) section (R143; default false)
+  CORTEX_COMPACTION_HANDOFF_QA_MAX_QUESTIONS?: string; // cap on gap questions per handoff QA round (R143; default 6, 1-20)
   CORTEX_STATE_DIR?: string; // explicit runtime-state root (4.108.6); empty = <project>/.cortex with writable-probe fallback
   CORTEX_COMPACTION_CHECKPOINT_PCT?: string; // fraction of the compaction threshold at which the first pre-compaction checkpoint is written (4.108.2; default 0.75)
   CORTEX_COMPACTION_CHECKPOINT_STEP?: string; // checkpoint refresh band width as a fraction of the threshold (4.108.2; default 0.10)
@@ -437,6 +443,8 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_COMPACTION_RESUME: '',
   CORTEX_COMPACTION_CHECKPOINT_PCT: '',
   CORTEX_COMPACTION_THRESHOLD_TOKENS: '',
+  CORTEX_COMPACTION_HANDOFF_QA: '',
+  CORTEX_COMPACTION_HANDOFF_QA_MAX_QUESTIONS: '',
   CORTEX_STATE_DIR: '',
   CORTEX_COMPACTION_CHECKPOINT_STEP: '',
   CORTEX_DELEGATION_HINT: '',
@@ -446,6 +454,10 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_HERDR_REPORTING: '',
   CORTEX_HERDR_AGENT_NAME: '',
   CORTEX_TERMINAL_BACKEND: '',
+  CORTEX_TMUX_AUTO_INSTALL: '',
+  CORTEX_TMUX_STATIC_URL: '',
+  CORTEX_TMUX_HISTORY_LIMIT: '',
+  CORTEX_TMUX_PANE_SIZE: '',
   CORTEX_SUBAGENT_RUNTIME: '',
   CORTEX_HERDR_KEEP_DELEGATE_PANES: '',
   CORTEX_ENDTURN_RESOLVER_REASONING: '',
@@ -921,6 +933,38 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     default: ''
   },
   {
+    key: 'CORTEX_TMUX_AUTO_INSTALL',
+    displayName: 'tmux self-install',
+    description: 'When tmux is missing, the first persistent request tries to install it: package manager (apt-get with expired-Release tolerance, apk, dnf, yum, brew; each step capped at 120 s), then a static binary from CORTEX_TMUX_STATIC_URL, then the R134 detached degrade. One attempt per process, one [INFO]/[WARN] line (R138, HB-TMUX-SELF-INSTALL). Set false to never attempt an install.',
+    type: 'string',
+    category: 'runtime',
+    default: ''
+  },
+  {
+    key: 'CORTEX_TMUX_STATIC_URL',
+    displayName: 'tmux static binary URL',
+    description: 'URL of a prebuilt/static tmux binary the R138 self-install downloads (curl, else wget) into ~/.local/bin/tmux after every package manager fails. Unset = the static step is skipped; there is no default download.',
+    type: 'string',
+    category: 'runtime',
+    default: ''
+  },
+  {
+    key: 'CORTEX_TMUX_HISTORY_LIMIT',
+    displayName: 'tmux history limit',
+    description: 'Scrollback lines kept per tmux pane the harness creates (applied around new-session so the first window gets it, plus the session option). Default 50000 (R141, HB-TMUX-CAPTURE-CAP).',
+    type: 'string',
+    category: 'runtime',
+    default: ''
+  },
+  {
+    key: 'CORTEX_TMUX_PANE_SIZE',
+    displayName: 'tmux pane size',
+    description: 'Fixed WxH geometry for tmux sessions the harness creates (new-session -x W -y H). Default 160x40, the pane Terminus captures. Every capture is 10 KB middle-omitted regardless (R141).',
+    type: 'string',
+    category: 'runtime',
+    default: ''
+  },
+  {
     key: 'CORTEX_SUBAGENT_RUNTIME',
     displayName: 'Sub-agent runtime',
     description: 'Where Task sub-agents run: auto | process | herdr. process = forked IPC child (the default path); herdr = a sibling herdr pane running the same agent-mode entry (visible + takeover-able, lifecycle reported to herdr; runs auto-approved because a pane has no IPC approval channel). auto = herdr when HERDR_ENV=1, the herdr terminal backend resolves and the parent auto-approves tools, else process. Task input `runtime` overrides per dispatch (R147, HB-HERDR-DELEGATES).',
@@ -940,6 +984,22 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_COMPACTION_THRESHOLD_TOKENS',
     displayName: 'Compaction threshold override (tokens)',
     description: 'Test/ops override: a positive integer replaces the card-derived compaction threshold (and halves it as the kept-history budget) so the checkpoint rung and compaction fire in a short run. Empty = card-derived (4.108.3).',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_COMPACTION_HANDOFF_QA',
+    displayName: 'Compaction handoff QA round',
+    description: 'DARK lever (R143 HB-HANDOFF-QA-SUMMARY): true = after each resume memory, a fresh history-free helper call asks what the memory is missing and a second helper call answers from the covered history; the answers are appended as a GAPS (Q/A) section. Empty/false = plain memory (default).',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_COMPACTION_HANDOFF_QA_MAX_QUESTIONS',
+    displayName: 'Handoff QA max questions',
+    description: 'Cap on the gap questions asked per handoff QA round (R143). Empty = 6; clamped to 1-20.',
     type: 'string',
     category: 'training',
     default: ''
