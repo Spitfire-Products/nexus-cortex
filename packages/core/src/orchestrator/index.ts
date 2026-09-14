@@ -5,6 +5,7 @@
 
 export * from './CortexOrchestrator.js';
 export * from './OrchestratorFactory.js';
+export * from './herdrReporter.js';
 export * from './APIClient.js';
 
 // StructuredOutput (grok-build port): schema-constrained JSON output via a

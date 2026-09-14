@@ -126,6 +126,11 @@ export class BashOutputTool extends BaseTool<BashOutputToolParams, ToolResult> {
         };
       }
 
+      // R146: external handles (herdr pane) re-pull their output from the backend first.
+      if (process.refresh) {
+        await process.refresh();
+      }
+
       // Get last read line for this shell
       const lastLine = this.lastReadLine.get(params.bash_id) || 0;
 

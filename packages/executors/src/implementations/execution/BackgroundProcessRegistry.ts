@@ -18,6 +18,13 @@ export interface BackgroundProcess {
   output: string[];
   exitCode: number | null;
   isRunning: boolean;
+  /**
+   * HB-HERDR-TERMINAL-BACKEND (R146): external handles (a herdr pane) have no child
+   * process. `refresh` re-pulls `output`/`exitCode`/`isRunning` from the backend before
+   * a BashOutput read; `onKill` is what KillShell invokes instead of a signal.
+   */
+  refresh?: () => Promise<void>;
+  onKill?: () => Promise<void> | void;
 }
 
 /**
@@ -82,6 +89,31 @@ export class BackgroundProcessRegistry {
   }
 
   /**
+   * Register an EXTERNAL handle (R146: a herdr pane) with no child process. BashOutput
+   * calls `refresh` before reading; KillShell calls `onKill`. pid is 0 so the signal
+   * paths in killProcess never fire for it.
+   */
+  registerExternal(
+    shellId: string,
+    command: string,
+    hooks: { refresh: () => Promise<void>; onKill: () => Promise<void> | void },
+  ): BackgroundProcess {
+    const bgProcess: BackgroundProcess = {
+      shellId,
+      pid: 0,
+      command,
+      startTime: new Date(),
+      output: [],
+      exitCode: null,
+      isRunning: true,
+      refresh: hooks.refresh,
+      onKill: hooks.onKill,
+    };
+    this.processes.set(shellId, bgProcess);
+    return bgProcess;
+  }
+
+  /**
    * Get a background process by shell ID
    */
   getProcess(shellId: string): BackgroundProcess | undefined {
@@ -115,6 +147,17 @@ export class BackgroundProcessRegistry {
       return false;
     }
 
+    // R146: external handle (herdr pane) — the backend hook is the only kill path.
+    if (process.onKill) {
+      try {
+        void process.onKill();
+        process.isRunning = false;
+        return true;
+      } catch (error) {
+        return false;
+      }
+    }
+
     if (process.process && process.isRunning) {
       try {
         process.process.kill('SIGTERM');
@@ -126,7 +169,7 @@ export class BackgroundProcessRegistry {
     }
 
     // If no process handle, try to kill by PID directly using Node.js process API
-    if (process.isRunning && process.pid) {
+    if (process.isRunning && process.pid > 0) {
       try {
         // Use Node.js global process.kill()
         global.process.kill(process.pid, 'SIGTERM');

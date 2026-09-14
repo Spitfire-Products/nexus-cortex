@@ -6,6 +6,29 @@ export * from './SchemaValidator.js';
 export * from './FileUtils.js';
 export { TmuxManager } from './TmuxManager.js';
 export type { TmuxSessionMetadata } from './TmuxManager.js';
+export {
+  HerdrTerminalBackend,
+  TmuxTerminalBackend,
+  DetachedTerminalBackend,
+  resolveTerminalBackend,
+  resetTerminalBackendCache,
+  readTerminalBackendLever,
+  registerPaneOutputHandle,
+  truncateMiddle,
+  stripSentinel,
+} from './TerminalBackend.js';
+export type {
+  TerminalBackend,
+  TerminalBackendKind,
+  TerminalBackendLever,
+  TerminalSessionOptions,
+  TerminalRunOptions,
+  TerminalRunResult,
+  TerminalReadOptions,
+  TerminalWaitOptions,
+  BackendExecFn,
+  BackendExecResult,
+} from './TerminalBackend.js';
 export { SessionPersistence } from './SessionPersistence.js';
 export { SessionLock } from './SessionLock.js';
 export type { LockInfo, LockOptions } from './SessionLock.js';

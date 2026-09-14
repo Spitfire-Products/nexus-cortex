@@ -122,6 +122,7 @@ export interface EnvironmentVariables {
   CORTEX_OUTER_TOOL_TIMEOUT_MS?: string; // floor (ms) for the outer per-batch tool abort: deadline = max(computed, floor + grace); empty = no floor
   CORTEX_HERDR_REPORTING?: string; // 'false' disables herdr lifecycle reporting inside a herdr pane (R145; default on when HERDR_ENV=1)
   CORTEX_HERDR_AGENT_NAME?: string; // agent label reported to herdr (R145; default cortex)
+  CORTEX_TERMINAL_BACKEND?: string; // auto | herdr | tmux | detached — persistent-session backend under Bash/TmuxSession/CreateArtifact (R146; auto = herdr > tmux > detached)
   CORTEX_COMPACTION_THRESHOLD_TOKENS?: string; // test/ops override of the compaction threshold in tokens (4.108.3); empty = card-derived
   CORTEX_STATE_DIR?: string; // explicit runtime-state root (4.108.6); empty = <project>/.cortex with writable-probe fallback
   CORTEX_COMPACTION_CHECKPOINT_PCT?: string; // fraction of the compaction threshold at which the first pre-compaction checkpoint is written (4.108.2; default 0.75)
@@ -442,6 +443,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_OUTER_TOOL_TIMEOUT_MS: '',
   CORTEX_HERDR_REPORTING: '',
   CORTEX_HERDR_AGENT_NAME: '',
+  CORTEX_TERMINAL_BACKEND: '',
   CORTEX_ENDTURN_RESOLVER_REASONING: '',
   CORTEX_DEADLINE_EXIT_MENTOR_REASONING: '',
   CORTEX_LOOP_TOOL_BLOCK_REASONING: '',
@@ -902,6 +904,14 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_HERDR_AGENT_NAME',
     displayName: 'herdr agent label',
     description: 'Agent label passed to herdr pane report-agent --agent; sanitized to [a-z][a-z0-9_-]{0,31}. Default cortex (R145).',
+    type: 'string',
+    category: 'runtime',
+    default: ''
+  },
+  {
+    key: 'CORTEX_TERMINAL_BACKEND',
+    displayName: 'Terminal backend',
+    description: 'Backend for persistent terminal sessions (Bash persistentSession, TmuxSession, CreateArtifact persistent): auto | herdr | tmux | detached. auto = herdr pane (inside a herdr pane with the socket reachable) > tmux > detached background process (R146, HB-HERDR-TERMINAL-BACKEND). Resolved once per process.',
     type: 'string',
     category: 'runtime',
     default: ''

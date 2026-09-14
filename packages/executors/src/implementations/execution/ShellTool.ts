@@ -18,6 +18,7 @@ import { spawn } from 'child_process';
 import { BaseTool, type ToolResult } from '../../base/index.js';
 import { SchemaValidator } from '../../utils/SchemaValidator.js';
 import { TmuxManager, SessionPersistence } from '../../utils/index.js';
+import { resolveTerminalBackend, registerPaneOutputHandle, type TerminalBackend } from '../../utils/TerminalBackend.js';
 import { stripAnsi } from '../../utils/TextUtils.js';
 import { BackgroundProcessRegistry } from './BackgroundProcessRegistry.js';
 import type { ExecutorConfig } from '../../base/ToolRegistry.js';
@@ -639,6 +640,20 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
   ): Promise<ToolResult> {
     const startTime = Date.now();
 
+    // HB-HERDR-TERMINAL-BACKEND (R146): inside a herdr pane with the socket reachable,
+    // the persistent session is a herdr pane split from ours (visible/takeover-able by
+    // the operator, survives client detach). tmux and the R134 detached fallback below
+    // are untouched when herdr is not the resolved backend.
+    let backend: TerminalBackend | null = null;
+    try {
+      backend = await resolveTerminalBackend();
+    } catch (error: any) {
+      console.warn(`[WARN] terminal backend resolution failed (${error?.message ?? error}); using the tmux/detached path`);
+    }
+    if (backend?.kind === 'herdr') {
+      return this.executeInHerdrSession(params, signal, backend, startTime, updateOutput);
+    }
+
     // Check tmux availability. HB-TMUX-FALLBACK (R134): task images without tmux
     // used to lose long-running monitors entirely (hard error). Degrade to the
     // run_in_background machinery instead (same BackgroundProcessRegistry handle,
@@ -749,6 +764,92 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
         return this.createErrorResult('Command was cancelled before completion (timed out or aborted).');
       }
       return this.createErrorResult(`Failed to execute in persistent session: ${error.message}`);
+    }
+  }
+
+  /**
+   * HB-HERDR-TERMINAL-BACKEND (R146): persistentSession on the herdr backend.
+   * sessionId is a label (mapped to the pane we created for it) or one of our pane
+   * ids; anything else — including the host pane — gets a fresh pane, never reuse.
+   * Blocking wait = `pane wait-output` on the sentinel (R139/R142); an incomplete
+   * run registers a BashOutput handle whose read pulls `pane read`.
+   * @private
+   */
+  private async executeInHerdrSession(
+    params: ShellToolParams,
+    signal: AbortSignal,
+    backend: TerminalBackend,
+    startTime: number,
+    updateOutput?: (output: string) => void,
+  ): Promise<ToolResult> {
+    try {
+      const cwd = params.directory
+        ? path.resolve(this.config.workingDirectory, params.directory)
+        : this.config.workingDirectory;
+      const requested = params.sessionId?.trim() || undefined;
+      const ours = await backend.list();
+      const resolved = requested ? (backend.resolveId ? backend.resolveId(requested) : requested) : undefined;
+      let paneId: string;
+      let label: string | undefined;
+      if (resolved && ours.includes(resolved)) {
+        paneId = resolved;
+        label = requested !== resolved ? requested : undefined;
+      } else {
+        label = requested && !/^w\d+:p\d+$/.test(requested) ? requested : undefined;
+        updateOutput?.(`Creating herdr pane${label ? ` '${label}'` : ''}...\n`);
+        paneId = (await backend.createSession({ cwd, label })).id;
+      }
+      const sessionId = label ?? paneId;
+
+      updateOutput?.(`Sending command to herdr pane ${paneId}: ${params.command}\n`);
+      const timeout = this.resolveTimeoutMs(params);
+      const run = await backend.run(paneId, params.command, { block: true, timeoutMs: timeout });
+      let output = run.output;
+      if (params.captureHistory) {
+        output = (await backend.read(paneId, { history: true }))
+          .split('\n')
+          .filter((line) => !line.includes('__CORTEX_DONE_'))
+          .join('\n');
+      }
+
+      let bashId: string | undefined;
+      if (!run.completed) {
+        bashId = `herdr-${paneId}`;
+        const pane = paneId;
+        registerPaneOutputHandle(backend, pane, bashId, params.command, () => backend.sendKeys(pane, ['C-c']));
+      }
+
+      const info = `[INFO] persistent session via herdr pane ${paneId}`;
+      const statusLine = run.completed
+        ? `Command completed with exit code ${run.exitCode}.`
+        : `Command did NOT complete within ${timeout}ms — it may still be running in the pane. ` +
+          `Re-check with persistentSession=true, sessionId='${sessionId}' (e.g. run \`true\` to recapture the pane), ` +
+          `or read it ONCE with BashOutput({ bash_id: "${bashId}" }); KillShell({ shell_id: "${bashId}" }) sends C-c to the pane.`;
+
+      const result = `${info}\n` +
+        `Command executed in persistent herdr pane '${paneId}'. ${statusLine}\n\n` +
+        `Output:\n${'='.repeat(60)}\n${output}\n${'='.repeat(60)}\n\n` +
+        `Session persists after this command completes (the pane stays open next to the operator's). You can:\n` +
+        `- Send more commands: persistentSession=true, sessionId='${sessionId}'\n` +
+        `- Inspect the pane: TmuxSession tool with action='capture', sessionId='${sessionId}'\n` +
+        `- Close the pane: TmuxSession tool with action='kill', sessionId='${sessionId}'`;
+
+      return this.createSuccessResult(result, {
+        executionTime: Date.now() - startTime,
+        sessionId,
+        paneId,
+        backend: 'herdr',
+        persistent: true,
+        sessionCwd: cwd,
+        exitCode: run.exitCode ?? null,
+        completed: run.completed,
+        ...(bashId ? { bash_id: bashId } : {}),
+      });
+    } catch (error: any) {
+      if (signal.aborted) {
+        return this.createErrorResult('Command was cancelled before completion (timed out or aborted).');
+      }
+      return this.createErrorResult(`Failed to execute in persistent herdr session: ${error.message}`);
     }
   }
 

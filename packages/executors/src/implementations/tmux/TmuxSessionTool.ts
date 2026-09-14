@@ -8,6 +8,7 @@
 import { BaseTool, type ToolResult } from '../../base/index.js';
 import { SchemaValidator } from '../../utils/SchemaValidator.js';
 import { TmuxManager, SessionPersistence, SessionLock, TmuxCapture } from '../../utils/index.js';
+import { resolveTerminalBackend, type TerminalBackend } from '../../utils/TerminalBackend.js';
 import { TmuxViewServer } from './TmuxViewServer.js';
 import { SandboxViewServer } from '../addon/SandboxViewServer.js';
 import type { ExecutorConfig } from '../../base/ToolRegistry.js';
@@ -214,6 +215,22 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
     signal: AbortSignal,
     updateOutput?: (output: string) => void
   ): Promise<ToolResult> {
+    // HB-HERDR-TERMINAL-BACKEND (R146): when the resolved backend is herdr, the
+    // session verbs map to herdr panes (snapshot stays tmux-only).
+    let backend: TerminalBackend | null = null;
+    try {
+      backend = await resolveTerminalBackend();
+    } catch (error: any) {
+      console.warn(`[WARN] terminal backend resolution failed (${error?.message ?? error}); using tmux`);
+    }
+    if (backend?.kind === 'herdr') {
+      try {
+        return await this.executeViaHerdr(params, backend, updateOutput);
+      } catch (error: any) {
+        return this.createErrorResult(`TmuxSession (herdr backend) error: ${error.message}`);
+      }
+    }
+
     // Check tmux availability
     if (!(await this.tmux.isAvailable())) {
       return this.createErrorResult(
@@ -245,6 +262,110 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
       }
     } catch (error: any) {
       return this.createErrorResult(`TmuxSession error: ${error.message}`);
+    }
+  }
+
+  /**
+   * HB-HERDR-TERMINAL-BACKEND (R146): create/send/capture/list/kill on herdr panes.
+   * sessionId is the label given at create (or a pane id we created). `send` goes
+   * through bracketed paste + Enter (no sentinel, so captures stay clean).
+   * @private
+   */
+  private async executeViaHerdr(
+    params: TmuxSessionParams,
+    backend: TerminalBackend,
+    updateOutput?: (output: string) => void
+  ): Promise<ToolResult> {
+    const info = `[INFO] terminal backend: ${backend.describe()}`;
+    const resolve = (id: string) => (backend.resolveId ? backend.resolveId(id) : id);
+    const exists = async (id: string) => (await backend.list()).includes(id);
+
+    switch (params.action) {
+      case 'create': {
+        updateOutput?.('Creating herdr pane...\n');
+        const workingDirectory = this.config.workingDirectory || process.cwd();
+        const cwd = params.cwd
+          ? (params.cwd.startsWith('/') ? params.cwd : require('path').join(workingDirectory, params.cwd))
+          : workingDirectory;
+        const label = params.sessionId;
+        const { id } = await backend.createSession({ cwd, env: params.env, label });
+        const sessionId = label ?? id;
+        updateOutput?.(`Pane created: ${id}\n`);
+        return this.createSuccessResult(
+          `${info}\n` +
+          `herdr pane created (visible next to the operator's pane; survives client detach).\n\n` +
+          `Session ID: ${sessionId}\n` +
+          `Pane: ${id}\n` +
+          `Working directory: ${cwd}\n` +
+          `Environment variables: ${params.env ? Object.keys(params.env).length : 0} set\n\n` +
+          `You can now:\n` +
+          `- Send commands: action='send', sessionId='${sessionId}', command='your command'\n` +
+          `- Capture output: action='capture', sessionId='${sessionId}'\n` +
+          `- Close the pane: action='kill', sessionId='${sessionId}'`,
+          { sessionId, paneId: id, cwd, env: params.env, backend: 'herdr' }
+        );
+      }
+      case 'send': {
+        const id = resolve(params.sessionId!);
+        if (!(await exists(id))) return this.createErrorResult(`Session '${params.sessionId}' does not exist`);
+        updateOutput?.(`Sending command to herdr pane ${id}...\n`);
+        await backend.sendText(id, params.command!);
+        await backend.sendKeys(id, ['Enter']);
+        return this.createSuccessResult(
+          `${info}\n` +
+          `Command sent to herdr pane '${id}'.\n\n` +
+          `Command: ${params.command}\n\n` +
+          `Use action='capture' to retrieve the output.`,
+          { sessionId: params.sessionId, paneId: id, command: params.command, backend: 'herdr' }
+        );
+      }
+      case 'capture': {
+        const id = resolve(params.sessionId!);
+        if (!(await exists(id))) return this.createErrorResult(`Session '${params.sessionId}' does not exist`);
+        updateOutput?.(`Capturing output from herdr pane ${id}...\n`);
+        const output = await backend.read(id, { history: params.captureHistory });
+        return this.createSuccessResult(
+          `${info}\n` +
+          `Captured output from herdr pane '${id}':\n\n` +
+          `${'='.repeat(60)}\n` +
+          output +
+          `\n${'='.repeat(60)}\n`,
+          { sessionId: params.sessionId, paneId: id, lines: output.split('\n').length, capturedHistory: params.captureHistory, backend: 'herdr' }
+        );
+      }
+      case 'list': {
+        const panes = await backend.list();
+        if (panes.length === 0) {
+          return this.createSuccessResult(
+            `${info}\nNo herdr panes created by this process.\n\nUse action="create" to create one.`,
+            { sessions: [], backend: 'herdr' }
+          );
+        }
+        return this.createSuccessResult(
+          `${info}\nherdr panes created by this process (${panes.length}):\n\n` +
+          panes.map((p) => `- ${p}`).join('\n'),
+          { sessions: panes.map((paneId) => ({ sessionId: paneId, paneId })), count: panes.length, backend: 'herdr' }
+        );
+      }
+      case 'kill': {
+        const id = resolve(params.sessionId!);
+        if (!(await exists(id))) return this.createErrorResult(`Session '${params.sessionId}' does not exist`);
+        updateOutput?.(`Closing herdr pane ${id}...\n`);
+        await backend.kill(id);
+        return this.createSuccessResult(
+          `${info}\nherdr pane '${id}' closed.`,
+          { sessionId: params.sessionId, paneId: id, backend: 'herdr' }
+        );
+      }
+      case 'snapshot':
+        return this.createErrorResult(
+          `${info}\n` +
+          `action='snapshot' is tmux-only (Playwright screenshot of a tmux session); the active terminal backend is herdr. ` +
+          `Use action='capture' (the pane text) — the pane is also visible live in the herdr UI. ` +
+          `Set CORTEX_TERMINAL_BACKEND=tmux to force tmux sessions.`
+        );
+      default:
+        return this.createErrorResult(`Unknown action: ${params.action}`);
     }
   }
 

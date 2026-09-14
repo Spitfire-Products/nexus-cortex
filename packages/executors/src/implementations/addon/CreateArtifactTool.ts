@@ -15,6 +15,7 @@ import { viewServer, SandboxViewServer } from './SandboxViewServer.js';
 import { SandboxRegistry } from '../../utils/SandboxRegistry.js';
 import { ArtifactRegistry, type ArtifactRuntime } from '../../utils/ArtifactRegistry.js';
 import { TmuxManager } from '../../utils/TmuxManager.js';
+import { resolveTerminalBackend, registerPaneOutputHandle, type TerminalBackend } from '../../utils/TerminalBackend.js';
 import { SessionPersistence } from '../../utils/SessionPersistence.js';
 import { BackgroundProcessRegistry } from '../execution/BackgroundProcessRegistry.js';
 
@@ -38,7 +39,8 @@ interface ArtifactSession {
   name: string;
   process?: ChildProcess;
   tmuxSessionId?: string;  // NEW: Tmux session ID for persistent mode
-  bashId?: string;          // HB-TMUX-FALLBACK (R134): BackgroundProcessRegistry id when tmux is absent
+  herdrPaneId?: string;     // HB-HERDR-TERMINAL-BACKEND (R146): herdr pane hosting the artifact process
+  bashId?: string;          // HB-TMUX-FALLBACK (R134): BackgroundProcessRegistry id when tmux is absent (R146: also the herdr pane's BashOutput handle)
   degradedWarning?: string; // HB-TMUX-FALLBACK (R134): one-line [WARN] when persistent mode ran without tmux
   url?: string;
   port?: number;
@@ -466,6 +468,7 @@ export class CreateArtifactToolExecutor extends BaseTool<CreateArtifactToolParam
           visualFeedbackEnabled: params.enableVisualFeedback || false,
           hasVisualSnapshot: !!session!.visualSnapshot,
           persistentDegraded: !!session!.degradedWarning,   // HB-TMUX-FALLBACK (R134)
+          herdrPaneId: session!.herdrPaneId,                // HB-HERDR-TERMINAL-BACKEND (R146)
           bash_id: session!.bashId
         }
       };
@@ -860,12 +863,31 @@ if __name__ == '__main__':
     // SandboxViewServer already knows) registered in BackgroundProcessRegistry so
     // BashOutput can poll it. Attach/reconnect + dashboard restart-into-pane are
     // the tmux semantics the plain path cannot honor; the [WARN] says so.
-    const tmuxAvailable = await tmuxManager.isAvailable();
+    // HB-HERDR-TERMINAL-BACKEND (R146): inside a herdr pane the artifact process gets
+    // its own pane split from ours (operator-visible, detach-survivable); BashOutput
+    // reads it through a registry handle whose refresh pulls `pane read`, KillShell
+    // closes the pane. The tmux and R134 detached paths below are unchanged.
+    let herdrBackend: TerminalBackend | null = null;
+    try {
+      const resolved = await resolveTerminalBackend();
+      if (resolved.kind === 'herdr') herdrBackend = resolved;
+    } catch (error: any) {
+      console.warn(`[WARN] terminal backend resolution failed (${error?.message ?? error}); using the tmux/detached path`);
+    }
+    const tmuxAvailable = herdrBackend ? false : await tmuxManager.isAvailable();
     let tmuxSessionId: string | undefined;
+    let herdrPaneId: string | undefined;
     let detachedProcess: ChildProcess | undefined;
     let bashId: string | undefined;
     let degradedWarning: string | undefined;
-    if (tmuxAvailable) {
+    if (herdrBackend) {
+      const backend = herdrBackend;
+      bashId = `artifact-${artifactId.substring(0, 8)}`;
+      const pane = (await backend.createSession({ cwd: artifactPath, label: bashId })).id;
+      herdrPaneId = pane;
+      await backend.run(pane, command, { block: false });
+      registerPaneOutputHandle(backend, pane, bashId, command, () => backend.kill(pane));
+    } else if (tmuxAvailable) {
       // Create tmux session with artifact ID as session name
       tmuxSessionId = `artifact-${artifactId.substring(0, 8)}`;
       await tmuxManager.createSession(tmuxSessionId, artifactPath);
@@ -907,6 +929,7 @@ if __name__ == '__main__':
       id: artifactId,
       name: params.name,
       tmuxSessionId,
+      herdrPaneId,
       process: detachedProcess,
       bashId,
       degradedWarning,
@@ -994,7 +1017,9 @@ if __name__ == '__main__':
     }
 
     // Log tmux session info
-    if (tmuxSessionId) {
+    if (herdrPaneId) {
+      console.log(`[${params.name}] Running in herdr pane ${herdrPaneId} (bash_id ${bashId}); access at: ${url}`);
+    } else if (tmuxSessionId) {
       console.log(`[${params.name}] Running in tmux session: ${tmuxSessionId}`);
       console.log(`[${params.name}] Access at: ${url}`);
       console.log(`[${params.name}] View output: tmux attach -t ${tmuxSessionId}`);
@@ -1187,6 +1212,13 @@ if __name__ == '__main__':
     originalName?: string
   ): string {
     const lines: string[] = [];
+
+    // HB-HERDR-TERMINAL-BACKEND (R146): the herdr pane hosting the process is the FIRST line
+    if (session.herdrPaneId) {
+      lines.push(`[INFO] persistent session via herdr pane ${session.herdrPaneId}`);
+      lines.push(`Use BashOutput({ bash_id: "${session.bashId}" }) to read its output, KillShell({ shell_id: "${session.bashId}" }) to close the pane.`);
+      lines.push('');
+    }
 
     // HB-TMUX-FALLBACK (R134): the degradation notice is the FIRST line of the result
     if (session.degradedWarning) {

@@ -171,6 +171,7 @@ const GROUPS: Array<{ group: string; levers: LeverSpec[] }> = [
       { key: 'CORTEX_HERDR_AGENT_NAME', what: 'Agent label reported to herdr (report-agent --agent); sanitized to [a-z][a-z0-9_-]{0,31}', codeDefault: 'cortex', kind: 'value' },
       { key: 'CORTEX_HERDR_BIN', what: 'Explicit herdr binary override (legacy HERDR_BIN honored). Resolution order: this → HERDR_BIN_PATH → PATH probe', codeDefault: '(unset)', kind: 'value' },
       { key: 'HERDR_BIN_PATH', what: 'herdr 0.9.0 pane export of its own binary path — the bin the reporter uses when no override is set and it is executable (informational; set by herdr, not by us)', codeDefault: '(unset — PATH probe)', kind: 'value' },
+      { key: 'CORTEX_TERMINAL_BACKEND', what: 'Persistent-session backend under Bash persistentSession / TmuxSession / CreateArtifact persistent: auto | herdr | tmux | detached. auto = herdr pane (HERDR_ENV=1 + socket reachable) > tmux > detached background process (R146 HB-HERDR-TERMINAL-BACKEND); resolved once per process', codeDefault: 'auto', kind: 'value' },
     ],
   },
 ];

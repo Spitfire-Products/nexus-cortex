@@ -1358,7 +1358,7 @@ nexus-cortex is NOT a recognized agent today (Claude Code, Codex, Grok CLI, … 
   --current <working|idle|blocked> --summary <token>` at turn start/end and on approval waits (we already emit these transitions as decisions
   events), so herdr's status is AUTHORITATIVE for us (no screen-manifest guessing), the sidebar rolls us up, and other agents can `agent wait
   --until idle` on us. Later: a detection manifest for the neoncortex/fuzzycortex screens + `HERDR_AGENT=cortex` on wrappers.
-- **R146 HB-HERDR-TERMINAL-BACKEND** — a `TerminalBackend` seam under ShellTool.persistentSession / TmuxSessionTool / CreateArtifactTool persistent:
+- **R146 HB-HERDR-TERMINAL-BACKEND** (BUILT 2026-09-13 → 4.108.17, live-smoked on session `bench`) — a `TerminalBackend` seam under ShellTool.persistentSession / TmuxSessionTool / CreateArtifactTool persistent:
   `herdr` (when the socket is reachable) > `tmux` (TmuxManager) > detached (R134). The herdr backend maps persistentSession → `pane split
   --no-focus` + `pane run`, BashOutput → `pane read`, the Terminus wait primitive → `pane wait-output --regex --timeout` (R139/R142 inherited),
   large input → `pane send-text` (bracketed paste; R140 inherited), capture caps → `--lines` (R141 inherited); panes survive client detach and
@@ -1366,7 +1366,7 @@ nexus-cortex is NOT a recognized agent today (Claude Code, Codex, Grok CLI, … 
 - **R147 HB-HERDR-DELEGATES** — Task sub-agents as herdr agents: `agent start <name> --kind cortex --pane <split>` + `agent prompt --wait
   --timeout <R133 limit>` + `agent wait --until idle` + `agent read --source recent-unwrapped`; the operator sees every delegate live and can
   `agent attach --takeover`. Keeps the in-process/IPC path when herdr is absent.
-- **R148 HB-HERDR-BENCH** (bench-side) — run the Vast executor's supervisors as herdr panes (`workspace create --label <store>`, one pane per
+- **R148 HB-HERDR-BENCH** (bench-side; BUILT 2026-09-13: bootstrap `TB2_HERDR=1` mode, supervisor `_herdr_report`, `.bench/vm/herdr-bench.sh`; dry-run local only, remote via ssh-wrapped `herdr --session`) — run the Vast executor's supervisors as herdr panes (`workspace create --label <store>`, one pane per
   shard) and watch/drive lanes from the repl with `herdr --machine vast-bench pane read|wait-output`; the server persists across repl/session
   restarts, so monitors do not die with the session and a stuck lane can be taken over instead of re-bootstrapped.
 Order: R144 → R145 → R146 → R147 → R148. Not installed anywhere yet (2026-09-13); binary install from herdr.dev (or `cargo install herdr`).
