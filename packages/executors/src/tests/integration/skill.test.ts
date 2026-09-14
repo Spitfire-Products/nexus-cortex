@@ -355,6 +355,62 @@ describe('Skill Integration', () => {
       expect(result.returnDisplay).toContain('-');
     });
   });
+
+  // R144 HB-HERDR-SKILL: `requires-env` frontmatter gates a skill's listing/loading on the
+  // process environment (NAME=VALUE, or bare NAME = set and non-empty; comma-separated = all).
+  describe('Environment gating (requires-env)', () => {
+    const gatedSkills = async (env: NodeJS.ProcessEnv) => {
+      const gatedDir = join(testDir, 'gated', '.cortex', 'skills', 'herdr-like');
+      await fs.mkdir(gatedDir, { recursive: true });
+      await fs.writeFile(
+        join(gatedDir, 'SKILL.md'),
+        `---
+name: herdr-like
+description: Only inside a herdr pane
+requires-env: HERDR_ENV=1
+---
+
+# Herdr-like
+
+Body.
+`,
+      );
+      return new SkillToolExecutor({ workingDirectory: join(testDir, 'gated'), env });
+    };
+
+    it('hides a requires-env skill from list + load when the env does not match', async () => {
+      const ex = await gatedSkills({});
+      const list = await ex.execute({ command: 'list' }, new AbortController().signal);
+      expect(list.returnDisplay).not.toContain('herdr-like');
+      const load = await ex.execute({ command: 'herdr-like' }, new AbortController().signal);
+      expect(load.success).toBe(false);
+      expect(load.returnDisplay).toContain('not found');
+    });
+
+    it('lists + loads the skill when the required env matches', async () => {
+      const ex = await gatedSkills({ HERDR_ENV: '1' });
+      const list = await ex.execute({ command: 'list' }, new AbortController().signal);
+      expect(list.returnDisplay).toContain('herdr-like');
+      const load = await ex.execute({ command: 'herdr-like' }, new AbortController().signal);
+      expect(load.success).toBe(true);
+      expect(load.returnDisplay).toContain('Body.');
+    });
+
+    it('the bundled herdr skill (repo .cortex/skills/herdr) is discoverable only when HERDR_ENV=1', async () => {
+      const repoRoot = join(__dirname, '..', '..', '..', '..', '..');
+      const off = new SkillToolExecutor({ workingDirectory: repoRoot, env: {} });
+      const offList = await off.execute({ command: 'list' }, new AbortController().signal);
+      expect(offList.returnDisplay).not.toMatch(/\*\*herdr\*\*/);
+
+      const on = new SkillToolExecutor({ workingDirectory: repoRoot, env: { HERDR_ENV: '1' } });
+      const onList = await on.execute({ command: 'list' }, new AbortController().signal);
+      expect(onList.returnDisplay).toMatch(/\*\*herdr\*\*/);
+      const load = await on.execute({ command: 'herdr' }, new AbortController().signal);
+      expect(load.success).toBe(true);
+      expect(load.returnDisplay).toContain('test "${HERDR_ENV:-}" = 1');
+      expect(load.returnDisplay).toContain('herdr --skill');
+    });
+  });
 });
 
 /**

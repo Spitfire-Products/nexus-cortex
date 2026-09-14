@@ -120,6 +120,8 @@ export interface EnvironmentVariables {
   CORTEX_SUBAGENT_TIMEOUT_MS?: string; // Task sub-agent wall-clock limit (ms) when no parent turn deadline is set (R133; default 300000)
   CORTEX_SUBAGENT_TIMEOUT_MAX_MS?: string; // upper cap (ms) on the deadline-derived Task sub-agent limit (R133; empty = no cap)
   CORTEX_OUTER_TOOL_TIMEOUT_MS?: string; // floor (ms) for the outer per-batch tool abort: deadline = max(computed, floor + grace); empty = no floor
+  CORTEX_HERDR_REPORTING?: string; // 'false' disables herdr lifecycle reporting inside a herdr pane (R145; default on when HERDR_ENV=1)
+  CORTEX_HERDR_AGENT_NAME?: string; // agent label reported to herdr (R145; default cortex)
   CORTEX_COMPACTION_THRESHOLD_TOKENS?: string; // test/ops override of the compaction threshold in tokens (4.108.3); empty = card-derived
   CORTEX_STATE_DIR?: string; // explicit runtime-state root (4.108.6); empty = <project>/.cortex with writable-probe fallback
   CORTEX_COMPACTION_CHECKPOINT_PCT?: string; // fraction of the compaction threshold at which the first pre-compaction checkpoint is written (4.108.2; default 0.75)
@@ -438,6 +440,8 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_SUBAGENT_TIMEOUT_MS: '',
   CORTEX_SUBAGENT_TIMEOUT_MAX_MS: '',
   CORTEX_OUTER_TOOL_TIMEOUT_MS: '',
+  CORTEX_HERDR_REPORTING: '',
+  CORTEX_HERDR_AGENT_NAME: '',
   CORTEX_ENDTURN_RESOLVER_REASONING: '',
   CORTEX_DEADLINE_EXIT_MENTOR_REASONING: '',
   CORTEX_LOOP_TOOL_BLOCK_REASONING: '',
@@ -884,6 +888,22 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     description: 'Floor (ms) for the outer per-batch tool abort; the deadline becomes max(computed, floor + 30 s grace). Unset = no floor (150 s for non-Bash tools without their own limit).',
     type: 'string',
     category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_HERDR_REPORTING',
+    displayName: 'herdr lifecycle reporting',
+    description: 'Inside a herdr pane (HERDR_ENV=1 + herdr on PATH) the orchestrator reports working/idle/blocked and a summary token to herdr (R145, HB-HERDR-LIFECYCLE). On by default there; "false" disables.',
+    type: 'string',
+    category: 'runtime',
+    default: ''
+  },
+  {
+    key: 'CORTEX_HERDR_AGENT_NAME',
+    displayName: 'herdr agent label',
+    description: 'Agent label passed to herdr pane report-agent --agent; sanitized to [a-z][a-z0-9_-]{0,31}. Default cortex (R145).',
+    type: 'string',
+    category: 'runtime',
     default: ''
   },
   {

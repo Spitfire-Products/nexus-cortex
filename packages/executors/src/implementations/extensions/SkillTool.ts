@@ -64,8 +64,10 @@ interface SkillDefinition {
 export class SkillToolExecutor extends BaseTool<SkillParams, ToolResult> {
   private skillsCache: Map<string, SkillDefinition> | null = null;
   private skillsDirs: { path: string; location: 'project' | 'central' | 'personal' | 'builtin' }[];
+  /** Environment consulted by the `requires-env` frontmatter gate (injectable for tests). */
+  private readonly env: NodeJS.ProcessEnv;
 
-  constructor(config: { workingDirectory: string }) {
+  constructor(config: { workingDirectory: string; env?: NodeJS.ProcessEnv }) {
     super('Skill', 'Skill', 'Invoke specialized skills', {
       type: 'object',
       properties: {
@@ -77,6 +79,7 @@ export class SkillToolExecutor extends BaseTool<SkillParams, ToolResult> {
       required: ['command'],
     });
 
+    this.env = config.env ?? process.env;
     this.skillsDirs = [
       // cwd-specific overlay (searched first → overrides/extends the central list)
       { path: join(config.workingDirectory, '.agents', 'skills'), location: 'project' },
@@ -322,6 +325,13 @@ export class SkillToolExecutor extends BaseTool<SkillParams, ToolResult> {
       // Get skill name (from frontmatter or fallback to directory name)
       const skillName = frontmatter.name || skillDir;
 
+      // R144 HB-HERDR-SKILL: `requires-env` gate — the skill is neither listed nor
+      // loadable unless every requirement holds against this.env. Forms: NAME=VALUE
+      // (exact match) or NAME (set and non-empty); comma-separated = all must hold.
+      if (frontmatter['requires-env'] && !this.envRequirementsMet(frontmatter['requires-env'])) {
+        return null;
+      }
+
       // Parse allowed-tools if present
       let allowedTools: string[] | undefined;
       if (frontmatter['allowed-tools']) {
@@ -343,6 +353,21 @@ export class SkillToolExecutor extends BaseTool<SkillParams, ToolResult> {
       console.error(`[Skill] Error parsing skill file ${filePath}: ${error.message}`);
       return null;
     }
+  }
+
+  /**
+   * Evaluate a `requires-env` frontmatter value against this.env.
+   */
+  private envRequirementsMet(spec: string): boolean {
+    return spec
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .every((req) => {
+        const eq = req.indexOf('=');
+        if (eq === -1) return !!this.env[req];
+        return this.env[req.slice(0, eq).trim()] === req.slice(eq + 1).trim();
+      });
   }
 
   /**

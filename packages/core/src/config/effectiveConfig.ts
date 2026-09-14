@@ -167,6 +167,8 @@ const GROUPS: Array<{ group: string; levers: LeverSpec[] }> = [
       { key: 'CORTEX_HEADLESS_APPROVE', what: 'Headless (no-terminal) servers auto-approve tools. Only "false" disables', codeDefault: 'true when headless', kind: 'flag-not-false' },
       { key: 'CORTEX_MODE', what: 'stateless = fresh session per request; persistent = one continuing session', codeDefault: 'persistent', kind: 'value' },
       { key: 'DEFAULT_MODEL_ID', what: 'The model new sessions use', codeDefault: '(registry default)', kind: 'value' },
+      { key: 'CORTEX_HERDR_REPORTING', what: 'Inside a herdr pane (HERDR_ENV=1 + herdr on PATH) the orchestrator reports working/idle/blocked + a summary token to herdr so its status is authoritative (R145 HB-HERDR-LIFECYCLE); only "false" disables', codeDefault: 'true when HERDR_ENV=1', kind: 'flag-not-false' },
+      { key: 'CORTEX_HERDR_AGENT_NAME', what: 'Agent label reported to herdr (report-agent --agent); sanitized to [a-z][a-z0-9_-]{0,31}', codeDefault: 'cortex', kind: 'value' },
     ],
   },
 ];

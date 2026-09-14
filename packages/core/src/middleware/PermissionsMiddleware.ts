@@ -101,6 +101,8 @@ export interface PermissionsMiddlewareOptions {
 export class PermissionsMiddleware implements IPermissionsChecker {
   private evaluator: PermissionEvaluator;
   private approvalHandler?: ApprovalHandler;
+  /** R145 HB-HERDR-LIFECYCLE: observer of the interactive approval wait (start/end), never awaited. */
+  private approvalWaitListener?: (phase: 'start' | 'end', toolName: string) => void;
   private auditLogger?: PermissionAuditLogger;
   private enableLogging: boolean;
   private bypassAll: boolean;
@@ -270,6 +272,7 @@ export class PermissionsMiddleware implements IPermissionsChecker {
     }
 
     try {
+      this.approvalWaitListener?.('start', context.toolName);
       return await this.approvalHandler.requestApproval({
         toolName: context.toolName,
         toolInput: context.toolInput,
@@ -279,7 +282,19 @@ export class PermissionsMiddleware implements IPermissionsChecker {
     } catch (error) {
       console.error('[PermissionsMiddleware] Approval request error:', error);
       return false;
+    } finally {
+      this.approvalWaitListener?.('end', context.toolName);
     }
+  }
+
+  /**
+   * R145 HB-HERDR-LIFECYCLE: observe the approval wait (the orchestrator reports
+   * blocked/working to herdr around it). Listener errors never affect the decision.
+   */
+  setApprovalWaitListener(listener: ((phase: 'start' | 'end', toolName: string) => void) | undefined): void {
+    this.approvalWaitListener = listener
+      ? (phase, toolName) => { try { listener(phase, toolName); } catch { /* observer only */ } }
+      : undefined;
   }
 
   /**

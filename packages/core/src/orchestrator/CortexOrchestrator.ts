@@ -78,6 +78,7 @@ import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGround
 import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, mentorSurfaceTimeoutMs, type MentorCallMeta } from '../training/mentorRole.js';
 import { resolveOuterToolDeadlineMs, resolveOuterToolTimeoutFloorMs } from './outerToolTimeout.js';
 import { resolveSubAgentTimeoutMs } from './subAgentTimeout.js';
+import { resolveHerdrReporting, HerdrReporter, type HerdrState } from './herdrReporter.js';
 import { resolveTurnDeadlineMs, timeBudgetState, timeBudgetWarnNudge } from './timeBudget.js';
 import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
 import { ExactRepeatTracker, notePollResults } from '../training/loopLadder.js';
@@ -625,6 +626,9 @@ export class CortexOrchestrator {
   private cachedEnvReport?: string;  // ENV_RECON_COMMAND output; cached for the lift planner, REFRESHED for the judges (HB-JUDGE-GROUNDING)
   private taskStartMs = 0;            // HB-JUDGE-GROUNDING: the user-turn start — the workspace delta is 'files changed since here'
   private turnLoopStartMs = 0;        // R133 HB-SUBAGENT-TIMEOUT: the tool-loop start of the active turn (mirror of the sendMessage/streamMessage local)
+  // R145 HB-HERDR-LIFECYCLE: lazily resolved once per orchestrator (undefined = unresolved, null = disabled).
+  private herdrReporter: HerdrReporter | null | undefined = undefined;
+  private herdrTurnLabel = 'turn:0';
   private turnDeadlineMsActive = 0;   // R133: the active turn's wall-clock budget (0 = no deadline) — sub-agent timeouts derive from what remains
   private endTurnResolverRejects = 0; // endTurnResolver: GAP vetoes so far this task (bounded by maxRejects → fallback-accept)
   private liftPlanText = '';          // 4.107.0: the PLAN OF ATTACK delivered at lift — handed to the resolver / deadline-exit / loop-exit judges as an advisory anchor
@@ -2131,6 +2135,7 @@ export class CortexOrchestrator {
     const TURN_DEADLINE_MS = loopDefaults.turnDeadlineMs;
     const loopStartMs = Date.now();
     this.turnLoopStartMs = loopStartMs; this.turnDeadlineMsActive = TURN_DEADLINE_MS; // R133: sub-agent timeouts read the residual
+    this.herdrTurnLabel = `turn:${Math.floor(this.turnNumber / 2) + 1}`; this.herdrReport('working', this.herdrTurnLabel); // R145
     let timeWarnFired = false;
 
     let totalToolErrors = 0;
@@ -2947,6 +2952,7 @@ export class CortexOrchestrator {
         const processedToolUseIds = new Set<string>();
 
         try {
+          this.herdrReport('working', `tool:${toolUseBlocks[0]?.name ?? 'batch'}`); // R145
           const toolResults = await this.handleToolCalls(toolUseBlocks, abortController.signal, structuredOutputState);
           this.testPostExecThrow(); // test-only fault injection for the re-execution guard (inert in prod)
           clearTimeout(timeoutId);
@@ -3672,8 +3678,10 @@ export class CortexOrchestrator {
     // Warn if we hit max iterations (or the exact-repeat breaker ended the loop — R137)
     if (loopBreak) {
       console.warn(`[Orchestrator Phase 2.5] Exact-repeat breaker ended the tool loop at iteration ${toolCallIteration}. Stopping loop.`);
+      this.herdrReport('idle', this.herdrTurnLabel); // R145: loop-break exit
     } else if (toolCallIteration >= MAX_TOOL_ITERATIONS) {
       console.warn(`[Orchestrator Phase 2.5] Max tool iterations (${MAX_TOOL_ITERATIONS}) reached. Stopping loop.`);
+      this.herdrReport('idle', this.herdrTurnLabel); // R145: max-iteration exit
     }
 
     // R29a: post-loop synthesis net. The tool loop can exit with the final
@@ -3918,6 +3926,7 @@ export class CortexOrchestrator {
 
     // 16. Build orchestrator response (use final message from multi-turn loop)
     // Include all executed tool uses from all iterations (not just final message)
+    this.herdrReport('idle', this.herdrTurnLabel); // R145: turn returned
     return {
       messageId: currentAssistantMessage.uuid,
       content: currentAssistantCanonicalMessage.content,
@@ -4609,6 +4618,7 @@ export class CortexOrchestrator {
     const TURN_DEADLINE_MS = loopDefaults.turnDeadlineMs;
     const loopStartMs = Date.now();
     this.turnLoopStartMs = loopStartMs; this.turnDeadlineMsActive = TURN_DEADLINE_MS; // R133: sub-agent timeouts read the residual
+    this.herdrTurnLabel = `turn:${Math.floor(this.turnNumber / 2) + 1}`; this.herdrReport('working', this.herdrTurnLabel); // R145
     let timeWarnFired = false;
     // HB-ENDTURN-TERMINAL (2026-09-08): dark gate + bounded continue-counter (streaming parity).
     const EMPTY_TURN_CONTINUE = loopDefaults.emptyTurnContinue;
@@ -5002,6 +5012,7 @@ export class CortexOrchestrator {
 
       try {
         // Execute tools (reuse existing method)
+        this.herdrReport('working', `tool:${toolUseBlocks[0]?.name ?? 'batch'}`); // R145
         const toolResults = await this.handleToolCalls(toolUseBlocks, abortController.signal, structuredOutputState);
         this.testPostExecThrow(); // test-only fault injection for the re-execution guard (inert in prod)
         clearTimeout(timeoutId);
@@ -5729,6 +5740,7 @@ export class CortexOrchestrator {
           ? `[Orchestrator Streaming] Exact-repeat breaker ended the tool loop at iteration ${toolCallIteration}. Stopping loop.`
           : `[Orchestrator Streaming] Max tool iterations (${MAX_TOOL_ITERATIONS}) reached. Stopping loop.`);
       }
+      this.herdrReport('idle', this.herdrTurnLabel); // R145: loop-break / max-iteration exit
     }
 
     // R29a (streaming parity): post-loop synthesis net. R32 added the R18b
@@ -5901,6 +5913,7 @@ export class CortexOrchestrator {
     }
 
     // Yield message_stop with usage data for CLI turn summary display
+    this.herdrReport('idle', this.herdrTurnLabel); // R145: turn returned (streaming)
     const finalUsage = convertedResponse?.usage || { inputTokens: 0, outputTokens: 0 };
     yield {
       type: 'message_stop' as const,
@@ -10518,6 +10531,31 @@ export class CortexOrchestrator {
   // ============================================
   // APPROVAL MODE API
   // ============================================
+
+  /**
+   * R145 HB-HERDR-LIFECYCLE: report a lifecycle transition to herdr when running inside a
+   * herdr pane (HERDR_ENV=1 + herdr on PATH; CORTEX_HERDR_REPORTING=false disables). Resolved
+   * once, lazily; fire-and-forget; never throws; the approval wait is observed via the
+   * permissions middleware so herdr sees blocked while a prompt is pending.
+   */
+  private herdrReport(state: HerdrState, summary?: string): void {
+    if (this.herdrReporter === undefined) {
+      const r = resolveHerdrReporting();
+      this.herdrReporter = r.enabled && r.binary && r.paneId
+        ? new HerdrReporter({ binary: r.binary, paneId: r.paneId, agentName: r.agentName })
+        : null;
+      if (this.herdrReporter && this.config.debug) {
+        console.log(`[Orchestrator] herdr lifecycle reporting on (pane ${r.paneId}, agent ${r.agentName})`);
+      }
+      if (this.herdrReporter) {
+        this.permissionsMiddleware?.setApprovalWaitListener((phase, toolName) => {
+          if (phase === 'start') this.herdrReporter?.report('blocked', 'waiting-approval');
+          else this.herdrReporter?.report('working', `tool:${toolName}`);
+        });
+      }
+    }
+    this.herdrReporter?.report(state, summary);
+  }
 
   /**
    * Get current approval mode settings

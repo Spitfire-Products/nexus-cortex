@@ -1345,6 +1345,54 @@ the model emitted a tool call the parser did not lift, so the turn ended with it
 whether the DSML parser (HB-DSML-PARSE, canary-passed 09-09) handles the `string="true|false"` attribute form and the `<｜｜DSML｜｜` double-bar
 variant; if not, extend the grammar + canary. Bench signature to grep in trajectories: final assistant text containing `DSML｜｜ calls`.
 
+## HB-HERDR — integrate nexus-cortex with herdr (herdrdev/herdr, Rust, Apache-2.0, "the runtime your coding agents live on") — R144+R145 BUILT 2026-09-13 → 4.108.14 (skill bundled + requires-env gate; lifecycle via pane report-agent with positional $HERDR_PANE_ID — 0.9.0 rejects --current); R146-R148 OPEN
+Grounded 2026-09-13 from herdr's docs (agent-automation.mdx, agents.mdx, cli-reference.mdx, concepts.mdx). herdr = a detach-survivable terminal
+workspace SERVER + client, driven by a local socket API (`herdr api schema --json`) and CLI: `workspace/tab/pane` topology; `pane run |
+send-text | send-keys | read --source recent-unwrapped --lines N | wait-output --regex --timeout`; `agent start --kind K --pane P | prompt --wait |
+wait --until idle|blocked|done | read | send-keys | attach --takeover | explain`; `pane report-agent <state> --summary` (an agent declares its own
+lifecycle); `HERDR_ENV=1` inside managed panes; remote hosts via `--machine`/`--remote` (SSH); a release-matched agent skill (`herdr --skill`).
+nexus-cortex is NOT a recognized agent today (Claude Code, Codex, Grok CLI, … are).
+- **R144 HB-HERDR-SKILL** — install herdr's agent skill into the harness skill set, gated on `HERDR_ENV=1` (its own guardrail): the model can split
+  panes, run/read/wait without stealing focus, and start helper agents in sibling panes. One day; uses the existing Skill tool.
+- **R145 HB-HERDR-LIFECYCLE** — make nexus-cortex a first-class herdr agent: when `HERDR_ENV=1`, the orchestrator calls `herdr pane report-agent
+  --current <working|idle|blocked> --summary <token>` at turn start/end and on approval waits (we already emit these transitions as decisions
+  events), so herdr's status is AUTHORITATIVE for us (no screen-manifest guessing), the sidebar rolls us up, and other agents can `agent wait
+  --until idle` on us. Later: a detection manifest for the neoncortex/fuzzycortex screens + `HERDR_AGENT=cortex` on wrappers.
+- **R146 HB-HERDR-TERMINAL-BACKEND** — a `TerminalBackend` seam under ShellTool.persistentSession / TmuxSessionTool / CreateArtifactTool persistent:
+  `herdr` (when the socket is reachable) > `tmux` (TmuxManager) > detached (R134). The herdr backend maps persistentSession → `pane split
+  --no-focus` + `pane run`, BashOutput → `pane read`, the Terminus wait primitive → `pane wait-output --regex --timeout` (R139/R142 inherited),
+  large input → `pane send-text` (bracketed paste; R140 inherited), capture caps → `--lines` (R141 inherited); panes survive client detach and
+  are visible/takeover-able by the operator.
+- **R147 HB-HERDR-DELEGATES** — Task sub-agents as herdr agents: `agent start <name> --kind cortex --pane <split>` + `agent prompt --wait
+  --timeout <R133 limit>` + `agent wait --until idle` + `agent read --source recent-unwrapped`; the operator sees every delegate live and can
+  `agent attach --takeover`. Keeps the in-process/IPC path when herdr is absent.
+- **R148 HB-HERDR-BENCH** (bench-side) — run the Vast executor's supervisors as herdr panes (`workspace create --label <store>`, one pane per
+  shard) and watch/drive lanes from the repl with `herdr --machine vast-bench pane read|wait-output`; the server persists across repl/session
+  restarts, so monitors do not die with the session and a stuck lane can be taken over instead of re-bootstrapped.
+Order: R144 → R145 → R146 → R147 → R148. Not installed anywhere yet (2026-09-13); binary install from herdr.dev (or `cargo install herdr`).
+
+## HB-TERMINUS-LESSONS — six mechanics from the Terminal-Bench reference agent (harbor `agents/terminus_2`, read 2026-09-13) — OPEN (R138-R143)
+Source: `tmux_session.py` + `terminus_2.py` in the harbor 0.23.0 install on the bench executor. Ours: `packages/executors/src/utils/TmuxManager.ts`,
+`implementations/tmux/TmuxSessionTool.ts`, `implementations/execution/ShellTool.ts` (persistentSession), `core/.../compactionResume.ts`.
+- **R138 HB-TMUX-SELF-INSTALL** — Terminus `_attempt_tmux_installation` / `_get_combined_install_command` (apt/apk/yum) / `_build_tmux_from_source`,
+  each step time-bounded. Ours only checks `isAvailable()`. On the first persistent-mode request: package manager → static build → R134 degrade.
+- **R139 HB-TMUX-WAIT-FOR** — Terminus `send_keys(block, min_timeout_sec, max_timeout_sec=180)`: blocking sends append `tmux wait-for` and the
+  harness waits on `tmux wait done` under a hard cap; non-blocking sends settle for `min_timeout_sec`. Ours polls a sentinel string every 400 ms
+  (`ShellTool.ts:90/:697`). Replace the sentinel with the wait-for channel; keep the cap; report "still running" honestly.
+- **R140 HB-TMUX-PASTE-BUFFER** — Terminus batches keys to the send-keys size limit and pastes oversize input via `load-buffer`/`paste-buffer`
+  (`tmux_session.py:661-687`). Ours is one `send-keys` per command (`TmuxManager.sendKeys`); long heredocs / `python3 -c` bodies are exactly
+  what TB4.0 sessions send (rs-archive-clone's heredoc "unexpected end of file"). Port batching + paste fallback.
+- **R141 HB-TMUX-CAPTURE-CAP** — Terminus raises `history-limit`, captures a fixed 160x40 pane and truncates each capture to 10 KB with the
+  MIDDLE omitted (`_limit_output_length`) so command echo + result survive. Our `TmuxSessionTool` capture/captureHistory has no cap; ShellTool's
+  30 KB head/tail cap does not apply to tmux captures. Add middle-omission + pane size/lines parameters.
+- **R142 HB-WAIT-PRIMITIVE** — Terminus `{"keystrokes": "", "duration": N}` = a side-effect-free wait; its timeout template says "it may still
+  be running — do nothing". Give our model the same: `BashOutput`/persistent session `wait_seconds` (or a `Wait` action) so "wait N then show
+  the screen" is never a repeated command (closes the R135/R137 class at the source; `poll_steer` should name it).
+- **R143 HB-HANDOFF-QA-SUMMARY** — Terminus `_summarize` (terminus_2.py:865+): summary → a FRESH sub-agent asks what is missing given the
+  task + current screen → a full-context sub-agent answers → history := [system, summary+questions, answers]. Ours writes one checkpoint memory.
+  A/B the question/answer round on the compaction proof task (one extra helper call per compaction).
+Not copied on purpose: screen-scraping as the only I/O, unbounded episodes, no loop guards.
+
 ## HB-POLL-REPEAT-BREAKER — the exact-repeat breaker force-exits the turn on identical BashOutput polls (2026-09-13, TB4.0 validation mp-checkpoint-consolidation) — BUILT 2026-09-13 → 4.108.11 (R137)
 Evidence (t4v session, 4.108.9): the model launched `timeout 580 python3 -u /tmp/fit.py` (promoted to background by TOOL_TIMEOUT_MODE=auto)
 and polled `BashOutput {"bash_id": "bg-8c537679"}` five times in a row — exactly what the promote steering tells it to do. `ExactRepeatTracker`
