@@ -169,6 +169,8 @@ const GROUPS: Array<{ group: string; levers: LeverSpec[] }> = [
       { key: 'DEFAULT_MODEL_ID', what: 'The model new sessions use', codeDefault: '(registry default)', kind: 'value' },
       { key: 'CORTEX_HERDR_REPORTING', what: 'Inside a herdr pane (HERDR_ENV=1 + herdr on PATH) the orchestrator reports working/idle/blocked + a summary token to herdr so its status is authoritative (R145 HB-HERDR-LIFECYCLE); only "false" disables', codeDefault: 'true when HERDR_ENV=1', kind: 'flag-not-false' },
       { key: 'CORTEX_HERDR_AGENT_NAME', what: 'Agent label reported to herdr (report-agent --agent); sanitized to [a-z][a-z0-9_-]{0,31}', codeDefault: 'cortex', kind: 'value' },
+      { key: 'CORTEX_HERDR_BIN', what: 'Explicit herdr binary override (legacy HERDR_BIN honored). Resolution order: this → HERDR_BIN_PATH → PATH probe', codeDefault: '(unset)', kind: 'value' },
+      { key: 'HERDR_BIN_PATH', what: 'herdr 0.9.0 pane export of its own binary path — the bin the reporter uses when no override is set and it is executable (informational; set by herdr, not by us)', codeDefault: '(unset — PATH probe)', kind: 'value' },
     ],
   },
 ];

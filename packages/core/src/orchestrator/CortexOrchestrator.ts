@@ -10541,11 +10541,11 @@ export class CortexOrchestrator {
   private herdrReport(state: HerdrState, summary?: string): void {
     if (this.herdrReporter === undefined) {
       const r = resolveHerdrReporting();
-      this.herdrReporter = r.enabled && r.binary && r.paneId
-        ? new HerdrReporter({ binary: r.binary, paneId: r.paneId, agentName: r.agentName })
+      this.herdrReporter = r.enabled && r.bin && r.paneId
+        ? new HerdrReporter({ binary: r.bin, paneId: r.paneId, agentName: r.agentName })
         : null;
       if (this.herdrReporter && this.config.debug) {
-        console.log(`[Orchestrator] herdr lifecycle reporting on (pane ${r.paneId}, agent ${r.agentName})`);
+        console.log(`[Orchestrator] herdr lifecycle reporting on (pane ${r.paneId}, agent ${r.agentName}, bin ${r.bin})`);
       }
       if (this.herdrReporter) {
         this.permissionsMiddleware?.setApprovalWaitListener((phase, toolName) => {

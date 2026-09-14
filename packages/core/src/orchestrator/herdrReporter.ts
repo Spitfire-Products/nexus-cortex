@@ -36,7 +36,8 @@ export type HerdrExecFn = (binary: string, args: string[], onError: (err: Error)
 export interface HerdrReportingResolution {
   enabled: boolean;
   reason?: string;
-  binary?: string;
+  /** The resolved herdr binary path (CORTEX_HERDR_BIN/HERDR_BIN → HERDR_BIN_PATH → PATH probe). */
+  bin?: string;
   paneId?: string;
   agentName?: string;
 }
@@ -66,7 +67,9 @@ export function sanitizeHerdrSummary(raw: string): string {
 
 /**
  * Enabled iff CORTEX_HERDR_REPORTING !== 'false', HERDR_ENV === '1', HERDR_PANE_ID is set,
- * and `herdr` resolves (HERDR_BIN, else each PATH entry). Never scans /nix/store.
+ * and `herdr` resolves. Binary order: CORTEX_HERDR_BIN (explicit override; legacy HERDR_BIN
+ * honored) → HERDR_BIN_PATH (herdr 0.9.0's own pane export, probed executable) → each PATH
+ * entry. Explicit-path probes only — never scans /nix/store.
  */
 export function resolveHerdrReporting(
   env: NodeJS.ProcessEnv = process.env,
@@ -82,21 +85,24 @@ export function resolveHerdrReporting(
   if (!paneId) {
     return { enabled: false, reason: 'HERDR_PANE_ID unset (herdr report-agent needs the pane id)' };
   }
-  let binary: string | undefined;
-  const override = (env.HERDR_BIN || '').trim();
+  let bin: string | undefined;
+  const override = (env.CORTEX_HERDR_BIN || env.HERDR_BIN || '').trim();
+  const paneExport = (env.HERDR_BIN_PATH || '').trim();
   if (override && isExecutable(override)) {
-    binary = override;
+    bin = override;
+  } else if (paneExport && isExecutable(paneExport)) {
+    bin = paneExport;
   } else {
     for (const dir of (env.PATH || '').split(delimiter)) {
       if (!dir) continue;
       const candidate = join(dir, 'herdr');
-      if (isExecutable(candidate)) { binary = candidate; break; }
+      if (isExecutable(candidate)) { bin = candidate; break; }
     }
   }
-  if (!binary) {
-    return { enabled: false, reason: 'herdr binary not found on PATH' };
+  if (!bin) {
+    return { enabled: false, reason: 'herdr binary not found (CORTEX_HERDR_BIN, HERDR_BIN_PATH, PATH)' };
   }
-  return { enabled: true, binary, paneId, agentName: sanitizeHerdrAgentName(env.CORTEX_HERDR_AGENT_NAME) };
+  return { enabled: true, bin, paneId, agentName: sanitizeHerdrAgentName(env.CORTEX_HERDR_AGENT_NAME) };
 }
 
 const defaultExec: HerdrExecFn = (binary, args, onError) => {
@@ -197,6 +203,6 @@ export class HerdrReporter {
     this.disabled = true;
     this.pending = null;
     const msg = err instanceof Error ? err.message : String(err);
-    try { this.warn(`[WARN] herdr lifecycle reporting disabled: ${msg}`); } catch { /* never throw */ }
+    try { this.warn(`[WARN] herdr lifecycle reporting disabled: ${msg} (bin ${this.binary})`); } catch { /* never throw */ }
   }
 }

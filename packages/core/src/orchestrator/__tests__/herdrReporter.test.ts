@@ -67,16 +67,33 @@ describe('resolveHerdrReporting (R145 HB-HERDR-LIFECYCLE)', () => {
     expect(r.reason).toMatch(/HERDR_PANE_ID/);
   });
 
-  it('enabled inside a pane with herdr on PATH; agent name defaults to cortex', () => {
+  it('enabled inside a pane with herdr on PATH; agent name defaults to cortex; bin = resolved path', () => {
     const r = resolveHerdrReporting(envOn(), isExec);
-    expect(r).toEqual({ enabled: true, binary: BIN, paneId: PANE, agentName: 'cortex' });
+    expect(r).toEqual({ enabled: true, bin: BIN, paneId: PANE, agentName: 'cortex' });
   });
 
-  it('HERDR_BIN wins over PATH; CORTEX_HERDR_AGENT_NAME is sanitized to the herdr name grammar', () => {
-    const r = resolveHerdrReporting(envOn({ HERDR_BIN: '/opt/herdr', PATH: '', CORTEX_HERDR_AGENT_NAME: 'My Agent!' }), (p) => p === '/opt/herdr');
+  it('CORTEX_HERDR_BIN (or legacy HERDR_BIN) wins over everything; CORTEX_HERDR_AGENT_NAME is sanitized to the herdr name grammar', () => {
+    const r = resolveHerdrReporting(envOn({ CORTEX_HERDR_BIN: '/opt/herdr', HERDR_BIN_PATH: '/pane/herdr', CORTEX_HERDR_AGENT_NAME: 'My Agent!' }), (p) => p === '/opt/herdr' || p === '/pane/herdr' || p === BIN);
     expect(r.enabled).toBe(true);
-    expect(r.binary).toBe('/opt/herdr');
+    expect(r.bin).toBe('/opt/herdr');
     expect(r.agentName).toBe('my-agent');
+    const legacy = resolveHerdrReporting(envOn({ HERDR_BIN: '/opt/herdr', PATH: '' }), (p) => p === '/opt/herdr');
+    expect(legacy.bin).toBe('/opt/herdr');
+  });
+
+  it('HERDR_BIN_PATH (the pane export) is used when executable, even with no PATH hit', () => {
+    const r = resolveHerdrReporting(envOn({ HERDR_BIN_PATH: '/home/x/.local/bin/herdr', PATH: '/nope' }), (p) => p === '/home/x/.local/bin/herdr');
+    expect(r.enabled).toBe(true);
+    expect(r.bin).toBe('/home/x/.local/bin/herdr');
+  });
+
+  it('HERDR_BIN_PATH set but not executable falls through to the PATH probe', () => {
+    const r = resolveHerdrReporting(envOn({ HERDR_BIN_PATH: '/stale/herdr' }), isExec);
+    expect(r.enabled).toBe(true);
+    expect(r.bin).toBe(BIN);
+    const none = resolveHerdrReporting(envOn({ HERDR_BIN_PATH: '/stale/herdr', PATH: '/nope' }), isExec);
+    expect(none.enabled).toBe(false);
+    expect(none.reason).toMatch(/PATH/);
   });
 });
 
@@ -145,6 +162,7 @@ describe('HerdrReporter', () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]![0]).toMatch(/^\[WARN\] herdr lifecycle reporting disabled: /);
     expect(warn.mock.calls[0]![0]).toContain('ENOENT');
+    expect(warn.mock.calls[0]![0]).toContain(`(bin ${BIN})`);
     expect(reporter.disabled).toBe(true);
   });
 
