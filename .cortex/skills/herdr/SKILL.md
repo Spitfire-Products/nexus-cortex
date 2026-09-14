@@ -1,10 +1,10 @@
 ---
 name: herdr
-description: "Control Herdr, a terminal multiplexer for coding agents. Use only when the user explicitly mentions Herdr or asks to use Herdr to inspect or control panes, tabs, workspaces, commands, or another agent. Do not use merely because a task could benefit from a background terminal, delegation, or parallel work. Requires HERDR_ENV=1."
+description: "Control Herdr, the terminal workspace server nexus-cortex is running inside (HERDR_ENV=1): inspect neighboring panes/agents, run long-lived processes in sibling panes and read/wait on them, start helper agents. Use when the user mentions Herdr, when you need a long-running process visible to the operator, or when coordinating with other agents. Use only when the user explicitly mentions Herdr or asks to use Herdr to inspect or control panes, tabs, workspaces, commands, or another agent. Do not use merely because a task could benefit from a background terminal, delegation, or parallel work. Requires HERDR_ENV=1."
 requires-env: HERDR_ENV=1
 ---
 
-> Source: github.com/herdrdev/herdr `skills/herdr/SKILL.md` @ b99002ac (2026-09-07), vendored 2026-09-14 for nexus-cortex (R144 HB-HERDR-SKILL); byte-identical to `herdr --skill` of herdr 0.9.0 at vendoring.
+> Source: github.com/herdrdev/herdr `skills/herdr/SKILL.md` @ b99002ac (2026-09-07), vendored 2026-09-14 for nexus-cortex (R144 HB-HERDR-SKILL); upstream body byte-identical below the harness-specific section to `herdr --skill` of herdr 0.9.0 at vendoring.
 > The installed binary is authoritative: `herdr --skill` prints the release-matched copy of this skill; prefer it whenever it differs from this file.
 > Gate: this skill is listed/loadable only when HERDR_ENV=1 (`requires-env` frontmatter, SkillTool), and its body stops unless `test "${HERDR_ENV:-}" = 1` — outside a herdr pane it is invisible and inert.
 
@@ -21,6 +21,33 @@ test "${HERDR_ENV:-}" = 1
 If the check fails, say that you are not running inside Herdr and stop. Do not inspect or control the focused Herdr session from outside Herdr.
 
 When the check passes, the `herdr` binary in `PATH` talks to the current session. Use it to inspect neighboring work, create terminal layout, start agents and commands, read output, and wait for state changes.
+
+## nexus-cortex inside Herdr (harness-specific — read this first)
+
+You are nexus-cortex. When `HERDR_ENV=1`, the harness itself is already integrated with Herdr:
+
+- **Your lifecycle is reported for you.** The orchestrator posts `working` (with `turn:<n>` / `tool:<name>` summary tokens), `idle`, and
+  `blocked` (while waiting for an approval) to Herdr through `pane report-agent` on your own pane (`$HERDR_PANE_ID`, source
+  `custom:nexus-cortex`). Do NOT call `herdr pane report-agent` or `report-metadata` yourself — you would fight the harness's reports.
+- **How others address you.** You appear as agent kind `cortex` in your pane. Other agents and scripts target you by pane id (`$HERDR_PANE_ID`)
+  or by a live name; give yourself a stable name once if collaboration needs it: `herdr agent rename --current <name>` (the `--agent` label is
+  the kind, not a name). `herdr agent wait <you> --until idle` resolves on the harness's own reports.
+- **Prefer Herdr panes for anything long-running or worth watching.** Your `Bash` tool with `run_in_background` + `BashOutput` is still the
+  cheapest way to run a build or a probe loop in the background, but a Herdr pane is better when the process must outlive your turn, when the
+  operator should be able to see and take it over (`herdr agent attach`), or when another agent must wait on it:
+  `herdr pane split --current --direction right --cwd "$PWD" --no-focus` → `herdr pane run <id> '<command>'` → `herdr pane wait-output <id>
+  --match '<text>' --timeout <ms>` or `--regex` → `herdr pane read <id> --lines 80`. This replaces a `sleep N; <probe>` loop — do not poll
+  with sleeps when `pane wait-output` can wait for the exact text.
+- **Persistent shells.** `Bash` with `persistentSession: true` uses tmux inside your own pane; when tmux is missing it degrades to a detached
+  process (a `[WARN]` says so). Under Herdr, a sibling pane from `pane split` is the more capable persistent terminal: it survives your turn and
+  the operator's detach, and its output is readable by everyone through `pane read`.
+- **Delegation.** `Task` sub-agents run in-process today. If a helper must be visible in the Herdr sidebar or driven by others, start it in a
+  sibling pane instead: `herdr agent start <name> --kind <kind> --pane <id> -- <args>`, then `herdr agent prompt <name> "<task>" --wait
+  --timeout <ms>` and `herdr agent read <name> --source recent-unwrapped --lines 120`. (A `--kind cortex` launcher is planned; until then
+  use `pane run` with the `cortex` CLI and address the pane by id.)
+- **Read before retrying.** `agent_prompt_stalled` or a wait timeout does not mean nothing was sent; `agent read` / `pane read` first.
+- **Scope.** Only touch panes you created or were told about; never `server stop`, never close the operator's panes, never `--takeover` an
+  agent you did not start. Everything you run in Herdr is visible to the operator — that is the point.
 
 ## Learn the current CLI
 
