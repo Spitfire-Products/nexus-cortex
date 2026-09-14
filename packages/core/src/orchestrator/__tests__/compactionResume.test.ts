@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   resolveCompactionResume, extractFirstUserText, pickDropped, buildCompactionResumeReminder,
-  isCompactionResumeMessage, COMPACTION_RESUME_MARKER, coversAll, buildRollingSeedMessage, upsertMemoryIndex, memoryIndexLine, MEMORY_INDEX_HEADER, scaleEstimateToRequestView, approxCharsOf, anchoredRequestEstimate,
+  isCompactionResumeMessage, COMPACTION_RESUME_MARKER, coversAll, buildRollingSeedMessage, upsertMemoryIndex, memoryIndexLine, MEMORY_INDEX_HEADER, scaleEstimateToRequestView, approxCharsOf, anchoredRequestEstimate, approxBlockChars, IMAGE_BLOCK_CHARS,
 } from '../compactionResume';
 
 const user = (text: string) => ({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
@@ -119,6 +119,23 @@ describe('4.108.5 — compaction judges the request view, not the raw history (R
     const n = approxCharsOf([a, b]);
     expect(n).toBeGreaterThanOrEqual(4 + 2 + JSON.stringify({ type: 'tool_result', content: 'zz' }).length);
     expect(approxCharsOf([{ message: { content: 'hello' } }])).toBe(5);
+  });
+  it('R149: a base64 image block counts as IMAGE_BLOCK_CHARS, not its megabyte of base64', () => {
+    const b64 = 'iVBORw0KGgo'.repeat(100_000); // ~1.1 MB of base64-looking payload
+    const img = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: b64 } };
+    const n = approxCharsOf([{ role: 'user', content: [img] }]);
+    expect(n).toBeGreaterThanOrEqual(IMAGE_BLOCK_CHARS);
+    expect(n).toBeLessThan(IMAGE_BLOCK_CHARS + 200); // structure only; the payload is flattened
+    // nested inside a tool_result content array too
+    const tr = { type: 'tool_result', tool_use_id: 't1', content: [{ type: 'text', text: 'ok' }, img] };
+    expect(approxCharsOf([{ role: 'user', content: [tr] }])).toBeLessThan(2 * IMAGE_BLOCK_CHARS);
+    // long ordinary text is NOT flattened (spaces/punctuation fail the base64 test)
+    const prose = 'the quick brown fox, jumped. '.repeat(200);
+    expect(approxBlockChars({ type: 'tool_result', content: prose })).toBeGreaterThan(prose.length);
+    // the anchor and the estimate use the same measure → a fresh image adds ~IMAGE_BLOCK_CHARS/4 tokens, not 250K
+    const anchorChars = approxCharsOf([{ role: 'user', content: [{ type: 'text', text: 'x'.repeat(40_000) }] }]);
+    const est = anchoredRequestEstimate({ anchorTokens: 10_000, anchorChars, currentChars: anchorChars + n, heuristicTokens: 999_999 });
+    expect(est.tokens).toBeLessThan(10_000 + 2_000);
   });
 });
 

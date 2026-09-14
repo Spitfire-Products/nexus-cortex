@@ -19,6 +19,14 @@ describe('ErrorClassificationMiddleware', () => {
   });
 
   describe('Network Errors - Retryable', () => {
+    it('R150: classifies the OpenAI SDK "Connection error." and undici "terminated" as retryable network faults', () => {
+      for (const msg of ['Connection error.', 'terminated', 'other side closed', 'UND_ERR_SOCKET', 'Client network socket disconnected before secure TLS connection was established']) {
+        const r = classifier.classify(new Error(msg));
+        expect(r.isRetryable, msg).toBe(true);
+        expect(r.errorType, msg).toBe('network');
+      }
+    });
+
     it('should classify ECONNRESET as retryable network error', () => {
       const error = new Error('ECONNRESET');
       const result = classifier.classify(error);

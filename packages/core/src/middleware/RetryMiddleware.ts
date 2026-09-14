@@ -163,7 +163,9 @@ export class RetryMiddleware implements IRetryExecutor {
     const errors: ErrorClassification[] = [];
     let totalDelayMs = 0;
 
-    for (let attempt = 0; attempt <= this.options.maxRetries; attempt++) {
+    // R150: the loop is unbounded by design — every path out is a `return` on success or a `throw` in the catch below
+    // (attempt-capped for ordinary faults, delay-budget-capped for network-class faults).
+    for (let attempt = 0; ; attempt++) {
       try {
         // Attempt the operation
         const result = await operation();
@@ -187,7 +189,24 @@ export class RetryMiddleware implements IRetryExecutor {
           ? Math.min(this.options.maxRetries, this.options.rateLimitMaxRetries ?? this.options.maxRetries)
           : this.options.maxRetries;
         const isLastAttempt = attempt >= attemptCap;
-        const shouldRetry = classification.isRetryable && !isLastAttempt;
+        // R150 HB-API-CONNECTION-RESILIENCE: network-class faults get a wall-clock budget instead of an attempt cap.
+        const networkBudget = this.options.networkRetryBudgetMs ?? 0;
+        const budgeted = classification.isRetryable && classification.errorType === 'network' && networkBudget > 0;
+        let delayMs: number;
+        let shouldRetry: boolean;
+        if (budgeted) {
+          delayMs = this.calculateDelay(attempt, this.options.networkMaxDelayMs ?? 60000);
+          shouldRetry = totalDelayMs + delayMs <= networkBudget;
+          if (shouldRetry) {
+            console.warn(
+              `[RetryMiddleware] network fault on ${context} (attempt ${attempt + 1}: ${String(error?.message ?? error).slice(0, 120)}) — ` +
+              `retrying in ${Math.round(delayMs / 1000)}s (budget ${Math.round((totalDelayMs + delayMs) / 1000)}/${Math.round(networkBudget / 1000)}s)`,
+            );
+          }
+        } else {
+          delayMs = this.calculateDelay(attempt);
+          shouldRetry = classification.isRetryable && !isLastAttempt;
+        }
 
         if (!shouldRetry) {
           // Either non-retryable or exhausted retries - throw error
@@ -201,8 +220,7 @@ export class RetryMiddleware implements IRetryExecutor {
           throw enhancedError;
         }
 
-        // Calculate delay with exponential backoff and jitter
-        const delayMs = this.calculateDelay(attempt);
+        // Delay already computed above (exponential backoff with jitter; network ladder capped separately)
         totalDelayMs += delayMs;
 
         // Wait before retrying
@@ -210,9 +228,6 @@ export class RetryMiddleware implements IRetryExecutor {
       }
     }
 
-    // This should never be reached due to the throw in the loop,
-    // but TypeScript needs this for type safety
-    throw new Error(`Retry loop completed unexpectedly for context: ${context}`);
   }
 
   /**
@@ -239,13 +254,13 @@ export class RetryMiddleware implements IRetryExecutor {
    * retry.calculateDelay(10); // capped at maxDelayMs (30000ms) ± 10%
    * ```
    */
-  calculateDelay(attempt: number): number {
+  calculateDelay(attempt: number, maxDelayMs: number = this.options.maxDelayMs): number {
     // Calculate exponential delay
     const exponentialDelay =
       this.options.baseDelayMs * Math.pow(this.options.backoffMultiplier, attempt);
 
-    // Cap at maximum delay
-    const cappedDelay = Math.min(exponentialDelay, this.options.maxDelayMs);
+    // Cap at maximum delay (the network ladder passes its own cap — R150)
+    const cappedDelay = Math.min(exponentialDelay, maxDelayMs);
 
     // Add jitter: random value between -jitterRange and +jitterRange
     const jitterRange = cappedDelay * this.options.jitterFactor;

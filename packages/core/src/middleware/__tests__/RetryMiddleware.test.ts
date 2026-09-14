@@ -30,6 +30,43 @@ describe('RetryMiddleware', () => {
     });
   });
 
+  describe('R150 network retry budget', () => {
+    it('keeps retrying network faults past maxRetries while the delay budget lasts', async () => {
+      const mw = new RetryMiddleware(errorClassifier, {
+        maxRetries: 1, baseDelayMs: 50, maxDelayMs: 50, backoffMultiplier: 2, jitterFactor: 0,
+        networkRetryBudgetMs: 400, networkMaxDelayMs: 50,
+      });
+      let calls = 0;
+      const res = await mw.executeWithRetry(async () => {
+        calls++;
+        if (calls <= 5) throw new Error('Connection error.');
+        return 'ok';
+      }, 'net');
+      expect(res.result).toBe('ok');
+      expect(res.attemptCount).toBe(6); // 5 waits × 50 ms = 250 ms ≤ 400 ms budget, well past maxRetries=1
+    });
+    it('gives up when the budget is exhausted and still honors the attempt cap for non-network faults', async () => {
+      const mw = new RetryMiddleware(errorClassifier, {
+        maxRetries: 1, baseDelayMs: 50, maxDelayMs: 50, backoffMultiplier: 1, jitterFactor: 0,
+        networkRetryBudgetMs: 120, networkMaxDelayMs: 50,
+      });
+      let calls = 0;
+      await expect(mw.executeWithRetry(async () => { calls++; throw new Error('terminated'); }, 'net')).rejects.toThrow();
+      expect(calls).toBe(3); // 2 waits (100 ms) fit the 120 ms budget, the third would not
+      let other = 0;
+      await expect(mw.executeWithRetry(async () => { other++; throw Object.assign(new Error('Too Many Requests'), { status: 429 }); }, 'rl')).rejects.toThrow();
+      expect(other).toBeLessThanOrEqual(2); // rate limit stays attempt-capped
+    });
+    it('budget 0 keeps the legacy attempt cap for network faults', async () => {
+      const mw = new RetryMiddleware(errorClassifier, {
+        maxRetries: 2, baseDelayMs: 10, maxDelayMs: 10, backoffMultiplier: 1, jitterFactor: 0, networkRetryBudgetMs: 0,
+      });
+      let calls = 0;
+      await expect(mw.executeWithRetry(async () => { calls++; throw new Error('Connection error.'); }, 'net')).rejects.toThrow();
+      expect(calls).toBe(3);
+    });
+  });
+
   describe('Constructor and Options', () => {
     it('should create instance with default options', () => {
       const middleware = new RetryMiddleware(errorClassifier);

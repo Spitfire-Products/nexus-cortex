@@ -96,7 +96,11 @@ const DEFAULT_RETRY_OPTIONS: RetryOptions = {
   baseDelayMs: 1000,
   maxDelayMs: 30000,
   backoffMultiplier: 2,
-  jitterFactor: 0.1
+  jitterFactor: 0.1,
+  // R150 HB-API-CONNECTION-RESILIENCE (2026-09-14): network-class faults (connection error / terminated / 5xx) retry on a
+  // 10-minute wall-clock budget (waits capped at 60 s) instead of 3 attempts ≈ 7 s. Env override: CORTEX_API_NETWORK_RETRY_MS (0 = off).
+  networkRetryBudgetMs: 600000,
+  networkMaxDelayMs: 60000,
 };
 
 /**
@@ -432,6 +436,11 @@ export async function createOrchestrator(
     ...DEFAULT_RETRY_OPTIONS,
     ...middlewareConfig.retryOptions
   };
+  // R150: CORTEX_API_NETWORK_RETRY_MS — wall-clock budget for network-class API faults (0 disables the budget ladder).
+  {
+    const envNetworkBudget = parseInt(process.env.CORTEX_API_NETWORK_RETRY_MS || '', 10);
+    if (Number.isFinite(envNetworkBudget) && envNetworkBudget >= 0) retryOptions.networkRetryBudgetMs = envNetworkBudget;
+  }
   const retryMiddleware = new RetryMiddleware(errorClassifier, retryOptions);
 
   // 3. PermissionsMiddleware (if enabled)

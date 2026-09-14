@@ -120,6 +120,7 @@ export interface EnvironmentVariables {
   CORTEX_SUBAGENT_TIMEOUT_MS?: string; // Task sub-agent wall-clock limit (ms) when no parent turn deadline is set (R133; default 300000)
   CORTEX_SUBAGENT_TIMEOUT_MAX_MS?: string; // upper cap (ms) on the deadline-derived Task sub-agent limit (R133; empty = no cap)
   CORTEX_OUTER_TOOL_TIMEOUT_MS?: string; // floor (ms) for the outer per-batch tool abort: deadline = max(computed, floor + grace); empty = no floor
+  CORTEX_API_NETWORK_RETRY_MS?: string; // wall-clock budget (ms) for network-class API fault retries (R150; default 600000; 0 = attempt-capped legacy)
   CORTEX_HERDR_REPORTING?: string; // 'false' disables herdr lifecycle reporting inside a herdr pane (R145; default on when HERDR_ENV=1)
   CORTEX_HERDR_AGENT_NAME?: string; // agent label reported to herdr (R145; default cortex)
   CORTEX_TERMINAL_BACKEND?: string; // auto | herdr | tmux | detached — persistent-session backend under Bash/TmuxSession/CreateArtifact (R146; auto = herdr > tmux > detached)
@@ -451,6 +452,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_SUBAGENT_TIMEOUT_MS: '',
   CORTEX_SUBAGENT_TIMEOUT_MAX_MS: '',
   CORTEX_OUTER_TOOL_TIMEOUT_MS: '',
+  CORTEX_API_NETWORK_RETRY_MS: '',
   CORTEX_HERDR_REPORTING: '',
   CORTEX_HERDR_AGENT_NAME: '',
   CORTEX_TERMINAL_BACKEND: '',
@@ -896,6 +898,14 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_SUBAGENT_TIMEOUT_MAX_MS',
     displayName: 'Sub-agent timeout cap (ms)',
     description: 'Upper cap (ms) on the deadline-derived Task sub-agent limit; unset = no cap (R133).',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_API_NETWORK_RETRY_MS',
+    displayName: 'API network-fault retry budget (ms)',
+    description: 'Wall-clock budget for retrying network-class API faults (connection error, terminated stream, 5xx) with an exponential ladder capped at 60 s per wait (R150, HB-API-CONNECTION-RESILIENCE). Default 600000 (10 min); 0 = legacy 3-attempt cap.',
     type: 'string',
     category: 'training',
     default: ''

@@ -70,6 +70,7 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   CORTEX_SUBAGENT_TIMEOUT_MS: { tier: 'env' },
   CORTEX_SUBAGENT_TIMEOUT_MAX_MS: { tier: 'env' },
   CORTEX_OUTER_TOOL_TIMEOUT_MS: { tier: 'env' },
+  CORTEX_API_NETWORK_RETRY_MS: { tier: 'env' },
   CORTEX_HERDR_REPORTING: { tier: 'env' },
   CORTEX_HERDR_AGENT_NAME: { tier: 'env' },
   CORTEX_TERMINAL_BACKEND: { tier: 'env' },

@@ -46,6 +46,20 @@ export class ErrorClassificationMiddleware implements IErrorClassifier {
     'socket hang up',
     'network error',
     'fetch failed',
+    // R150 HB-API-CONNECTION-RESILIENCE (2026-09-14): the shapes the SDKs actually throw on a transport blip — the OpenAI
+    // SDK's APIConnectionError message is literally "Connection error."; undici reports a torn response body as
+    // "terminated" / "other side closed" (UND_ERR_*). None matched → not retryable → the tool loop exited on the FIRST
+    // fault and an 8-hour bench turn shipped un-attested (tb4-flash-v2: 3 lanes at 8:36 AM PT, 1 pass lost).
+    'connection error',
+    'terminated',
+    'other side closed',
+    'und_err_',
+    'econnaborted',
+    'epipe',
+    'eai_again',
+    'enotfound',
+    'premature close',
+    'client network socket disconnected',
   ];
 
   /**

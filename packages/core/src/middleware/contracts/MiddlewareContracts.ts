@@ -96,6 +96,12 @@ export interface RetryOptions {
    *  survives two waits usually survives a third; burning the full backoff
    *  ladder wastes wall-clock (grok-build port, 2026-08-01). Default: 2. */
   rateLimitMaxRetries?: number;
+  /** R150 (2026-09-14): wall-clock BUDGET (ms) for network-class faults (connection error / terminated / 5xx). While
+   *  the cumulative retry delay stays inside the budget the ladder keeps going past maxRetries — a transport blip of
+   *  minutes must not end an hours-long agent turn. 0/unset = legacy attempt-capped behavior. Env: CORTEX_API_NETWORK_RETRY_MS. */
+  networkRetryBudgetMs?: number;
+  /** Per-wait cap (ms) on the network-class ladder (default 60000). */
+  networkMaxDelayMs?: number;
 }
 
 /**

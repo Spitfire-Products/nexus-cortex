@@ -553,6 +553,8 @@ export class CortexOrchestrator {
   // R132 HB-COMPACTION-ESTIMATE: the last REAL prompt_tokens the provider reported + the request-view char size at that moment.
   // ensureHistoryFitsModel anchors its estimate here (anchor + grown chars/4) instead of the ~5-7x over-reading heuristic.
   private lastUsageAnchor: { promptTokens: number; requestChars: number } | null = null;
+  /** R150: last error message that ended (or interrupted) the tool loop — banked on the abnormal-exit-bypass event. */
+  private lastToolLoopError = '';
 
   // Responses API stateful chaining: track last response ID for XAI/OpenAI
   // When set, continuation requests send previous_response_id instead of full history,
@@ -3571,6 +3573,7 @@ export class CortexOrchestrator {
 
           const errorMessage = toolError.message || 'Unknown error during tool execution';
           const isTimeout = toolError.name === 'AbortError';
+          this.lastToolLoopError = String(errorMessage).slice(0, 300); // R150 observability
           const errorContent = isTimeout
             ? `Tool execution timed out after ${TOOL_TIMEOUT_MS}ms. Try a different approach — use more targeted commands (narrow paths, add --max-count/head limits, filter early), break large work into smaller steps, or use a different tool. Repeating the same command will hit the same timeout.`
             : `Tool execution failed with exception: ${errorMessage}`;
@@ -3673,6 +3676,7 @@ export class CortexOrchestrator {
       } catch (loopError: any) {
         // Phase 2.5 Day 3: Catch-all for unexpected errors in loop
         console.error(`[Orchestrator Phase 2.5] Unexpected error in multi-turn loop:`, loopError.message);
+        this.lastToolLoopError = String(loopError?.message ?? loopError).slice(0, 300); // R150 observability
 
         // Break out of loop on unexpected errors
         break;
@@ -3719,7 +3723,7 @@ export class CortexOrchestrator {
           void store.recordEvent({
             sessionId: this.currentSessionId ?? 'unknown',
             kind: 'endturn_gate_fallback',
-            detail: { reason: 'abnormal-exit-bypass', iteration: toolCallIteration },
+            detail: { reason: 'abnormal-exit-bypass', iteration: toolCallIteration, error: this.lastToolLoopError || undefined },
           }).catch(() => {});
         }
       }

@@ -203,6 +203,31 @@ export function anchoredRequestEstimate(input: {
 }
 
 /** Char size of a canonical/request-shaped message list, the same way pruneAgedForRequest measures it. */
+/**
+ * R149 HB-COMPACTION-IMAGE-CHARS (2026-09-14, tb4-flash-v2): a base64 image block is NOT prompt text — a 1 MB screenshot
+ * JSON-stringified is ~1M chars = ~250K "tokens" in the chars/4 growth term, while the provider bills ~1-2K tokens for it
+ * (or nothing at all when the image is handed to a vision helper). Three false proactive compactions in the run fired at
+ * estimates of 826K-969K while the API reported 14K-318K prompt tokens — every one an image-heavy session. Long
+ * base64-looking strings count as IMAGE_BLOCK_CHARS instead of their length, on both the anchor and the estimate side.
+ */
+export const IMAGE_BLOCK_CHARS = 6000; // ≈1.5K tokens at chars/4 — the order a vision provider bills per image
+const BASE64_MIN_CHARS = 2048;
+const BASE64_RE = /^[A-Za-z0-9+/=\r\n]+$/;
+
+/** Char measure of one non-text block: JSON size, with long base64 payloads flattened to IMAGE_BLOCK_CHARS. */
+export function approxBlockChars(v: any, depth = 0): number {
+  if (typeof v === 'string') {
+    const quotes = depth > 0 ? 2 : 0; // JSON-encoded strings carry their quotes
+    return v.length >= BASE64_MIN_CHARS && BASE64_RE.test(v.slice(0, 4096)) ? IMAGE_BLOCK_CHARS : v.length + quotes;
+  }
+  if (v === null || v === undefined || typeof v !== 'object') { try { return JSON.stringify(v)?.length ?? 0; } catch { return 0; } }
+  if (depth > 8) return 0;
+  if (Array.isArray(v)) { let n = 2; for (const x of v) n += approxBlockChars(x, depth + 1) + 1; return n; }
+  let n = 2;
+  for (const [k, val] of Object.entries(v)) n += k.length + 3 + approxBlockChars(val, depth + 1) + 1;
+  return n;
+}
+
 export function approxCharsOf(messages: any[]): number {
   let n = 0;
   for (const m of messages ?? []) {
@@ -213,7 +238,7 @@ export function approxCharsOf(messages: any[]): number {
       if (!b || typeof b !== 'object') continue;
       if (b.type === 'text' && typeof b.text === 'string') n += b.text.length;
       else if (b.type === 'thinking' && typeof b.thinking === 'string') n += b.thinking.length;
-      else { try { n += JSON.stringify(b).length; } catch { /* skip */ } }
+      else n += approxBlockChars(b); // R149: image/base64-aware
     }
   }
   return n;
