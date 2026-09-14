@@ -34,6 +34,7 @@ import type {
   SubAgentResult,
   ToolUsageSummary,
 } from '@nexus-cortex/core';
+import { parseDelegateArgs, readDelegateTaskFile, writeDelegateResult, applyDelegateEnv, type DelegateTaskPayload } from './utils/delegateTaskFile.js';
 
 // ============================================
 // STATE
@@ -47,6 +48,10 @@ let modelId: string = '';
 let startTime: Date = new Date();
 let abortRequested: boolean = false;
 let pauseRequested: boolean = false;
+// R147 HB-HERDR-DELEGATES: file-driven mode (herdr pane delegate, no IPC channel):
+// the start payload comes from --task-file and the result goes to --result-file.
+let delegateMode: boolean = false;
+let delegateResultFile: string | undefined;
 
 // Guidance queue for cross-agent communication
 let pendingGuidance: string[] = [];
@@ -118,8 +123,12 @@ process.on('message', async (message: ParentToChildMessage) => {
 /**
  * Handle start message - begin agent execution
  */
-async function handleStart(message: IPCStartMessage): Promise<void> {
-  const { payload } = message;
+async function handleStart(message: IPCStartMessage | { type: 'start'; payload: DelegateTaskPayload }): Promise<void> {
+  const payload = message.payload as DelegateTaskPayload;
+  // A pane delegate has no parent to forward approvals to; its task file says auto.
+  const permissionMode: 'auto' | 'interactive' = payload.permissionMode === 'auto' ? 'auto' : 'interactive';
+  // Env parity with the IPC fork (which inherits the parent's process.env): the task file carries the snapshot.
+  applyDelegateEnv(payload.env);
 
   agentId = payload.agentId;
   agentName = payload.agentDefinition.name;
@@ -169,7 +178,7 @@ async function handleStart(message: IPCStartMessage): Promise<void> {
     // We'll replace the approval handler after creation
     orchestrator = await createOrchestrator(config, {
       enablePermissions: true,
-      permissionMode: 'interactive', // Use interactive mode with our IPC handler
+      permissionMode, // interactive = our IPC handler; auto = herdr pane delegate (no approval channel)
     });
 
     // Create session
@@ -177,8 +186,12 @@ async function handleStart(message: IPCStartMessage): Promise<void> {
 
     // Replace the approval handler with our IPC-based one
     // This forwards all permission requests to the parent process
-    orchestrator.setApprovalHandler(ipcApprovalHandler);
-    log('info', 'Sub-agent permissions configured - requests will be forwarded to parent for user approval');
+    if (permissionMode === 'interactive') {
+      orchestrator.setApprovalHandler(ipcApprovalHandler);
+      log('info', 'Sub-agent permissions configured - requests will be forwarded to parent for user approval');
+    } else {
+      log('info', 'Sub-agent permissions: auto-approve (file-driven delegate, no IPC approval channel)');
+    }
 
     // Notify parent we've started
     sendToParent({
@@ -201,6 +214,7 @@ async function handleStart(message: IPCStartMessage): Promise<void> {
     );
 
     // Send completion
+    if (delegateResultFile) writeDelegateResult(delegateResultFile, result);
     sendToParent({
       type: 'completed',
       payload: {
@@ -212,6 +226,9 @@ async function handleStart(message: IPCStartMessage): Promise<void> {
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
     log('error', `Agent execution failed: ${err.message}`);
+    if (delegateResultFile) {
+      try { writeDelegateResult(delegateResultFile, createErrorResult(agentId, agentName, modelId, err, startTime)); } catch { /* reported via the pane */ }
+    }
 
     sendToParent({
       type: 'error',
@@ -436,6 +453,7 @@ async function executeTask(prompt: string): Promise<SubAgentResult> {
     // Store accumulated text
     if (accumulatedText) {
       responseParts.push(accumulatedText);
+      if (delegateMode) process.stdout.write(`${accumulatedText}\n`);
       sendToParent({
         type: 'text',
         payload: {
@@ -498,6 +516,7 @@ function trackToolUsage(toolUse: unknown): void {
   }
 
   // Emit tool call event
+  if (delegateMode) process.stdout.write(`[tool] ${toolName}\n`);
   sendToParent({
     type: 'tool_call',
     payload: {
@@ -562,6 +581,10 @@ function buildResult(status: SubAgentResult['status']): SubAgentResult {
 // ============================================
 
 function log(level: 'debug' | 'info' | 'warn' | 'error', message: string, data?: unknown): void {
+  if (delegateMode) {
+    if (level !== 'debug') process.stderr.write(`[agent-mode ${level}] ${message}\n`);
+    return;
+  }
   sendToParent({
     type: 'log',
     payload: { level, message, data },
@@ -585,6 +608,20 @@ sendToParent({
 });
 
 log('info', `Agent process started (PID: ${process.pid})`);
+
+// R147: file-driven start (herdr pane delegate) — no IPC parent will ever send 'start'.
+const delegateArgs = parseDelegateArgs(process.argv.slice(2), process.env);
+if (delegateArgs.taskFile) {
+  delegateMode = true;
+  delegateResultFile = delegateArgs.resultFile;
+  try {
+    const payload = readDelegateTaskFile(delegateArgs.taskFile, { consume: true }); // carries the env snapshot; unlink once read
+    void handleStart({ type: 'start', payload });
+  } catch (error) {
+    process.stderr.write(`[agent-mode error] ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(2);
+  }
+}
 
 // Handle uncaught errors
 process.on('uncaughtException', (error) => {

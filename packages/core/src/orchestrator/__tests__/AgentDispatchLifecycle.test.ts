@@ -964,3 +964,37 @@ describe('Tmux Monitoring', () => {
     expect(formatTmuxEvent('error', 'explore', 'Process crashed')).toBe('❌ Process crashed');
   });
 });
+
+// ============================================
+// 6. RUNTIME SELECTION (R147 HB-HERDR-DELEGATES)
+// ============================================
+
+import { resolveSubAgentRuntime, readSubAgentRuntimeLever } from '../HerdrSubAgentRunner.js';
+
+describe('Sub-agent runtime selection (R147)', () => {
+  it('process is the default: no lever, no herdr -> process', () => {
+    const lever = readSubAgentRuntimeLever({});
+    expect(lever).toBe('auto');
+    expect(resolveSubAgentRuntime({ lever, herdrAvailable: false, parentAutoApprove: true }).runtime).toBe('process');
+  });
+
+  it('herdr is chosen only when the lever/env allow: auto + available + auto-approving parent', () => {
+    expect(resolveSubAgentRuntime({ lever: 'auto', herdrAvailable: true, parentAutoApprove: true }).runtime).toBe('herdr');
+    expect(resolveSubAgentRuntime({ lever: 'auto', herdrAvailable: true, parentAutoApprove: false }).runtime).toBe('process');
+    expect(resolveSubAgentRuntime({ lever: readSubAgentRuntimeLever({ CORTEX_SUBAGENT_RUNTIME: 'process' }), herdrAvailable: true, parentAutoApprove: true }).runtime).toBe('process');
+  });
+
+  it('Task input runtime overrides the lever for one dispatch; unavailable herdr falls back to process', () => {
+    const toolUseBlocks = [
+      { id: 't1', name: 'Task', input: { subagent_type: 'explore', prompt: 'a', description: 'a', runtime: 'herdr' } },
+      { id: 't2', name: 'Task', input: { subagent_type: 'explore', prompt: 'b', description: 'b' } },
+    ];
+    const warn = vi.fn();
+    const runtimes = toolUseBlocks.map((t) =>
+      resolveSubAgentRuntime({ lever: 'process', requested: (t.input as any).runtime, herdrAvailable: true, parentAutoApprove: false, warn }).runtime,
+    );
+    expect(runtimes).toEqual(['herdr', 'process']);
+    expect(resolveSubAgentRuntime({ lever: 'auto', requested: 'herdr', herdrAvailable: false, parentAutoApprove: true, warn }).runtime).toBe('process');
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+});

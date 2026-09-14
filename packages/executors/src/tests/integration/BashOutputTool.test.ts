@@ -424,3 +424,121 @@ describe('BashOutputTool Integration', () => {
     expect(content).toContain('=== Output ===');
   });
 });
+
+// HB-WAIT-PRIMITIVE (R142, 2026-09-14): BashOutput wait_seconds / wait_for — a side-effect-free
+// wait that returns early on new output, exit, or a regex match, else at the timeout. The result
+// text starts with `[wait] <elapsed>s, <output|matched|exited|timeout>`.
+import { describe as d142, it as it142, expect as ex142, beforeEach as be142, afterEach as ae142 } from 'vitest';
+import { spawn as spawn142, type ChildProcess as CP142 } from 'child_process';
+import { BashOutputTool as BOT142 } from '../../implementations/execution/BashOutputTool.js';
+import { BackgroundProcessRegistry as BPR142 } from '../../implementations/execution/BackgroundProcessRegistry.js';
+
+d142('R142 HB-WAIT-PRIMITIVE: BashOutput wait_seconds / wait_for', () => {
+  const reg = BPR142.getInstance();
+  let tool: BOT142;
+  const procs: CP142[] = [];
+  const sig = () => new AbortController().signal;
+  const start = (id: string, script: string) => {
+    const p = spawn142('sh', ['-c', script]);
+    procs.push(p);
+    reg.registerProcess(id, p.pid!, script, p);
+    return p;
+  };
+  be142(() => { reg.clear(); tool = new BOT142({ workingDirectory: process.cwd(), allowFileSystem: true }); });
+  ae142(() => { for (const p of procs.splice(0)) { try { p.kill('SIGKILL'); } catch { /* gone */ } } reg.clear(); });
+
+  it142('wait_seconds returns early when NEW output arrives', async () => {
+    start('w-out', 'sleep 0.4; echo later-line; sleep 5');
+    const t0 = Date.now();
+    const res = await tool.execute({ bash_id: 'w-out', wait_seconds: 5 }, sig());
+    ex142(res.success).toBe(true);
+    ex142(Date.now() - t0).toBeLessThan(3000);
+    const text = res.llmContent as string;
+    ex142(text).toMatch(/^\[wait\] \d+(\.\d)?s, output\n/);
+    ex142(text).toContain('later-line');
+    ex142(text).toContain('Status: Running');
+    ex142(res.metadata?.wait).toMatchObject({ outcome: 'output' });
+  });
+
+  it142('wait_seconds returns early when the process exits without output', async () => {
+    start('w-exit', 'sleep 0.3');
+    const t0 = Date.now();
+    const res = await tool.execute({ bash_id: 'w-exit', wait_seconds: 5 }, sig());
+    ex142(Date.now() - t0).toBeLessThan(3000);
+    ex142(res.llmContent as string).toMatch(/^\[wait\] \d+(\.\d)?s, exited\n/);
+    ex142(res.llmContent as string).toContain('Status: Exited');
+  });
+
+  it142('wait_for returns as soon as the NEW output matches the regex (earlier lines do not count)', async () => {
+    start('w-match', 'echo warmup; sleep 0.3; echo READY 42; sleep 5; echo tail-line');
+    await new Promise((r) => setTimeout(r, 100));
+    const first = await tool.execute({ bash_id: 'w-match' }, sig());
+    ex142(first.llmContent as string).toContain('warmup');
+    const t0 = Date.now();
+    const res = await tool.execute({ bash_id: 'w-match', wait_for: 'READY \\d+', wait_seconds: 5 }, sig());
+    ex142(Date.now() - t0).toBeLessThan(3000);
+    const text = res.llmContent as string;
+    ex142(text).toMatch(/^\[wait\] \d+(\.\d)?s, matched\n/);
+    const outputSection = text.slice(text.indexOf('=== Output ==='));
+    ex142(outputSection).toContain('READY 42');
+    ex142(outputSection).not.toContain('tail-line');
+    ex142(outputSection).not.toContain('warmup');
+    ex142(text).toContain('Status: Running');
+  });
+
+  it142('wait_for with wait_seconds: times out honestly when nothing matches (process still running)', async () => {
+    start('w-timeout', 'sleep 5');
+    const t0 = Date.now();
+    const res = await tool.execute({ bash_id: 'w-timeout', wait_for: 'never', wait_seconds: 1 }, sig());
+    const el = Date.now() - t0;
+    ex142(el).toBeGreaterThanOrEqual(900);
+    ex142(el).toBeLessThan(3000);
+    ex142(res.success).toBe(true);
+    ex142(res.llmContent as string).toMatch(/^\[wait\] 1(\.\d)?s, timeout\n/);
+    ex142(res.llmContent as string).toContain('Status: Running');
+  });
+
+  it142('external handle (herdr/tmux pane): the refresh hook is re-pulled while waiting; match ends the wait', async () => {
+    let pulls = 0;
+    const handle = reg.registerExternal('herdr-w1:p9', 'node server.js', {
+      refresh: async () => {
+        pulls += 1;
+        if (pulls >= 3) handle.output.splice(0, handle.output.length, 'booting', 'server ready on 3000');
+        else handle.output.splice(0, handle.output.length, 'booting');
+      },
+      onKill: () => {},
+    });
+    const res = await tool.execute({ bash_id: 'herdr-w1:p9', wait_for: 'ready on \\d+', wait_seconds: 5 }, sig());
+    ex142(pulls).toBeGreaterThanOrEqual(3);
+    ex142(res.llmContent as string).toMatch(/^\[wait\] \d+(\.\d)?s, matched\n/);
+    ex142(res.llmContent as string).toContain('server ready on 3000');
+  });
+
+  it142('external handle: exit seen through refresh ends the wait as exited', async () => {
+    let pulls = 0;
+    const handle = reg.registerExternal('herdr-w1:p10', 'make', {
+      refresh: async () => { pulls += 1; if (pulls >= 2) { handle.isRunning = false; handle.exitCode = 0; } },
+      onKill: () => {},
+    });
+    const res = await tool.execute({ bash_id: 'herdr-w1:p10', wait_seconds: 5 }, sig());
+    ex142(res.llmContent as string).toMatch(/^\[wait\] \d+(\.\d)?s, exited\n/);
+    ex142(res.llmContent as string).toContain('Exit Code: 0');
+  });
+
+  it142('no wait params: unchanged result shape (no [wait] prefix)', async () => {
+    start('w-plain', 'echo plain');
+    await new Promise((r) => setTimeout(r, 100));
+    const res = await tool.execute({ bash_id: 'w-plain' }, sig());
+    ex142(res.llmContent as string).toMatch(/^Shell ID:/);
+  });
+
+  it142('validates wait_seconds range (0-600) and wait_for regex', async () => {
+    start('w-val', 'sleep 1');
+    const big = await tool.execute({ bash_id: 'w-val', wait_seconds: 601 }, sig());
+    ex142(big.success).toBe(false);
+    ex142(big.error).toMatch(/wait_seconds/);
+    const bad = await tool.execute({ bash_id: 'w-val', wait_for: '[' }, sig());
+    ex142(bad.success).toBe(false);
+    ex142(bad.error).toMatch(/wait_for/);
+  });
+});

@@ -118,6 +118,32 @@ describe('R146: persistentSession backend routing', () => {
     reg.removeProcess(bashId);
   });
 
+  it('R142: wait_for on the herdr path -> ONE combined --regex to pane wait-output; a user match reports waitMatched + a BashOutput handle', async () => {
+    const calls: string[][] = [];
+    const exec: BackendExecFn = async (_bin, args) => {
+      calls.push(args);
+      if (args[1] === 'split') return ok(JSON.stringify({ result: { pane: { pane_id: 'w1:p6' } } }));
+      if (args[1] === 'wait-output') return ok(JSON.stringify({ result: { matched_line: 'listening on port 8080', read: { text: '' } } }));
+      if (args[1] === 'read') return ok('$ node server.js; printf ...\nstarting\nlistening on port 8080\n');
+      return ok('{"result":{"type":"ok"}}');
+    };
+    state.backend = new HerdrTerminalBackend({ bin: '/fake/herdr', parentPaneId: 'w1:p1', exec });
+    const t = mkTool();
+    const res = await t.execute({ command: 'node server.js', persistentSession: true, sessionId: 'srv', wait_for: 'listening on port \\d+', timeout: 5000 }, new AbortController().signal);
+    expect(res.success).toBe(true);
+    const wait = calls.find((c) => c[1] === 'wait-output')!;
+    expect(wait.slice(0, 4)).toEqual(['pane', 'wait-output', 'w1:p6', '--regex']);
+    expect(wait[4]).toMatch(/__CORTEX_DONE_[0-9a-f]+_\(\\d\+\)__/);
+    expect(wait[4]).toContain('listening on port \\d+');
+    expect(wait.slice(5)).toEqual(['--timeout', '5000']);
+    expect(res.metadata?.completed).toBe(false);
+    expect(res.metadata?.waitMatched).toBe(true);
+    expect(res.metadata?.bash_id).toBe('herdr-w1:p6');
+    expect(res.llmContent as string).toMatch(/wait_for .*matched/);
+    expect(res.llmContent as string).toContain('listening on port 8080');
+    BackgroundProcessRegistry.getInstance().removeProcess('herdr-w1:p6');
+  });
+
   it('uses the tmux path when herdr is absent', async () => {
     const tmux = TmuxManager.getInstance();
     vi.spyOn(tmux, 'isAvailable').mockResolvedValue(true);

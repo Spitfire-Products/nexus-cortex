@@ -18,7 +18,7 @@ import { spawn } from 'child_process';
 import { BaseTool, type ToolResult } from '../../base/index.js';
 import { SchemaValidator } from '../../utils/SchemaValidator.js';
 import { TmuxManager, SessionPersistence } from '../../utils/index.js';
-import { resolveTerminalBackend, registerPaneOutputHandle, type TerminalBackend } from '../../utils/TerminalBackend.js';
+import { resolveTerminalBackend, registerPaneOutputHandle, outputAfterCommandEcho, type TerminalBackend } from '../../utils/TerminalBackend.js';
 import { stripAnsi } from '../../utils/TextUtils.js';
 import { BackgroundProcessRegistry } from './BackgroundProcessRegistry.js';
 import type { ExecutorConfig } from '../../base/ToolRegistry.js';
@@ -64,6 +64,13 @@ export interface ShellToolParams {
    * Capture entire scrollback history (for persistent sessions)
    */
   captureHistory?: boolean;
+
+  /**
+   * HB-WAIT-PRIMITIVE (R142): regex; for persistentSession runs, return as soon as the
+   * session output (after the command echo) matches, instead of waiting for the command
+   * to finish. `timeout` caps the wait. The command may still be running afterwards.
+   */
+  wait_for?: string;
 }
 
 /**
@@ -143,6 +150,11 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
             description:
               'Optional: Capture entire scrollback history for persistent sessions (default: false).',
           },
+          wait_for: {
+            type: 'string',
+            description:
+              'Optional (persistentSession only): regex; return as soon as the session output matches it (e.g. "listening on port \\d+") instead of waiting for the command to finish, capped by timeout. Prefer this over sleep polling for servers and long jobs.',
+          },
         },
         required: ['command'],
       },
@@ -215,6 +227,18 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
     if (params.timeout !== undefined) {
       if (typeof params.timeout !== 'number' || params.timeout <= 0) {
         return 'Timeout must be a positive number.';
+      }
+    }
+
+    // R142: wait_for must be a valid regex
+    if (params.wait_for !== undefined) {
+      if (typeof params.wait_for !== 'string' || !params.wait_for) {
+        return 'wait_for must be a non-empty regex string.';
+      }
+      try {
+        new RegExp(params.wait_for);
+      } catch (error: any) {
+        return `Invalid wait_for regex: ${error.message}`;
       }
     }
 
@@ -712,18 +736,25 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
       // Send command to session with a completion sentinel appended so we can
       // detect ACTUAL completion + exit code instead of the old fixed 5s sleep
       // (which silently returned mid-run for any command longer than 5s).
-      // The `\$?` keeps the host shell (execAsync in sendKeys wraps the keys in
-      // double quotes) from expanding $? — the session shell must expand it.
+      // R140: TmuxManager.sendKeys delivers the text argv-verbatim (paste buffer for
+      // multi-line/oversize input), so `$?` needs no host-shell escaping; a multi-line
+      // command gets the sentinel on its OWN line (never glued to a heredoc terminator).
       updateOutput?.(`Sending command: ${params.command}\n`);
       const sentinel = `__CORTEX_DONE_${crypto.randomBytes(4).toString('hex')}`;
-      await this.tmux.sendKeys(sessionId, `${params.command}; printf '${sentinel}_%d\\n' \\$?`);
+      const marker = `printf '${sentinel}_%d\\n' $?`;
+      await this.tmux.sendKeys(
+        sessionId,
+        params.command.includes('\n') ? `${params.command}\n${marker}` : `${params.command}; ${marker}`,
+      );
 
-      // Poll pane until the sentinel appears or the timeout elapses
+      // Poll pane until the sentinel appears, wait_for matches (R142), or the timeout elapses
       const timeout = this.resolveTimeoutMs(params);
       const deadline = Date.now() + timeout;
       const startLine = params.captureHistory ? -3000 : undefined;
+      const waitRe = params.wait_for ? new RegExp(params.wait_for) : null;
       let output = '';
       let completed = false;
+      let waitMatched = false;
       let sessionExitCode: number | null = null;
       while (Date.now() < deadline && !signal.aborted) {
         await new Promise((resolve) =>
@@ -736,13 +767,21 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
           sessionExitCode = parsed.exitCode;
           break;
         }
+        // R142: only text AFTER the echoed command line counts (stale screen text never matches).
+        if (waitRe && waitRe.test(ShellTool.stripSentinelLines(outputAfterCommandEcho(output, sentinel.slice('__CORTEX_DONE_'.length)), sentinel))) {
+          waitMatched = true;
+          break;
+        }
       }
       const cleanedOutput = ShellTool.stripSentinelLines(output, sentinel);
 
       const statusLine = completed
         ? `Command completed with exit code ${sessionExitCode}.`
-        : `Command did NOT complete within ${timeout}ms — it may still be running in the session. ` +
-          `Re-check with persistentSession=true, sessionId='${sessionId}' (e.g. run \`true\` to recapture the pane).`;
+        : waitMatched
+          ? `wait_for /${params.wait_for}/ matched after ${((Date.now() - startTime) / 1000).toFixed(1)}s — the command may still be running in the session. ` +
+            `Re-check with persistentSession=true, sessionId='${sessionId}' (e.g. run \`true\` to recapture the pane), or use TmuxSession action='wait'.`
+          : `Command did NOT complete within ${timeout}ms — it may still be running in the session. ` +
+            `Re-check with persistentSession=true, sessionId='${sessionId}' (e.g. run \`true\` to recapture the pane).`;
 
       const result = `Command executed in persistent tmux session '${sessionId}'. ${statusLine}\n\n` +
         `Output:\n${'='.repeat(60)}\n${cleanedOutput}\n${'='.repeat(60)}\n\n` +
@@ -757,7 +796,8 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
         persistent: true,
         sessionCwd: cwd,
         exitCode: sessionExitCode,
-        completed
+        completed,
+        waitMatched
       });
     } catch (error: any) {
       if (signal.aborted) {
@@ -803,7 +843,11 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
 
       updateOutput?.(`Sending command to herdr pane ${paneId}: ${params.command}\n`);
       const timeout = this.resolveTimeoutMs(params);
-      const run = await backend.run(paneId, params.command, { block: true, timeoutMs: timeout });
+      const run = await backend.run(paneId, params.command, {
+        block: true,
+        timeoutMs: timeout,
+        ...(params.wait_for ? { waitFor: { regex: params.wait_for } } : {}),
+      });
       let output = run.output;
       if (params.captureHistory) {
         output = (await backend.read(paneId, { history: true }))
@@ -822,9 +866,12 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
       const info = `[INFO] persistent session via herdr pane ${paneId}`;
       const statusLine = run.completed
         ? `Command completed with exit code ${run.exitCode}.`
-        : `Command did NOT complete within ${timeout}ms — it may still be running in the pane. ` +
-          `Re-check with persistentSession=true, sessionId='${sessionId}' (e.g. run \`true\` to recapture the pane), ` +
-          `or read it ONCE with BashOutput({ bash_id: "${bashId}" }); KillShell({ shell_id: "${bashId}" }) sends C-c to the pane.`;
+        : run.waitMatched
+          ? `wait_for /${params.wait_for}/ matched after ${((Date.now() - startTime) / 1000).toFixed(1)}s — the command may still be running in the pane. ` +
+            `Read it with BashOutput({ bash_id: "${bashId}", wait_for: "<regex>" }) or wait_seconds; KillShell({ shell_id: "${bashId}" }) sends C-c to the pane.`
+          : `Command did NOT complete within ${timeout}ms — it may still be running in the pane. ` +
+            `Re-check with persistentSession=true, sessionId='${sessionId}' (e.g. run \`true\` to recapture the pane), ` +
+            `or read it ONCE with BashOutput({ bash_id: "${bashId}" }); KillShell({ shell_id: "${bashId}" }) sends C-c to the pane.`;
 
       const result = `${info}\n` +
         `Command executed in persistent herdr pane '${paneId}'. ${statusLine}\n\n` +
@@ -843,6 +890,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
         sessionCwd: cwd,
         exitCode: run.exitCode ?? null,
         completed: run.completed,
+        waitMatched: run.waitMatched === true,
         ...(bashId ? { bash_id: bashId } : {}),
       });
     } catch (error: any) {

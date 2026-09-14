@@ -8,7 +8,7 @@
 import { BaseTool, type ToolResult } from '../../base/index.js';
 import { SchemaValidator } from '../../utils/SchemaValidator.js';
 import { TmuxManager, SessionPersistence, SessionLock, TmuxCapture } from '../../utils/index.js';
-import { resolveTerminalBackend, type TerminalBackend } from '../../utils/TerminalBackend.js';
+import { resolveTerminalBackend, TmuxTerminalBackend, type TerminalBackend } from '../../utils/TerminalBackend.js';
 import { TmuxViewServer } from './TmuxViewServer.js';
 import { SandboxViewServer } from '../addon/SandboxViewServer.js';
 import type { ExecutorConfig } from '../../base/ToolRegistry.js';
@@ -20,7 +20,7 @@ export interface TmuxSessionParams {
   /**
    * Action to perform
    */
-  action: 'create' | 'send' | 'capture' | 'list' | 'kill' | 'snapshot';
+  action: 'create' | 'send' | 'capture' | 'list' | 'kill' | 'snapshot' | 'wait';
 
   /**
    * Session identifier (required for all actions except 'list')
@@ -51,6 +51,15 @@ export interface TmuxSessionParams {
    * Include visual screenshot (optional for 'snapshot' action)
    */
   includeScreenshot?: boolean;
+
+  /** R142 'wait' action: literal text to wait for (one of match|regex required). */
+  match?: string;
+
+  /** R142 'wait' action: regex to wait for. */
+  regex?: string;
+
+  /** R142 'wait' action: cap in ms (default 30000, max 600000). */
+  timeoutMs?: number;
 }
 
 /**
@@ -79,13 +88,13 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
     super(
       'TmuxSession',
       'TmuxSession',
-      `Manage persistent terminal sessions with tmux. Supports creating sessions, sending commands, capturing output, and managing session lifecycle. Use the 'snapshot' action with includeScreenshot=true to visually see what's displayed in the terminal - essential for iteratively debugging and improving commands you execute.`,
+      `Manage persistent terminal sessions with tmux. Supports creating sessions, sending commands, capturing output, and managing session lifecycle. Use the 'snapshot' action with includeScreenshot=true to visually see what's displayed in the terminal - essential for iteratively debugging and improving commands you execute. Use action='wait' with match or regex (+ timeoutMs) to block until the screen shows some text — prefer it over sleep polling (the echoed command line counts, so wait for text the command itself does not contain).`,
       {
         type: 'object',
         properties: {
           action: {
             type: 'string',
-            enum: ['create', 'send', 'capture', 'list', 'kill', 'snapshot'],
+            enum: ['create', 'send', 'capture', 'list', 'kill', 'snapshot', 'wait'],
             description: 'Action to perform on tmux session'
           },
           sessionId: {
@@ -114,6 +123,18 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
             type: 'boolean',
             description: 'Capture visual screenshot of terminal session using Playwright. Enables you (the model) to see exactly what is displayed in the terminal, including colors, formatting, and visual layout. Screenshot is returned as base64 PNG in response metadata. Essential for debugging visual terminal applications, progress bars, formatted output, and iteratively improving command execution.',
             default: false
+          },
+          match: {
+            type: 'string',
+            description: 'Literal text to wait for (wait action; one of match|regex required)'
+          },
+          regex: {
+            type: 'string',
+            description: 'Regex to wait for (wait action; one of match|regex required)'
+          },
+          timeoutMs: {
+            type: 'number',
+            description: 'Wait cap in milliseconds (wait action; default 30000, max 600000)'
           }
         },
         required: ['action']
@@ -180,6 +201,25 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
       case 'snapshot':
         if (!params.sessionId) {
           return `sessionId is required for ${params.action} action`;
+        }
+        break;
+
+      case 'wait':
+        if (!params.sessionId) {
+          return 'sessionId is required for wait action';
+        }
+        if (!params.match && !params.regex) {
+          return 'wait action requires match or regex';
+        }
+        if (params.regex) {
+          try {
+            new RegExp(params.regex);
+          } catch (error: any) {
+            return `Invalid regex: ${error.message}`;
+          }
+        }
+        if (params.timeoutMs !== undefined && (typeof params.timeoutMs !== 'number' || params.timeoutMs <= 0)) {
+          return 'timeoutMs must be a positive number';
         }
         break;
 
@@ -257,12 +297,49 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
           return await this.handleKill(params, updateOutput);
         case 'snapshot':
           return await this.handleSnapshot(params, updateOutput);
+        case 'wait':
+          if (!(await this.tmux.sessionExists(params.sessionId!))) {
+            return this.createErrorResult(`Session '${params.sessionId}' does not exist`);
+          }
+          return await this.handleWait(params, new TmuxTerminalBackend(this.tmux), updateOutput);
         default:
           return this.createErrorResult(`Unknown action: ${params.action}`);
       }
     } catch (error: any) {
       return this.createErrorResult(`TmuxSession error: ${error.message}`);
     }
+  }
+
+  /** R142 wait cap (ms). */
+  private static readonly DEFAULT_WAIT_MS = 30000;
+  private static readonly MAX_WAIT_MS = 600000;
+
+  /**
+   * HB-WAIT-PRIMITIVE (R142): block until the session shows `match`/`regex` or timeoutMs
+   * elapses — herdr: `pane wait-output`; tmux: capture-pane polling. Side-effect free.
+   * @private
+   */
+  private async handleWait(
+    params: TmuxSessionParams,
+    backend: TerminalBackend,
+    updateOutput?: (output: string) => void
+  ): Promise<ToolResult> {
+    const id = backend.resolveId ? backend.resolveId(params.sessionId!) : params.sessionId!;
+    const timeoutMs = Math.min(params.timeoutMs ?? TmuxSessionTool.DEFAULT_WAIT_MS, TmuxSessionTool.MAX_WAIT_MS);
+    const target = params.regex ? `/${params.regex}/` : `"${params.match}"`;
+    updateOutput?.(`Waiting up to ${timeoutMs}ms for ${target} in session ${id}...\n`);
+    const started = Date.now();
+    const res = await backend.waitOutput(id, { match: params.match, regex: params.regex, timeoutMs });
+    const elapsed = ((Date.now() - started) / 1000).toFixed(1);
+    const outcome = res.matched ? 'matched' : 'timeout';
+    return this.createSuccessResult(
+      `[wait] ${elapsed}s, ${outcome}\n` +
+      (res.matched
+        ? `Session '${params.sessionId}' output matched ${target}.`
+        : `Session '${params.sessionId}' did not show ${target} within ${timeoutMs}ms — whatever is running may still be running; do nothing or wait again.`) +
+      `\n\n${'='.repeat(60)}\n${res.output}\n${'='.repeat(60)}\n`,
+      { sessionId: params.sessionId, paneId: id, matched: res.matched, elapsedMs: Date.now() - started, backend: backend.kind }
+    );
   }
 
   /**
@@ -346,6 +423,11 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
           panes.map((p) => `- ${p}`).join('\n'),
           { sessions: panes.map((paneId) => ({ sessionId: paneId, paneId })), count: panes.length, backend: 'herdr' }
         );
+      }
+      case 'wait': {
+        const id = resolve(params.sessionId!);
+        if (!(await exists(id))) return this.createErrorResult(`Session '${params.sessionId}' does not exist`);
+        return this.handleWait(params, backend, updateOutput);
       }
       case 'kill': {
         const id = resolve(params.sessionId!);

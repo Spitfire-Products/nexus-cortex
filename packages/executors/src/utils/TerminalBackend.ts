@@ -51,7 +51,10 @@ export interface TerminalRunOptions {
   block?: boolean;
   /** Hard cap for the blocking wait (default 120000). Never exceeded. */
   timeoutMs?: number;
-  /** Optional extra wait target (blocking herdr/tmux runs wait for the sentinel; this is advisory). */
+  /**
+   * R142: an extra wait target for BLOCKING runs — the wait ends at the sentinel OR when
+   * the session output (after the command echo) matches; `waitMatched` reports the latter.
+   */
   waitFor?: { match?: string; regex?: string };
 }
 
@@ -60,6 +63,8 @@ export interface TerminalRunResult {
   completed: boolean;
   timedOut?: boolean;
   exitCode?: number | null;
+  /** R142: the run returned because opts.waitFor matched (command may still be running). */
+  waitMatched?: boolean;
 }
 
 export interface TerminalReadOptions {
@@ -179,6 +184,25 @@ function sentinelRegex(token: string): string {
   return `__CORTEX_DONE_${token}_(\\d+)__`;
 }
 
+/** R142: the regex source for a TerminalRunOptions.waitFor target (match = escaped literal). */
+export function waitForRegexSource(waitFor: { match?: string; regex?: string } | undefined): string | null {
+  if (!waitFor) return null;
+  if (waitFor.regex) return waitFor.regex;
+  if (waitFor.match) return waitFor.match.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return null;
+}
+
+/**
+ * R142: the part of a pane capture produced AFTER the last echoed command line carrying the
+ * sentinel token — so stale screen text never satisfies a waitFor target.
+ */
+export function outputAfterCommandEcho(capture: string, token: string): string {
+  const idx = capture.lastIndexOf(`__CORTEX_DONE_${token}_%`);
+  if (idx < 0) return capture;
+  const eol = capture.indexOf('\n', idx);
+  return eol < 0 ? '' : capture.slice(eol + 1);
+}
+
 /** Drop every line carrying the sentinel token (echoed command line + printed marker). */
 export function stripSentinel(output: string, token: string): string {
   return output
@@ -282,15 +306,35 @@ export class HerdrTerminalBackend implements TerminalBackend {
       return { output: '', completed: false, exitCode: null };
     }
 
-    const waited = await this.waitOutputRaw(id, { regex: sentinelRegex(token), timeoutMs });
-    if (!waited.matched) {
-      const output = await this.read(id);
-      return { output: stripSentinel(output, token), completed: false, timedOut: true, exitCode: null };
+    // R142: one wait-output call watches the sentinel AND the caller's waitFor target.
+    // `pane wait-output` matches the whole screen, so a hit on the ECHOED command line
+    // (verified live: `echo READY 9090` matched /READY \d+/ at 0.0s) is re-checked against
+    // the text AFTER the echo and re-waited (bounded poll) until it is real or time is up.
+    const extra = waitForRegexSource(opts.waitFor);
+    const extraRe = extra ? new RegExp(extra) : null;
+    const regex = extra ? `(?:${sentinelRegex(token)})|(?:${extra})` : sentinelRegex(token);
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const remaining = Math.max(1, deadline - Date.now());
+      const waited = await this.waitOutputRaw(id, { regex, timeoutMs: remaining });
+      if (!waited.matched) {
+        const output = await this.read(id);
+        return { output: stripSentinel(output, token), completed: false, timedOut: true, exitCode: null };
+      }
+      const m = waited.matchedLine.match(new RegExp(sentinelRegex(token)));
+      if (m) {
+        const output = await this.read(id);
+        return { output: stripSentinel(output, token), completed: true, exitCode: Number(m[1]) };
+      }
+      const raw = await this.readRaw(id, { history: true });
+      if (!extraRe || extraRe.test(outputAfterCommandEcho(raw, token))) {
+        return { output: truncateMiddle(stripSentinel(raw, token)), completed: false, exitCode: null, waitMatched: true };
+      }
+      if (Date.now() >= deadline) {
+        return { output: truncateMiddle(stripSentinel(raw, token)), completed: false, timedOut: true, exitCode: null };
+      }
+      await new Promise((r) => setTimeout(r, TMUX_POLL_INTERVAL_MS));
     }
-    const m = waited.matchedLine.match(new RegExp(sentinelRegex(token)));
-    const exitCode = m ? Number(m[1]) : null;
-    const output = await this.read(id);
-    return { output: stripSentinel(output, token), completed: true, exitCode };
   }
 
   async sendText(idOrLabel: string, text: string): Promise<void> {
@@ -301,15 +345,20 @@ export class HerdrTerminalBackend implements TerminalBackend {
     parseEnvelope(await this.call(['pane', 'send-keys', this.resolveId(idOrLabel), ...keys], EXEC_GRACE_MS), 'pane send-keys');
   }
 
-  /** `pane read --source recent-unwrapped --lines N`, capped at 10 KB middle-omitted (R141). */
-  async read(idOrLabel: string, opts: TerminalReadOptions = {}): Promise<string> {
+  /** `pane read --source recent-unwrapped --lines N`, ANSI-stripped, uncapped. */
+  private async readRaw(idOrLabel: string, opts: TerminalReadOptions = {}): Promise<string> {
     const lines = opts.lines ?? (opts.history ? HERDR_HISTORY_READ_LINES : HERDR_DEFAULT_READ_LINES);
     const res = await this.call(
       ['pane', 'read', this.resolveId(idOrLabel), '--source', 'recent-unwrapped', '--lines', String(lines)],
       EXEC_GRACE_MS,
     );
     if (res.code !== 0) parseEnvelope(res, 'pane read');
-    return truncateMiddle(stripAnsi(res.stdout));
+    return stripAnsi(res.stdout);
+  }
+
+  /** `pane read`, capped at 10 KB middle-omitted (R141). */
+  async read(idOrLabel: string, opts: TerminalReadOptions = {}): Promise<string> {
+    return truncateMiddle(await this.readRaw(idOrLabel, opts));
   }
 
   private async waitOutputRaw(
@@ -354,7 +403,12 @@ export class HerdrTerminalBackend implements TerminalBackend {
   }
 }
 
-/** Thin wrapper over TmuxManager — the existing sentinel-poll behavior is preserved. */
+/**
+ * Thin wrapper over TmuxManager — the existing sentinel-poll behavior is preserved.
+ * R140: multi-line / oversize commands reach the session through TmuxManager's
+ * load-buffer/paste-buffer path (sentinel on its own line so a heredoc terminator
+ * is never glued to `; printf`); sendText is Enter-less, sendKeys sends key names.
+ */
 export class TmuxTerminalBackend implements TerminalBackend {
   readonly kind = 'tmux' as const;
   constructor(private readonly tmux: TmuxManager = TmuxManager.getInstance()) {}
@@ -376,28 +430,35 @@ export class TmuxTerminalBackend implements TerminalBackend {
     const block = opts.block !== false;
     const timeoutMs = opts.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
     const token = crypto.randomBytes(4).toString('hex');
-    // `\$?` keeps the host shell (execAsync in sendKeys double-quotes the keys) from expanding $?.
-    await this.tmux.sendKeys(id, `${command}; printf '__CORTEX_DONE_${token}_%d__\\n' \\$?`);
+    // TmuxManager.sendKeys delivers argv-verbatim (R140), so `$?` needs no host-shell escaping.
+    const marker = `printf '__CORTEX_DONE_${token}_%d__\\n' $?`;
+    await this.tmux.sendKeys(id, command.includes('\n') ? `${command}\n${marker}` : `${command}; ${marker}`);
     if (!block) return { output: '', completed: false, exitCode: null };
     const deadline = Date.now() + timeoutMs;
     const re = new RegExp(sentinelRegex(token));
+    const extraSrc = waitForRegexSource(opts.waitFor);
+    const extra = extraSrc ? new RegExp(extraSrc) : null;
     let output = '';
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, TMUX_POLL_INTERVAL_MS));
       output = await this.tmux.capturePane(id);
       const m = output.match(re);
       if (m) return { output: stripSentinel(output, token), completed: true, exitCode: Number(m[1]) };
+      // R142: only text after the echoed command line counts toward waitFor.
+      if (extra && extra.test(outputAfterCommandEcho(output, token))) {
+        return { output: stripSentinel(output, token), completed: false, exitCode: null, waitMatched: true };
+      }
     }
     return { output: stripSentinel(output, token), completed: false, timedOut: true, exitCode: null };
   }
 
-  /** tmux send-keys submits with Enter; there is no Enter-less text path in TmuxManager. */
+  /** Enter-less text (R140: bracketed paste via load-buffer/paste-buffer when multi-line or oversize). */
   sendText(id: string, text: string): Promise<void> {
-    return this.tmux.sendKeys(id, text);
+    return this.tmux.sendKeys(id, text, { enter: false });
   }
 
   sendKeys(id: string, keys: string[]): Promise<void> {
-    return this.tmux.sendKeys(id, keys.join(' '));
+    return this.tmux.sendRawKeys(id, keys);
   }
 
   read(id: string, opts: TerminalReadOptions = {}): Promise<string> {

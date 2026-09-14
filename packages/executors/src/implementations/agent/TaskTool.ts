@@ -19,6 +19,7 @@ export interface TaskParams {
   strategy?: string;    // Optional arm persona/strategy label — recorded with benchmarks for (model×temp×strategy) effectiveness scoring
   resume?: string;      // Optional session ID to resume
   timeout_ms?: number;  // Optional wall-clock limit in ms (R133: default derives from the parent's remaining turn deadline)
+  runtime?: 'process' | 'herdr'; // Optional runtime override (R147: process = forked IPC child, herdr = sibling herdr pane); default follows CORTEX_SUBAGENT_RUNTIME
 }
 
 /**
@@ -92,6 +93,11 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
         timeout_ms: {
           type: 'number' as const,
           description: "Optional wall-clock limit for the sub-agent in ms. Default derives from the parent's remaining turn deadline (90% minus a 30 s margin) or 5 minutes when no deadline is set; a value below 60000 is raised to 60000."
+        },
+        runtime: {
+          type: 'string' as const,
+          enum: ['process', 'herdr'],
+          description: 'Optional runtime override: "process" = forked child (default path); "herdr" = a sibling herdr pane the operator can watch and take over (only when running inside herdr). Default follows CORTEX_SUBAGENT_RUNTIME.'
         }
       },
       required: ['description' as const, 'prompt' as const, 'subagent_type' as const]

@@ -238,6 +238,40 @@ describe('HerdrTerminalBackend argv + semantics (herdr 0.9.0)', () => {
     expect(last[1]).toEqual(['pane', 'send-keys', 'w1:p2', 'Enter']);
   });
 
+  it('R142 run(waitFor): a wait-output hit on the ECHOED command line is not a match; re-waits until the text appears after the echo', async () => {
+    let waits = 0;
+    const { backend, calls } = mk((args, all) => {
+      const token = (all[0][3] as string).match(/__CORTEX_DONE_([0-9a-f]+)_/)![1];
+      const echo = `$ sleep 3; echo READY 9090; printf '\\n__CORTEX_DONE_${token}_%s__\\n' $?`;
+      if (args[1] === 'wait-output') {
+        waits += 1;
+        return ok(matchedJson(waits === 1 ? echo : 'READY 9090', ''));
+      }
+      if (args[1] === 'read') return ok(waits === 1 ? `${echo}\n` : `${echo}\nREADY 9090\n`);
+      return ok();
+    });
+    const res = await backend.run('w1:p2', 'sleep 3; echo READY 9090', { block: true, timeoutMs: 5000, waitFor: { regex: 'READY \\d+' } });
+    expect(waits).toBe(2);
+    const wait = calls.find((c) => c[1] === 'wait-output')!;
+    expect(wait[4]).toMatch(/^\(\?:__CORTEX_DONE_[0-9a-f]+_\(\\d\+\)__\)\|\(\?:READY \\d\+\)$/);
+    expect(res.completed).toBe(false);
+    expect(res.waitMatched).toBe(true);
+    expect(res.output).toContain('READY 9090');
+  });
+
+  it('R142 run(waitFor): the sentinel still wins and reports completion', async () => {
+    const { backend } = mk((args, all) => {
+      const token = (all[0][3] as string).match(/__CORTEX_DONE_([0-9a-f]+)_/)![1];
+      if (args[1] === 'wait-output') return ok(matchedJson(`__CORTEX_DONE_${token}_2__`, ''));
+      if (args[1] === 'read') return ok(`out\n__CORTEX_DONE_${token}_2__\n`);
+      return ok();
+    });
+    const res = await backend.run('w1:p2', 'make', { block: true, timeoutMs: 5000, waitFor: { match: 'never' } });
+    expect(res.completed).toBe(true);
+    expect(res.exitCode).toBe(2);
+    expect(res.waitMatched).toBeFalsy();
+  });
+
   it('sendText / sendKeys map 1:1', async () => {
     const { backend, calls } = mk(() => ok());
     await backend.sendText('w1:p2', 'hello');
@@ -303,12 +337,63 @@ describe('TmuxTerminalBackend (thin wrapper)', () => {
     expect(await backend.createSession({ cwd: '/w' })).toEqual({ id: 's1' });
     expect(create).toHaveBeenCalledWith(undefined, '/w', undefined);
     await backend.sendText('s1', 'ls');
-    expect(send).toHaveBeenCalledWith('s1', 'ls');
+    expect(send).toHaveBeenCalledWith('s1', 'ls', { enter: false });
     expect(await backend.read('s1', { history: true })).toBe('captured');
     expect(cap).toHaveBeenCalledWith('s1', -3000);
     expect(await backend.list()).toEqual(['s1']);
     await backend.kill('s1');
     expect(kill).toHaveBeenCalledWith('s1');
+  });
+});
+
+describe('TmuxTerminalBackend paste path (R140 HB-TMUX-PASTE-BUFFER)', () => {
+  /** Injected tmux exec: records argv; capture-pane is spied separately (execAsync path). */
+  const mk = () => {
+    const calls: string[][] = [];
+    const tmux = TmuxManager.createWithExec(async (_bin, args) => {
+      calls.push(args);
+      return { stdout: args[0] === '-V' ? 'tmux 3.5a' : '', stderr: '' };
+    });
+    return { tmux, calls, backend: new TmuxTerminalBackend(tmux) };
+  };
+
+  it('run() with a heredoc: sentinel on its OWN line, body via load-buffer/paste-buffer, Enter separate, $? unescaped', async () => {
+    const { tmux, calls, backend } = mk();
+    let pasted = '';
+    const origPaste = (tmux as any).pasteText.bind(tmux);
+    vi.spyOn(tmux as any, 'pasteText').mockImplementation(async (id: string, text: string) => { pasted = text; return origPaste(id, text); });
+    vi.spyOn(tmux, 'capturePane').mockImplementation(async () => {
+      const token = pasted.match(/__CORTEX_DONE_([0-9a-f]+)_/)![1];
+      return `$ cat <<EOF > f.txt\n> line\n> EOF\nline\n__CORTEX_DONE_${token}_0__\n$ `;
+    });
+    const res = await backend.run('s1', 'cat <<EOF > f.txt\nline\nEOF', { block: true, timeoutMs: 3000 });
+    expect(pasted).toMatch(/^cat <<EOF > f\.txt\nline\nEOF\nprintf '__CORTEX_DONE_[0-9a-f]+_%d__\\n' \$\?$/);
+    expect(calls.map((c) => c[0])).toEqual(['-V', 'load-buffer', 'paste-buffer', 'send-keys']);
+    expect(calls[2].slice(0, 3)).toEqual(['paste-buffer', '-d', '-p']);
+    expect(calls[3]).toEqual(['send-keys', '-t', 's1', 'Enter']);
+    expect(res.completed).toBe(true);
+    expect(res.exitCode).toBe(0);
+    expect(res.output).not.toContain('__CORTEX_DONE_');
+  });
+
+  it('run() with a > 2000-char single line takes the paste path; a short line keeps send-keys -l', async () => {
+    const { calls, backend } = mk();
+    await backend.run('s1', 'echo ' + 'x'.repeat(2500), { block: false });
+    expect(calls.map((c) => c[0])).toEqual(['-V', 'load-buffer', 'paste-buffer', 'send-keys']);
+    calls.length = 0;
+    await backend.run('s1', 'true', { block: false });
+    expect(calls.map((c) => c[0])).toEqual(['send-keys', 'send-keys']);
+    expect(calls[0].slice(0, 4)).toEqual(['send-keys', '-t', 's1', '-l']);
+    expect(calls[0][4]).toMatch(/^true; printf '__CORTEX_DONE_[0-9a-f]+_%d__\\n' \$\?$/);
+  });
+
+  it('sendText is Enter-less (bracketed paste for multi-line); sendKeys sends tmux key names raw', async () => {
+    const { calls, backend } = mk();
+    await backend.sendText('s1', 'a\nb');
+    expect(calls.map((c) => c[0])).toEqual(['-V', 'load-buffer', 'paste-buffer']);
+    calls.length = 0;
+    await backend.sendKeys('s1', ['C-c', 'Enter']);
+    expect(calls).toEqual([['send-keys', '-t', 's1', 'C-c', 'Enter']]);
   });
 });
 

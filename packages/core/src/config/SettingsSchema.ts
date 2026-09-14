@@ -123,6 +123,8 @@ export interface EnvironmentVariables {
   CORTEX_HERDR_REPORTING?: string; // 'false' disables herdr lifecycle reporting inside a herdr pane (R145; default on when HERDR_ENV=1)
   CORTEX_HERDR_AGENT_NAME?: string; // agent label reported to herdr (R145; default cortex)
   CORTEX_TERMINAL_BACKEND?: string; // auto | herdr | tmux | detached — persistent-session backend under Bash/TmuxSession/CreateArtifact (R146; auto = herdr > tmux > detached)
+  CORTEX_SUBAGENT_RUNTIME?: string; // auto | process | herdr — where Task sub-agents run (R147; auto = herdr pane when HERDR_ENV=1 + backend resolves + parent auto-approves, else forked IPC child)
+  CORTEX_HERDR_KEEP_DELEGATE_PANES?: string; // '0'/'false' closes a herdr delegate pane when it finishes (R147; default keep for operator inspection)
   CORTEX_COMPACTION_THRESHOLD_TOKENS?: string; // test/ops override of the compaction threshold in tokens (4.108.3); empty = card-derived
   CORTEX_STATE_DIR?: string; // explicit runtime-state root (4.108.6); empty = <project>/.cortex with writable-probe fallback
   CORTEX_COMPACTION_CHECKPOINT_PCT?: string; // fraction of the compaction threshold at which the first pre-compaction checkpoint is written (4.108.2; default 0.75)
@@ -444,6 +446,8 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_HERDR_REPORTING: '',
   CORTEX_HERDR_AGENT_NAME: '',
   CORTEX_TERMINAL_BACKEND: '',
+  CORTEX_SUBAGENT_RUNTIME: '',
+  CORTEX_HERDR_KEEP_DELEGATE_PANES: '',
   CORTEX_ENDTURN_RESOLVER_REASONING: '',
   CORTEX_DEADLINE_EXIT_MENTOR_REASONING: '',
   CORTEX_LOOP_TOOL_BLOCK_REASONING: '',
@@ -912,6 +916,22 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_TERMINAL_BACKEND',
     displayName: 'Terminal backend',
     description: 'Backend for persistent terminal sessions (Bash persistentSession, TmuxSession, CreateArtifact persistent): auto | herdr | tmux | detached. auto = herdr pane (inside a herdr pane with the socket reachable) > tmux > detached background process (R146, HB-HERDR-TERMINAL-BACKEND). Resolved once per process.',
+    type: 'string',
+    category: 'runtime',
+    default: ''
+  },
+  {
+    key: 'CORTEX_SUBAGENT_RUNTIME',
+    displayName: 'Sub-agent runtime',
+    description: 'Where Task sub-agents run: auto | process | herdr. process = forked IPC child (the default path); herdr = a sibling herdr pane running the same agent-mode entry (visible + takeover-able, lifecycle reported to herdr; runs auto-approved because a pane has no IPC approval channel). auto = herdr when HERDR_ENV=1, the herdr terminal backend resolves and the parent auto-approves tools, else process. Task input `runtime` overrides per dispatch (R147, HB-HERDR-DELEGATES).',
+    type: 'string',
+    category: 'runtime',
+    default: ''
+  },
+  {
+    key: 'CORTEX_HERDR_KEEP_DELEGATE_PANES',
+    displayName: 'Keep herdr delegate panes',
+    description: 'Herdr delegate panes are kept after the sub-agent finishes so the operator can inspect or take them over (default). Set 0/false to close the pane and remove its task/result files on completion (R147).',
     type: 'string',
     category: 'runtime',
     default: ''

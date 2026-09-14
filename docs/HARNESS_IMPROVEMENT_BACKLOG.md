@@ -1363,9 +1363,20 @@ nexus-cortex is NOT a recognized agent today (Claude Code, Codex, Grok CLI, … 
   --no-focus` + `pane run`, BashOutput → `pane read`, the Terminus wait primitive → `pane wait-output --regex --timeout` (R139/R142 inherited),
   large input → `pane send-text` (bracketed paste; R140 inherited), capture caps → `--lines` (R141 inherited); panes survive client detach and
   are visible/takeover-able by the operator.
-- **R147 HB-HERDR-DELEGATES** — Task sub-agents as herdr agents: `agent start <name> --kind cortex --pane <split>` + `agent prompt --wait
-  --timeout <R133 limit>` + `agent wait --until idle` + `agent read --source recent-unwrapped`; the operator sees every delegate live and can
-  `agent attach --takeover`. Keeps the in-process/IPC path when herdr is absent.
+- **R147 HB-HERDR-DELEGATES** (BUILT 2026-09-14, live-smoked on session `bench`: `DELEGATE-OK` from a deepseek-v4-flash delegate in pane w1:p8, pane
+  status `idle` / `delegate:completed`) — Task sub-agents as herdr panes. `cortex` is not a recognized `agent start --kind` in 0.9.0, so
+  `packages/core/src/orchestrator/HerdrSubAgentRunner.ts` does `pane split <HERDR_PANE_ID> --direction down --no-focus --cwd` + `pane rename` +
+  `pane run` of the parent's OWN `cli/dist/agent-mode.js` in a new file-driven mode (`--task-file` = the IPCStartMessage payload + permissionMode
+  + the parent env snapshot, 0600 and consumed by the child; `--result-file` = the same SubAgentResult the IPC child returns), then loops
+  `agent wait <pane> --until idle --until done --timeout <slice>` (`agent_not_found` until the child's R145 report = not an error; `done` counts
+  as idle) with result.json + a shell exit sentinel as completion evidence; timeout -> `pane send-keys C-c`, status `timeout` + the pane
+  transcript; the runner reports the pane's terminal state itself (`pane report-agent ... idle` + `summary=delegate:<status>`) because the
+  child's throttled last report dies with its exit. Lever `CORTEX_SUBAGENT_RUNTIME=auto|process|herdr` (auto = herdr when HERDR_ENV=1 + the R146
+  backend resolves + the parent auto-approves — a pane has no IPC approval channel, so delegates run auto-approved; explicit lever / Task
+  `runtime` input skip that guard) + `CORTEX_HERDR_KEEP_DELEGATE_PANES` (default keep for inspection; 0 closes + scrubs). Task input gains
+  `runtime`; `task_spawn` rows bank `runtime[]`, a `delegate_pane` row banks paneId/status per herdr delegate; the LLM-facing result carries a
+  `Pane:` line. The forked IPC path is unchanged and remains the default outside herdr. Open: the child's usage counters are 0 for deepseek
+  (pre-existing agent-mode stream-usage gap, IPC path too); the `.env` LEDGER line for the two levers is owner-authored.
 - **R148 HB-HERDR-BENCH** (bench-side; BUILT 2026-09-13: bootstrap `TB2_HERDR=1` mode, supervisor `_herdr_report`, `.bench/vm/herdr-bench.sh`; dry-run local only, remote via ssh-wrapped `herdr --session`) — run the Vast executor's supervisors as herdr panes (`workspace create --label <store>`, one pane per
   shard) and watch/drive lanes from the repl with `herdr --machine vast-bench pane read|wait-output`; the server persists across repl/session
   restarts, so monitors do not die with the session and a stuck lane can be taken over instead of re-bootstrapped.
@@ -1379,13 +1390,13 @@ Source: `tmux_session.py` + `terminus_2.py` in the harbor 0.23.0 install on the 
 - **R139 HB-TMUX-WAIT-FOR** — Terminus `send_keys(block, min_timeout_sec, max_timeout_sec=180)`: blocking sends append `tmux wait-for` and the
   harness waits on `tmux wait done` under a hard cap; non-blocking sends settle for `min_timeout_sec`. Ours polls a sentinel string every 400 ms
   (`ShellTool.ts:90/:697`). Replace the sentinel with the wait-for channel; keep the cap; report "still running" honestly.
-- **R140 HB-TMUX-PASTE-BUFFER** — Terminus batches keys to the send-keys size limit and pastes oversize input via `load-buffer`/`paste-buffer`
+- **R140 HB-TMUX-PASTE-BUFFER** (BUILT 2026-09-13 → 4.108.18) — Terminus batches keys to the send-keys size limit and pastes oversize input via `load-buffer`/`paste-buffer`
   (`tmux_session.py:661-687`). Ours is one `send-keys` per command (`TmuxManager.sendKeys`); long heredocs / `python3 -c` bodies are exactly
   what TB4.0 sessions send (rs-archive-clone's heredoc "unexpected end of file"). Port batching + paste fallback.
 - **R141 HB-TMUX-CAPTURE-CAP** — Terminus raises `history-limit`, captures a fixed 160x40 pane and truncates each capture to 10 KB with the
   MIDDLE omitted (`_limit_output_length`) so command echo + result survive. Our `TmuxSessionTool` capture/captureHistory has no cap; ShellTool's
   30 KB head/tail cap does not apply to tmux captures. Add middle-omission + pane size/lines parameters.
-- **R142 HB-WAIT-PRIMITIVE** — Terminus `{"keystrokes": "", "duration": N}` = a side-effect-free wait; its timeout template says "it may still
+- **R142 HB-WAIT-PRIMITIVE** (BUILT 2026-09-13 → 4.108.18: BashOutput wait_seconds/wait_for, Bash persistent wait_for, TmuxSession wait) — Terminus `{"keystrokes": "", "duration": N}` = a side-effect-free wait; its timeout template says "it may still
   be running — do nothing". Give our model the same: `BashOutput`/persistent session `wait_seconds` (or a `Wait` action) so "wait N then show
   the screen" is never a repeated command (closes the R135/R137 class at the source; `poll_steer` should name it).
 - **R143 HB-HANDOFF-QA-SUMMARY** — Terminus `_summarize` (terminus_2.py:865+): summary → a FRESH sub-agent asks what is missing given the

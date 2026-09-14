@@ -333,6 +333,19 @@ export interface SubAgentResult {
 
   /** Artifacts produced by the agent */
   artifacts?: SubAgentArtifact[];
+
+  // ─────────────────────────────────────────────────────────────────
+  // Runtime (R147 HB-HERDR-DELEGATES)
+  // ─────────────────────────────────────────────────────────────────
+
+  /** Where the sub-agent ran: forked IPC child (process) or a herdr pane (herdr). */
+  runtime?: 'process' | 'herdr';
+
+  /** herdr pane id when runtime === 'herdr' (operator can `agent attach --takeover` it). */
+  paneId?: string;
+
+  /** Last lines of the herdr pane (runtime === 'herdr'); the partial transcript on timeout. */
+  transcriptTail?: string;
 }
 
 /**

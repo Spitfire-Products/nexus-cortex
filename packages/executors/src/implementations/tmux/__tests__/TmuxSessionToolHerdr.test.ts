@@ -94,4 +94,64 @@ describe('R146: TmuxSession on the herdr backend', () => {
     expect(avail).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
   });
+
+  it('R142 wait action (herdr): maps to `pane wait-output --match|--regex --timeout`; reports matched / timeout', async () => {
+    const calls: string[][] = [];
+    let timeout = false;
+    const exec: BackendExecFn = async (_bin, args) => {
+      calls.push(args);
+      if (args[1] === 'split') return ok(JSON.stringify({ result: { pane: { pane_id: 'w1:p5' } } }));
+      if (args[1] === 'wait-output') {
+        if (timeout) return { stdout: '', stderr: JSON.stringify({ error: { code: 'timeout' } }), code: 1 };
+        return ok(JSON.stringify({ result: { matched_line: 'ready 7', read: { text: 'boot\nready 7' } } }));
+      }
+      if (args[1] === 'read') return ok('boot\nstill booting');
+      return ok();
+    };
+    state.backend = new HerdrTerminalBackend({ bin: '/fake/herdr', parentPaneId: 'w1:p1', exec });
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tmuxtool-wait-'));
+    dirs.push(dir);
+    const tool = new TmuxSessionTool({ workingDirectory: dir });
+    const sig = new AbortController().signal;
+    await tool.execute({ action: 'create', sessionId: 'mon', cwd: dir }, sig);
+
+    const hit = await tool.execute({ action: 'wait', sessionId: 'mon', regex: 'ready \\d+', timeoutMs: 2000 }, sig);
+    expect(hit.success).toBe(true);
+    expect(calls[calls.length - 1]).toEqual(['pane', 'wait-output', 'w1:p5', '--regex', 'ready \\d+', '--timeout', '2000']);
+    expect(hit.llmContent as string).toMatch(/^\[wait\] \d+(\.\d)?s, matched\n/);
+    expect(hit.llmContent as string).toContain('ready 7');
+    expect(hit.metadata?.matched).toBe(true);
+
+    timeout = true;
+    const miss = await tool.execute({ action: 'wait', sessionId: 'mon', match: 'never', timeoutMs: 100 }, sig);
+    expect(miss.success).toBe(true);
+    expect(calls.find((c) => c[1] === 'wait-output' && c[3] === '--match')).toEqual(['pane', 'wait-output', 'w1:p5', '--match', 'never', '--timeout', '100']);
+    expect(miss.llmContent as string).toMatch(/^\[wait\] \d+(\.\d)?s, timeout\n/);
+    expect(miss.llmContent as string).toContain('still booting');
+    expect(miss.metadata?.matched).toBe(false);
+
+    const bad = await tool.execute({ action: 'wait', sessionId: 'mon' }, sig);
+    expect(bad.success).toBe(false);
+    expect(bad.error).toMatch(/match or regex/);
+  });
+
+  it('R142 wait action (tmux): polls capture-pane for the text and returns matched / timeout', async () => {
+    const tmux = TmuxManager.getInstance();
+    vi.spyOn(tmux, 'isAvailable').mockResolvedValue(true);
+    vi.spyOn(tmux, 'sessionExists').mockResolvedValue(true);
+    let n = 0;
+    vi.spyOn(tmux, 'capturePane').mockImplementation(async () => (++n >= 2 ? '$ run\nready 9\n' : '$ run\nbooting\n'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tmuxtool-wait-tmux-'));
+    dirs.push(dir);
+    const tool = new TmuxSessionTool({ workingDirectory: dir });
+    const sig = new AbortController().signal;
+    const hit = await tool.execute({ action: 'wait', sessionId: 's1', regex: 'ready \\d+', timeoutMs: 5000 }, sig);
+    expect(hit.success).toBe(true);
+    expect(hit.llmContent as string).toMatch(/^\[wait\] \d+(\.\d)?s, matched\n/);
+    expect(hit.llmContent as string).toContain('ready 9');
+    expect(n).toBeGreaterThanOrEqual(2);
+    const miss = await tool.execute({ action: 'wait', sessionId: 's1', match: 'never', timeoutMs: 300 }, sig);
+    expect(miss.llmContent as string).toMatch(/^\[wait\] \d+(\.\d)?s, timeout\n/);
+    expect(miss.metadata?.matched).toBe(false);
+  });
 });

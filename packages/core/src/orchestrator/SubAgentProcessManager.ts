@@ -825,6 +825,11 @@ export class SubAgentProcessManager implements ISubAgentManager {
     return join(root, sessionDir, `${this.config.parentSessionId}.subagents`);
   }
 
+  /** R147: a delegate that did not run through this manager's IPC (herdr pane) still gets the durable orphan-recovery record. */
+  persistExternalResult(toolUseId: string, result: SubAgentResult): void {
+    this.persistSubAgentResult(toolUseId, result);
+  }
+
   private persistSubAgentResult(toolUseId: string, result: SubAgentResult): void {
     try {
       const dir = this.getSubagentStoreDir();

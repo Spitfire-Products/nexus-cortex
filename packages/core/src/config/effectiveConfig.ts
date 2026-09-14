@@ -172,6 +172,8 @@ const GROUPS: Array<{ group: string; levers: LeverSpec[] }> = [
       { key: 'CORTEX_HERDR_BIN', what: 'Explicit herdr binary override (legacy HERDR_BIN honored). Resolution order: this → HERDR_BIN_PATH → PATH probe', codeDefault: '(unset)', kind: 'value' },
       { key: 'HERDR_BIN_PATH', what: 'herdr 0.9.0 pane export of its own binary path — the bin the reporter uses when no override is set and it is executable (informational; set by herdr, not by us)', codeDefault: '(unset — PATH probe)', kind: 'value' },
       { key: 'CORTEX_TERMINAL_BACKEND', what: 'Persistent-session backend under Bash persistentSession / TmuxSession / CreateArtifact persistent: auto | herdr | tmux | detached. auto = herdr pane (HERDR_ENV=1 + socket reachable) > tmux > detached background process (R146 HB-HERDR-TERMINAL-BACKEND); resolved once per process', codeDefault: 'auto', kind: 'value' },
+      { key: 'CORTEX_SUBAGENT_RUNTIME', what: 'Where Task sub-agents run: auto | process | herdr. process = forked IPC child; herdr = sibling herdr pane running the same agent-mode entry (visible, takeover-able, auto-approved). auto = herdr when HERDR_ENV=1 + the herdr terminal backend resolves + the parent auto-approves, else process; Task input `runtime` overrides per dispatch (R147 HB-HERDR-DELEGATES)', codeDefault: 'auto', kind: 'value' },
+      { key: 'CORTEX_HERDR_KEEP_DELEGATE_PANES', what: 'Keep herdr delegate panes (and their task/result files) after the sub-agent finishes for operator inspection; 0/false closes them on completion (R147)', codeDefault: '1 (keep)', kind: 'value' },
     ],
   },
 ];

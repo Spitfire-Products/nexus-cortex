@@ -718,3 +718,78 @@ describe('HB-TMUX-FALLBACK (R134): persistentSession without tmux', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });
+
+// HB-WAIT-PRIMITIVE (R142, 2026-09-14): Bash persistentSession wait_for on the tmux path — the
+// sentinel poll also watches the pane for the regex (only text AFTER the echoed command line
+// counts) and returns as soon as it matches, reporting the command as possibly still running.
+import { describe as d142, it as it142, expect as ex142, afterEach as ae142, vi as vi142 } from 'vitest';
+import { resetTerminalBackendCache as reset142 } from '../../utils/TerminalBackend.js';
+
+d142('R142 HB-WAIT-PRIMITIVE: wait_for on the tmux persistent path', () => {
+  const dirs: string[] = [];
+  ae142(() => { vi142.restoreAllMocks(); reset142(); for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true }); });
+
+  /** Mock tmux: sendKeys records the text, capturePane returns the scripted frames in order (last repeats). */
+  const mockTmux = (frames: (sent: string) => string[]) => {
+    const tmux = TmuxManager.getInstance();
+    vi142.spyOn(tmux, 'isAvailable').mockResolvedValue(true);
+    vi142.spyOn(tmux, 'sessionExists').mockResolvedValue(true);
+    let sent = '';
+    let i = 0;
+    vi142.spyOn(tmux, 'sendKeys').mockImplementation(async (_id, cmd) => { sent = cmd; });
+    vi142.spyOn(tmux, 'capturePane').mockImplementation(async () => {
+      const f = frames(sent);
+      return f[Math.min(i++, f.length - 1)];
+    });
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shell-wait-'));
+    dirs.push(dir);
+    return { tool: new ShellTool({ workingDirectory: dir } as ExecutorConfig), sentRef: () => sent };
+  };
+  const sentinelOf = (sent: string) => sent.match(/__CORTEX_DONE_[0-9a-f]+/)![0];
+
+  it142('returns when the regex appears after the command echo, before the sentinel (command still running)', async () => {
+    const { tool } = mockTmux((sent) => [
+      `$ node server.js; printf '${sentinelOf(sent)}_%d\\n' $?\nstarting`,
+      `$ node server.js; printf '${sentinelOf(sent)}_%d\\n' $?\nstarting\nlistening on port 8080`,
+    ]);
+    const t0 = Date.now();
+    const res = await tool.execute({ command: 'node server.js', persistentSession: true, sessionId: 'srv', wait_for: 'listening on port \\d+', timeout: 10000 }, new AbortController().signal);
+    ex142(res.success).toBe(true);
+    ex142(Date.now() - t0).toBeLessThan(5000);
+    ex142(res.metadata?.completed).toBe(false);
+    ex142(res.metadata?.waitMatched).toBe(true);
+    const text = res.llmContent as string;
+    ex142(text).toContain('listening on port 8080');
+    ex142(text).toMatch(/wait_for .*matched/);
+    ex142(text).toContain('may still be running');
+    ex142(text).not.toContain('__CORTEX_DONE_');
+  });
+
+  it142('stale text BEFORE the echoed command line never satisfies wait_for', async () => {
+    const { tool } = mockTmux((sent) => [
+      `listening on port 1 (old)\n$ node server.js; printf '${sentinelOf(sent)}_%d\\n' $?\nstarting`,
+      `listening on port 1 (old)\n$ node server.js; printf '${sentinelOf(sent)}_%d\\n' $?\nstarting`,
+      `listening on port 1 (old)\n$ node server.js; printf '${sentinelOf(sent)}_%d\\n' $?\nstarting\nlistening on port 2`,
+    ]);
+    const res = await tool.execute({ command: 'node server.js', persistentSession: true, sessionId: 'srv2', wait_for: 'listening on port \\d+', timeout: 10000 }, new AbortController().signal);
+    ex142(res.metadata?.waitMatched).toBe(true);
+    ex142(res.llmContent as string).toContain('listening on port 2');
+  });
+
+  it142('the sentinel still wins when the command finishes first (completed, not waitMatched)', async () => {
+    const { tool } = mockTmux((sent) => [
+      `$ make; printf '${sentinelOf(sent)}_%d\\n' $?\nbuilt\n${sentinelOf(sent)}_0`,
+    ]);
+    const res = await tool.execute({ command: 'make', persistentSession: true, sessionId: 'mk', wait_for: 'never-appears', timeout: 10000 }, new AbortController().signal);
+    ex142(res.metadata?.completed).toBe(true);
+    ex142(res.metadata?.exitCode).toBe(0);
+    ex142(res.metadata?.waitMatched).toBe(false);
+  });
+
+  it142('rejects an invalid wait_for regex', async () => {
+    const { tool } = mockTmux(() => ['']);
+    const res = await tool.execute({ command: 'true', persistentSession: true, wait_for: '(' }, new AbortController().signal);
+    ex142(res.success).toBe(false);
+    ex142(res.error).toMatch(/wait_for/);
+  });
+});

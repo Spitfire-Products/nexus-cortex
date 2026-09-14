@@ -78,7 +78,9 @@ import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGround
 import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, mentorSurfaceTimeoutMs, type MentorCallMeta } from '../training/mentorRole.js';
 import { resolveOuterToolDeadlineMs, resolveOuterToolTimeoutFloorMs } from './outerToolTimeout.js';
 import { resolveSubAgentTimeoutMs } from './subAgentTimeout.js';
-import { resolveHerdrReporting, HerdrReporter, type HerdrState } from './herdrReporter.js';
+import { resolveHerdrReporting, HerdrReporter, sanitizeHerdrAgentName, type HerdrState } from './herdrReporter.js';
+import { runDelegateInHerdr, readSubAgentRuntimeLever, resolveSubAgentRuntime, type SubAgentRuntime } from './HerdrSubAgentRunner.js';
+import { randomBytes } from 'crypto';
 import { resolveTurnDeadlineMs, timeBudgetState, timeBudgetWarnNudge } from './timeBudget.js';
 import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
 import { ExactRepeatTracker, notePollResults } from '../training/loopLadder.js';
@@ -534,6 +536,8 @@ export class CortexOrchestrator {
 
   // Wave 3: Approval mode for auto-approve actions feature
   private approvalMode: { autoApproveActions: boolean };
+  /** R147: cached herdr-delegate availability probe (HERDR_ENV + herdr terminal backend), once per process. */
+  private herdrDelegateAvailable: Promise<boolean> | null = null;
 
   // Phase 2 Mentorship: Pattern Detection
   private errorPatterns: Map<string, number> = new Map();
@@ -7488,12 +7492,15 @@ export class CortexOrchestrator {
     // could tell whether the model ever reached for Task (it is anchor-stripped on turn 1 and never prompted).
     if (taskTools.length > 0) {
       const store = this.getDecisionStore();
+      // R147: the runtime each dispatch will use (herdr pane vs forked child), resolved once here so the row and the dispatch agree
+      const runtimes = await Promise.all(taskTools.map(t => this.resolveSubAgentRuntimeFor(t.input).then(r => r.runtime)));
       if (store) void store.recordEvent({
         sessionId: this.currentSessionId ?? 'unknown',
         kind: 'task_spawn',
         toolName: 'Task',
         detail: {
           count: taskTools.length,
+          runtime: runtimes,
           parallel: taskTools.length > 1,
           subagentTypes: taskTools.map(t => String((t.input as any)?.subagent_type ?? '')),
           models: taskTools.map(t => String((t.input as any)?.model ?? 'inherit')),
@@ -7977,17 +7984,14 @@ export class CortexOrchestrator {
                   // the parent's full CORTEX_TURN_DEADLINE_MS via process.env and never converges before the kill.
                   const { timeoutMs, source: timeoutSource } = this.resolveSubAgentTimeoutFor(toolUse.input);
                   if (this.config.debug) console.log(`[SubAgent] timeout ${timeoutMs}ms (${timeoutSource})`);
-                  const subAgentResult = await processManager.spawnAgent(
-                    agentDef,
-                    taskPrompt,
-                    {
-                      modelOverride: resolvedModelId,
-                      timeoutMs,
-                      maxTurns: 50,
-                      envOverrides: { ...(timeoutSource === 'deadline' || timeoutSource === 'requested' ? { CORTEX_TURN_DEADLINE_MS: String(timeoutMs) } : {}), ...(envOverrides ?? {}) },
-                      toolUseId: toolUse.id,
-                    }
-                  );
+                  // R147 HB-HERDR-DELEGATES: runtime = herdr pane or forked IPC child (lever / Task `runtime`).
+                  const subAgentResult = await this.dispatchSubAgent(processManager, toolUse.input, agentDef, taskPrompt, {
+                    modelOverride: resolvedModelId,
+                    timeoutMs,
+                    maxTurns: 50,
+                    envOverrides: { ...(timeoutSource === 'deadline' || timeoutSource === 'requested' ? { CORTEX_TURN_DEADLINE_MS: String(timeoutMs) } : {}), ...(envOverrides ?? {}) },
+                    toolUseId: toolUse.id,
+                  });
 
                   // Clean up event listeners after completion
                   progressListeners.cleanup();
@@ -8014,9 +8018,11 @@ export class CortexOrchestrator {
                         turnCount: subAgentResult.turnCount,
                         filesModified: subAgentResult.filesModified,
                         cost: subAgentResult.cost,
+                        runtime: subAgentResult.runtime ?? 'process',
+                        paneId: subAgentResult.paneId,
                       },
-                      // Track that this was a process-based sub-agent
-                      executionMode: 'child_process',
+                      // Track how the sub-agent ran (forked child or herdr pane)
+                      executionMode: subAgentResult.runtime === 'herdr' ? 'herdr_pane' : 'child_process',
                     },
                   };
                 } catch (subAgentError: any) {
@@ -8275,7 +8281,8 @@ export class CortexOrchestrator {
           // R133 HB-SUBAGENT-TIMEOUT: see the handleToolCalls site — residual-derived limit, mirrored into the child's turn deadline.
           const { timeoutMs, source: timeoutSource } = this.resolveSubAgentTimeoutFor(toolUse.input);
           if (this.config.debug) console.log(`[SubAgent] timeout ${timeoutMs}ms (${timeoutSource})`);
-          const subAgentResult = await processManager.spawnAgent(agentDef, taskPrompt, {
+          // R147 HB-HERDR-DELEGATES: runtime = herdr pane or forked IPC child (lever / Task `runtime`).
+          const subAgentResult = await this.dispatchSubAgent(processManager, toolUse.input, agentDef, taskPrompt, {
             modelOverride: resolvedModelId,
             timeoutMs,
             maxTurns: 50,
@@ -8303,8 +8310,10 @@ export class CortexOrchestrator {
                 durationMs: subAgentResult.durationMs,
                 turnCount: subAgentResult.turnCount,
                 filesModified: subAgentResult.filesModified,
+                runtime: subAgentResult.runtime ?? 'process',
+                paneId: subAgentResult.paneId,
               },
-              executionMode: 'child_process',
+              executionMode: subAgentResult.runtime === 'herdr' ? 'herdr_pane' : 'child_process',
             },
           };
         } catch (subAgentError: any) {
@@ -8814,6 +8823,79 @@ export class CortexOrchestrator {
   private subAgentBlockTimeoutMs = (block: { name?: string; input?: unknown }): number | undefined =>
     block?.name === 'Task' || block?.name === 'Browse' ? this.resolveSubAgentTimeoutFor(block.input).timeoutMs : undefined;
 
+  /**
+   * R147 HB-HERDR-DELEGATES: herdr delegates are possible only inside a herdr pane (HERDR_ENV=1 +
+   * HERDR_PANE_ID + binary) with the herdr terminal backend resolving (socket reachable). Probed once.
+   */
+  private probeHerdrDelegateAvailable(): Promise<boolean> {
+    if (!this.herdrDelegateAvailable) {
+      this.herdrDelegateAvailable = (async () => {
+        if (!resolveHerdrReporting({ ...process.env, CORTEX_HERDR_REPORTING: '' }).enabled) return false;
+        const executors = await import('@nexus-cortex/executors');
+        const backend = await executors.resolveTerminalBackend();
+        return backend.kind === 'herdr';
+      })().catch(() => false);
+    }
+    return this.herdrDelegateAvailable;
+  }
+
+  /** R147: lever CORTEX_SUBAGENT_RUNTIME + Task `runtime` input + availability + the parent's approval mode. */
+  private async resolveSubAgentRuntimeFor(input: unknown): Promise<{ runtime: SubAgentRuntime; reason: string }> {
+    const lever = readSubAgentRuntimeLever();
+    const requested = (input as { runtime?: unknown } | undefined)?.runtime;
+    const mayUseHerdr = requested === 'herdr' || (requested !== 'process' && lever !== 'process');
+    const herdrAvailable = mayUseHerdr ? await this.probeHerdrDelegateAvailable() : false;
+    return resolveSubAgentRuntime({
+      lever,
+      requested,
+      herdrAvailable,
+      parentAutoApprove: this.approvalMode?.autoApproveActions === true,
+    });
+  }
+
+  /** R147: run the sub-agent in a herdr pane (HerdrSubAgentRunner) or as the forked IPC child (unchanged path). */
+  private async dispatchSubAgent(
+    processManager: SubAgentProcessManager,
+    input: unknown,
+    agentDef: AgentDefinition,
+    taskPrompt: string,
+    options: { modelOverride: string; timeoutMs: number; maxTurns: number; envOverrides: Record<string, string>; toolUseId: string },
+  ): Promise<SubAgentResult> {
+    const { runtime, reason } = await this.resolveSubAgentRuntimeFor(input);
+    if (this.config.debug) console.log(`[SubAgent] runtime ${runtime} (${reason})`);
+    if (runtime !== 'herdr') return processManager.spawnAgent(agentDef, taskPrompt, options);
+
+    const name = sanitizeHerdrAgentName(`${agentDef.name}-${randomBytes(2).toString('hex')}`);
+    const result = await runDelegateInHerdr({
+      agentDef,
+      taskPrompt,
+      name,
+      cwd: this.config.projectPath,
+      envOverrides: options.envOverrides,
+      timeoutMs: options.timeoutMs,
+      maxTurns: options.maxTurns,
+      modelOverride: options.modelOverride,
+      debug: this.config.debug,
+    });
+    if (options.toolUseId) processManager.persistExternalResult(options.toolUseId, result);
+    const store = this.getDecisionStore();
+    if (store) void store.recordEvent({
+      sessionId: this.currentSessionId ?? 'unknown',
+      kind: 'delegate_pane',
+      toolName: 'Task',
+      detail: {
+        paneId: result.paneId,
+        agentName: agentDef.name,
+        delegateName: name,
+        status: result.status,
+        durationMs: result.durationMs,
+        toolUseId: options.toolUseId,
+        turn: this.turnNumber,
+      },
+    }).catch(() => {});
+    return result;
+  }
+
   private formatSubAgentResultForLLM(result: SubAgentResult): string {
     const lines: string[] = [];
 
@@ -8829,6 +8911,7 @@ export class CortexOrchestrator {
     lines.push(`**Model**: ${result.model}`);
     lines.push(`**Duration**: ${(result.durationMs / 1000).toFixed(1)}s`);
     lines.push(`**Turns**: ${result.turnCount}`);
+    if (result.paneId) lines.push(`**Pane**: ${result.paneId} (herdr; \`herdr agent attach ${result.paneId} --takeover\` to inspect)`);
     lines.push('');
 
     // Summary

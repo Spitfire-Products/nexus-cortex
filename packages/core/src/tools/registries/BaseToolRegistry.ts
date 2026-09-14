@@ -216,7 +216,7 @@ PARALLEL EXECUTION:
 - Must be sequential: build→test→validate chains, file mutations, package installs
 - Use && to chain sequential commands in a single call
 
-For background execution, set run_in_background: true, then continue with other useful work — check results ONCE with BashOutput when you need them. Busy-waiting is forbidden: do not run sleep to wait, do not re-run the same status/inspection command while a background task runs, and do not poll BashOutput repeatedly — each of these burns turns without progress. Do other work, then check once.`,
+For background execution, set run_in_background: true, then continue with other useful work — check results ONCE with BashOutput when you need them. Busy-waiting is forbidden: do not run sleep to wait, do not re-run the same status/inspection command while a background task runs, and do not poll BashOutput repeatedly — each of these burns turns without progress. Do other work, then check once. To wait for something, use BashOutput wait_seconds/wait_for, or for persistentSession runs pass wait_for (regex) + timeout to return as soon as the session shows that text — prefer wait_for over sleep polling.`,
     schema: {
       type: 'object',
       properties: {
@@ -251,6 +251,10 @@ For background execution, set run_in_background: true, then continue with other 
         captureHistory: {
           type: 'boolean',
           description: 'When using persistent sessions, capture entire scrollback history (not just visible output). Default: false.'
+        },
+        wait_for: {
+          type: 'string',
+          description: 'persistentSession only: regex; return as soon as the session output matches it (e.g. "listening on port \\d+") instead of waiting for the command to finish, capped by timeout. The command may still be running afterwards.'
         }
       },
       required: ['command']
@@ -270,12 +274,12 @@ For background execution, set run_in_background: true, then continue with other 
 
 - Returns only NEW output since your last check (incremental reads)
 - Shows process status: Running or Exited with exit code
-- Use repeatedly to poll a long-running command until it completes
 - Use filter to search output with regex (e.g., filter: "ERROR|WARN")
+- To WAIT, pass wait_seconds (block up to N s, returning early on new output or exit) and/or wait_for (regex; return as soon as new output matches) — a side-effect-free wait; prefer wait_for over sleep polling. The result then starts with "[wait] <elapsed>s, <output|matched|exited|timeout>"; on timeout the process may still be running — do nothing or wait again.
 
 WORKFLOW:
 1. Start: Bash({ command: "npm test", run_in_background: true }) → returns bash_id
-2. Poll: BashOutput({ bash_id }) → check status + read new output
+2. Wait: BashOutput({ bash_id, wait_seconds: 120 }) or BashOutput({ bash_id, wait_for: "passed|failed", wait_seconds: 300 })
 3. Done: When status shows "Exited", all output has been captured
 4. Cleanup: KillShell({ shell_id: bash_id }) if process hangs`,
     schema: {
@@ -288,6 +292,14 @@ WORKFLOW:
         filter: {
           type: 'string',
           description: 'Regex to filter output lines (e.g., "ERROR|FAIL" to show only errors)'
+        },
+        wait_seconds: {
+          type: 'number',
+          description: 'Block up to this many seconds (0-600) for new output or process exit, returning early when either happens. Side-effect free; use instead of sleep.'
+        },
+        wait_for: {
+          type: 'string',
+          description: 'Regex; return as soon as NEW output matches it, else at the wait_seconds timeout (default 30 s when only wait_for is given).'
         }
       },
       required: ['bash_id']
@@ -659,6 +671,11 @@ TIME LIMIT: each agent runs under a wall-clock limit (timeout_ms, else derived f
         timeout_ms: {
           type: 'number',
           description: "Optional wall-clock limit for the sub-agent in ms. Default derives from the parent's remaining turn deadline (90% minus a 30 s margin) or 5 minutes when no deadline is set; a value below 60000 is raised to 60000."
+        },
+        runtime: {
+          type: 'string',
+          enum: ['process', 'herdr'],
+          description: 'Optional runtime override: "process" = forked child (default path); "herdr" = a sibling herdr pane the operator can watch and take over (only when running inside herdr). Default follows CORTEX_SUBAGENT_RUNTIME.'
         }
       },
       required: ['description', 'prompt', 'subagent_type']
@@ -2077,6 +2094,7 @@ Actions:
 - list: List all active sessions
 - kill: Terminate a session
 - snapshot: Capture visual screenshot (if supported)
+- wait: Block until the screen shows match (literal) or regex, capped by timeoutMs — side-effect free; prefer it over sleep polling (the echoed command line counts, so wait for text the command itself does not contain). Returns "[wait] <elapsed>s, matched|timeout" + the screen.
 
 Graceful degradation: Returns error if tmux is not installed.`,
     schema: {
@@ -2084,7 +2102,7 @@ Graceful degradation: Returns error if tmux is not installed.`,
       properties: {
         action: {
           type: 'string',
-          enum: ['create', 'send', 'capture', 'list', 'kill', 'snapshot'],
+          enum: ['create', 'send', 'capture', 'list', 'kill', 'snapshot', 'wait'],
           description: 'Action to perform on tmux session'
         },
         sessionId: {
@@ -2113,6 +2131,18 @@ Graceful degradation: Returns error if tmux is not installed.`,
           type: 'boolean',
           description: 'Include visual screenshot (optional for snapshot action)',
           default: false
+        },
+        match: {
+          type: 'string',
+          description: 'Literal text to wait for (wait action; one of match|regex required)'
+        },
+        regex: {
+          type: 'string',
+          description: 'Regex to wait for (wait action; one of match|regex required)'
+        },
+        timeoutMs: {
+          type: 'number',
+          description: 'Wait cap in milliseconds (wait action; default 30000, max 600000)'
         }
       },
       required: ['action']

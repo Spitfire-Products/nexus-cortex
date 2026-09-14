@@ -239,7 +239,7 @@ export function formatLadderSignal(toolName: string, result: LadderResult): stri
     const waits = p?.waitSec !== undefined ? `${p.waits} waits of ~${p.waitSec} s on ${p.probe}` : `${p?.waits ?? result.count} repeats of ${p?.probe ?? toolName}`;
     return (
       `<system-reminder>\nPolling pattern detected (${waits}). Move the wait off the turn: launch the probe loop with ` +
-      `run_in_background (or \`persistentSession\`) and read it with BashOutput when you need it; keep any foreground wait <= 60 s. ` +
+      `run_in_background (or \`persistentSession\`) and poll it with BashOutput wait_seconds/wait_for (a side-effect-free wait that returns on new output, exit, or match) instead of sleep; keep any foreground wait <= 60 s. ` +
       `${toolName} stays available.\n</system-reminder>`
     );
   }

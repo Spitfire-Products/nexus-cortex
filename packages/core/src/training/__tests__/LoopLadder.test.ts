@@ -637,6 +637,9 @@ d135('R135 HB-POLL-LOOP — poll-and-wait never feeds the loop lenses; poll_stee
     ex135(text).toContain('Polling pattern detected (3 waits of ~120 s on curl localhost:5000/api/v1/config)');
     ex135(text).toContain('run_in_background');
     ex135(text).toContain('BashOutput');
+    // R142 HB-WAIT-PRIMITIVE: the steer names the side-effect-free wait instead of sleep polling.
+    ex135(text).toContain('wait_seconds');
+    ex135(text).toContain('wait_for');
     ex135(text).toContain('Bash stays available');
   });
 });

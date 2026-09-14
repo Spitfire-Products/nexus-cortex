@@ -71,6 +71,8 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   CORTEX_HERDR_REPORTING: { tier: 'env' },
   CORTEX_HERDR_AGENT_NAME: { tier: 'env' },
   CORTEX_TERMINAL_BACKEND: { tier: 'env' },
+  CORTEX_SUBAGENT_RUNTIME: { tier: 'env' },
+  CORTEX_HERDR_KEEP_DELEGATE_PANES: { tier: 'env' },
   CORTEX_ENDTURN_RESOLVER_REASONING: { tier: 'env' },
   CORTEX_DEADLINE_EXIT_MENTOR_REASONING: { tier: 'env' },
   CORTEX_LOOP_TOOL_BLOCK_REASONING: { tier: 'env' },

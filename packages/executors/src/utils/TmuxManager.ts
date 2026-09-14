@@ -2,13 +2,46 @@
  * TmuxManager - Singleton for managing tmux sessions
  * Handles persistent terminal session lifecycle and operations
  */
-import { spawn, exec } from 'child_process';
+import { spawn, exec, execFile } from 'child_process';
 import { promisify } from 'util';
-import { existsSync, statSync } from 'fs';
+import { existsSync, statSync, writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
 import * as crypto from 'crypto';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+/**
+ * HB-TMUX-PASTE-BUFFER (R140, 2026-09-14): argv exec for the send paths (no host-shell
+ * quoting, so `$?` and quotes reach the session verbatim). Injectable for tests.
+ */
+export interface TmuxExecResult {
+  stdout: string;
+  stderr: string;
+}
+export type TmuxExecFn = (bin: string, args: string[]) => Promise<TmuxExecResult>;
+export const defaultTmuxExec: TmuxExecFn = async (bin, args) => {
+  const { stdout, stderr } = await execFileAsync(bin, args, { maxBuffer: 16 * 1024 * 1024 });
+  return { stdout: String(stdout), stderr: String(stderr) };
+};
+
+/**
+ * R140: input above this many bytes (or containing a newline) is delivered with
+ * `load-buffer` + `paste-buffer` instead of one `send-keys` argument (Terminus 2
+ * batches keys to the send-keys size limit and pastes oversize input the same way;
+ * TB4.0 rs-archive-clone lost a heredoc to the argument limit).
+ */
+export const TMUX_SEND_KEYS_MAX_CHARS = 2000;
+
+export function needsPasteBuffer(text: string): boolean {
+  return text.includes('\n') || Buffer.byteLength(text, 'utf8') > TMUX_SEND_KEYS_MAX_CHARS;
+}
+
+export interface TmuxSendOptions {
+  /** Press Enter after the text (default true). */
+  enter?: boolean;
+}
 
 /**
  * TmuxBinaryLocator - Robust tmux binary discovery
@@ -146,7 +179,7 @@ export class TmuxManager {
   private static instance: TmuxManager;
   private tmuxAvailable: boolean | null = null;
 
-  private constructor() {}
+  private constructor(private readonly exec: TmuxExecFn = defaultTmuxExec) {}
 
   /**
    * Get singleton instance
@@ -158,6 +191,11 @@ export class TmuxManager {
     return TmuxManager.instance;
   }
 
+  /** Test hook (R140): a non-singleton instance with an injected exec. */
+  public static createWithExec(exec: TmuxExecFn): TmuxManager {
+    return new TmuxManager(exec);
+  }
+
   /**
    * Check if tmux is installed and available
    */
@@ -167,7 +205,7 @@ export class TmuxManager {
     }
 
     try {
-      await execAsync(`${getTmuxBin()} -V`);
+      await this.exec(getTmuxBin(), ['-V']);
       this.tmuxAvailable = true;
       return true;
     } catch {
@@ -229,20 +267,60 @@ export class TmuxManager {
   }
 
   /**
-   * Send keys (command) to a tmux session
+   * Send text (a command) to a tmux session, followed by Enter unless `enter: false`.
+   * R140: short single-line text goes as ONE literal `send-keys -l` argument; multi-line
+   * or oversize text (> TMUX_SEND_KEYS_MAX_CHARS) is written to a 0600 temp file and
+   * delivered with `load-buffer` + `paste-buffer -d -p` (bracketed paste when the pane
+   * application asked for it), then Enter is a separate `send-keys`. Text reaches the
+   * session verbatim on both paths (no host-shell expansion of `$?`, quotes, backticks).
    * @param sessionId Session identifier
-   * @param command Command to send
+   * @param command Text to send
    */
-  public async sendKeys(sessionId: string, command: string): Promise<void> {
+  public async sendKeys(sessionId: string, command: string, opts: TmuxSendOptions = {}): Promise<void> {
     if (!(await this.isAvailable())) {
       throw new Error('tmux is not installed');
     }
 
     try {
-      // Send command followed by Enter key
-      await execAsync(`${getTmuxBin()} send-keys -t ${sessionId} "${command.replace(/"/g, '\\"')}" Enter`);
+      if (needsPasteBuffer(command)) {
+        await this.pasteText(sessionId, command);
+      } else {
+        await this.exec(getTmuxBin(), ['send-keys', '-t', sessionId, '-l', command]);
+      }
+      if (opts.enter !== false) {
+        await this.exec(getTmuxBin(), ['send-keys', '-t', sessionId, 'Enter']);
+      }
     } catch (error: any) {
       throw new Error(`Failed to send keys to session: ${error.message}`);
+    }
+  }
+
+  /**
+   * Send tmux KEY NAMES (C-c, Enter, Escape, ...) to a session — no -l, no implicit Enter.
+   * @param sessionId Session identifier
+   * @param keys Key names as tmux send-keys understands them
+   */
+  public async sendRawKeys(sessionId: string, keys: string[]): Promise<void> {
+    if (!(await this.isAvailable())) {
+      throw new Error('tmux is not installed');
+    }
+    try {
+      await this.exec(getTmuxBin(), ['send-keys', '-t', sessionId, ...keys]);
+    } catch (error: any) {
+      throw new Error(`Failed to send keys to session: ${error.message}`);
+    }
+  }
+
+  /** R140 paste path: temp file (0600) -> load-buffer -> paste-buffer -d -p; the file is always deleted. */
+  private async pasteText(sessionId: string, text: string): Promise<void> {
+    const name = `cortex-${crypto.randomBytes(4).toString('hex')}`;
+    const file = join(tmpdir(), `${name}.paste`);
+    writeFileSync(file, text, { mode: 0o600 });
+    try {
+      await this.exec(getTmuxBin(), ['load-buffer', '-b', name, file]);
+      await this.exec(getTmuxBin(), ['paste-buffer', '-d', '-p', '-b', name, '-t', sessionId]);
+    } finally {
+      try { unlinkSync(file); } catch { /* already gone */ }
     }
   }
 

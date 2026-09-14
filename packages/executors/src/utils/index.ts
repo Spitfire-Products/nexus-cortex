@@ -4,8 +4,8 @@
 
 export * from './SchemaValidator.js';
 export * from './FileUtils.js';
-export { TmuxManager } from './TmuxManager.js';
-export type { TmuxSessionMetadata } from './TmuxManager.js';
+export { TmuxManager, TMUX_SEND_KEYS_MAX_CHARS, needsPasteBuffer } from './TmuxManager.js';
+export type { TmuxSessionMetadata, TmuxExecFn, TmuxExecResult, TmuxSendOptions } from './TmuxManager.js';
 export {
   HerdrTerminalBackend,
   TmuxTerminalBackend,
@@ -16,6 +16,8 @@ export {
   registerPaneOutputHandle,
   truncateMiddle,
   stripSentinel,
+  waitForRegexSource,
+  outputAfterCommandEcho,
 } from './TerminalBackend.js';
 export type {
   TerminalBackend,
