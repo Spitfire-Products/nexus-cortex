@@ -26,6 +26,21 @@ that we always pass (cobol-modernization, configure-git-webserver, hf-model-infe
 pytorch-model-recovery, winning-avg-corewars); 4 tasks DSH passes that we never do (dna-assembly, extract-elf, filter-js-from-html,
 video-processing). Tool shape is not the difference: DSH used its editor tool in 0.6% of calls.
 
+
+**2026-09-15 rerun on nexus-cortex 4.108.21 (R149–R151 + Bash doctrine edits), 89 tasks × 3 repeats × 2 arms, Vast VM executors, harbor 0.23.0,
+dataset pinned to the same commit as the k=5 series:**
+
+| arm | pass@1 over 3 repeats | Wilson 95% | tokens (as billed) | agent-hours |
+|---|---|---|---|---|
+| effort low | **76.4%** (204/267) | 71.0–81.1 | $9.82 | 47.1 |
+| effort high | 74.9% (200/267) | 69.4–79.7 | $13.49 | 62.3 |
+
+Paired on 267 task×repeat pairs: 24 flips favor high, 28 favor low, p = 0.68. Effort is a null on TB2.1 and costs 37% more tokens, so
+effort low is the TB2.1 configuration. Both arms sit on the earlier k=5 band (77.3 ± 2.7) — the 4.108.21 changes, which target 8-hour
+behavior, neither moved nor hurt TB2.1. Disclosures: the high arm ran on a 7-vCPU VM against 15 for low; a 27-minute DeepSeek incident
+returned null completion bodies to 23 of the 534 sessions, which the harness of the day ended as fails (fixed in 4.108.22, not re-scored).
+Ledger: `.cortex/bench/r-tb21-a21-2026-09-15.md`.
+
 ## 2. Terminal-Bench 4.0 (66 tasks, `terminal-bench/terminal-bench`, 8-hour agent budgets)
 
 | arm | runs | pass@1 | notes |

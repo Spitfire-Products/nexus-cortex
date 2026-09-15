@@ -799,7 +799,7 @@ export class GatewayTranslationLayer {
     } else if (modelConfig.api.pattern === 'chat/completions' || modelConfig.api.pattern === 'hf-space') {
       // OpenAI shape: { choices: [{ message: {...} }] }. hf-space returns the same
       // shape (sendHFSpaceAPI normalizes the Gradio output into an OpenAI completion).
-      return resp.choices ? resp.choices.map((c: any) => c.message) : [];
+      return resp && Array.isArray(resp.choices) ? resp.choices.map((c: any) => c.message) : []; // R152: null-safe
     } else if (modelConfig.api.pattern === 'responses') {
       // OpenAI/XAI Responses API: { output: [...] }
       // Return the full response as a single-item array so ResponsesAPIAdapter can handle it

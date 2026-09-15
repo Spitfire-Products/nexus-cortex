@@ -60,6 +60,8 @@ export class ErrorClassificationMiddleware implements IErrorClassifier {
     'enotfound',
     'premature close',
     'client network socket disconnected',
+    // R152 (2026-09-15): a completion body that parsed to null / carried no choices — a transport-class fault, retried on the budget ladder
+    'empty completion body',
   ];
 
   /**

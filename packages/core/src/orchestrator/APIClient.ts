@@ -18,6 +18,7 @@ import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { GoogleGenAI } from '@google/genai';
 import { v4 as uuidv4 } from 'uuid';
+import { assertCompletionBody } from './completionBodyGuard.js';
 import { parseHFCompletion, normalizeToolCallArguments } from '../models/hfSpace/normalize.js';
 import type { ModelConfig } from '../models/ModelConfig.interface.js';
 import type { PreparedRequest } from '../adapters/GatewayTranslationLayer.js';
@@ -1022,6 +1023,7 @@ export class APIClient {
 
     // Send request
     const response = await client.chat.completions.create(chatRequest);
+    assertCompletionBody(response, modelConfig.provider ?? 'chat-completions'); // R152: null/choices-less body → retryable
 
     return {
       data: response,
