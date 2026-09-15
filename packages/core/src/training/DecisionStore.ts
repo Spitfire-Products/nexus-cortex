@@ -63,6 +63,7 @@ export type SteeringEventKind =
   | 'steering_injected'
   | 'loop_escalation'
   | 'endturn_gate_fallback'
+  | 'budget_continue_nudge'
   | 'inaction_nudge'
   | 'effort_pulse' // def-efdbb67fd8: think-harder ablation arm fired (mechanism-engagement evidence)
   | 'time_budget_break' // #2 (2026-09-04): the per-turn wall-clock deadline forced synthesis (mechanism-engagement evidence)

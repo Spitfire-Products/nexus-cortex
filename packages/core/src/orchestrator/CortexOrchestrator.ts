@@ -81,7 +81,7 @@ import { resolveSubAgentTimeoutMs } from './subAgentTimeout.js';
 import { resolveHerdrReporting, HerdrReporter, sanitizeHerdrAgentName, type HerdrState } from './herdrReporter.js';
 import { runDelegateInHerdr, readSubAgentRuntimeLever, resolveSubAgentRuntime, type SubAgentRuntime } from './HerdrSubAgentRunner.js';
 import { randomBytes } from 'crypto';
-import { resolveTurnDeadlineMs, timeBudgetState, timeBudgetWarnNudge } from './timeBudget.js';
+import { resolveTurnDeadlineMs, timeBudgetState, timeBudgetWarnNudge, resolveBudgetVisibility, resolveBudgetContinueMinRemaining, budgetBand, budgetVisibilityLine } from './timeBudget.js';
 import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
 import { ExactRepeatTracker, notePollResults } from '../training/loopLadder.js';
 
@@ -111,7 +111,7 @@ import { decideLoopBlock, isLoopBlockTrigger, shouldArmLoopBlock, hasAlternative
 import { resolveLoopExitConfig, parseLoopExitVerdict } from '../training/loopExitPlanner.js';
 import { shouldNudgeInaction, formatInactionNudge } from './inactionGuard.js';
 import { applyImageTtlForRequest } from './imageTtl.js';
-import { detectSurrenderText, resolveSurrenderNudgeMode, SURRENDER_REMINDER } from './turnEndGuards.js';
+import { detectSurrenderText, resolveSurrenderNudgeMode, SURRENDER_REMINDER, detectOpenItemsText, buildBudgetContinueReminder } from './turnEndGuards.js';
 import { ModelRouterMatrix } from '../training/ModelRouterMatrix.js';
 import { classifyTask } from '../training/TaskClassifier.js';
 import { closestToolMatches } from './toolNameMatcher.js';
@@ -2143,6 +2143,7 @@ export class CortexOrchestrator {
     this.turnLoopStartMs = loopStartMs; this.turnDeadlineMsActive = TURN_DEADLINE_MS; // R133: sub-agent timeouts read the residual
     this.herdrTurnLabel = `turn:${Math.floor(this.turnNumber / 2) + 1}`; this.herdrReport('working', this.herdrTurnLabel); // R145
     let timeWarnFired = false;
+    let lastBudgetBand = -1; // R151: budget-visibility band already announced
 
     let totalToolErrors = 0;
 
@@ -2169,6 +2170,7 @@ export class CortexOrchestrator {
     this.visionHandoffsThisTurn = 0;
     let endTurnNudges = 0;
     let surrenderNudgeUsed = false; // item 13b: one execute-your-plan nudge per turn
+    let budgetContinueNudgeUsed = false; // R151: one continue-with-budget nudge per turn
     const END_TURN_MAX_NUDGES = 2;
     // EndTurn gate / Stages 1-3 are OPT-IN (default OFF). The line-number
     // fabrication they targeted is fully resolved at the root cause:
@@ -2624,6 +2626,14 @@ export class CortexOrchestrator {
           const surrenderUnsatisfied =
             resolveSurrenderNudgeMode() && ev.usedTools && !surrenderNudgeUsed &&
             detectSurrenderText(surrenderDraftText);
+          // R151 HB-BUDGET-VISIBILITY: an open-items finish with >= MIN_REMAINING of the wall budget left gets ONE
+          // continue-with-budget nudge (after the surrender guard, which is narrower and takes precedence).
+          const budgetContinueMin = resolveBudgetContinueMinRemaining();
+          const budgetRemainingFrac = TURN_DEADLINE_MS > 0 ? Math.max(0, 1 - (Date.now() - loopStartMs) / TURN_DEADLINE_MS) : 0;
+          const budgetContinueUnsatisfied =
+            !surrenderUnsatisfied && budgetContinueMin > 0 && TURN_DEADLINE_MS > 0 && resolveBudgetVisibility() &&
+            ev.usedTools && !budgetContinueNudgeUsed && budgetRemainingFrac >= budgetContinueMin &&
+            detectOpenItemsText(surrenderDraftText);
           if (endTurnGateUnsatisfied && endTurnNudges >= END_TURN_MAX_NUDGES) {
             const fallbackReason = !ev.endTurnCalled ? 'missing-EndTurn' : 'coordinate-violation';
             console.warn(
@@ -2641,7 +2651,7 @@ export class CortexOrchestrator {
             }
           }
 
-          if (surrenderUnsatisfied || (endTurnGateUnsatisfied && endTurnNudges < END_TURN_MAX_NUDGES)) {
+          if (surrenderUnsatisfied || budgetContinueUnsatisfied || (endTurnGateUnsatisfied && endTurnNudges < END_TURN_MAX_NUDGES)) {
             if (surrenderUnsatisfied) {
               surrenderNudgeUsed = true;
               const store = this.getDecisionStore();
@@ -2653,6 +2663,17 @@ export class CortexOrchestrator {
                 }).catch(() => {});
               }
               console.warn('[Orchestrator] Surrender guard: remaining-steps finish detected — execute-your-plan nudge.');
+            } else if (budgetContinueUnsatisfied) {
+              budgetContinueNudgeUsed = true;
+              const store = this.getDecisionStore();
+              if (store) {
+                void store.recordEvent({
+                  sessionId: this.currentSessionId ?? 'unknown',
+                  kind: 'budget_continue_nudge',
+                  detail: { iteration: toolCallIteration, remainingFrac: Number(budgetRemainingFrac.toFixed(3)), deadlineMs: TURN_DEADLINE_MS, chars: surrenderDraftText.length },
+                }).catch(() => {});
+              }
+              console.warn(`[Orchestrator] Budget guard (R151): open-items finish with ${Math.round(budgetRemainingFrac * 100)}% of the wall budget left — continue-with-budget nudge.`);
             } else {
               endTurnNudges++;
             }
@@ -2682,6 +2703,8 @@ export class CortexOrchestrator {
             // imperatives bind harder than generic boilerplate).
             const endTurnReminderText = surrenderUnsatisfied
               ? SURRENDER_REMINDER
+              : budgetContinueUnsatisfied
+              ? buildBudgetContinueReminder(TURN_DEADLINE_MS - (Date.now() - loopStartMs), TURN_DEADLINE_MS)
               : !ev.endTurnCalled
               ? buildMissingEndTurnReminder(ev)
               : ('<system-reminder>EndTurn REJECTED. Your drafted answer asserts line number(s) ' +
@@ -3240,6 +3263,16 @@ export class CortexOrchestrator {
       // may decide FINISH/RETIRE (end now, cleanly) or ACTION (one directed step) instead of the dumb
       // "wrap up" nudge; null/CONTINUE falls back to the normal nudge. Hard-floor break below stays.
       let timeSignal: string | null = null;
+      // R151 HB-BUDGET-VISIBILITY: announce the wall budget once per 10% band (silent without a deadline; the warn rung owns >=90%).
+      let budgetVisSignal: string | null = null;
+      if (TURN_DEADLINE_MS > 0 && resolveBudgetVisibility()) {
+        const elapsedForBand = Date.now() - loopStartMs;
+        const band = budgetBand(elapsedForBand, TURN_DEADLINE_MS);
+        if (band !== lastBudgetBand && timeBudgetState(elapsedForBand, TURN_DEADLINE_MS) === 'ok') {
+          lastBudgetBand = band;
+          budgetVisSignal = budgetVisibilityLine(elapsedForBand, TURN_DEADLINE_MS);
+        }
+      }
       if (!timeWarnFired && timeBudgetState(Date.now() - loopStartMs, TURN_DEADLINE_MS) === 'warn') {
         timeWarnFired = true;
         const de = await this.deadlineExitCheckpoint(
@@ -3254,8 +3287,8 @@ export class CortexOrchestrator {
         }
         timeSignal = de?.signal || timeBudgetWarnNudge(Date.now() - loopStartMs, TURN_DEADLINE_MS);
       }
-      if (budgetSignal || diversityWarning || ladderSignal || timeSignal) {
-        const signals = [budgetSignal, diversityWarning, ladderSignal, timeSignal].filter(Boolean).join('\n');
+      if (budgetSignal || diversityWarning || ladderSignal || timeSignal || budgetVisSignal) {
+        const signals = [budgetSignal, diversityWarning, ladderSignal, timeSignal, budgetVisSignal].filter(Boolean).join('\n');
         const lastMsg = this.messageHistory[this.messageHistory.length - 1] as any;
         if (lastMsg?.message?.content?.[0]?.type === 'tool_result') {
           const block = lastMsg.message.content[0];
@@ -3273,6 +3306,7 @@ export class CortexOrchestrator {
               diversityWarning ? 'diversity' : null,
               ladderSignal ? (ladderPollSteer ? 'poll_steer' : 'ladder') : null,
               timeSignal ? 'time' : null,
+              budgetVisSignal ? 'budget_visibility' : null,
             ].filter(Boolean);
             void store
               .recordEvent({
@@ -4628,6 +4662,7 @@ export class CortexOrchestrator {
     this.turnLoopStartMs = loopStartMs; this.turnDeadlineMsActive = TURN_DEADLINE_MS; // R133: sub-agent timeouts read the residual
     this.herdrTurnLabel = `turn:${Math.floor(this.turnNumber / 2) + 1}`; this.herdrReport('working', this.herdrTurnLabel); // R145
     let timeWarnFired = false;
+    let lastBudgetBand = -1; // R151: budget-visibility band already announced
     // HB-ENDTURN-TERMINAL (2026-09-08): dark gate + bounded continue-counter (streaming parity).
     const EMPTY_TURN_CONTINUE = loopDefaults.emptyTurnContinue;
     const EMPTY_CONTINUE_MAX = 3;
@@ -5247,6 +5282,16 @@ export class CortexOrchestrator {
         // #2: one-shot wall-clock warning at 90% of the deadline (streaming parity). DARK
         // deadline-exit-mentor may FINISH/RETIRE (end cleanly) or ACTION (one step) here.
         let timeSignal: string | null = null;
+      // R151 HB-BUDGET-VISIBILITY: announce the wall budget once per 10% band (silent without a deadline; the warn rung owns >=90%).
+      let budgetVisSignal: string | null = null;
+      if (TURN_DEADLINE_MS > 0 && resolveBudgetVisibility()) {
+        const elapsedForBand = Date.now() - loopStartMs;
+        const band = budgetBand(elapsedForBand, TURN_DEADLINE_MS);
+        if (band !== lastBudgetBand && timeBudgetState(elapsedForBand, TURN_DEADLINE_MS) === 'ok') {
+          lastBudgetBand = band;
+          budgetVisSignal = budgetVisibilityLine(elapsedForBand, TURN_DEADLINE_MS);
+        }
+      }
         if (!timeWarnFired && timeBudgetState(Date.now() - loopStartMs, TURN_DEADLINE_MS) === 'warn') {
           timeWarnFired = true;
           const de = await this.deadlineExitCheckpoint(
@@ -5261,8 +5306,8 @@ export class CortexOrchestrator {
           }
           timeSignal = de?.signal || timeBudgetWarnNudge(Date.now() - loopStartMs, TURN_DEADLINE_MS);
         }
-        if (budgetSignal || diversityWarning || ladderSignal || timeSignal) {
-          const signals = [budgetSignal, diversityWarning, ladderSignal, timeSignal].filter(Boolean).join('\n');
+        if (budgetSignal || diversityWarning || ladderSignal || timeSignal || budgetVisSignal) {
+          const signals = [budgetSignal, diversityWarning, ladderSignal, timeSignal, budgetVisSignal].filter(Boolean).join('\n');
           const lastMsg = this.messageHistory[this.messageHistory.length - 1] as any;
           if (lastMsg?.message?.content?.[0]?.type === 'tool_result') {
             const block = lastMsg.message.content[0];
@@ -5276,6 +5321,8 @@ export class CortexOrchestrator {
                 budgetSignal ? 'budget' : null,
                 diversityWarning ? 'diversity' : null,
                 ladderSignal ? (ladderPollSteer ? 'poll_steer' : 'ladder') : null,
+                timeSignal ? 'time' : null,
+                budgetVisSignal ? 'budget_visibility' : null,
               ].filter(Boolean);
               void store
                 .recordEvent({

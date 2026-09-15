@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveTurnDeadlineMs, timeBudgetState, timeBudgetWarnNudge } from '../timeBudget.js';
+import { resolveTurnDeadlineMs, timeBudgetState, timeBudgetWarnNudge, resolveBudgetVisibility, resolveBudgetContinueMinRemaining, budgetBand, budgetVisibilityLine, formatBudgetHM } from '../timeBudget.js';
 
 describe('resolveTurnDeadlineMs (#2)', () => {
   it('disabled by default (0) → no behaviour change when unset', () => {
@@ -40,5 +40,30 @@ describe('timeBudgetWarnNudge (#2)', () => {
     expect(n).toContain('~100s left');
     expect(n.toLowerCase()).toContain('endturn');
     expect(n.toLowerCase()).toContain('converge');
+  });
+});
+
+describe('R151 HB-BUDGET-VISIBILITY', () => {
+  it('bands: -1 without a deadline, 0..10 across the budget', () => {
+    expect(budgetBand(1000, 0)).toBe(-1);
+    expect(budgetBand(0, 100_000)).toBe(0);
+    expect(budgetBand(9_999, 100_000)).toBe(0);
+    expect(budgetBand(10_000, 100_000)).toBe(1);
+    expect(budgetBand(43 * 60_000, 480 * 60_000)).toBe(0); // 43 min of 8 h is still band 0
+    expect(budgetBand(250_000, 100_000)).toBe(10);
+  });
+  it('line names total, elapsed, percent and remaining', () => {
+    const line = budgetVisibilityLine(43 * 60_000, 480 * 60_000);
+    expect(line).toContain('WALL BUDGET: 8h00m total');
+    expect(line).toContain('elapsed 43m (9%)');
+    expect(line).toContain('~7h17m remaining');
+    expect(formatBudgetHM(65 * 60_000)).toBe('1h05m');
+  });
+  it('levers: visibility defaults on, continue fraction defaults 0.5, 0 disables', () => {
+    expect(resolveBudgetVisibility({} as any)).toBe(true);
+    expect(resolveBudgetVisibility({ CORTEX_BUDGET_VISIBILITY: 'false' } as any)).toBe(false);
+    expect(resolveBudgetContinueMinRemaining({} as any)).toBe(0.5);
+    expect(resolveBudgetContinueMinRemaining({ CORTEX_BUDGET_CONTINUE_MIN_REMAINING: '0' } as any)).toBe(0);
+    expect(resolveBudgetContinueMinRemaining({ CORTEX_BUDGET_CONTINUE_MIN_REMAINING: '0.25' } as any)).toBe(0.25);
   });
 });

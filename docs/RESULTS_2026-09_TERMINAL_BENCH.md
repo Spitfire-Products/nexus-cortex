@@ -60,6 +60,12 @@ not significant at n=1). Tokens $24.83 (+26% at equal rate tier: output +32%, th
 reference V4.1 Flash 26.8 now sits inside our interval. Three deltas moved at once (harness, effort, timeout floor), so the +3 is not
 attributable to effort alone; the next spend should be repeats of this configuration, not another lever.
 
+Post-run fixes (4.108.20, same day): the rerun's log sweep found two harness defects — a transport-fault class (`Connection error.` /
+`terminated`) that was not retried and ended three lanes during one two-minute API blip (R150), and a compaction estimator that counted base64
+images as text and fired three false compactions (R149). Both fixed and released; a 7-task retest on 4.108.20 (`tinkersnot/tb2-t4r-ctl`)
+confirmed zero false compactions on the three image sessions and clean full-budget agent phases on every lane the blip had killed. Ledger:
+`.cortex/bench/r-tb4-flash-v2-2026-09-14.md` §10.
+
 ## 3. Methodology and disclosures
 - pass@1 = mean over independent full passes; a single-run delta under ~5 points on TB2.1 is inside the measured run-to-run band (32 of 89 tasks flip).
 - Sterile installs: the published npm package, no private memory or skills, no web tools (TB has no browse dependency), the model's own key only.

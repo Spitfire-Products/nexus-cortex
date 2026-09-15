@@ -201,9 +201,11 @@ Use replace_all for replacing and renaming strings across the file.`,
     name: 'Bash',
     description: `Execute bash/shell commands. Each call runs in a fresh shell started from the project working directory — cd inside a call does not carry over to the next call (use persistentSession for a stateful shell where cwd and env persist). Default timeout: 120 seconds (configurable via timeout, max 600 seconds).
 
-When Read/Edit/Write are in your tool set, use them instead of bash cat/head/tail/sed/awk/echo for file inspection and mutation — bash file-viewing bypasses the read-tracking that Edit relies on. Bash remains correct for binary/forensic inspection (file, od, strings, hexdump) and for actual shell operations (builds, tests, git, process management). Never mine git history, package registries, or vendored artifacts for a task's reference solution — solve in the workspace.
+When Read/Edit/Write are in your tool set, use them instead of bash cat/head/tail/sed/awk/echo for file inspection and mutation — bash file-viewing bypasses the read-tracking that Edit relies on. Bash remains correct for binary/forensic inspection (file, od, strings, hexdump) and for actual shell operations (builds, tests, git, process management). Never mine git history, package registries, vendored artifacts, or the filesystem outside the workspace (grader/verifier/test hunts) for a task's reference solution — solve in the workspace.
 
 Always quote file paths containing spaces. Use absolute paths throughout — even after a cd, relative paths in later commands of the same call are resolved against the new cwd, a repeated source of silent wrong-file operations. cd persists within this Bash call only, never across tool calls.
+
+Graders commonly run your deliverables as an unprivileged user in a fresh process: never build, compile or write at import time; keep every deliverable world-readable (umask 022; chmod -R a+rX on output trees); and before finishing, re-run the task's own checks once as a non-root user when one is available (e.g. runuser -u nobody -- <command>) — a root-only path is a silent fail.
 
 DESTRUCTIVE COMMANDS — confirm with user first:
 - Deleting: rm -rf, git branch -D, DROP TABLE
@@ -216,7 +218,7 @@ PARALLEL EXECUTION:
 - Must be sequential: build→test→validate chains, file mutations, package installs
 - Use && to chain sequential commands in a single call
 
-For background execution, set run_in_background: true, then continue with other useful work — check results ONCE with BashOutput when you need them. Busy-waiting is forbidden: do not run sleep to wait, do not re-run the same status/inspection command while a background task runs, and do not poll BashOutput repeatedly — each of these burns turns without progress. Do other work, then check once. To wait for something, use BashOutput wait_seconds/wait_for, or for persistentSession runs pass wait_for (regex) + timeout to return as soon as the session shows that text — prefer wait_for over sleep polling.`,
+For background execution, set run_in_background: true, then continue with other useful work — check results ONCE with BashOutput when you need them. Busy-waiting is forbidden: do not run sleep to wait, do not re-run the same status/inspection command while a background task runs, and do not poll BashOutput repeatedly — each of these burns turns without progress. Do other work, then check once. To wait for something, use BashOutput wait_seconds/wait_for, or for persistentSession runs pass wait_for (regex) + timeout to return as soon as the session shows that text — prefer wait_for over sleep polling. While a background task runs, do NOT check its status again until you have completed at least one other useful tool call; never run sleep to pace checks.`,
     schema: {
       type: 'object',
       properties: {

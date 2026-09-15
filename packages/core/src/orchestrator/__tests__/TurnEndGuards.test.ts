@@ -1,6 +1,6 @@
 /** Item 13b — surrender-guard pure half. */
 import { describe, it, expect } from 'vitest';
-import { detectSurrenderText, resolveSurrenderNudgeMode, SURRENDER_REMINDER } from '../turnEndGuards.js';
+import { detectSurrenderText, resolveSurrenderNudgeMode, SURRENDER_REMINDER, detectOpenItemsText, buildBudgetContinueReminder } from '../turnEndGuards.js';
 
 describe('surrender detection (item 13b)', () => {
   it('detects the train-fasttext specimen shape', () => {
@@ -47,5 +47,25 @@ I did not claim the model exists because it does not — the task is incomplete.
     } finally {
       if (prev === undefined) delete process.env.CORTEX_SURRENDER_NUDGE; else process.env.CORTEX_SURRENDER_NUDGE = prev;
     }
+  });
+});
+
+describe('R151 open-items detection', () => {
+  it('detects the sound-change-cascade specimen (did not get to execute it within budget)', () => {
+    const t = `I also wrote /app/repair.py, an error-driven search that derives candidate rules only from the 23 broken pairs and tries each at every position, but I did not get to execute it within budget. **Open items:** the 23 unexplained pairs; the cascade is over-fitted, so its generalization to unseen proto-forms is unverified.`;
+    expect(detectOpenItemsText(t)).toBe(true);
+  });
+  it('detects "not yet verified" / "could not verify" / "left untouched" finishes', () => {
+    expect(detectOpenItemsText('The migration is applied and the API answers on both paths. The rollback script is written but not yet verified against a live cutover, and the p95 numbers are noisy on this shared box, so treat them as indicative rather than final.')).toBe(true);
+    expect(detectOpenItemsText('checkpoint.py still has lsn + 1 in create_checkpoint; it is off the stated surface so I left it untouched. Durability is synchronous per commit and the writer keeps every durable entry in memory over a very long run.')).toBe(true);
+  });
+  it('never trips on a plain complete answer or on short texts', () => {
+    expect(detectOpenItemsText('All 60 tests pass locally; the package installs cleanly, the benchmark shows a 12x speedup over NetworkX on the provided graph pairs, and the output file is at /app/output/result.json exactly as specified.')).toBe(false);
+    expect(detectOpenItemsText('Open items: none.')).toBe(false);
+  });
+  it('reminder names the remaining and total budget', () => {
+    const r = buildBudgetContinueReminder(6 * 3600_000, 8 * 3600_000);
+    expect(r).toContain('~6h00m');
+    expect(r).toContain('8h00m wall budget (75%)');
   });
 });

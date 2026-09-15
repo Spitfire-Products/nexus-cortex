@@ -45,3 +45,37 @@ export const SURRENDER_REMINDER =
   'your own plan (adapt it as results come in — e.g. a smaller variant if limits forced the ' +
   'failure). Only conclude when you have attempted the plan or hit a hard limit you can name — ' +
   'and then state that limit explicitly.</system-reminder>';
+
+/** R151 HB-BUDGET-VISIBILITY — open-items finish shapes (tb4-flash-v2 specimens: "Open items:", "did not get to execute it
+ *  within budget", "not yet verified", "could not verify", "left untouched"). Broader than the surrender set on purpose: it
+ *  only fires when a large fraction of the wall budget remains (the orchestrator gates it), so a plain answer with a caveat
+ *  costs at most one continue nudge per turn. */
+const OPEN_ITEMS_RES = [
+  /\bopen items?\b/i,
+  /\bnot (yet )?(verified|validated|executed|run|tested|implemented|finished|exercised)\b/i,
+  /\bdid not (get to|have time to|manage to)\b/i,
+  /\bcould not (verify|run|execute|complete|finish|test|confirm)\b/i,
+  /\bremaining (work|items|issues|gaps|steps)\b/i,
+  /\bleft (it |them |that |this |these |those )?(untouched|unresolved|unverified|as[- ]is|for later|undone)\b/i,
+  /\bunresolved\b/i,
+  /\bwithin (the )?(time |wall |iteration )?budget\b/i,
+  /\bran out of (time|budget|iterations)\b/i,
+  /\b(unverified|untested) (against|on|with|because)\b/i,
+  /\bwould (need|require) (more|further|additional) (time|work|investigation|runs?)\b/i,
+];
+
+export function detectOpenItemsText(finalText: string): boolean {
+  if (!finalText || finalText.length < 120) return false;
+  return OPEN_ITEMS_RES.some((re) => re.test(finalText));
+}
+
+export function buildBudgetContinueReminder(remainingMs: number, deadlineMs: number): string {
+  const h = (ms: number) => { const t = Math.max(0, Math.round(ms / 60000)); const hh = Math.floor(t / 60); const mm = t % 60; return hh > 0 ? `${hh}h${String(mm).padStart(2, '0')}m` : `${mm}m`; };
+  const pct = deadlineMs > 0 ? Math.round((remainingMs / deadlineMs) * 100) : 0;
+  return (
+    `<system-reminder>You are finishing with open, unverified or unexecuted items while ~${h(remainingMs)} of the ` +
+    `${h(deadlineMs)} wall budget (${pct}%) remains. That budget is yours to spend: go back and CLOSE those items now — ` +
+    `run the task's own checks, execute the steps you listed, verify every claim you flagged as unverified — and only ` +
+    `then finish. Do not re-describe the plan; do it. If an item is truly impossible, name the hard limit.</system-reminder>`
+  );
+}
