@@ -275,3 +275,20 @@ describe('verifyRequirements — STRICT 4.90.1 regressions', () => {
     expect(v.nudge).toMatch(/paraphrases/);
   });
 });
+
+// R161 HB-JUDGE-TASKSHAPE (2026-09-16): analysis/science prompts are tasks too — the judge must not be bypassed.
+describe('isTaskShaped — R161 broadened shapes', () => {
+  it('recognizes the three tb4-p prompts the old verb list missed', () => {
+    expect(isTaskShaped('Eliminate cumulative layout shift from the website at `/app/barber-shop-site/`. Do not change the visual design.')).toBe(true);
+    expect(isTaskShaped('To determine the beta activity concentration in a foodstuff, a 1 mL aliquot from the sample was measured. Report the efficiency, the volumetric factor and the detection limit in /app/results.txt.')).toBe(true);
+    expect(isTaskShaped('You are given high-resolution negative-ion LC-MS/MS data for an unknown IgG N-glycan. Elucidate the structure and save your answer as JSON in /app/output/answer.json.')).toBe(true);
+  });
+  it('recognizes a stated completion budget and a save-as cue without any listed verb', () => {
+    expect(isTaskShaped('The chorale is in strict 4/4. You have 28800 seconds to complete this task.')).toBe(true);
+    expect(isTaskShaped('The transcription goes in score.musicxml; save it as /app/score.musicxml when done.')).toBe(true);
+  });
+  it('still rejects a bare question or chit-chat', () => {
+    expect(isTaskShaped('What does the flag --no-cache do in this CLI?')).toBe(false);
+    expect(isTaskShaped('thanks, that looks right')).toBe(false);
+  });
+});

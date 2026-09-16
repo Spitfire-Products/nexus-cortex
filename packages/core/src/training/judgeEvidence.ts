@@ -67,7 +67,17 @@ function sh(cmd: string, cwd: string, timeoutMs: number, maxBuffer = 512 * 1024)
   }
 }
 
-const SKIP_DIRS = /(^|\/)(node_modules|\.git|\.venv|venv|__pycache__|dist|build|target|\.cache)(\/|$)/;
+const SKIP_DIRS = /(^|\/)(node_modules|\.git|\.venv|venv|__pycache__|dist|build|target|\.cache|\.cortex|\.addon-tools|\.ivy2|\.sbt|\.m2|\.gradle|\.npm)(\/|$)/;
+/** Same skip set as a grep -E fragment for the shell scans (applied BEFORE the head cap — R162). */
+const SKIP_DIRS_GREP = '(^|/)(node_modules|\\.git|\\.venv|venv|__pycache__|dist|build|target|\\.cache|\\.cortex|\\.addon-tools|\\.ivy2|\\.sbt|\\.m2|\\.gradle|\\.npm)(/|$)';
+const SOURCE_EXT = /\.(py|ts|tsx|js|jsx|mjs|cjs|scala|java|kt|go|rs|c|cc|cpp|h|hpp|rb|php|cs|swift|sh|bash|sql|yaml|yml|toml|json|md|txt|csv|tsv|html|css|rq|ttl|lean|v|cu|jl|r|m)$/i;
+/** R162: source-like files first (edited code before data/artifacts), stable otherwise; skip dirs removed. */
+export function prioritizeDeltaCandidates(paths: string[]): string[] {
+  const keep = paths.map((p) => p.trim()).filter((p) => p && !SKIP_DIRS.test(p));
+  const src = keep.filter((p) => SOURCE_EXT.test(p) && !BINARY_EXT.test(p));
+  const rest = keep.filter((p) => !src.includes(p));
+  return [...src, ...rest];
+}
 const BINARY_EXT = /\.(png|jpe?g|gif|webp|bmp|pdf|zip|tar|gz|bz2|xz|7z|whl|so|o|a|bin|exe|dll|dylib|pyc|class|jar|wasm|mp3|mp4|wav|ogg|ttf|otf|woff2?)$/i;
 
 /** Pure: pick the files to show from a list of changed paths — skip build/vendor dirs and binaries, cap the count. */
@@ -109,18 +119,22 @@ export function collectWorkspaceDelta(cwd: string, sinceMs: number, cfg: JudgeGr
   let summary = '';
   let candidates: string[] = [];
   if (inRepo) {
-    const status = sh('git status --short --untracked-files=all 2>/dev/null | head -60', cwd, 5000);
+    // R162 HB-JUDGE-DELTA-BUILDDIRS (2026-09-16, tb4-p distributed-dedup): drop vendor/build dirs BEFORE the cap — sbt `target/`
+    // filled the 60 slots and the edited source never reached the judge ("source file NOT present in the WORKSPACE DELTA", vetoes
+    // #1 and #5). Same for the non-git scan below.
+    const status = sh(`git status --short --untracked-files=all 2>/dev/null | grep -v -E '${SKIP_DIRS_GREP}' | head -200`, cwd, 5000);
     const stat = sh('git diff --stat 2>/dev/null | tail -20', cwd, 5000);
     summary = ['WORKSPACE DELTA (files changed this task, git):', status.trim() || '(no changes vs HEAD)', stat.trim()].filter(Boolean).join('\n');
-    candidates = status.split('\n').map((l) => l.slice(3).trim()).filter(Boolean)
-      .map((p) => (p.includes(' -> ') ? p.split(' -> ').pop()!.trim() : p));
+    candidates = prioritizeDeltaCandidates(status.split('\n').map((l) => l.slice(3).trim()).filter(Boolean)
+      .map((p) => (p.includes(' -> ') ? p.split(' -> ').pop()!.trim() : p)));
   } else {
     const epoch = Math.max(0, Math.floor(sinceMs / 1000) - 1);
-    const found = sh(`find . -type f -newermt @${epoch} 2>/dev/null | grep -v -E '/(node_modules|\\.git|__pycache__|\\.venv|venv)/' | head -60`, cwd, 8000);
+    const found = sh(`find . -type f -newermt @${epoch} 2>/dev/null | grep -v -E '${SKIP_DIRS_GREP}' | head -400`, cwd, 8000);
     const list = found.split('\n').map((l) => l.replace(/^\.\//, '').trim()).filter(Boolean);
     if (list.length === 0) return '';
-    summary = ['WORKSPACE DELTA (files modified this task):', ...list.slice(0, 40)].join('\n');
-    candidates = list;
+    const ordered = prioritizeDeltaCandidates(list);
+    summary = ['WORKSPACE DELTA (files modified this task):', ...ordered.slice(0, 40)].join('\n');
+    candidates = ordered;
   }
   const files = selectDeltaFiles(candidates, cfg.deltaMaxFiles).map((p) => {
     try {

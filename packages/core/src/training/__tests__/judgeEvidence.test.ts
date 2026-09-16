@@ -104,3 +104,18 @@ describe('detectCheckCommand / runCheck', () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
+
+// R162 HB-JUDGE-DELTA-BUILDDIRS (2026-09-16): build/vendor dirs must not crowd the edited source out of the judge's delta.
+import { prioritizeDeltaCandidates, selectDeltaFiles as _sdf } from '../judgeEvidence.js';
+describe('prioritizeDeltaCandidates (R162)', () => {
+  it('drops build dirs and puts edited source ahead of data even when target/ files dominate the list', () => {
+    const list = [...Array.from({ length: 70 }, (_, i) => `target/scala-2.12/classes/tb/dedup/C${i}.class`), 'data/corpus.parquet',
+      'submission/src/main/scala/tb/dedup/submission/SubmissionDedup.scala', '.cortex/sessions/x.jsonl', 'notes.txt'];
+    const out = prioritizeDeltaCandidates(list);
+    expect(out[0]).toBe('submission/src/main/scala/tb/dedup/submission/SubmissionDedup.scala');
+    expect(out).toContain('notes.txt');
+    expect(out.some((p) => p.startsWith('target/'))).toBe(false);
+    expect(out.some((p) => p.startsWith('.cortex/'))).toBe(false);
+    expect(_sdf(out, 8)[0]).toBe('submission/src/main/scala/tb/dedup/submission/SubmissionDedup.scala');
+  });
+});

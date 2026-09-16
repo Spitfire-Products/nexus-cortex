@@ -90,6 +90,13 @@ at 11–13/66. The budget-visibility line (R151) fired in every session and the 
 ended at 40 minutes of an 8-hour budget: the mechanism is live and does not change early finishing. The harness changes since the
 first high run did not move the score; the next spend is a third repeat plus a 7-task patch cell on 4.108.22, not another lever.
 
+Patch cell (09-16, `tinkersnot/tb2-t4p-ctl`, ledger `.cortex/bench/r-tb4-patch-2026-09-16.md`): the seven sessions the provider incident
+had cut were re-run on nexus-cortex 4.111.0 (R152 null-body retry plus the 4.109–4.111 fixes). 1 of 7 recovered (lake-temp-glm), so the
+clean second repeat is **12/66 = 18.2%** (Wilson 10.7–29.0) with the disclosure that those seven rows ran on a later harness than the
+other 56; the single-version number remains 11/66. Two repeats of the high configuration now average 19.7%. No null-body errors
+recurred; the reasoning-exhaustion backoff and the budget-aware finish judge both fired in the field (18 vetoes across 5 sessions) and
+lengthened the sessions (median 137 min vs 28 min for the same tasks) without changing the outcome on 4 of the 5 judged sessions.
+
 ## 3. Methodology and disclosures
 - pass@1 = mean over independent full passes; a single-run delta under ~5 points on TB2.1 is inside the measured run-to-run band (32 of 89 tasks flip).
 - Sterile installs: the published npm package, no private memory or skills, no web tools (TB has no browse dependency), the model's own key only.

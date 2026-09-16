@@ -73,9 +73,16 @@ function windowGrounded(text: string, outputs: string, win: number): boolean {
  *  nudge); false positives are the cost to avoid. */
 export function isTaskShaped(userText: string): boolean {
   if (!userText || userText.length < 8) return false;
-  return /\b(fix|add|implement|create|write|build|make|update|refactor|convert|generate|install|configure|set up|setup|remove|delete|rename|migrate|optimi[sz]e|debug|repair|extract|compress|decompress|parse|train|deploy|run)\b/i.test(
-    userText,
-  );
+  // R161 HB-JUDGE-TASKSHAPE (2026-09-16, tb4-p): this predicate also gates the EndTurn finish judge and the deadline-exit
+  // mentor. The original coding-verb list missed analysis/science tasks ("Eliminate cumulative layout shift…", "To determine
+  // the beta activity…", "You are given … data … report …") — 3 of 7 patch-cell sessions were never adjudicated, one of them a
+  // 353-turn finish that shipped broken. Broadened verbs + three deliverable cues (an /app|/results|/output path, "save/write
+  // … as/to", a stated completion budget). Still conservative: a bare question with none of these stays false.
+  if (/\b(fix|add|implement|create|write|build|make|update|refactor|convert|generate|install|configure|set up|setup|remove|delete|rename|migrate|optimi[sz]e|debug|repair|extract|compress|decompress|parse|train|deploy|run|eliminate|determine|identify|compute|calculate|solve|analy[sz]e|transcribe|derive|report|produce|output|save|submit|process|harmoni[sz]e|predict|classify|complete|answer|model|plan|reduce|improve|port|translate|reconstruct|catalogue|catalog|annotate|verify|validate|design|recover|resolve|decode|encode|simulate|estimate|fit|prove|find)\b/i.test(userText)) return true;
+  if (/(^|[\s`'"(])\/(app|results|output|workspace|logs)\//m.test(userText)) return true; // a deliverable/workspace path
+  if (/\b(save|write|store|put)\b[^.\n]{0,80}\b(as|to|in|under|at)\b/i.test(userText)) return true;
+  if (/\b\d+\s+(seconds|minutes|hours)\s+to\s+complete\b/i.test(userText)) return true; // a stated completion budget
+  return false;
 }
 
 // 4.92 (strict-bug audit 2026-09-04): match "UNVERIFIED" AND "UNVERIFIED (reason)" — the honest way to
