@@ -129,6 +129,9 @@ export interface EnvironmentVariables {
   CORTEX_BASH_OOM_PRIORITY?: string; // 'false' stops the Bash child shell from raising its own oom_score_adj to 1000 (R156; default on, linux only)
   CORTEX_MENTOR_CONSULT_BUDGET_TOKENS?: string; // output cap (tokens) for an AskForAdvice mentor hint (default 800; was 400; 100..4000)
   CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED?: string; // resolver GAP vetoes allowed while >= the budget-continue fraction of the wall budget remains (R160; default 6; 0 = liveness cap only)
+  CORTEX_JUDGE_SEMANTIC?: string; // 'false' restores the 4.111 judge gating (task-shape regex gate, regex nudges, fixed veto count) — A/B control (R165; default on)
+  CORTEX_JUDGE_PROGRESS_MIN_CALLS?: string; // tool calls since the last veto that count as working the plan (R165; default 3; 1..50)
+  CORTEX_JUDGE_ESCALATE_REASONING?: string; // 'false' skips the one thinking-on re-judge before accepting a finish with a recorded gap (R165; default on)
   CORTEX_HERDR_REPORTING?: string; // 'false' disables herdr lifecycle reporting inside a herdr pane (R145; default on when HERDR_ENV=1)
   CORTEX_HERDR_AGENT_NAME?: string; // agent label reported to herdr (R145; default cortex)
   CORTEX_TERMINAL_BACKEND?: string; // auto | herdr | tmux | detached — persistent-session backend under Bash/TmuxSession/CreateArtifact (R146; auto = herdr > tmux > detached)
@@ -469,6 +472,9 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_BASH_OOM_PRIORITY: '',
   CORTEX_MENTOR_CONSULT_BUDGET_TOKENS: '',
   CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED: '',
+  CORTEX_JUDGE_SEMANTIC: '',
+  CORTEX_JUDGE_PROGRESS_MIN_CALLS: '',
+  CORTEX_JUDGE_ESCALATE_REASONING: '',
   CORTEX_HERDR_REPORTING: '',
   CORTEX_HERDR_AGENT_NAME: '',
   CORTEX_TERMINAL_BACKEND: '',
@@ -978,6 +984,30 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED',
     displayName: 'Resolver max rejects with budget',
     description: 'How many times the EndTurn finish judge may veto a finish while at least CORTEX_BUDGET_CONTINUE_MIN_REMAINING of the wall budget remains (R160, HB-RESOLVER-BUDGET-CAP). Below that fraction, or without a deadline, the liveness cap CORTEX_ENDTURN_RESOLVER_MAX_REJECTS (2) applies. Default 6; 0 disables.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_JUDGE_SEMANTIC',
+    displayName: 'Semantic finish judge',
+    description: 'The EndTurn finish judge adjudicates every tool-using finish (no task-shape regex gate), runs the checks it names, grades GAP by confidence, and replaces the fixed veto count with a progress condition plus one thinking-on escalation (R165, HB-JUDGE-SEMANTIC). Default on; false = the 4.111 behavior.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_JUDGE_PROGRESS_MIN_CALLS',
+    displayName: 'Judge progress minimum calls',
+    description: 'How many tool calls since the previous veto count as the junior having worked the fix plan; fewer (and no named check run) triggers the thinking-on escalation instead of another veto (R165). Default 3.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_JUDGE_ESCALATE_REASONING',
+    displayName: 'Judge escalation to reasoning',
+    description: 'When the junior re-attests without working the plan, re-judge once with the resolver reasoning forced on before accepting the finish with the gap recorded (R165). Default on.',
     type: 'string',
     category: 'training',
     default: ''

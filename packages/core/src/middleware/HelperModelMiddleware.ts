@@ -1584,6 +1584,11 @@ Give concise, actionable guidance in plain text with these labeled parts:
     workspaceDelta?: string;
     checkResult?: string;
     helperModelId?: string;
+    /** R165: the previous veto's fix plan + what the junior did since (the judge grades progress first). */
+    priorVetoItems?: string;
+    progressSummary?: string;
+    /** R165: 'on' = one thinking-on escalation call (per-surface reasoning forced on for this call only). */
+    reasoning?: 'on';
   }): Promise<string> {
     const ctx: EndTurnResolverContext = {
       liftPlan: context.liftPlan,
@@ -1593,12 +1598,15 @@ Give concise, actionable guidance in plain text with these labeled parts:
       attestation: context.attestation,
       workspaceDelta: context.workspaceDelta,
       checkResult: context.checkResult,
+      priorVetoItems: context.priorVetoItems,
+      progressSummary: context.progressSummary,
     };
     const cfg = resolveEndTurnResolverConfig();
+    const roleEnv = context.reasoning === 'on' ? { ...process.env, CORTEX_ENDTURN_RESOLVER_REASONING: 'on' } : process.env;
     return this.generateGuidance(
       {
         surface: 'endturn-resolver',
-        mentor: resolveMentorRoleConfig('endturn-resolver', process.env, { modelId: context.helperModelId, effort: cfg.effort, outputBudgetTokens: cfg.outputBudgetTokens }),
+        mentor: resolveMentorRoleConfig('endturn-resolver', roleEnv, { modelId: context.helperModelId, effort: cfg.effort, outputBudgetTokens: cfg.outputBudgetTokens }),
         persona: resolverSystemPrompt(cfg.abstain),
         task: cfg.abstain
           ? 'Adjudicate whether the work product meets the task requirements. First line VERDICT: MEETS|GAP|RETIRE; ' +

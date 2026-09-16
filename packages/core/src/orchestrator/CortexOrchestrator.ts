@@ -28,7 +28,7 @@ import { join as pathJoin } from 'path';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'node:child_process';
 import { ENV_RECON_COMMAND, resolveLiftPlanConfig } from '../training/liftPlanner.js';
-import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation } from '../training/endTurnResolver.js';
+import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction } from '../training/endTurnResolver.js';
 import { resolveDeadlineExitConfig, deadlineExitCallBudget, parseDeadlineExitVerdict } from '../training/deadlineExitMentor.js';
 import { isTaskShaped } from './requirementsVerification.js';
 import { type ServerSideToolMetadata, extractServerSideMetadata, XAIServerSideTools, OpenAIServerSideTools, toCanonicalTool } from '../tools/ServerSideTools.js';
@@ -640,6 +640,14 @@ export class CortexOrchestrator {
   private herdrTurnLabel = 'turn:0';
   private turnDeadlineMsActive = 0;   // R133: the active turn's wall-clock budget (0 = no deadline) — sub-agent timeouts derive from what remains
   private endTurnResolverRejects = 0; // endTurnResolver: GAP vetoes so far this task (bounded by maxRejects → fallback-accept)
+  // R165 HB-JUDGE-SEMANTIC: per-turn judge state — progress since the last veto, the judge's own named checks and plan,
+  // whether the one thinking-on escalation was spent, and whether the judge adjudicated this finish (regex nudges defer).
+  private turnToolCallTotal = 0;
+  private toolCallsAtLastVeto = 0;
+  private judgeNamedChecks: string[] = [];
+  private judgePriorPlan = '';
+  private judgeEscalated = false;
+  private judgeAdjudicatedThisFinish = false;
   private liftPlanText = '';          // 4.107.0: the PLAN OF ATTACK delivered at lift — handed to the resolver / deadline-exit / loop-exit judges as an advisory anchor
   private effectiveDeferredLoading = true; // per-turn resolved deferred-loading (card > env > settings); set at assembly
 
@@ -990,8 +998,11 @@ export class CortexOrchestrator {
     if (ev.endTurnCalled !== true) return; // gate rejected (or no EndTurn) — the resolver only vetoes PASSES
     if (!this.helperMiddleware?.evaluateEndTurn) return;
     const task = this.lastRealUserText();
-    if (!isTaskShaped(task)) return; // only adjudicate real work tasks
     const cfg = resolveEndTurnResolverConfig();
+    // R165: semantics belong to the judge — every tool-using finish is adjudicated. The task-shape regex (R161) only
+    // gates the legacy path (CORTEX_JUDGE_SEMANTIC=false).
+    if (cfg.semantic ? !ev.usedTools : !isTaskShaped(task)) return;
+    this.judgeAdjudicatedThisFinish = false;
     // R160 HB-RESOLVER-BUDGET-CAP: the cap is budget-aware — while >= CORTEX_BUDGET_CONTINUE_MIN_REMAINING of the wall
     // budget remains the judge may veto up to maxRejectsBudgeted times; below that (or with no deadline) the liveness cap.
     const resolverRemainingMs = this.turnDeadlineMsActive > 0 && this.turnLoopStartMs > 0 ? Math.max(0, this.turnDeadlineMsActive - (Date.now() - this.turnLoopStartMs)) : null;
@@ -1019,23 +1030,61 @@ export class CortexOrchestrator {
         const cmd = detectCheckCommand(judgeCwd);
         if (cmd) checkResult = runCheck(judgeCwd, cmd, jcfg);
       }
+      // R165: run the checks the judge itself named at the previous veto — the objective qualifier. The judge asserts,
+      // the harness verifies, the junior sees a real failing command instead of prose.
+      let namedRan = 0; let namedPassed = 0; let namedFailed = 0; let namedResults = '';
+      if (cfg.semantic && this.judgeNamedChecks.length > 0) {
+        for (const c of this.judgeNamedChecks.slice(0, 3)) {
+          const r = runCheck(judgeCwd, c, jcfg);
+          namedRan += 1; if (/→ PASSED/.test(r)) namedPassed += 1; else namedFailed += 1;
+          namedResults += (namedResults ? '\n\n' : '') + r;
+        }
+      }
+      const combinedCheck = [checkResult, namedResults ? `JUDGE-NAMED CHECKS (from your previous fix plan; executed by the harness just now):\n${namedResults}` : '']
+        .filter(Boolean).join('\n\n');
+      const callsSince = this.turnToolCallTotal - this.toolCallsAtLastVeto;
+      const progressed = this.endTurnResolverRejects === 0 || callsSince >= cfg.progressMinCalls || namedPassed > 0;
+      const priorVetoItems = cfg.semantic && this.endTurnResolverRejects > 0 ? this.judgePriorPlan : undefined;
+      const progressSummary = priorVetoItems
+        ? `${callsSince} tool call(s) since the veto; judge-named checks: ${namedRan} run, ${namedPassed} passed, ${namedFailed} failed${progressed ? '' : ' — the junior re-attested without working the plan'}`
+        : undefined;
       const timeoutMs = mentorSurfaceTimeoutMs('endturn-resolver', parseInt(process.env.CORTEX_ENDTURN_RESOLVER_TIMEOUT_MS ?? '90000', 10)); // thinking-aware
       const t0 = Date.now();
-      const text = await withTimeout(
-        this.helperMiddleware.evaluateEndTurn({
+      const judgeOnce = (reasoning?: 'on') => withTimeout(
+        this.helperMiddleware!.evaluateEndTurn({
           task,
           liftPlan: this.liftPlanText || undefined,
           envReport: this.gatherEnvReport({ fresh: true }),
           workProduct,
           attestation,
           workspaceDelta,
-          checkResult,
+          checkResult: combinedCheck,
+          priorVetoItems,
+          progressSummary,
+          reasoning,
           helperModelId: this.config.reactiveMentorship?.helperModelId,
         }),
-        timeoutMs,
+        reasoning === 'on' ? mentorSurfaceTimeoutMs('endturn-resolver', Math.max(timeoutMs, 180000)) : timeoutMs,
       );
+      let text = await judgeOnce();
+      let verdict = parseResolverVerdict(text ?? ''); // withTimeout → null on timeout; blank → ABSTAIN (below)
+      let action: VetoAction = cfg.semantic
+        ? decideVetoAction({ meets: verdict.meets, blank: verdict.blank, retire: verdict.retire && cfg.abstain, confidence: verdict.confidence, rejects: this.endTurnResolverRejects, cap: resolverCap, progressed, escalated: this.judgeEscalated, checksFailed: namedFailed > 0 })
+        : (verdict.blank || (verdict.retire && cfg.abstain) || verdict.meets || !verdict.plan ? 'accept' : 'veto');
+      if (action === 'escalate') {
+        // R165: the junior re-attested without working the plan — one thinking-on adjudication before we accept with the gap recorded.
+        this.judgeEscalated = true;
+        if (cfg.escalateReasoning) {
+          console.warn(`[EndTurnResolver] R165: re-attest without progress (${callsSince} calls since the veto) — escalating the judge to reasoning-on once.`);
+          const text2 = await judgeOnce('on');
+          const v2 = parseResolverVerdict(text2 ?? '');
+          if (!v2.blank) { text = text2; verdict = v2; }
+        }
+        action = decideVetoAction({ meets: verdict.meets, blank: verdict.blank, retire: verdict.retire && cfg.abstain, confidence: verdict.confidence, rejects: this.endTurnResolverRejects, cap: resolverCap, progressed, escalated: true, checksFailed: namedFailed > 0 });
+        if (action === 'escalate') action = 'accept-with-gap';
+      }
+      this.judgeAdjudicatedThisFinish = verdict.parsed;
       const latencyMs = Date.now() - t0;
-      const verdict = parseResolverVerdict(text ?? ''); // withTimeout → null on timeout; blank → ABSTAIN (below)
       // OBSERVABILITY (resolver-AB follow-up, 2026-09-05): bank the TEXT the resolver produced +
       // what it judged, not just counts — so a k=5 run can score the resolver's JUDGMENT QUALITY
       // (was the GAP warranted? was the fix plan good? did it judge the right artifact?) and not
@@ -1049,6 +1098,7 @@ export class CortexOrchestrator {
           blank: verdict.blank, failOpen: verdict.blank,
           planChars: verdict.plan.length, rejects: this.endTurnResolverRejects, parsed: verdict.parsed,
           cap: resolverCap, capLiveness: cfg.maxRejects, capBudgeted: cfg.maxRejectsBudgeted, remainingFrac: resolverRemainingFrac === null ? null : Number(resolverRemainingFrac.toFixed(3)), // R160
+          semantic: cfg.semantic, action, confidence: verdict.confidence, namedChecks: verdict.checks.length, namedRan, namedPassed, namedFailed, callsSince, progressed, escalated: this.judgeEscalated, // R165
           latencyMs, rawLen: (text ?? '').length,
           deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,
           liftPlanChars: this.liftPlanText.length,
@@ -1068,15 +1118,21 @@ export class CortexOrchestrator {
         // loop (no veto, no reject increment) instead of burning more pro@max cycles on a task
         // the junior can't fix. The finish stands (ev.endTurnCalled stays true).
         if (this.config.debug) console.warn(`[EndTurnResolver] RETIRE — abstained (unclosable): ${verdict.plan.slice(0, 160)}`);
-      } else if (!verdict.meets && verdict.plan) {
+      } else if (action === 'veto') {
         this.endTurnResolverRejects += 1;
         ev.endTurnCalled = false; // VETO the finish
+        if (cfg.semantic) { this.judgeNamedChecks = verdict.checks; this.judgePriorPlan = verdict.plan.slice(0, 2500); this.toolCallsAtLastVeto = this.turnToolCallTotal; }
         et.is_error = true;
         et.content =
           `EndTurn HELD (finish review) — the work does not yet meet the task's requirements. Fix plan:\n\n` +
           `${verdict.plan}\n\nDo this, verify against the task's own criteria (not your own tests), then call EndTurn again.` +
           budgetedVetoEscalation(this.endTurnResolverRejects, resolverCap, resolverRemainingMs ?? 0, this.turnDeadlineMsActive); // R160
         console.warn(`[EndTurnResolver] GAP — vetoed finish (${verdict.plan.length}-char plan, reject ${this.endTurnResolverRejects}/${resolverCap}${resolverRemainingFrac === null ? '' : `, budget remaining ${Math.round(resolverRemainingFrac * 100)}%`})`);
+      } else if (action === 'accept-with-gap' || action === 'accept-low-confidence') {
+        // R165: the judge still sees a gap but the finish stands — cap reached, no progress after the escalation, or a
+        // low-confidence suspicion with no failed check. Recorded, not hidden: the gap rides on the event for adjudication.
+        console.warn(`[EndTurnResolver] ${action.toUpperCase()} — finish accepted with a recorded gap (rejects ${this.endTurnResolverRejects}/${resolverCap}, confidence ${verdict.confidence}): ${verdict.plan.slice(0, 160).replace(/\s+/g, ' ')}`);
+        if (store) void store.recordEvent({ sessionId, kind: 'endturn_gap_accepted', toolName: 'EndTurn', detail: { action, rejects: this.endTurnResolverRejects, cap: resolverCap, confidence: verdict.confidence, plan: verdict.plan.slice(0, 2000), checks: verdict.checks, callsSince, escalated: this.judgeEscalated } }).catch(() => {});
       } else if (this.config.debug) {
         console.log(`[EndTurnResolver] MEETS — finish confirmed (parsed=${verdict.parsed})`);
       }
@@ -1105,7 +1161,7 @@ export class CortexOrchestrator {
     const cfg = resolveDeadlineExitConfig();
     if (!cfg.enabled) return null;
     if (!this.helperMiddleware?.evaluateDeadlineExit) return null;
-    if (!isTaskShaped(task)) return null;
+    if (!resolveEndTurnResolverConfig().semantic && !isTaskShaped(task)) return null; // R165: semantic mode = every task
     const { timeoutMs, outputBudgetTokens } = deadlineExitCallBudget(cfg, remainingMs);
     const store = this.getDecisionStore();
     const sessionId = this.currentSessionId ?? 'unknown';
@@ -2121,6 +2177,7 @@ export class CortexOrchestrator {
     // R153: the stop reason of the LATEST response (continuation/retry/gate/synth refresh it) — the empty-response
     // classifier used to read the turn's FIRST response, so a `length` cutoff on a continuation was never seen.
     let lastStopReason: string | undefined = convertedResponse.stopReason;
+    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     let toolCallIteration = 0;
     // R137 HB-POLL-REPEAT-BREAKER: the exact-repeat breaker used to force-exit by overwriting
@@ -2636,8 +2693,10 @@ export class CortexOrchestrator {
                 .map((b: any) => b.text || '')
                 .join('\n')
             : String(currentAssistantCanonicalMessage.content ?? '');
+          // R165: when the semantic judge adjudicated this finish, the regex surrender/open-items nudges defer to it.
+          const judgeOwnsFinish = this.judgeAdjudicatedThisFinish && resolveEndTurnResolverConfig().semantic;
           const surrenderUnsatisfied =
-            resolveSurrenderNudgeMode() && ev.usedTools && !surrenderNudgeUsed &&
+            resolveSurrenderNudgeMode() && ev.usedTools && !surrenderNudgeUsed && !judgeOwnsFinish &&
             detectSurrenderText(surrenderDraftText);
           // R151 HB-BUDGET-VISIBILITY: an open-items finish with >= MIN_REMAINING of the wall budget left gets ONE
           // continue-with-budget nudge (after the surrender guard, which is narrower and takes precedence).
@@ -2645,7 +2704,7 @@ export class CortexOrchestrator {
           const budgetRemainingFrac = TURN_DEADLINE_MS > 0 ? Math.max(0, 1 - (Date.now() - loopStartMs) / TURN_DEADLINE_MS) : 0;
           const budgetContinueUnsatisfied =
             !surrenderUnsatisfied && budgetContinueMin > 0 && TURN_DEADLINE_MS > 0 && resolveBudgetVisibility() &&
-            ev.usedTools && budgetContinueNudges < BUDGET_CONTINUE_MAX_NUDGES && budgetRemainingFrac >= budgetContinueMin &&
+            ev.usedTools && !judgeOwnsFinish && budgetContinueNudges < BUDGET_CONTINUE_MAX_NUDGES && budgetRemainingFrac >= budgetContinueMin &&
             detectOpenItemsText(surrenderDraftText);
           if (endTurnGateUnsatisfied && endTurnNudges >= END_TURN_MAX_NUDGES) {
             const fallbackReason = !ev.endTurnCalled ? 'missing-EndTurn' : 'coordinate-violation';
@@ -2909,6 +2968,7 @@ export class CortexOrchestrator {
 
         // Track these tool uses for the response
         allExecutedToolUses.push(...toolUseBlocks);
+        this.turnToolCallTotal += toolUseBlocks.length; // R165 progress counter
         ev.noteToolUses(toolUseBlocks); // per-turn evidence (shared with the streaming loop — endTurnGates.ts)
 
         // Track per-tool call counts for diversity warning
@@ -4545,6 +4605,7 @@ export class CortexOrchestrator {
 
     let currentAssistantCanonicalMessage = convertedResponse.messages[0]!;
     let lastStopReason: string | undefined = convertedResponse.stopReason; // R153 (see non-streaming loop)
+    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     const assistantMessageId = currentAssistantCanonicalMessage.uuid;
 
@@ -5007,6 +5068,7 @@ export class CortexOrchestrator {
 
       // Track all tool uses
       allExecutedToolUses.push(...toolUseBlocks);
+      this.turnToolCallTotal += toolUseBlocks.length; // R165 progress counter
 
       // Track which tool_use_ids have been processed to avoid duplicates in error handler
       const processedToolUseIds = new Set<string>();

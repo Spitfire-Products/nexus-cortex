@@ -143,3 +143,44 @@ describe('endTurnResolver — R160 budget-aware reject cap', () => {
     expect(budgetedVetoEscalation(3, 6, 60000, 0)).toBe(''); // no deadline → no escalation
   });
 });
+
+// R165 HB-JUDGE-SEMANTIC (2026-09-16): confidence + named checks parsed; the veto policy is a pure table.
+import { decideVetoAction, buildResolverUserPrompt as _brp } from '../endTurnResolver.js';
+describe('endTurnResolver — R165 semantic judge', () => {
+  it('parses CONFIDENCE and CHECK lines out of a GAP plan and strips them from the plan text', () => {
+    const v = parseResolverVerdict('VERDICT: GAP\nCONFIDENCE: medium\n1. u exceeds ±500.\nCHECK: `python3 -c "import numpy as np; d=np.load(\'/app/results/run.npz\'); assert abs(d[\'u\']).max()<=500"`\n2. dt spacing.\n   CHECK: python3 /app/check_dt.py\n');
+    expect(v.meets).toBe(false); expect(v.confidence).toBe('medium');
+    expect(v.checks).toEqual(['python3 -c "import numpy as np; d=np.load(\'/app/results/run.npz\'); assert abs(d[\'u\']).max()<=500"', 'python3 /app/check_dt.py']);
+    expect(v.plan.startsWith('1. u exceeds')).toBe(true);
+    expect(v.plan).not.toMatch(/CONFIDENCE:/);
+  });
+  it('defaults confidence to high and checks to [] for the old format', () => {
+    const v = parseResolverVerdict('VERDICT: GAP\n1. missing file');
+    expect(v.confidence).toBe('high'); expect(v.checks).toEqual([]);
+    expect(parseResolverVerdict('VERDICT: MEETS').confidence).toBe('high');
+  });
+  it('config levers: semantic on, 3 progress calls, escalation on; all overridable', () => {
+    const c = resolveEndTurnResolverConfig({} as any);
+    expect(c.semantic).toBe(true); expect(c.progressMinCalls).toBe(3); expect(c.escalateReasoning).toBe(true);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_SEMANTIC: 'false' } as any).semantic).toBe(false);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_PROGRESS_MIN_CALLS: '7' } as any).progressMinCalls).toBe(7);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_ESCALATE_REASONING: 'off' } as any).escalateReasoning).toBe(false);
+  });
+  it('veto policy: first GAP vetoes; progress keeps vetoing under the cap; no progress escalates once then accepts-with-gap; low confidence without a failed check never vetoes', () => {
+    const base = { meets: false, blank: false, retire: false, confidence: 'high' as const, cap: 6, checksFailed: false };
+    expect(decideVetoAction({ ...base, rejects: 0, progressed: false, escalated: false })).toBe('veto');
+    expect(decideVetoAction({ ...base, rejects: 2, progressed: true, escalated: false })).toBe('veto');
+    expect(decideVetoAction({ ...base, rejects: 2, progressed: false, escalated: false })).toBe('escalate');
+    expect(decideVetoAction({ ...base, rejects: 2, progressed: false, escalated: true })).toBe('accept-with-gap');
+    expect(decideVetoAction({ ...base, rejects: 6, progressed: true, escalated: false })).toBe('accept-with-gap');
+    expect(decideVetoAction({ ...base, confidence: 'low', rejects: 0, progressed: false, escalated: false })).toBe('accept-low-confidence');
+    expect(decideVetoAction({ ...base, confidence: 'low', checksFailed: true, rejects: 0, progressed: false, escalated: false })).toBe('veto');
+    expect(decideVetoAction({ ...base, meets: true, rejects: 0, progressed: false, escalated: false })).toBe('accept');
+    expect(decideVetoAction({ ...base, blank: true, rejects: 0, progressed: false, escalated: false })).toBe('accept');
+  });
+  it('the prompt carries prior veto items and progress, and the persona asks for CONFIDENCE and CHECK lines', () => {
+    const p = _brp({ task: 'do x', workProduct: 'done', priorVetoItems: '1. u exceeds 500', progressSummary: '12 tool calls; ran named check 1' });
+    expect(p).toContain('PRIOR VETO ITEMS'); expect(p).toContain('PROGRESS SINCE THAT VETO');
+    expect(RESOLVER_SYSTEM).toMatch(/CONFIDENCE: high/); expect(RESOLVER_SYSTEM).toMatch(/CHECK: <command>/);
+  });
+});

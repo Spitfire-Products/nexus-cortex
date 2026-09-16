@@ -22,24 +22,40 @@ export interface EndTurnResolverConfig {
    *  stated — the second veto hit maxRejects=2 a median 24 min into an 8-h budget and the finish shipped. 0 = same as
    *  maxRejects (byte-identical); no deadline → maxRejects. */
   maxRejectsBudgeted: number;
+  /** R165 HB-JUDGE-SEMANTIC (2026-09-16): the judge decides SEMANTICS; deterministic code gathers evidence and enforces limits.
+   *  semantic=true drops the task-shape regex gate (adjudicate every tool-using finish), folds the open-items/surrender
+   *  regex nudges into the judge when it ran, runs the judge's own named CHECK commands before the next adjudication,
+   *  grades GAP by confidence, and replaces the fixed veto count with a progress condition (+ one thinking-on escalation).
+   *  CORTEX_JUDGE_SEMANTIC=false restores the 4.111 gating byte-for-byte (A/B control). */
+  semantic: boolean;
+  /** R165: tool calls since the last veto that count as "the junior worked the plan" (CORTEX_JUDGE_PROGRESS_MIN_CALLS, default 3). */
+  progressMinCalls: number;
+  /** R165: on a re-attest with no progress, re-judge ONCE with reasoning on before accepting-with-gap (CORTEX_JUDGE_ESCALATE_REASONING, default on). */
+  escalateReasoning: boolean;
   /** ABSTENTION (CORTEX_ENDTURN_RESOLVER_ABSTAIN): offer the judge a RETIRE verdict for a
    *  structurally-hopeless finish and HONOR it (accept + stop) instead of burning the reject
    *  cycles on a task the junior can't fix. Dark by default (A/B-able). */
   abstain: boolean;
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, abstain: false };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, abstain: false };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
   const e = (env.CORTEX_ENDTURN_RESOLVER_EFFORT ?? '').trim();
   const m = parseInt((env.CORTEX_ENDTURN_RESOLVER_MAX_REJECTS ?? '').trim(), 10);
   const mb = parseInt((env.CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED ?? '').trim(), 10);
+  const sem = (env.CORTEX_JUDGE_SEMANTIC ?? '').trim().toLowerCase();
+  const pm = parseInt((env.CORTEX_JUDGE_PROGRESS_MIN_CALLS ?? '').trim(), 10);
+  const esc = (env.CORTEX_JUDGE_ESCALATE_REASONING ?? '').trim().toLowerCase();
   return {
     outputBudgetTokens: Number.isInteger(n) && n > 0 ? n : DEFAULTS.outputBudgetTokens,
     effort: e || DEFAULTS.effort,
     maxRejects: Number.isInteger(m) && m >= 0 ? m : DEFAULTS.maxRejects,
     maxRejectsBudgeted: Number.isInteger(mb) && mb >= 0 ? Math.min(20, mb) : DEFAULTS.maxRejectsBudgeted,
+    semantic: sem === '' ? DEFAULTS.semantic : !(sem === 'false' || sem === '0' || sem === 'off'),
+    progressMinCalls: Number.isInteger(pm) && pm >= 1 ? Math.min(50, pm) : DEFAULTS.progressMinCalls,
+    escalateReasoning: esc === '' ? DEFAULTS.escalateReasoning : !(esc === 'false' || esc === '0' || esc === 'off'),
     abstain: (env.CORTEX_ENDTURN_RESOLVER_ABSTAIN ?? '').trim().toLowerCase() === 'true',
   };
 }
@@ -57,11 +73,16 @@ export const RESOLVER_SYSTEM =
   'FORMAT — your FIRST line MUST be exactly one of:\n' +
   '  VERDICT: MEETS\n' +
   '  VERDICT: GAP\n' +
-  'If MEETS: stop after that line (optionally one short confirming clause).\n' +
-  'If GAP: after the verdict line, give a SHORT numbered FIX PLAN — name each unmet requirement, then the ' +
-  'concrete step(s) to close it and the exact check to verify it against the TASK\'s criteria. If a gap ' +
-  'cannot be verified in this box, say so and tell the junior to note it in open_items and finish. Be ' +
-  'terse and concrete; do not rewrite the whole solution.\n' +
+  'Second line MUST be exactly `CONFIDENCE: high`, `CONFIDENCE: medium` or `CONFIDENCE: low` — how sure you are of the verdict ' +
+  'given the evidence you were shown (low = you suspect a gap but cannot point at a failed check or a concrete defect).\n' +
+  'If MEETS: stop after those lines (optionally one short confirming clause).\n' +
+  'If GAP: after the verdict lines, give a SHORT numbered FIX PLAN — name each unmet requirement, then the ' +
+  'concrete step(s) to close it and the exact check to verify it against the TASK\'s criteria. For every item that a single ' +
+  'shell command can settle objectively, add a line `CHECK: <command>` (runs from the workspace root; exit non-zero or print ' +
+  'FAIL when the requirement is unmet) — the harness will RUN it before your next adjudication and show you the result. ' +
+  'If PRIOR VETO ITEMS are provided, first say for each whether it is now CLOSED (point at the evidence) or STILL OPEN; do not ' +
+  'raise new items while prior ones stay open unless the new one is more severe. If a gap cannot be verified in this box, say ' +
+  'so and tell the junior to note it in open_items and finish. Be terse and concrete; do not rewrite the whole solution.\n' +
   'EVIDENCE RULE (HB-JUDGE-GROUNDING): judge the ARTIFACT, not the prose. When a WORKSPACE DELTA and/or a CHECK RUN ' +
   'are provided, they are the ground truth: a GAP must name a concrete defect you can point at in the delta or a ' +
   'failed check; a MEETS must point at a passing check or the delta content that satisfies each criterion. Do not ' +
@@ -98,6 +119,10 @@ export interface EndTurnResolverContext {
   /** 4.107.0: the lift planner's PLAN OF ATTACK delivered to the junior at lift (advisory anchor — the judge holds the
    *  junior to the bar it was steered to and says where the plan and the TASK disagree; the TASK wins). */
   liftPlan?: string;
+  /** R165: the fix plan from the previous veto of this finish (the judge grades progress against it). */
+  priorVetoItems?: string;
+  /** R165: what the junior did since that veto (tool-call count, commands that touched the named checks). */
+  progressSummary?: string;
 }
 
 /** Build the user prompt for the judge. Bounded slices keep the call cheap and cache-stable. */
@@ -115,6 +140,10 @@ export function buildResolverUserPrompt(ctx: EndTurnResolverContext, abstain = f
   parts.push(`WORK PRODUCT (the junior's final answer + its most recent checks/tool outputs):\n${(ctx.workProduct || '').trim().slice(0, 5000)}`);
   const att = (ctx.attestation || '').trim();
   if (att) parts.push(`THE JUNIOR'S OWN ATTESTATION (treat as a claim to VERIFY, not as truth):\n${att.slice(0, 2000)}`);
+  const prior = (ctx.priorVetoItems || '').trim();
+  if (prior) parts.push(`PRIOR VETO ITEMS (your own fix plan from the previous adjudication of this finish — grade each CLOSED or STILL OPEN before anything else):\n${prior.slice(0, 2500)}`);
+  const prog = (ctx.progressSummary || '').trim();
+  if (prog) parts.push(`PROGRESS SINCE THAT VETO (harness-observed, ground truth):\n${prog.slice(0, 1500)}`);
   parts.push(
     abstain
       ? 'Adjudicate now. First line: `VERDICT: MEETS`, `VERDICT: GAP`, or `VERDICT: RETIRE`. If GAP, add the ' +
@@ -139,21 +168,51 @@ export interface ResolverVerdict {
   parsed: boolean;
   /** The judge returned nothing usable (empty text or no VERDICT line) → the orchestrator abstains. */
   blank: boolean;
+  /** R165: the judge's stated confidence (defaults to high when absent — prior prompt versions had no line). */
+  confidence: 'high' | 'medium' | 'low';
+  /** R165: shell checks the judge named (`CHECK: <cmd>` lines), in order, deduplicated, backticks stripped. */
+  checks: string[];
 }
 
 /** Parse the judge's response. Empty/verdict-less text → `blank` (ABSTAIN), never MEETS. */
 export function parseResolverVerdict(text: string): ResolverVerdict {
   const t = (text || '').trim();
-  if (!t) return { meets: false, retire: false, plan: '', parsed: false, blank: true };
+  if (!t) return { meets: false, retire: false, plan: '', parsed: false, blank: true, confidence: 'high', checks: [] };
   const m = t.match(/VERDICT:\s*(MEETS|GAP|RETIRE)/i);
-  if (!m) return { meets: false, retire: false, plan: '', parsed: false, blank: true }; // no clear verdict → abstain, do not block
+  if (!m) return { meets: false, retire: false, plan: '', parsed: false, blank: true, confidence: 'high', checks: [] }; // no clear verdict → abstain, do not block
   const verdict = m[1]!.toUpperCase();
   const meets = verdict === 'MEETS';
   const retire = verdict === 'RETIRE';
   // The plan (GAP) / reason (RETIRE) is everything after the verdict line.
   const idx = t.indexOf(m[0]);
-  const plan = t.slice(idx + m[0].length).trim();
-  return { meets, retire, plan, parsed: true, blank: false };
+  let plan = t.slice(idx + m[0].length).trim();
+  const cm = plan.match(/^\s*CONFIDENCE:\s*(high|medium|low)\b[^\n]*\n?/im);
+  const confidence = (cm ? cm[1]!.toLowerCase() : 'high') as 'high' | 'medium' | 'low';
+  if (cm) plan = plan.replace(cm[0], '').trim();
+  const checks: string[] = [];
+  for (const line of plan.split('\n')) {
+    const cl = line.match(/^\s*(?:[-*\d.)]+\s*)?CHECK:\s*(.+?)\s*$/i);
+    if (!cl) continue;
+    const cmd = cl[1]!.replace(/^`+|`+$/g, '').trim();
+    if (cmd && cmd.length <= 400 && !checks.includes(cmd)) checks.push(cmd);
+  }
+  return { meets, retire, plan, parsed: true, blank: false, confidence, checks: checks.slice(0, 4) };
+}
+
+/** R165: what to do with a verdict. Pure, so the policy is unit-testable and readable in one place. */
+export type VetoAction = 'accept' | 'veto' | 'escalate' | 'accept-with-gap' | 'accept-low-confidence';
+export function decideVetoAction(input: {
+  meets: boolean; blank: boolean; retire: boolean; confidence: 'high' | 'medium' | 'low';
+  rejects: number; cap: number; progressed: boolean; escalated: boolean;
+  /** A judge-named check ran and FAILED (objective evidence of the gap). */
+  checksFailed: boolean;
+}): VetoAction {
+  if (input.meets || input.blank || input.retire) return 'accept';
+  if (input.confidence === 'low' && !input.checksFailed) return 'accept-low-confidence'; // suspicion without a failed check is not a veto
+  if (input.rejects >= input.cap) return 'accept-with-gap'; // the liveness/budget ceiling still holds
+  if (input.rejects === 0) return 'veto';
+  if (!input.progressed) return input.escalated ? 'accept-with-gap' : 'escalate'; // re-attested without working the plan
+  return 'veto';
 }
 
 /**
