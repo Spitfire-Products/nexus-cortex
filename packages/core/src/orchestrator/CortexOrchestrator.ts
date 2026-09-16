@@ -2185,7 +2185,7 @@ export class CortexOrchestrator {
     let surrenderNudgeUsed = false; // item 13b: one execute-your-plan nudge per turn
     let budgetContinueNudges = 0; // R151/R157: continue-with-budget nudges this turn (bounded by CORTEX_BUDGET_CONTINUE_MAX_NUDGES)
     const BUDGET_CONTINUE_MAX_NUDGES = resolveBudgetContinueMaxNudges();
-    this.reasoningBackoffRemaining = 0; // R153: backoff is per turn
+    this.reasoningBackoffRemaining = 0; this.reasoningBackoffLastLevel = undefined; // R153: backoff is per turn
     const END_TURN_MAX_NUDGES = 2;
     // EndTurn gate / Stages 1-3 are OPT-IN (default OFF). The line-number
     // fabrication they targeted is fully resolved at the root cause:
@@ -9534,6 +9534,10 @@ export class CortexOrchestrator {
    *  reasoning-only turn (output cap hit, nothing delivered). Takes precedence over the effort pulse. */
   private reasoningBackoffRemaining = 0;
   private reasoningBackoffLevel: ReasoningEffortLevel | undefined;
+  /** R153b (4.111.1, tb4-p foodstuff): the level the LAST exhaustion in this turn stepped to — a repeat exhaustion steps down
+   *  from here even after the counter expired (the empty-retry call consumed one of the lowered turns, so iteration 10 went
+   *  high→medium again instead of medium→low). Reset per turn with the counter. */
+  private reasoningBackoffLastLevel: ReasoningEffortLevel | undefined;
 
   private consumeReasoningBackoff(): ReasoningEffortLevel | undefined {
     if (this.reasoningBackoffRemaining <= 0) return undefined;
@@ -9556,11 +9560,13 @@ export class CortexOrchestrator {
       if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'reasoning_exhaustion', detail: { iteration, outputTokens, backoff: false } }).catch(() => {});
       return undefined;
     }
-    // A repeat exhaustion while a backoff is already armed steps down AGAIN (high → medium → low).
-    const base = this.reasoningBackoffRemaining > 0 && this.reasoningBackoffLevel ? this.reasoningBackoffLevel : effectiveEffort;
+    // A repeat exhaustion in the same turn steps down AGAIN from the last level (high → medium → low), whether or not the
+    // counter is still armed (R153b). The counter covers the empty-retry call PLUS cfg.turns continuations.
+    const base = this.reasoningBackoffLastLevel ?? effectiveEffort;
     const level = stepDownEffort(base);
     this.reasoningBackoffLevel = level;
-    this.reasoningBackoffRemaining = cfg.turns;
+    this.reasoningBackoffLastLevel = level;
+    this.reasoningBackoffRemaining = cfg.turns + 1;
     console.warn(`[Orchestrator] R153: reasoning exhaustion at iteration ${iteration} (${outputTokens ?? '?'} output tokens, no text/tool) — next ${cfg.turns} continuation(s) at effort '${level}' (was '${base ?? 'card default'}').`);
     if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'reasoning_exhaustion', detail: { iteration, outputTokens, from: base ?? null, level, turns: cfg.turns } }).catch(() => {});
     return level;
