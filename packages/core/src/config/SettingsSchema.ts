@@ -127,6 +127,7 @@ export interface EnvironmentVariables {
   CORTEX_REASONING_EXHAUST_BACKOFF_TURNS?: string; // continuations run at the lowered effort after a reasoning-exhaustion turn (R153; default 2; 1..10)
   CORTEX_BUDGET_CONTINUE_MAX_NUDGES?: string; // continue-with-budget nudges allowed per turn (R157; default 2; 0 = off; max 10)
   CORTEX_BASH_OOM_PRIORITY?: string; // 'false' stops the Bash child shell from raising its own oom_score_adj to 1000 (R156; default on, linux only)
+  CORTEX_MENTOR_CONSULT_BUDGET_TOKENS?: string; // output cap (tokens) for an AskForAdvice mentor hint (default 800; was 400; 100..4000)
   CORTEX_HERDR_REPORTING?: string; // 'false' disables herdr lifecycle reporting inside a herdr pane (R145; default on when HERDR_ENV=1)
   CORTEX_HERDR_AGENT_NAME?: string; // agent label reported to herdr (R145; default cortex)
   CORTEX_TERMINAL_BACKEND?: string; // auto | herdr | tmux | detached — persistent-session backend under Bash/TmuxSession/CreateArtifact (R146; auto = herdr > tmux > detached)
@@ -465,6 +466,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_REASONING_EXHAUST_BACKOFF_TURNS: '',
   CORTEX_BUDGET_CONTINUE_MAX_NUDGES: '',
   CORTEX_BASH_OOM_PRIORITY: '',
+  CORTEX_MENTOR_CONSULT_BUDGET_TOKENS: '',
   CORTEX_HERDR_REPORTING: '',
   CORTEX_HERDR_AGENT_NAME: '',
   CORTEX_TERMINAL_BACKEND: '',
@@ -958,6 +960,14 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_BASH_OOM_PRIORITY',
     displayName: 'Bash child OOM priority',
     description: 'The Bash tool child shell (and every descendant) raises its own oom_score_adj to 1000 so the kernel OOM killer takes it before the orchestrator; the model sees Killed instead of the session vanishing (R156, HB-OOM-CHILD-PRIORITY). Default on; linux only.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_MENTOR_CONSULT_BUDGET_TOKENS',
+    displayName: 'Mentor consult answer budget (tokens)',
+    description: 'Output token cap for an AskForAdvice mentor hint. Default 800 (a 400-token hint on tb4-flash-v3 was cut mid-sentence, finish_reason length); clamps to 100..4000.',
     type: 'string',
     category: 'training',
     default: ''

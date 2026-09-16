@@ -4755,36 +4755,31 @@ export class CortexOrchestrator {
 
           try {
             await this.ensureHistoryFitsModel(effectiveModel);
-            const retryCanonicalHistory = this.convertToCanonicalMessages([...this.messageHistory]);
-            const retryRequest = this.gatewayTranslation.prepareRequest(
-              retryCanonicalHistory,
-              toolsToUse,
-              effectiveModel,
-              {
-                temperature: options.parameters?.temperature,
-                maxTokens: options.parameters?.maxTokens,
-                topP: options.parameters?.topP,
-                reasoningEffort: this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort, // R153 backoff > request param
-                stream: false,
-                staticSystemPrompt: this.currentStaticSystemPrompt,
-                conversationId: this.currentConversationId,
-              },
-            );
-            if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
-              retryRequest.previousResponseId = this.lastResponseId;
-            }
-            retryRequest.conversationId = this.currentSessionId;
-
-            let retryApiResponse;
-            if (this.retryMiddleware) {
-              const retryResult = await this.retryMiddleware.executeWithRetry(
-                () => this.apiClient.sendRequest(retryRequest, effectiveModel),
-                'r32_stream_empty_retry',
+            const retryEffort = this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort; // R153 backoff > request param
+            const buildRetryRequest = (): PreparedRequest => { // R154: rebuildable for the image-rejection heal
+              const retryCanonicalHistory = this.convertToCanonicalMessages([...this.messageHistory]);
+              const req = this.gatewayTranslation.prepareRequest(
+                retryCanonicalHistory,
+                toolsToUse,
+                effectiveModel,
+                {
+                  temperature: options.parameters?.temperature,
+                  maxTokens: options.parameters?.maxTokens,
+                  topP: options.parameters?.topP,
+                  reasoningEffort: retryEffort,
+                  stream: false,
+                  staticSystemPrompt: this.currentStaticSystemPrompt,
+                  conversationId: this.currentConversationId,
+                },
               );
-              retryApiResponse = retryResult.result;
-            } else {
-              retryApiResponse = await this.apiClient.sendRequest(retryRequest, effectiveModel);
-            }
+              if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
+                req.previousResponseId = this.lastResponseId;
+              }
+              req.conversationId = this.currentSessionId;
+              return req;
+            };
+
+            const retryApiResponse = await this.sendWithImageHeal(buildRetryRequest, effectiveModel, 'r32_stream_empty_retry');
 
             const retryConverted = this.gatewayTranslation.convertResponse(
               retryApiResponse.data,
@@ -5445,31 +5440,35 @@ export class CortexOrchestrator {
         const streamContinuationHistorySource = streamCanSliceInput
           ? this.messageHistory.slice(this.messageCountAtLastResponse)
           : this.messageHistory;
-        const continuationCanonicalHistory = this.convertToCanonicalMessages([...streamContinuationHistorySource]);
-
         // §13-B2: re-evaluate the forced mentor choice on THIS streaming continuation — thrash
         // develops here, not on the initial request (mirror of the non-stream continuation fix).
         const continuationForcedChoice = await this.resolveForcedMentorChoice(toolsToUse, toolCallIteration);
+        const streamContinuationEffort = this.consumeReasoningBackoff() ?? this.consumeEffortPulse() ?? options.parameters?.reasoningEffort; // R153 backoff > effort pulse > request param > card
 
-        // Phase 2.8: Prepare continuation request
+        // Phase 2.8: Prepare continuation request (R154: built by a closure so the image-rejection heal can
+        // rebuild it from the stubbed history and re-stream once; byte-identical request otherwise).
         // All providers maintain thinking throughout multi-turn execution
-        const continuationRequest = this.gatewayTranslation.prepareRequest(
-          continuationCanonicalHistory,
-          toolsToUse, // Updated tools including SearchTools discoveries
-          effectiveModel,
-          {
-            temperature: options.parameters?.temperature,
-            maxTokens: options.parameters?.maxTokens,
-            topP: options.parameters?.topP,
-            reasoningEffort: this.consumeReasoningBackoff() ?? this.consumeEffortPulse() ?? options.parameters?.reasoningEffort, // R153 backoff > effort pulse > request param > card
-            stream: true, // STREAMING continuation
-            staticSystemPrompt: this.currentStaticSystemPrompt, // R28
-            conversationId: this.currentConversationId, // R28b
-            toolChoice: continuationForcedChoice // §13-B2 forced mentor tool_choice (continuation)
-            // Thinking enabled for all providers in continuations
-            // This allows interleaved thinking during tool execution
-          }
-        );
+        const buildStreamContinuationRequest = (): PreparedRequest => {
+          const continuationCanonicalHistory = this.convertToCanonicalMessages([...streamContinuationHistorySource]);
+          return this.gatewayTranslation.prepareRequest(
+            continuationCanonicalHistory,
+            toolsToUse, // Updated tools including SearchTools discoveries
+            effectiveModel,
+            {
+              temperature: options.parameters?.temperature,
+              maxTokens: options.parameters?.maxTokens,
+              topP: options.parameters?.topP,
+              reasoningEffort: streamContinuationEffort,
+              stream: true, // STREAMING continuation
+              staticSystemPrompt: this.currentStaticSystemPrompt, // R28
+              conversationId: this.currentConversationId, // R28b
+              toolChoice: continuationForcedChoice // §13-B2 forced mentor tool_choice (continuation)
+              // Thinking enabled for all providers in continuations
+              // This allows interleaved thinking during tool execution
+            }
+          );
+        };
+        const continuationRequest = buildStreamContinuationRequest();
 
         // Stateful Responses API: chain with previous_response_id for server-side reasoning preservation
         if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
@@ -5493,21 +5492,40 @@ export class CortexOrchestrator {
           console.log(`[Orchestrator Streaming] Sending tool results back to model for continuation (iteration ${toolCallIteration})...`);
         }
 
-        // NEW: Stream continuation response
-        const continuationStreamingResponse = this.apiClient.streamRequest(continuationRequest, effectiveModel);
-
         // Yield a marker so CLI knows this is a continuation
         if (process.env.DEBUG_THINKING === 'true') {
           console.log(`\n[DEBUG Orchestrator] === CONTINUATION ${toolCallIteration} STARTING ===`);
         }
 
-        // Yield continuation chunks in real-time
-        for await (const chunk of continuationStreamingResponse.chunks) {
-          yield chunk;
+        // NEW: Stream continuation response. R154: one heal attempt — if the provider rejects an image block
+        // (a request-shape 4xx raised before any chunk arrives), stub the image blocks and re-stream the
+        // rebuilt request once; every other error propagates exactly as before.
+        let continuationProviderMessage: any;
+        for (let healAttempt = 0; ; healAttempt++) {
+          const streamReq = healAttempt === 0 ? continuationRequest : buildStreamContinuationRequest();
+          const continuationStreamingResponse = this.apiClient.streamRequest(streamReq, effectiveModel);
+          try {
+            // Yield continuation chunks in real-time
+            for await (const chunk of continuationStreamingResponse.chunks) {
+              yield chunk;
+            }
+            // Get final continuation message
+            continuationProviderMessage = await continuationStreamingResponse.finalMessage;
+            break;
+          } catch (streamErr: any) {
+            if (healAttempt === 0 && isImageRejectionError(streamErr)) {
+              const reason = String(streamErr?.message ?? streamErr).slice(0, 300);
+              const stripped = stripRejectedImages(this.messageHistory, reason);
+              if (stripped > 0) {
+                console.warn(`[Orchestrator Streaming] R154: provider rejected an image block on the continuation — stubbed ${stripped} image block(s) in history and re-streaming once.`);
+                const healStore = this.getDecisionStore();
+                if (healStore) void healStore.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'image_rejection_heal', detail: { stripped, label: 'stream_continuation', reason: reason.slice(0, 160) } }).catch(() => {});
+                continue;
+              }
+            }
+            throw streamErr;
+          }
         }
-
-        // Get final continuation message
-        const continuationProviderMessage = await continuationStreamingResponse.finalMessage;
 
         // Validate continuation response (API pattern-aware)
         if (!continuationProviderMessage) {
@@ -5835,36 +5853,31 @@ export class CortexOrchestrator {
         await this.historyStore.appendMessage(this.currentSessionId, synthUserMessage);
 
         await this.ensureHistoryFitsModel(effectiveModel);
-        const synthCanonicalHistory = this.convertToCanonicalMessages([...this.messageHistory]);
-        const synthRequest = this.gatewayTranslation.prepareRequest(
-          synthCanonicalHistory,
-          [], // tools suppressed — must produce text
-          effectiveModel,
-          {
-            temperature: options.parameters?.temperature,
-            maxTokens: options.parameters?.maxTokens,
-            topP: options.parameters?.topP,
-            reasoningEffort: this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort, // R153 backoff > request param
-            stream: false,
-            staticSystemPrompt: this.currentStaticSystemPrompt, // R28
-            conversationId: this.currentConversationId, // R28b
-          },
-        );
-        if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
-          synthRequest.previousResponseId = this.lastResponseId;
-        }
-        synthRequest.conversationId = this.currentSessionId;
-
-        let synthApiResponse;
-        if (this.retryMiddleware) {
-          const synthResult = await this.retryMiddleware.executeWithRetry(
-            () => this.apiClient.sendRequest(synthRequest, effectiveModel),
-            'r29a_stream_synthesis_retry',
+        const synthEffort = this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort; // R153 backoff > request param
+        const buildSynthRequest = (): PreparedRequest => { // R154: rebuildable for the image-rejection heal
+          const synthCanonicalHistory = this.convertToCanonicalMessages([...this.messageHistory]);
+          const req = this.gatewayTranslation.prepareRequest(
+            synthCanonicalHistory,
+            [], // tools suppressed — must produce text
+            effectiveModel,
+            {
+              temperature: options.parameters?.temperature,
+              maxTokens: options.parameters?.maxTokens,
+              topP: options.parameters?.topP,
+              reasoningEffort: synthEffort,
+              stream: false,
+              staticSystemPrompt: this.currentStaticSystemPrompt, // R28
+              conversationId: this.currentConversationId, // R28b
+            },
           );
-          synthApiResponse = synthResult.result;
-        } else {
-          synthApiResponse = await this.apiClient.sendRequest(synthRequest, effectiveModel);
-        }
+          if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
+            req.previousResponseId = this.lastResponseId;
+          }
+          req.conversationId = this.currentSessionId;
+          return req;
+        };
+
+        const synthApiResponse = await this.sendWithImageHeal(buildSynthRequest, effectiveModel, 'r29a_stream_synthesis_retry');
 
         const synthConverted = this.gatewayTranslation.convertResponse(
           synthApiResponse.data,
@@ -8698,6 +8711,10 @@ export class CortexOrchestrator {
     const getCallback = () => this.config.onSubAgentEvent;
 
     // Emit event via callback or console.log
+    // 2026-09-16 (tb4-flash-v3 vllm-deepseek-streaming, 500+ ticker lines): the child heartbeats `progress` once a
+    // SECOND; the console fallback used to print every beat. Print a beat only when the turn number changes or
+    // 30 s have passed since the last printed one (the callback path is untouched — UIs want every beat).
+    const progressLog = { turn: -1, at: 0 };
     const emitEvent = (event: SubAgentEvent) => {
       const callback = getCallback();
       if (callback) {
@@ -8708,9 +8725,15 @@ export class CortexOrchestrator {
           case 'started':
             console.log(`\n${prefix} Started (model: ${event.data.model})`);
             break;
-          case 'progress':
-            console.log(`${prefix} Turn ${event.data.turnNumber} (${(event.data.elapsedMs! / 1000).toFixed(1)}s, ${event.data.totalTokens} tokens)`);
+          case 'progress': {
+            const turn = event.data.turnNumber ?? -1;
+            const now = Date.now();
+            if (turn !== progressLog.turn || now - progressLog.at >= 30_000) {
+              progressLog.turn = turn; progressLog.at = now;
+              console.log(`${prefix} Turn ${event.data.turnNumber} (${(event.data.elapsedMs! / 1000).toFixed(1)}s, ${event.data.totalTokens} tokens)`);
+            }
             break;
+          }
           case 'tool_call':
             console.log(`${prefix} Using: ${event.data.toolName}${event.data.toolSummary || ''}`);
             break;

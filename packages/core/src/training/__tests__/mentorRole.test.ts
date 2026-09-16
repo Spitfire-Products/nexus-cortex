@@ -18,7 +18,7 @@ describe('mentorRole — the mentor as a first-class resolved role', () => {
   });
   it('the consult is thinking-off by default and opts in via CORTEX_MENTOR_CONSULT_REASONING', () => {
     expect(resolveMentorRoleConfig('mentor-consult', {} as any).thinking).toBe(false);
-    expect(resolveMentorRoleConfig('mentor-consult', {} as any).outputBudgetTokens).toBe(400);
+    expect(resolveMentorRoleConfig('mentor-consult', {} as any).outputBudgetTokens).toBe(800);
     const on = resolveMentorRoleConfig('mentor-consult', { CORTEX_MENTOR_CONSULT_REASONING: 'on' } as any, { effort: 'max' });
     expect(on.thinking).toBe(true);
     expect(on.thinkingSource).toBe('CORTEX_MENTOR_CONSULT_REASONING');
@@ -125,5 +125,21 @@ describe('per-surface reasoning switch (4.107.0)', () => {
     expect(resolveMentorRoleConfig('loop-exit-planner', { CORTEX_LOOP_TOOL_BLOCK_REASONING: 'none' } as any, {}).thinking).toBe(false);
     // the consult keeps its own var
     expect(resolveMentorRoleConfig('mentor-consult', { CORTEX_LIFT_PLAN_REASONING: 'on' } as any, {}).thinking).toBe(false);
+  });
+});
+
+// 2026-09-16: AskForAdvice hint budget lever (a 400-token hint was cut mid-sentence on tb4-flash-v3).
+import { resolveConsultBudgetTokens, resolveMentorRoleConfig as _rmrc } from '../mentorRole.js';
+describe('resolveConsultBudgetTokens', () => {
+  it('defaults to 800, honours the lever within 100..4000', () => {
+    expect(resolveConsultBudgetTokens({})).toBe(800);
+    expect(resolveConsultBudgetTokens({ CORTEX_MENTOR_CONSULT_BUDGET_TOKENS: '1200' })).toBe(1200);
+    expect(resolveConsultBudgetTokens({ CORTEX_MENTOR_CONSULT_BUDGET_TOKENS: '10' })).toBe(800);
+    expect(resolveConsultBudgetTokens({ CORTEX_MENTOR_CONSULT_BUDGET_TOKENS: '99999' })).toBe(4000);
+    expect(resolveConsultBudgetTokens({ CORTEX_MENTOR_CONSULT_BUDGET_TOKENS: 'x' })).toBe(800);
+  });
+  it('the mentor-consult surface picks the lever up as its output budget', () => {
+    const cfg = _rmrc('mentor-consult', { CORTEX_MENTOR_CONSULT_BUDGET_TOKENS: '1000' } as any, {});
+    expect(cfg.outputBudgetTokens).toBe(1000);
   });
 });

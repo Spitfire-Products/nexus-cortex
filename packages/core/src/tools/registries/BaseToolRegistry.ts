@@ -206,6 +206,7 @@ When Read/Edit/Write are in your tool set, use them instead of bash cat/head/tai
 Always quote file paths containing spaces. Use absolute paths throughout — even after a cd, relative paths in later commands of the same call are resolved against the new cwd, a repeated source of silent wrong-file operations. cd persists within this Bash call only, never across tool calls.
 
 Graders commonly run your deliverables as an unprivileged user in a fresh process: never build, compile or write at import time; keep every deliverable world-readable (umask 022; chmod -R a+rX on output trees); and before finishing, re-run the task's own checks once as a non-root user when one is available (e.g. runuser -u nobody -- <command>) — a root-only path is a silent fail.
+Dependency manifests (requirements.txt, pyproject/lock files, package.json) are graded inputs: never change a pin, swap a package for a variant, or add a dependency without proving the manifest still installs in a FRESH environment (a clean venv + pip install -r, or npm ci) — the grader installs from your manifest on its own image, where a source build that replaced a binary wheel (psycopg2-binary → psycopg2) fails for lack of a compiler.
 
 DESTRUCTIVE COMMANDS — confirm with user first:
 - Deleting: rm -rf, git branch -D, DROP TABLE

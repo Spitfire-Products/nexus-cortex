@@ -55,7 +55,12 @@ export interface MentorSurfaceInputs {
 const DEFAULT_EFFORT: MentorEffort = 'max';
 const DEFAULT_BUDGET = 4000;
 const DEFAULT_TIMEOUT_MS = 90_000;
-const DEFAULT_CONSULT_BUDGET = 400;
+const DEFAULT_CONSULT_BUDGET = 800; // was 400 (2026-09-16: tb4-flash-v3 pretrain-shard-corruption consult cut mid-sentence at 400, finish_reason=length)
+/** CORTEX_MENTOR_CONSULT_BUDGET_TOKENS — output cap for an AskForAdvice hint (default 800; 100..4000). */
+export function resolveConsultBudgetTokens(env: NodeJS.ProcessEnv = process.env): number {
+  const n = parseInt((env.CORTEX_MENTOR_CONSULT_BUDGET_TOKENS ?? '').trim(), 10);
+  return Number.isInteger(n) && n >= 100 ? Math.min(4000, n) : DEFAULT_CONSULT_BUDGET;
+}
 export const DEFAULT_MENTOR_MODEL = 'deepseek-flash';
 
 function offValue(v: string | undefined): boolean {
@@ -146,7 +151,7 @@ export function resolveMentorRoleConfig(
       if (global) return normEffort(global, DEFAULT_EFFORT);
       return normEffort(inputs.effort, DEFAULT_EFFORT);
     })(),
-    outputBudgetTokens: inputs.outputBudgetTokens && inputs.outputBudgetTokens > 0 ? inputs.outputBudgetTokens : (isConsult ? DEFAULT_CONSULT_BUDGET : DEFAULT_BUDGET),
+    outputBudgetTokens: inputs.outputBudgetTokens && inputs.outputBudgetTokens > 0 ? inputs.outputBudgetTokens : (isConsult ? resolveConsultBudgetTokens(env) : DEFAULT_BUDGET),
     timeoutMs,
     ...(temperature !== undefined ? { temperature } : {}),
     thinkingSource,

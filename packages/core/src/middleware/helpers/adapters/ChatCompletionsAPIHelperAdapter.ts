@@ -401,7 +401,9 @@ export class ChatCompletionsAPIHelperAdapter extends BaseHelperAdapter {
       completionTokens: response?.usage?.completion_tokens,
       maxTokensSent: this.lastMaxTokensSent,
       thinking: !!mentorRole?.thinking,
-      truncated: false,
+      // 2026-09-16: a content answer cut by the output cap IS truncated (the flag used to be set only on the
+      // thinking-on empty-content path, so a 400-token consult hint ending mid-sentence banked truncated:false).
+      truncated: response?.choices[0]?.finish_reason === 'length',
       retriedThinkingOff: false,
       ...(abortedFirstCall ? { abortedFirstCall: true } : {}),
       ...(firstBudget ? { firstCallTimeoutMs: firstBudget } : {}),
