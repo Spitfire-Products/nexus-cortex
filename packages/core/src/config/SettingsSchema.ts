@@ -128,6 +128,7 @@ export interface EnvironmentVariables {
   CORTEX_BUDGET_CONTINUE_MAX_NUDGES?: string; // continue-with-budget nudges allowed per turn (R157; default 2; 0 = off; max 10)
   CORTEX_BASH_OOM_PRIORITY?: string; // 'false' stops the Bash child shell from raising its own oom_score_adj to 1000 (R156; default on, linux only)
   CORTEX_MENTOR_CONSULT_BUDGET_TOKENS?: string; // output cap (tokens) for an AskForAdvice mentor hint (default 800; was 400; 100..4000)
+  CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED?: string; // resolver GAP vetoes allowed while >= the budget-continue fraction of the wall budget remains (R160; default 6; 0 = liveness cap only)
   CORTEX_HERDR_REPORTING?: string; // 'false' disables herdr lifecycle reporting inside a herdr pane (R145; default on when HERDR_ENV=1)
   CORTEX_HERDR_AGENT_NAME?: string; // agent label reported to herdr (R145; default cortex)
   CORTEX_TERMINAL_BACKEND?: string; // auto | herdr | tmux | detached — persistent-session backend under Bash/TmuxSession/CreateArtifact (R146; auto = herdr > tmux > detached)
@@ -467,6 +468,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_BUDGET_CONTINUE_MAX_NUDGES: '',
   CORTEX_BASH_OOM_PRIORITY: '',
   CORTEX_MENTOR_CONSULT_BUDGET_TOKENS: '',
+  CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED: '',
   CORTEX_HERDR_REPORTING: '',
   CORTEX_HERDR_AGENT_NAME: '',
   CORTEX_TERMINAL_BACKEND: '',
@@ -968,6 +970,14 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_MENTOR_CONSULT_BUDGET_TOKENS',
     displayName: 'Mentor consult answer budget (tokens)',
     description: 'Output token cap for an AskForAdvice mentor hint. Default 800 (a 400-token hint on tb4-flash-v3 was cut mid-sentence, finish_reason length); clamps to 100..4000.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED',
+    displayName: 'Resolver max rejects with budget',
+    description: 'How many times the EndTurn finish judge may veto a finish while at least CORTEX_BUDGET_CONTINUE_MIN_REMAINING of the wall budget remains (R160, HB-RESOLVER-BUDGET-CAP). Below that fraction, or without a deadline, the liveness cap CORTEX_ENDTURN_RESOLVER_MAX_REJECTS (2) applies. Default 6; 0 disables.',
     type: 'string',
     category: 'training',
     default: ''

@@ -115,3 +115,31 @@ describe('4.107.0 — the resolver receives the lift plan as an ADVISORY anchor'
     expect(p.length).toBeLessThan(3500 + 800);
   });
 });
+
+// R160 HB-RESOLVER-BUDGET-CAP (2026-09-16): the reject cap follows the wall budget.
+import { effectiveMaxRejects, budgetedVetoEscalation } from '../endTurnResolver.js';
+describe('endTurnResolver — R160 budget-aware reject cap', () => {
+  const cfg = resolveEndTurnResolverConfig({} as NodeJS.ProcessEnv);
+  it('defaults the budgeted cap to 6 and clamps overrides to 0..20', () => {
+    expect(cfg.maxRejectsBudgeted).toBe(6);
+    expect(resolveEndTurnResolverConfig({ CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED: '0' } as any).maxRejectsBudgeted).toBe(0);
+    expect(resolveEndTurnResolverConfig({ CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED: '99' } as any).maxRejectsBudgeted).toBe(20);
+  });
+  it('uses the budgeted cap while >= minRemaining of the budget is left, the liveness cap otherwise', () => {
+    expect(effectiveMaxRejects(cfg, 0.95, 0.5)).toBe(6);
+    expect(effectiveMaxRejects(cfg, 0.5, 0.5)).toBe(6);
+    expect(effectiveMaxRejects(cfg, 0.49, 0.5)).toBe(2);
+    expect(effectiveMaxRejects(cfg, null, 0.5)).toBe(2); // no deadline
+    expect(effectiveMaxRejects(cfg, 0.95, 0)).toBe(2); // continue-nudge lever off
+    expect(effectiveMaxRejects({ ...cfg, maxRejectsBudgeted: 0 }, 0.95, 0.5)).toBe(2); // disabled → byte-identical
+    expect(effectiveMaxRejects({ ...cfg, maxRejectsBudgeted: 1 }, 0.95, 0.5)).toBe(2); // never below the liveness cap
+  });
+  it('escalation text appears from the second veto and names the remaining budget', () => {
+    expect(budgetedVetoEscalation(1, 6, 7 * 3600000, 8 * 3600000)).toBe('');
+    const t = budgetedVetoEscalation(2, 6, 7 * 3600000 + 5 * 60000, 8 * 3600000);
+    expect(t).toContain('veto 2 of 6');
+    expect(t).toContain('7h05m');
+    expect(t).toContain('open_items');
+    expect(budgetedVetoEscalation(3, 6, 60000, 0)).toBe(''); // no deadline → no escalation
+  });
+});

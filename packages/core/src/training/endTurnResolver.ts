@@ -17,22 +17,29 @@ export interface EndTurnResolverConfig {
   effort: string;
   /** Max GAP verdicts that reject-and-replan before the gate fallback-accepts (liveness beats loops). */
   maxRejects: number;
+  /** R160 HB-RESOLVER-BUDGET-CAP (2026-09-16): the cap that applies while >= CORTEX_BUDGET_CONTINUE_MIN_REMAINING of the
+   *  wall budget remains. tb4-flash-v3: 16 of 22 confident-wrong finishes ended on a GAP verdict the judge had already
+   *  stated — the second veto hit maxRejects=2 a median 24 min into an 8-h budget and the finish shipped. 0 = same as
+   *  maxRejects (byte-identical); no deadline → maxRejects. */
+  maxRejectsBudgeted: number;
   /** ABSTENTION (CORTEX_ENDTURN_RESOLVER_ABSTAIN): offer the judge a RETIRE verdict for a
    *  structurally-hopeless finish and HONOR it (accept + stop) instead of burning the reject
    *  cycles on a task the junior can't fix. Dark by default (A/B-able). */
   abstain: boolean;
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, abstain: false };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, abstain: false };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
   const e = (env.CORTEX_ENDTURN_RESOLVER_EFFORT ?? '').trim();
   const m = parseInt((env.CORTEX_ENDTURN_RESOLVER_MAX_REJECTS ?? '').trim(), 10);
+  const mb = parseInt((env.CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED ?? '').trim(), 10);
   return {
     outputBudgetTokens: Number.isInteger(n) && n > 0 ? n : DEFAULTS.outputBudgetTokens,
     effort: e || DEFAULTS.effort,
     maxRejects: Number.isInteger(m) && m >= 0 ? m : DEFAULTS.maxRejects,
+    maxRejectsBudgeted: Number.isInteger(mb) && mb >= 0 ? Math.min(20, mb) : DEFAULTS.maxRejectsBudgeted,
     abstain: (env.CORTEX_ENDTURN_RESOLVER_ABSTAIN ?? '').trim().toLowerCase() === 'true',
   };
 }
@@ -147,4 +154,28 @@ export function parseResolverVerdict(text: string): ResolverVerdict {
   const idx = t.indexOf(m[0]);
   const plan = t.slice(idx + m[0].length).trim();
   return { meets, retire, plan, parsed: true, blank: false };
+}
+
+/**
+ * R160: the reject cap in force right now. With a live deadline and at least `minRemaining` of the wall budget
+ * left, the larger budgeted cap applies (the judge keeps vetoing while there is time to act on its plan); once
+ * the budget is below that fraction — or there is no deadline — the liveness cap (`maxRejects`) applies. A
+ * budgeted cap of 0 or one not above `maxRejects` leaves behavior byte-identical to the liveness cap.
+ */
+export function effectiveMaxRejects(cfg: EndTurnResolverConfig, remainingFrac: number | null, minRemaining: number): number {
+  if (remainingFrac === null || !(minRemaining > 0)) return cfg.maxRejects;
+  if (cfg.maxRejectsBudgeted <= cfg.maxRejects) return cfg.maxRejects;
+  return remainingFrac >= minRemaining ? cfg.maxRejectsBudgeted : cfg.maxRejects;
+}
+
+/** R160: escalation line appended to the GAP fix plan from the second veto on. */
+export function budgetedVetoEscalation(rejectIndex: number, cap: number, remainingMs: number, deadlineMs: number): string {
+  if (rejectIndex < 2 || !(deadlineMs > 0)) return '';
+  const h = Math.floor(remainingMs / 3600000); const m = Math.round((remainingMs % 3600000) / 60000);
+  const left = h > 0 ? `${h}h${String(m).padStart(2, '0')}m` : `${m}m`;
+  return (
+    `\n\nThis is veto ${rejectIndex} of ${cap}. About ${left} of the wall budget remains — that time is for closing the gap above, ` +
+    `not for re-describing the work. Work it with tools until the task's own criterion is met, or, if it genuinely cannot be met in ` +
+    `this box, name the hard limit under open_items and finish.`
+  );
 }

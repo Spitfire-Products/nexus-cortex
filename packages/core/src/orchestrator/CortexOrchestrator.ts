@@ -28,7 +28,7 @@ import { join as pathJoin } from 'path';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'node:child_process';
 import { ENV_RECON_COMMAND, resolveLiftPlanConfig } from '../training/liftPlanner.js';
-import { resolveEndTurnResolverConfig, parseResolverVerdict } from '../training/endTurnResolver.js';
+import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation } from '../training/endTurnResolver.js';
 import { resolveDeadlineExitConfig, deadlineExitCallBudget, parseDeadlineExitVerdict } from '../training/deadlineExitMentor.js';
 import { isTaskShaped } from './requirementsVerification.js';
 import { type ServerSideToolMetadata, extractServerSideMetadata, XAIServerSideTools, OpenAIServerSideTools, toCanonicalTool } from '../tools/ServerSideTools.js';
@@ -992,7 +992,12 @@ export class CortexOrchestrator {
     const task = this.lastRealUserText();
     if (!isTaskShaped(task)) return; // only adjudicate real work tasks
     const cfg = resolveEndTurnResolverConfig();
-    if (this.endTurnResolverRejects >= cfg.maxRejects) return; // fallback-accept: liveness beats loops
+    // R160 HB-RESOLVER-BUDGET-CAP: the cap is budget-aware — while >= CORTEX_BUDGET_CONTINUE_MIN_REMAINING of the wall
+    // budget remains the judge may veto up to maxRejectsBudgeted times; below that (or with no deadline) the liveness cap.
+    const resolverRemainingMs = this.turnDeadlineMsActive > 0 && this.turnLoopStartMs > 0 ? Math.max(0, this.turnDeadlineMsActive - (Date.now() - this.turnLoopStartMs)) : null;
+    const resolverRemainingFrac = resolverRemainingMs === null ? null : resolverRemainingMs / this.turnDeadlineMsActive;
+    const resolverCap = effectiveMaxRejects(cfg, resolverRemainingFrac, resolveBudgetContinueMinRemaining());
+    if (this.endTurnResolverRejects >= resolverCap) return; // fallback-accept: liveness beats loops
     const et = toolResults.find((tr) => tr.tool_name === 'EndTurn');
     if (!et) return;
     const store = this.getDecisionStore();
@@ -1043,6 +1048,7 @@ export class CortexOrchestrator {
           meets: verdict.meets, retire: verdict.retire, abstained: (verdict.retire && cfg.abstain) || verdict.blank,
           blank: verdict.blank, failOpen: verdict.blank,
           planChars: verdict.plan.length, rejects: this.endTurnResolverRejects, parsed: verdict.parsed,
+          cap: resolverCap, capLiveness: cfg.maxRejects, capBudgeted: cfg.maxRejectsBudgeted, remainingFrac: resolverRemainingFrac === null ? null : Number(resolverRemainingFrac.toFixed(3)), // R160
           latencyMs, rawLen: (text ?? '').length,
           deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,
           liftPlanChars: this.liftPlanText.length,
@@ -1068,8 +1074,9 @@ export class CortexOrchestrator {
         et.is_error = true;
         et.content =
           `EndTurn HELD (finish review) — the work does not yet meet the task's requirements. Fix plan:\n\n` +
-          `${verdict.plan}\n\nDo this, verify against the task's own criteria (not your own tests), then call EndTurn again.`;
-        if (this.config.debug) console.warn(`[EndTurnResolver] GAP — vetoed finish (${verdict.plan.length}-char plan, reject ${this.endTurnResolverRejects}/${cfg.maxRejects})`);
+          `${verdict.plan}\n\nDo this, verify against the task's own criteria (not your own tests), then call EndTurn again.` +
+          budgetedVetoEscalation(this.endTurnResolverRejects, resolverCap, resolverRemainingMs ?? 0, this.turnDeadlineMsActive); // R160
+        console.warn(`[EndTurnResolver] GAP — vetoed finish (${verdict.plan.length}-char plan, reject ${this.endTurnResolverRejects}/${resolverCap}${resolverRemainingFrac === null ? '' : `, budget remaining ${Math.round(resolverRemainingFrac * 100)}%`})`);
       } else if (this.config.debug) {
         console.log(`[EndTurnResolver] MEETS — finish confirmed (parsed=${verdict.parsed})`);
       }

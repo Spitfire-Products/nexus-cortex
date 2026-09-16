@@ -78,6 +78,7 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   CORTEX_BUDGET_CONTINUE_MAX_NUDGES: { tier: 'env' },
   CORTEX_BASH_OOM_PRIORITY: { tier: 'env' },
   CORTEX_MENTOR_CONSULT_BUDGET_TOKENS: { tier: 'env' },
+  CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED: { tier: 'env' },
   CORTEX_HERDR_REPORTING: { tier: 'env' },
   CORTEX_HERDR_AGENT_NAME: { tier: 'env' },
   CORTEX_TERMINAL_BACKEND: { tier: 'env' },
