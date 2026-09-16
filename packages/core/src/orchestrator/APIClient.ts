@@ -2272,6 +2272,9 @@ export class APIClient {
 
     // Phase 2.8: Track tool calls for streaming tool execution
     const accumulatedToolCalls = new Map<number, { id?: string; name?: string; arguments: string }>();
+    // R153 (2026-09-16): keep the provider's LAST non-null finish_reason so a `length` cutoff survives reassembly
+    // (the empty-response classifier keys `truncated` on it; the old hardcode reported every text turn as `stop`).
+    let lastFinishReason: string | null = null;
 
     // Capture this context before entering generator
     const self = this;
@@ -2351,6 +2354,7 @@ export class APIClient {
 
         // Check if finish_reason indicates tool_calls completion (or length-truncated tool call)
         const finishReason = chunk.choices[0]?.finish_reason;
+        if (finishReason) lastFinishReason = String(finishReason);
         if ((finishReason === 'tool_calls' || finishReason === 'length') && accumulatedToolCalls.size > 0) {
           // Emit tool_use_complete events for each accumulated tool call
           for (const [_, toolCall] of accumulatedToolCalls) {
@@ -2413,7 +2417,9 @@ export class APIClient {
             ...(fullReasoningContent && { reasoning_content: fullReasoningContent }),
             ...(finalToolCalls.length > 0 && { tool_calls: finalToolCalls })
           },
-          finish_reason: finalToolCalls.length > 0 ? 'tool_calls' : 'stop'
+          // R153: tool calls keep 'tool_calls' (downstream contract); otherwise report what the provider said
+          // ('length' = output cap hit) instead of a synthetic 'stop'.
+          finish_reason: finalToolCalls.length > 0 ? 'tool_calls' : (lastFinishReason ?? 'stop')
         }],
         usage: {
           prompt_tokens: 0,

@@ -69,3 +69,29 @@ describe('R151 open-items detection', () => {
     expect(r).toContain('8h00m wall budget (75%)');
   });
 });
+
+// R157 (2026-09-16, tb4-flash-v3 audit): explicit surrenders the first R151 set missed + the re-armed reminder.
+describe('R157 open-items detector v2', () => {
+  const pad = ' The rest of this message describes what was built and how it was checked, in enough detail to clear the length floor.';
+  it('catches the tb4-flash-v3 surrender phrasings', () => {
+    for (const t of [
+      '## Final answer: TASK NOT COMPLETE. I must be plain: I did not prove target_theorem, and I did not edit /app/Main.v at all.' + pad,
+      'FINAL ANSWER — honest status report. OUTCOME: The task is NOT complete. The delivered artifact fails the task\'s real success criterion.' + pad,
+      'Honest bottom line: I did not fully solve the task. I recovered a 33-rule cascade that reproduces 777 of 780 training pairs.' + pad,
+      'I could not prove takens_embedding_existential. Here is an honest account of what I did and where the proof breaks.' + pad,
+      'I was unable to get the marker to disappear on boot; the mechanism is localized but the fix is incomplete.' + pad,
+      'The build still fails on the second target after my change; the first target passes.' + pad,
+    ]) expect(detectOpenItemsText(t)).toBe(true);
+  });
+  it('stays quiet on a confident completed finish', () => {
+    expect(detectOpenItemsText('I fixed the release pipeline. /app/scripts/release.ts now drives everything from the app present at run time plus /app/visibility.json. All release checks pass and the output matches the reference byte for byte.')).toBe(false);
+  });
+  it('second reminder is firmer and names the count', () => {
+    const first = buildBudgetContinueReminder(6 * 3600_000, 8 * 3600_000);
+    const second = buildBudgetContinueReminder(6 * 3600_000, 8 * 3600_000, 2);
+    expect(first).toContain('CLOSE those items now');
+    expect(second).toContain('second time');
+    expect(second).toContain('75%');
+    expect(second).not.toBe(first);
+  });
+});

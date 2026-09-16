@@ -96,7 +96,9 @@ export type SteeringEventKind =
   //   the last real prompt_tokens the estimate was anchored on (0 = heuristic fallback)
   | 'slice_block' // CORTEX_SLICE_BLOCK: a re-slice of a static file was coercively blocked (force Read); detail {file, priorSlices, blockNumber}
   | 'loop_break' // R137 HB-POLL-REPEAT-BREAKER: the exact-repeat breaker (MAX_LOOP_REPETITIONS) ended the tool loop — detail {tool, matchCount, iteration}; the banked toolCallIterations stays the TRUE count (no longer overwritten to the cap)
-  | 'dsml_recovered';
+  | 'dsml_recovered'
+  | 'reasoning_exhaustion' // R153: a truncated reasoning-only turn (output cap hit, no text/tool) armed the effort backoff — detail {iteration, level, turns, outputTokens?}
+  | 'image_rejection_heal'; // R154: the provider rejected an image block; user-side image blocks were stubbed and the request retried — detail {stripped, label, reason}
 
 export interface SteeringEventInput {
   sessionId: string;

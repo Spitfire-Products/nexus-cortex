@@ -101,3 +101,54 @@ export function emptyResponseNudge(kind: EmptyResponseKind): string {
 export function nudgeForbidsTools(kind: EmptyResponseKind): boolean {
   return kind !== 'truncated' && kind !== 'reasoning_only_active';
 }
+
+/**
+ * R153 HB-REASONING-EXHAUSTION (2026-09-16, tb4-flash-v3): a `truncated` turn that carried reasoning and
+ * nothing else spent the WHOLE output budget thinking (DeepSeek flash at effort high: 58 turns at exactly
+ * 65536 output tokens across 23 of 63 sessions, 3.8M output tokens burned, sessions ending at iteration
+ * 10 with 97% of the wall budget left). "Continue from where you stopped" cannot work — the reasoning is
+ * not resumable — so the remedy is to think LESS on the next call(s): step the reasoning effort down one
+ * level for a bounded number of continuations and say plainly what happened.
+ */
+export function isReasoningExhaustion(cls: EmptyResponseClassification | null | undefined): boolean {
+  return !!cls && cls.kind === 'truncated' && cls.hadReasoning && !cls.hadToolUse;
+}
+
+export type ReasoningEffortLevel = 'low' | 'medium' | 'high';
+
+/** One level down from the effective effort; unknown/card-default effort steps to 'medium' first. */
+export function stepDownEffort(current: string | undefined): ReasoningEffortLevel {
+  const c = (current ?? '').trim().toLowerCase();
+  if (c === 'max' || c === 'high' || c === 'xhigh') return 'medium';
+  if (c === 'medium') return 'low';
+  if (c === 'low' || c === 'minimal' || c === 'none') return 'low';
+  return 'medium';
+}
+
+export interface ReasoningExhaustBackoffConfig { enabled: boolean; turns: number }
+
+/** CORTEX_REASONING_EXHAUST_BACKOFF (default on; 'false' disables) / CORTEX_REASONING_EXHAUST_BACKOFF_TURNS (default 2, 1..10). */
+export function resolveReasoningExhaustBackoff(env: NodeJS.ProcessEnv = process.env): ReasoningExhaustBackoffConfig {
+  const v = (env.CORTEX_REASONING_EXHAUST_BACKOFF ?? '').trim().toLowerCase();
+  const enabled = v === '' ? true : !(v === 'false' || v === '0' || v === 'off');
+  const rawTurns = (env.CORTEX_REASONING_EXHAUST_BACKOFF_TURNS ?? '').trim();
+  const n = rawTurns === '' ? 2 : Number(rawTurns);
+  const turns = Number.isFinite(n) && n >= 1 ? Math.min(10, Math.floor(n)) : 2;
+  return { enabled, turns };
+}
+
+export function reasoningExhaustionNudge(level: ReasoningEffortLevel | undefined): string {
+  const lv = level ? ` Reasoning effort is temporarily lowered to '${level}' for your next calls.` : '';
+  return (
+    'Your previous turn spent the ENTIRE output budget on internal reasoning and delivered nothing — no text, no tool ' +
+    'call — so it was wasted. Do not restart that analysis. Decide in a few sentences and ACT: call the single most ' +
+    'useful tool now (a quick experiment beats a long derivation), or write your final answer only if you are actually ' +
+    'done.' + lv
+  );
+}
+
+/** Kind-tailored nudge that also knows the exhaustion special case (falls back to emptyResponseNudge). */
+export function emptyResponseNudgeFor(cls: EmptyResponseClassification, backoffLevel?: ReasoningEffortLevel): string {
+  if (isReasoningExhaustion(cls)) return reasoningExhaustionNudge(backoffLevel);
+  return emptyResponseNudge(cls.kind);
+}

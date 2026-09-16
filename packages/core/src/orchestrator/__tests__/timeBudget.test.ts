@@ -67,3 +67,15 @@ describe('R151 HB-BUDGET-VISIBILITY', () => {
     expect(resolveBudgetContinueMinRemaining({ CORTEX_BUDGET_CONTINUE_MIN_REMAINING: '0.25' } as any)).toBe(0.25);
   });
 });
+
+// R157: continue-with-budget nudges per turn.
+import { resolveBudgetContinueMaxNudges } from '../timeBudget.js';
+describe('resolveBudgetContinueMaxNudges (R157)', () => {
+  it('defaults to 2; 0/negative/garbage → 0 (off); clamps to 10', () => {
+    expect(resolveBudgetContinueMaxNudges({})).toBe(2);
+    expect(resolveBudgetContinueMaxNudges({ CORTEX_BUDGET_CONTINUE_MAX_NUDGES: '3' })).toBe(3);
+    expect(resolveBudgetContinueMaxNudges({ CORTEX_BUDGET_CONTINUE_MAX_NUDGES: '0' })).toBe(0);
+    expect(resolveBudgetContinueMaxNudges({ CORTEX_BUDGET_CONTINUE_MAX_NUDGES: 'x' })).toBe(0);
+    expect(resolveBudgetContinueMaxNudges({ CORTEX_BUDGET_CONTINUE_MAX_NUDGES: '50' })).toBe(10);
+  });
+});

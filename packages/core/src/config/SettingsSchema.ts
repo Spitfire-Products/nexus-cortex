@@ -123,6 +123,10 @@ export interface EnvironmentVariables {
   CORTEX_API_NETWORK_RETRY_MS?: string; // wall-clock budget (ms) for network-class API fault retries (R150; default 600000; 0 = attempt-capped legacy)
   CORTEX_BUDGET_VISIBILITY?: string; // 'false' silences the per-10%-band WALL BUDGET line and the continue-with-budget nudge (R151; default on when a turn deadline exists)
   CORTEX_BUDGET_CONTINUE_MIN_REMAINING?: string; // fraction of the wall budget that must remain for the open-items continue nudge (R151; default 0.5; 0 = off)
+  CORTEX_REASONING_EXHAUST_BACKOFF?: string; // 'false' disables the effort backoff after a truncated reasoning-only turn (R153; default on)
+  CORTEX_REASONING_EXHAUST_BACKOFF_TURNS?: string; // continuations run at the lowered effort after a reasoning-exhaustion turn (R153; default 2; 1..10)
+  CORTEX_BUDGET_CONTINUE_MAX_NUDGES?: string; // continue-with-budget nudges allowed per turn (R157; default 2; 0 = off; max 10)
+  CORTEX_BASH_OOM_PRIORITY?: string; // 'false' stops the Bash child shell from raising its own oom_score_adj to 1000 (R156; default on, linux only)
   CORTEX_HERDR_REPORTING?: string; // 'false' disables herdr lifecycle reporting inside a herdr pane (R145; default on when HERDR_ENV=1)
   CORTEX_HERDR_AGENT_NAME?: string; // agent label reported to herdr (R145; default cortex)
   CORTEX_TERMINAL_BACKEND?: string; // auto | herdr | tmux | detached — persistent-session backend under Bash/TmuxSession/CreateArtifact (R146; auto = herdr > tmux > detached)
@@ -457,6 +461,10 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_API_NETWORK_RETRY_MS: '',
   CORTEX_BUDGET_VISIBILITY: '',
   CORTEX_BUDGET_CONTINUE_MIN_REMAINING: '',
+  CORTEX_REASONING_EXHAUST_BACKOFF: '',
+  CORTEX_REASONING_EXHAUST_BACKOFF_TURNS: '',
+  CORTEX_BUDGET_CONTINUE_MAX_NUDGES: '',
+  CORTEX_BASH_OOM_PRIORITY: '',
   CORTEX_HERDR_REPORTING: '',
   CORTEX_HERDR_AGENT_NAME: '',
   CORTEX_TERMINAL_BACKEND: '',
@@ -918,6 +926,38 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_BUDGET_CONTINUE_MIN_REMAINING',
     displayName: 'Budget-continue minimum remaining fraction',
     description: 'A finish whose draft lists open, unverified or unexecuted items gets one continue-with-budget nudge per turn when at least this fraction of the wall budget remains (R151). Default 0.5; 0 disables the nudge.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_REASONING_EXHAUST_BACKOFF',
+    displayName: 'Reasoning-exhaustion effort backoff',
+    description: 'After a turn that spent the whole output budget on reasoning with no text or tool call (finish_reason length), run the next continuations one reasoning-effort level lower and say so to the model (R153, HB-REASONING-EXHAUSTION). Default on; \'false\' disables.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_REASONING_EXHAUST_BACKOFF_TURNS',
+    displayName: 'Reasoning-exhaustion backoff turns',
+    description: 'How many continuation calls run at the lowered reasoning effort after a reasoning-exhaustion turn (R153). Default 2.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_BUDGET_CONTINUE_MAX_NUDGES',
+    displayName: 'Budget-continue max nudges per turn',
+    description: 'How many times per turn an open-items finish with budget remaining may be nudged to continue; the second nudge is firmer (R157, R151 v2). Default 2; 0 disables.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_BASH_OOM_PRIORITY',
+    displayName: 'Bash child OOM priority',
+    description: 'The Bash tool child shell (and every descendant) raises its own oom_score_adj to 1000 so the kernel OOM killer takes it before the orchestrator; the model sees Killed instead of the session vanishing (R156, HB-OOM-CHILD-PRIORITY). Default on; linux only.',
     type: 'string',
     category: 'training',
     default: ''

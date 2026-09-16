@@ -62,6 +62,19 @@ const OPEN_ITEMS_RES = [
   /\bran out of (time|budget|iterations)\b/i,
   /\b(unverified|untested) (against|on|with|because)\b/i,
   /\bwould (need|require) (more|further|additional) (time|work|investigation|runs?)\b/i,
+  // R157 (2026-09-16, tb4-flash-v3 audit): explicit surrenders the first set missed — "TASK NOT COMPLETE", "I did not
+  // prove", "did not fully solve", "honest status report", "fails the task's real success criterion", "unable to".
+  /\bnot (fully )?(complete|completed|solved|done|finished)\b/i,
+  /\btask is not\b/i,
+  /\bdid not (fully )?(complete|solve|finish|prove|fix|implement|apply|achieve|reach|get|find|succeed)\b/i,
+  /\bcould not (prove|solve|find|get|make|reproduce|achieve|reach|meet|fix|determine|identify|resolve)\b/i,
+  /\bunable to\b/i,
+  /\bincomplete\b/i,
+  /\bhonest (status|account|bottom line|accounting|summary)\b/i,
+  /\bfails? (the|its|this) [^.]{0,40}(criterion|criteria|check|test|requirement|gate|bar|threshold)\b/i,
+  /\bnot (a |the )?(working|full|complete) (fix|solution|implementation|proof)\b/i,
+  /\bpartial(ly)? (solved|complete|implemented|working|solution)\b/i,
+  /\bstill (fails?|failing|missing|broken|wrong|incorrect)\b/i,
 ];
 
 export function detectOpenItemsText(finalText: string): boolean {
@@ -69,9 +82,18 @@ export function detectOpenItemsText(finalText: string): boolean {
   return OPEN_ITEMS_RES.some((re) => re.test(finalText));
 }
 
-export function buildBudgetContinueReminder(remainingMs: number, deadlineMs: number): string {
+export function buildBudgetContinueReminder(remainingMs: number, deadlineMs: number, nudgeIndex: number = 1): string {
   const h = (ms: number) => { const t = Math.max(0, Math.round(ms / 60000)); const hh = Math.floor(t / 60); const mm = t % 60; return hh > 0 ? `${hh}h${String(mm).padStart(2, '0')}m` : `${mm}m`; };
   const pct = deadlineMs > 0 ? Math.round((remainingMs / deadlineMs) * 100) : 0;
+  if (nudgeIndex >= 2) {
+    // R157: the re-armed nudge — the first one was answered with another open-items finish.
+    return (
+      `<system-reminder>This is the ${nudgeIndex === 2 ? 'second' : `${nudgeIndex}th`} time you are finishing with open, unverified ` +
+      `or failed items while ~${h(remainingMs)} of the ${h(deadlineMs)} wall budget (${pct}%) remains. Stopping now forfeits that ` +
+      `time. Pick the single most valuable open item, work it with tools until it is closed or you hit a hard limit you can ` +
+      `name, then re-check the task's own acceptance criteria before you finish. Do not summarize again; act.</system-reminder>`
+    );
+  }
   return (
     `<system-reminder>You are finishing with open, unverified or unexecuted items while ~${h(remainingMs)} of the ` +
     `${h(deadlineMs)} wall budget (${pct}%) remains. That budget is yours to spend: go back and CLOSE those items now — ` +

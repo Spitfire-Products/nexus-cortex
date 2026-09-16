@@ -81,7 +81,7 @@ import { resolveSubAgentTimeoutMs } from './subAgentTimeout.js';
 import { resolveHerdrReporting, HerdrReporter, sanitizeHerdrAgentName, type HerdrState } from './herdrReporter.js';
 import { runDelegateInHerdr, readSubAgentRuntimeLever, resolveSubAgentRuntime, type SubAgentRuntime } from './HerdrSubAgentRunner.js';
 import { randomBytes } from 'crypto';
-import { resolveTurnDeadlineMs, timeBudgetState, timeBudgetWarnNudge, resolveBudgetVisibility, resolveBudgetContinueMinRemaining, budgetBand, budgetVisibilityLine } from './timeBudget.js';
+import { resolveTurnDeadlineMs, timeBudgetState, timeBudgetWarnNudge, resolveBudgetVisibility, resolveBudgetContinueMinRemaining, resolveBudgetContinueMaxNudges, budgetBand, budgetVisibilityLine } from './timeBudget.js';
 import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
 import { ExactRepeatTracker, notePollResults } from '../training/loopLadder.js';
 
@@ -147,7 +147,10 @@ import { InitCortexContext, MemoryWrite, MemoryRecall } from '../tools/context-m
 import { ContextBudgetManager } from '../conversation/ContextBudgetManager.js';
 import { pruneAgedToolResults } from '../conversation/ToolResultPruner.js';
 import { detectTailRepetition, tailLoopGuardEnabled } from './tailRepetitionDetector.js';
-import { classifyEmptyResponse, emptyResponseNudge, nudgeForbidsTools } from './emptyResponseClassifier.js';
+import { classifyEmptyResponse, emptyResponseNudge, nudgeForbidsTools, emptyResponseNudgeFor, isReasoningExhaustion, stepDownEffort, resolveReasoningExhaustBackoff, type ReasoningEffortLevel, type EmptyResponseClassification } from './emptyResponseClassifier.js';
+import { isImageRejectionError, stripRejectedImages } from './imageRejectionHeal.js'; // R154
+import type { PreparedRequest } from '../adapters/GatewayTranslationLayer.js';
+import type { APIResponse } from './APIClient.js';
 
 // Phase 2.5: Tool Execution Integration
 import type { ExecutorRegistry } from '@nexus-cortex/types';
@@ -2108,6 +2111,9 @@ export class CortexOrchestrator {
     // Keep executing tools until model returns a text response
     let currentAssistantMessage = assistantMessage;
     let currentAssistantCanonicalMessage = assistantCanonicalMessage;
+    // R153: the stop reason of the LATEST response (continuation/retry/gate/synth refresh it) — the empty-response
+    // classifier used to read the turn's FIRST response, so a `length` cutoff on a continuation was never seen.
+    let lastStopReason: string | undefined = convertedResponse.stopReason;
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     let toolCallIteration = 0;
     // R137 HB-POLL-REPEAT-BREAKER: the exact-repeat breaker used to force-exit by overwriting
@@ -2170,7 +2176,9 @@ export class CortexOrchestrator {
     this.visionHandoffsThisTurn = 0;
     let endTurnNudges = 0;
     let surrenderNudgeUsed = false; // item 13b: one execute-your-plan nudge per turn
-    let budgetContinueNudgeUsed = false; // R151: one continue-with-budget nudge per turn
+    let budgetContinueNudges = 0; // R151/R157: continue-with-budget nudges this turn (bounded by CORTEX_BUDGET_CONTINUE_MAX_NUDGES)
+    const BUDGET_CONTINUE_MAX_NUDGES = resolveBudgetContinueMaxNudges();
+    this.reasoningBackoffRemaining = 0; // R153: backoff is per turn
     const END_TURN_MAX_NUDGES = 2;
     // EndTurn gate / Stages 1-3 are OPT-IN (default OFF). The line-number
     // fabrication they targeted is fully resolved at the root cause:
@@ -2287,7 +2295,7 @@ export class CortexOrchestrator {
           // for observability + a tailored nudge. D-E: stopReason distinguishes a max_tokens truncation
           // ('truncated' → continue) from a demand-final-answer.
           const emptyClass = (!hasVisibleText && !structuredOutputState?.result)
-            ? classifyEmptyResponse(currentAssistantCanonicalMessage.content, convertedResponse.stopReason, loopHasBudget)
+            ? classifyEmptyResponse(currentAssistantCanonicalMessage.content, lastStopReason, loopHasBudget)
             : null;
           const isEmptyContinueKind = EMPTY_TURN_CONTINUE && !!emptyClass
             && (emptyClass.kind === 'truncated' || emptyClass.kind === 'reasoning_only_active');
@@ -2300,6 +2308,7 @@ export class CortexOrchestrator {
               `[Orchestrator] Empty response detected (${emptyClass.kind}, hadReasoning=${emptyClass.hadReasoning}, iteration=${toolCallIteration}). ` +
               `Retrying once with explicit completion prompt.`,
             );
+            const exhaustionLevel = this.armReasoningBackoffIfExhausted(emptyClass, options.parameters?.reasoningEffort ?? (effectiveModel as any)?.reasoning?.effort, toolCallIteration, (currentAssistantMessage as any)?.usage?.outputTokens);
 
             // R26 (2026-05-15, surfaced by A/B benchmark): the empty assistant
             // turn is already in messageHistory. The retry below rebuilds the
@@ -2339,7 +2348,7 @@ export class CortexOrchestrator {
                 role: 'user',
                 content: [{
                   type: 'text',
-                  text: `<system-reminder>${emptyResponseNudge(emptyClass.kind)}${nudgeForbidsTools(emptyClass.kind) ? ' Do not call any more tools.' : ''}</system-reminder>`,
+                  text: `<system-reminder>${emptyResponseNudgeFor(emptyClass, exhaustionLevel)}${nudgeForbidsTools(emptyClass.kind) ? ' Do not call any more tools.' : ''}</system-reminder>`,
                 }],
               },
               timeline: {
@@ -2361,36 +2370,31 @@ export class CortexOrchestrator {
             // tool-result continuation path (lines ~1395-1466) but without
             // tool_result blocks.
             await this.ensureHistoryFitsModel(effectiveModel);
-            const retryCanonicalHistory = this.convertToCanonicalMessages([...this.messageHistory]);
-            const retryRequest = this.gatewayTranslation.prepareRequest(
-              retryCanonicalHistory,
-              toolsToUse,
-              effectiveModel,
-              {
-                temperature: options.parameters?.temperature,
-                maxTokens: options.parameters?.maxTokens,
-                topP: options.parameters?.topP,
-                reasoningEffort: options.parameters?.reasoningEffort,
-                stream: options.streaming,
-                staticSystemPrompt: this.currentStaticSystemPrompt, // R28
-                conversationId: this.currentConversationId, // R28b
-              },
-            );
-            if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
-              retryRequest.previousResponseId = this.lastResponseId;
-            }
-            retryRequest.conversationId = this.currentSessionId;
-
-            let retryApiResponse;
-            if (this.retryMiddleware) {
-              const retryResult = await this.retryMiddleware.executeWithRetry(
-                () => this.apiClient.sendRequest(retryRequest, effectiveModel),
-                'empty_response_retry',
+            const retryEffort = this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort; // R153 backoff > request param
+            const buildRetryRequest = (): PreparedRequest => { // R154: rebuildable for the image-rejection heal
+              const retryCanonicalHistory = this.convertToCanonicalMessages([...this.messageHistory]);
+              const req = this.gatewayTranslation.prepareRequest(
+                retryCanonicalHistory,
+                toolsToUse,
+                effectiveModel,
+                {
+                  temperature: options.parameters?.temperature,
+                  maxTokens: options.parameters?.maxTokens,
+                  topP: options.parameters?.topP,
+                  reasoningEffort: retryEffort,
+                  stream: options.streaming,
+                  staticSystemPrompt: this.currentStaticSystemPrompt, // R28
+                  conversationId: this.currentConversationId, // R28b
+                },
               );
-              retryApiResponse = retryResult.result;
-            } else {
-              retryApiResponse = await this.apiClient.sendRequest(retryRequest, effectiveModel);
-            }
+              if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
+                req.previousResponseId = this.lastResponseId;
+              }
+              req.conversationId = this.currentSessionId;
+              return req;
+            };
+
+            const retryApiResponse = await this.sendWithImageHeal(buildRetryRequest, effectiveModel, 'empty_response_retry');
 
             const retryConverted = this.gatewayTranslation.convertResponse(
               retryApiResponse.data,
@@ -2435,6 +2439,7 @@ export class CortexOrchestrator {
               // Update current pointer so the loop re-evaluates with new content.
               currentAssistantMessage = retryAssistantMessage as any;
               currentAssistantCanonicalMessage = retryAssistantCanonical;
+              lastStopReason = retryConverted.stopReason; // R153
               continue;
             }
           }
@@ -2518,7 +2523,7 @@ export class CortexOrchestrator {
                   temperature: options.parameters?.temperature,
                   maxTokens: options.parameters?.maxTokens,
                   topP: options.parameters?.topP,
-                  reasoningEffort: options.parameters?.reasoningEffort,
+                  reasoningEffort: this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort, // R153 backoff > request param
                   stream: options.streaming,
                   staticSystemPrompt: this.currentStaticSystemPrompt, // R28
                   conversationId: this.currentConversationId, // R28b
@@ -2579,6 +2584,7 @@ export class CortexOrchestrator {
                 await this.historyStore.appendMessage(this.currentSessionId, inactionAssistantMessage);
                 currentAssistantMessage = inactionAssistantMessage as any;
                 currentAssistantCanonicalMessage = inactionAssistantCanonical;
+                lastStopReason = inactionConverted.stopReason; // R153
                 continue;
               }
             }
@@ -2632,7 +2638,7 @@ export class CortexOrchestrator {
           const budgetRemainingFrac = TURN_DEADLINE_MS > 0 ? Math.max(0, 1 - (Date.now() - loopStartMs) / TURN_DEADLINE_MS) : 0;
           const budgetContinueUnsatisfied =
             !surrenderUnsatisfied && budgetContinueMin > 0 && TURN_DEADLINE_MS > 0 && resolveBudgetVisibility() &&
-            ev.usedTools && !budgetContinueNudgeUsed && budgetRemainingFrac >= budgetContinueMin &&
+            ev.usedTools && budgetContinueNudges < BUDGET_CONTINUE_MAX_NUDGES && budgetRemainingFrac >= budgetContinueMin &&
             detectOpenItemsText(surrenderDraftText);
           if (endTurnGateUnsatisfied && endTurnNudges >= END_TURN_MAX_NUDGES) {
             const fallbackReason = !ev.endTurnCalled ? 'missing-EndTurn' : 'coordinate-violation';
@@ -2664,16 +2670,16 @@ export class CortexOrchestrator {
               }
               console.warn('[Orchestrator] Surrender guard: remaining-steps finish detected — execute-your-plan nudge.');
             } else if (budgetContinueUnsatisfied) {
-              budgetContinueNudgeUsed = true;
+              budgetContinueNudges++;
               const store = this.getDecisionStore();
               if (store) {
                 void store.recordEvent({
                   sessionId: this.currentSessionId ?? 'unknown',
                   kind: 'budget_continue_nudge',
-                  detail: { iteration: toolCallIteration, remainingFrac: Number(budgetRemainingFrac.toFixed(3)), deadlineMs: TURN_DEADLINE_MS, chars: surrenderDraftText.length },
+                  detail: { iteration: toolCallIteration, remainingFrac: Number(budgetRemainingFrac.toFixed(3)), deadlineMs: TURN_DEADLINE_MS, chars: surrenderDraftText.length, nudge: budgetContinueNudges, maxNudges: BUDGET_CONTINUE_MAX_NUDGES },
                 }).catch(() => {});
               }
-              console.warn(`[Orchestrator] Budget guard (R151): open-items finish with ${Math.round(budgetRemainingFrac * 100)}% of the wall budget left — continue-with-budget nudge.`);
+              console.warn(`[Orchestrator] Budget guard (R151): open-items finish with ${Math.round(budgetRemainingFrac * 100)}% of the wall budget left — continue-with-budget nudge ${budgetContinueNudges}/${BUDGET_CONTINUE_MAX_NUDGES}.`);
             } else {
               endTurnNudges++;
             }
@@ -2704,7 +2710,7 @@ export class CortexOrchestrator {
             const endTurnReminderText = surrenderUnsatisfied
               ? SURRENDER_REMINDER
               : budgetContinueUnsatisfied
-              ? buildBudgetContinueReminder(TURN_DEADLINE_MS - (Date.now() - loopStartMs), TURN_DEADLINE_MS)
+              ? buildBudgetContinueReminder(TURN_DEADLINE_MS - (Date.now() - loopStartMs), TURN_DEADLINE_MS, budgetContinueNudges)
               : !ev.endTurnCalled
               ? buildMissingEndTurnReminder(ev)
               : ('<system-reminder>EndTurn REJECTED. Your drafted answer asserts line number(s) ' +
@@ -2753,7 +2759,7 @@ export class CortexOrchestrator {
                 temperature: options.parameters?.temperature,
                 maxTokens: options.parameters?.maxTokens,
                 topP: options.parameters?.topP,
-                reasoningEffort: options.parameters?.reasoningEffort,
+                reasoningEffort: this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort, // R153 backoff > request param
                 stream: options.streaming,
                 staticSystemPrompt: this.currentStaticSystemPrompt,
                 conversationId: this.currentConversationId,
@@ -2816,6 +2822,7 @@ export class CortexOrchestrator {
               await this.historyStore.appendMessage(this.currentSessionId, gateAssistantMessage);
               currentAssistantMessage = gateAssistantMessage as any;
               currentAssistantCanonicalMessage = gateAssistantCanonical;
+              lastStopReason = gateConverted.stopReason; // R153
               continue;
             }
           }
@@ -3454,70 +3461,59 @@ export class CortexOrchestrator {
       const continuationHistorySource = canSliceInput
         ? this.messageHistory.slice(this.messageCountAtLastResponse)
         : this.messageHistory;
-      const continuationCanonicalHistory = this.convertToCanonicalMessages([...continuationHistorySource]);
-
       // §13-B2: re-evaluate the forced mentor choice on THIS continuation — thrash develops HERE
       // (turnNumber ≥ 1 with accumulating failing outcomes), NOT on the initial request (turnNumber 0
       // where the window is empty). Attaching it only to the initial assembly made the force unreachable.
       const continuationForcedChoice = await this.resolveForcedMentorChoice(toolsToUse, toolCallIteration);
+      // R153: resolve the effort ONCE (the backoff/pulse counters are consumed per call, not per build).
+      const continuationEffort = this.consumeReasoningBackoff() ?? this.consumeEffortPulse() ?? options.parameters?.reasoningEffort; // R153 backoff > effort pulse > request param > card
 
-      const continuationRequest = this.gatewayTranslation.prepareRequest(
-        continuationCanonicalHistory,
-        toolsToUse,
-        effectiveModel,
-        {
-          temperature: options.parameters?.temperature,
-          maxTokens: options.parameters?.maxTokens,
-          topP: options.parameters?.topP,
-          reasoningEffort: this.consumeEffortPulse() ?? options.parameters?.reasoningEffort, // effort pulse > request param > card
-          stream: options.streaming,
-          staticSystemPrompt: this.currentStaticSystemPrompt, // R28
-          conversationId: this.currentConversationId, // R28b
-          toolChoice: continuationForcedChoice // §13-B2 forced mentor tool_choice (continuation)
+      // R154: the request is built by a closure so the image-rejection heal can rebuild it from the
+      // (stubbed) history and retry once. Byte-identical request when no heal is needed.
+      const buildContinuationRequest = (): PreparedRequest => {
+        const continuationCanonicalHistory = this.convertToCanonicalMessages([...continuationHistorySource]);
+        const req = this.gatewayTranslation.prepareRequest(
+          continuationCanonicalHistory,
+          toolsToUse,
+          effectiveModel,
+          {
+            temperature: options.parameters?.temperature,
+            maxTokens: options.parameters?.maxTokens,
+            topP: options.parameters?.topP,
+            reasoningEffort: continuationEffort,
+            stream: options.streaming,
+            staticSystemPrompt: this.currentStaticSystemPrompt, // R28
+            conversationId: this.currentConversationId, // R28b
+            toolChoice: continuationForcedChoice // §13-B2 forced mentor tool_choice (continuation)
+          }
+        );
+
+        // Stateful Responses API: chain with previous_response_id for server-side reasoning preservation
+        if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
+          req.previousResponseId = this.lastResponseId;
         }
-      );
 
-      // Stateful Responses API: chain with previous_response_id for server-side reasoning preservation
-      if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
-        continuationRequest.previousResponseId = this.lastResponseId;
-      }
+        // Cache-routing conversation id
+        req.conversationId = this.currentSessionId;
+
+        // PTC: Override tools with defer_loading + PTC system tools on continuation
+        if (isPTCEnabled && toolsToUse && toolsToUse.length > 0) {
+          req.tools = this.gatewayTranslation.prepareToolsWithPTC(toolsToUse, effectiveModel);
+          (req.parameters as any).enablePTC = true;
+        }
+        return req;
+      };
 
       if (canSliceInput && this.config.debug) {
         console.log(`[Orchestrator Phase 2.5] Input-sliced for previous_response_id: sent ${continuationHistorySource.length}/${this.messageHistory.length} messages`);
-      }
-
-      // Cache-routing conversation id
-      continuationRequest.conversationId = this.currentSessionId;
-
-      // PTC: Override tools with defer_loading + PTC system tools on continuation
-      if (isPTCEnabled && toolsToUse && toolsToUse.length > 0) {
-        continuationRequest.tools = this.gatewayTranslation.prepareToolsWithPTC(toolsToUse, effectiveModel);
-        (continuationRequest.parameters as any).enablePTC = true;
       }
 
       if (this.config.debug) {
         console.log(`[Orchestrator Phase 2.5] Sending tool results back to model for continuation...`);
       }
 
-      // Send continuation request with retry logic
-      let continuationApiResponse;
-      if (this.retryMiddleware) {
-        const retryResult = await this.retryMiddleware.executeWithRetry(
-          () => this.apiClient.sendRequest(continuationRequest, effectiveModel),
-          'continuation_api_call'
-        );
-
-        continuationApiResponse = retryResult.result;
-
-        // Log retry information if retries occurred
-        if (this.config.debug && retryResult.attemptCount > 1) {
-          console.log(`[Orchestrator] Continuation API call succeeded after ${retryResult.attemptCount} attempts`);
-          console.log(`[Orchestrator] Total retry time: ${retryResult.totalDelayMs}ms`);
-        }
-      } else {
-        // Fallback: direct call if middleware not available
-        continuationApiResponse = await this.apiClient.sendRequest(continuationRequest, effectiveModel);
-      }
+      // Send continuation request with retry logic (network ladder inside; image-rejection heal around it — R154)
+      const continuationApiResponse = await this.sendWithImageHeal(buildContinuationRequest, effectiveModel, 'continuation_api_call');
 
       // Convert continuation response
       const continuationConvertedResponse = this.gatewayTranslation.convertResponse(
@@ -3594,6 +3590,7 @@ export class CortexOrchestrator {
           // Update current message for next iteration
           currentAssistantMessage = continuationAssistantMessage;
           currentAssistantCanonicalMessage = continuationAssistantCanonicalMessage;
+          lastStopReason = continuationConvertedResponse.stopReason; // R153
 
           // Phase 2.5 Day 3: Stop if too many errors accumulated
           if (totalToolErrors >= MAX_CONSECUTIVE_ERRORS) {
@@ -3788,43 +3785,38 @@ export class CortexOrchestrator {
         await this.historyStore.appendMessage(this.currentSessionId, synthUserMessage);
 
         await this.ensureHistoryFitsModel(effectiveModel);
-        const synthCanonicalHistory = this.convertToCanonicalMessages([...this.messageHistory]);
-        const synthRequest = this.gatewayTranslation.prepareRequest(
-          synthCanonicalHistory,
-          // Tools suppressed — the model MUST produce text, not call more tools.
-          // NOTE (structured-output constraint, 2026-08-02): this is R29a's
-          // plain-text escape hatch for tool-loop EXHAUSTION (30+ calls). A
-          // jsonSchema turn that gets here degrades to text; StructuredOutput
-          // is deliberately NOT re-forced (this terminal synth turn has no
-          // tool-interception, so a StructuredOutput call would go uncaptured —
-          // worse than the graceful text fallback + structuredOutput.valid=false).
-          [],
-          effectiveModel,
-          {
-            temperature: options.parameters?.temperature,
-            maxTokens: options.parameters?.maxTokens,
-            topP: options.parameters?.topP,
-            reasoningEffort: options.parameters?.reasoningEffort,
-            stream: options.streaming,
-            staticSystemPrompt: this.currentStaticSystemPrompt, // R28
-            conversationId: this.currentConversationId, // R28b
-          },
-        );
-        if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
-          synthRequest.previousResponseId = this.lastResponseId;
-        }
-        synthRequest.conversationId = this.currentSessionId;
-
-        let synthApiResponse;
-        if (this.retryMiddleware) {
-          const synthResult = await this.retryMiddleware.executeWithRetry(
-            () => this.apiClient.sendRequest(synthRequest, effectiveModel),
-            'r29a_synthesis_retry',
+        const synthEffort = this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort; // R153 backoff > request param
+        const buildSynthRequest = (): PreparedRequest => { // R154: rebuildable for the image-rejection heal
+          const synthCanonicalHistory = this.convertToCanonicalMessages([...this.messageHistory]);
+          const req = this.gatewayTranslation.prepareRequest(
+            synthCanonicalHistory,
+            // Tools suppressed — the model MUST produce text, not call more tools.
+            // NOTE (structured-output constraint, 2026-08-02): this is R29a's
+            // plain-text escape hatch for tool-loop EXHAUSTION (30+ calls). A
+            // jsonSchema turn that gets here degrades to text; StructuredOutput
+            // is deliberately NOT re-forced (this terminal synth turn has no
+            // tool-interception, so a StructuredOutput call would go uncaptured —
+            // worse than the graceful text fallback + structuredOutput.valid=false).
+            [],
+            effectiveModel,
+            {
+              temperature: options.parameters?.temperature,
+              maxTokens: options.parameters?.maxTokens,
+              topP: options.parameters?.topP,
+              reasoningEffort: synthEffort,
+              stream: options.streaming,
+              staticSystemPrompt: this.currentStaticSystemPrompt, // R28
+              conversationId: this.currentConversationId, // R28b
+            },
           );
-          synthApiResponse = synthResult.result;
-        } else {
-          synthApiResponse = await this.apiClient.sendRequest(synthRequest, effectiveModel);
-        }
+          if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
+            req.previousResponseId = this.lastResponseId;
+          }
+          req.conversationId = this.currentSessionId;
+          return req;
+        };
+
+        const synthApiResponse = await this.sendWithImageHeal(buildSynthRequest, effectiveModel, 'r29a_synthesis_retry');
 
         const synthConverted = this.gatewayTranslation.convertResponse(
           synthApiResponse.data,
@@ -3872,6 +3864,7 @@ export class CortexOrchestrator {
           }
           currentAssistantMessage = synthAssistantMessage as any;
           currentAssistantCanonicalMessage = synthAssistantCanonical;
+          lastStopReason = synthConverted.stopReason; // R153
         }
       } catch (synthErr: any) {
         // Synthesis is best-effort: a failure must not crash the turn. Return
@@ -4544,6 +4537,7 @@ export class CortexOrchestrator {
     }
 
     let currentAssistantCanonicalMessage = convertedResponse.messages[0]!;
+    let lastStopReason: string | undefined = convertedResponse.stopReason; // R153 (see non-streaming loop)
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     const assistantMessageId = currentAssistantCanonicalMessage.uuid;
 
@@ -4702,7 +4696,7 @@ export class CortexOrchestrator {
           && (TURN_DEADLINE_MS <= 0 || (Date.now() - loopStartMs) < 0.6 * TURN_DEADLINE_MS)
           && toolCallIteration < 0.6 * MAX_TOOL_ITERATIONS;
         const emptyClass = !hasVisibleText
-          ? classifyEmptyResponse(currentAssistantCanonicalMessage.content, undefined, loopHasBudget)
+          ? classifyEmptyResponse(currentAssistantCanonicalMessage.content, lastStopReason, loopHasBudget)
           : null;
         const isEmptyContinueKind = EMPTY_TURN_CONTINUE && !!emptyClass
           && (emptyClass.kind === 'truncated' || emptyClass.kind === 'reasoning_only_active');
@@ -4715,6 +4709,7 @@ export class CortexOrchestrator {
             `[Orchestrator Streaming] R32/R18b: Empty response (${emptyClass.kind}, iteration=${toolCallIteration}). ` +
             `Retrying with tools preserved.`,
           );
+          const exhaustionLevel = this.armReasoningBackoffIfExhausted(emptyClass, options.parameters?.reasoningEffort ?? (effectiveModel as any)?.reasoning?.effort, toolCallIteration, (this.messageHistory[this.messageHistory.length - 1] as any)?.usage?.outputTokens);
 
           // R26 repair: ensure the empty assistant turn has content (xAI hard-400s on empty)
           for (let i = this.messageHistory.length - 1; i >= 0; i--) {
@@ -4740,7 +4735,7 @@ export class CortexOrchestrator {
               role: 'user',
               content: [{
                 type: 'text',
-                text: `<system-reminder>${emptyResponseNudge(emptyClass.kind)}${nudgeForbidsTools(emptyClass.kind) ? ' Do not call any more tools.' : ''}</system-reminder>`,
+                text: `<system-reminder>${emptyResponseNudgeFor(emptyClass, exhaustionLevel)}${nudgeForbidsTools(emptyClass.kind) ? ' Do not call any more tools.' : ''}</system-reminder>`,
               }],
             },
             timeline: {
@@ -4769,7 +4764,7 @@ export class CortexOrchestrator {
                 temperature: options.parameters?.temperature,
                 maxTokens: options.parameters?.maxTokens,
                 topP: options.parameters?.topP,
-                reasoningEffort: options.parameters?.reasoningEffort,
+                reasoningEffort: this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort, // R153 backoff > request param
                 stream: false,
                 staticSystemPrompt: this.currentStaticSystemPrompt,
                 conversationId: this.currentConversationId,
@@ -4832,6 +4827,7 @@ export class CortexOrchestrator {
               await this.historyStore.appendMessage(this.currentSessionId, retryAssistantMessage);
 
               currentAssistantCanonicalMessage = retryAssistantCanonical;
+              lastStopReason = retryConverted.stopReason; // R153
 
               // Yield any text from the retry as streaming chunks
               const retryText = (retryAssistantCanonical.content as any[])
@@ -4924,7 +4920,7 @@ export class CortexOrchestrator {
                   temperature: options.parameters?.temperature,
                   maxTokens: options.parameters?.maxTokens,
                   topP: options.parameters?.topP,
-                  reasoningEffort: options.parameters?.reasoningEffort,
+                  reasoningEffort: this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort, // R153 backoff > request param
                   stream: false,
                   staticSystemPrompt: this.currentStaticSystemPrompt,
                   conversationId: this.currentConversationId,
@@ -4985,6 +4981,7 @@ export class CortexOrchestrator {
                 await this.historyStore.appendMessage(this.currentSessionId, retryAssistantMessage);
 
                 currentAssistantCanonicalMessage = retryAssistantCanonical;
+              lastStopReason = retryConverted.stopReason; // R153
 
                 const retryText = (retryAssistantCanonical.content as any[])
                   .filter((b: any) => b && b.type === 'text' && typeof b.text === 'string')
@@ -5464,7 +5461,7 @@ export class CortexOrchestrator {
             temperature: options.parameters?.temperature,
             maxTokens: options.parameters?.maxTokens,
             topP: options.parameters?.topP,
-            reasoningEffort: this.consumeEffortPulse() ?? options.parameters?.reasoningEffort, // effort pulse > request param > card
+            reasoningEffort: this.consumeReasoningBackoff() ?? this.consumeEffortPulse() ?? options.parameters?.reasoningEffort, // R153 backoff > effort pulse > request param > card
             stream: true, // STREAMING continuation
             staticSystemPrompt: this.currentStaticSystemPrompt, // R28
             conversationId: this.currentConversationId, // R28b
@@ -5555,8 +5552,9 @@ export class CortexOrchestrator {
 
           const finishReason = continuationProviderMessage.choices[0]?.finish_reason;
           if (finishReason === 'length') {
-            console.warn(`[Orchestrator Streaming] Chat Completions API hit max tokens. Stopping tool loop.`);
-            break;
+            // R153: do NOT leave the loop — the empty-response classifier below sees `truncated` (via lastStopReason)
+            // and continues with the effort backoff; a partial text answer simply ends the turn as before.
+            console.warn(`[Orchestrator Streaming] Chat Completions API hit max tokens (finish_reason=length) — handing to the truncation path.`);
           }
         }
 
@@ -5623,6 +5621,7 @@ export class CortexOrchestrator {
 
         // Update for next iteration
         currentAssistantCanonicalMessage = continuationAssistantCanonicalMessage;
+          lastStopReason = continuationConvertedResponse.stopReason; // R153
 
         // Check if continuation has more tool uses
         const continuationToolUses = continuationAssistantCanonicalMessage.content
@@ -5845,7 +5844,7 @@ export class CortexOrchestrator {
             temperature: options.parameters?.temperature,
             maxTokens: options.parameters?.maxTokens,
             topP: options.parameters?.topP,
-            reasoningEffort: options.parameters?.reasoningEffort,
+            reasoningEffort: this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort, // R153 backoff > request param
             stream: false,
             staticSystemPrompt: this.currentStaticSystemPrompt, // R28
             conversationId: this.currentConversationId, // R28b
@@ -5911,6 +5910,7 @@ export class CortexOrchestrator {
           await this.historyStore.appendMessage(this.currentSessionId, synthAssistantMessage);
           this.sessionTimeline.recordMessage(synthAssistantMessage.uuid, 'assistant');
           currentAssistantCanonicalMessage = synthCanonical;
+          lastStopReason = synthConverted.stopReason; // R153
           if (synthConverted.usage) {
             this.cacheMetricsAccumulator.addUsage(synthConverted.usage, effectiveModel.provider);
             this.noteRequestUsage(synthConverted.usage); // R132
@@ -9498,6 +9498,62 @@ export class CortexOrchestrator {
     if (this.effortPulseRemaining <= 0) return undefined;
     this.effortPulseRemaining -= 1;
     return (process.env.CORTEX_EFFORT_PULSE_LEVEL || 'high') as 'low' | 'medium' | 'high';
+  }
+
+  /** R153 HB-REASONING-EXHAUSTION: continuations left at a LOWERED reasoning effort after a truncated
+   *  reasoning-only turn (output cap hit, nothing delivered). Takes precedence over the effort pulse. */
+  private reasoningBackoffRemaining = 0;
+  private reasoningBackoffLevel: ReasoningEffortLevel | undefined;
+
+  private consumeReasoningBackoff(): ReasoningEffortLevel | undefined {
+    if (this.reasoningBackoffRemaining <= 0) return undefined;
+    this.reasoningBackoffRemaining -= 1;
+    return this.reasoningBackoffLevel;
+  }
+
+  /** Arms the backoff when the empty turn is a reasoning exhaustion; returns the level the next calls will use. */
+  private armReasoningBackoffIfExhausted(
+    cls: EmptyResponseClassification | null,
+    effectiveEffort: string | undefined,
+    iteration: number,
+    outputTokens?: number,
+  ): ReasoningEffortLevel | undefined {
+    if (!isReasoningExhaustion(cls)) return undefined;
+    const cfg = resolveReasoningExhaustBackoff();
+    const store = this.getDecisionStore();
+    if (!cfg.enabled) {
+      console.warn(`[Orchestrator] R153: reasoning exhaustion at iteration ${iteration} (output cap hit, nothing delivered) — backoff disabled (CORTEX_REASONING_EXHAUST_BACKOFF=false).`);
+      if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'reasoning_exhaustion', detail: { iteration, outputTokens, backoff: false } }).catch(() => {});
+      return undefined;
+    }
+    // A repeat exhaustion while a backoff is already armed steps down AGAIN (high → medium → low).
+    const base = this.reasoningBackoffRemaining > 0 && this.reasoningBackoffLevel ? this.reasoningBackoffLevel : effectiveEffort;
+    const level = stepDownEffort(base);
+    this.reasoningBackoffLevel = level;
+    this.reasoningBackoffRemaining = cfg.turns;
+    console.warn(`[Orchestrator] R153: reasoning exhaustion at iteration ${iteration} (${outputTokens ?? '?'} output tokens, no text/tool) — next ${cfg.turns} continuation(s) at effort '${level}' (was '${base ?? 'card default'}').`);
+    if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'reasoning_exhaustion', detail: { iteration, outputTokens, from: base ?? null, level, turns: cfg.turns } }).catch(() => {});
+    return level;
+  }
+
+  /** R154 HB-IMAGE-REJECTION-HEAL: send a request built from messageHistory; if the provider rejects an image
+   *  block (4xx "unsupported image"), stub every user-side image block and retry the SAME build once. */
+  private async sendWithImageHeal(build: () => PreparedRequest, model: ModelConfig, label: string): Promise<APIResponse> {
+    const send = async (req: PreparedRequest): Promise<APIResponse> => this.retryMiddleware
+      ? (await this.retryMiddleware.executeWithRetry(() => this.apiClient.sendRequest(req, model), label)).result
+      : this.apiClient.sendRequest(req, model);
+    try {
+      return await send(build());
+    } catch (err: any) {
+      if (!isImageRejectionError(err)) throw err;
+      const reason = String(err?.message ?? err).slice(0, 300);
+      const stripped = stripRejectedImages(this.messageHistory, reason);
+      if (stripped === 0) throw err;
+      console.warn(`[Orchestrator] R154: provider rejected an image block on ${label} — stubbed ${stripped} image block(s) in history and retrying once.`);
+      const store = this.getDecisionStore();
+      if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'image_rejection_heal', detail: { stripped, label, reason: reason.slice(0, 160) } }).catch(() => {});
+      return await send(build());
+    }
   }
 
   /** Honored AskForAdvice consults per session (rate-limit + rung state; persists across turns). */

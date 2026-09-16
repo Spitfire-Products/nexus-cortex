@@ -81,6 +81,15 @@ images as text and fired three false compactions (R149). Both fixed and released
 confirmed zero false compactions on the three image sessions and clean full-budget agent phases on every lane the blip had killed. Ledger:
 `.cortex/bench/r-tb4-flash-v2-2026-09-14.md` §10.
 
+Second repeat (09-15, `tinkersnot/tb2-t4z2-ctl`, ledger `.cortex/bench/r-tb4-flash-v3-2026-09-15.md`): same configuration on nexus-cortex
+4.108.21 (R149–R151 + Bash doctrine edits): **11/66 = 16.7%** (Wilson 9.6–27.4), 0 errored rows. Paired against the 4.108.19 run: 4 pass
+both, 7 only here, 10 only there (p = 0.63). Two repeats of the high configuration give a mean of 18.9% pass@1, 4/66 stable, 21/66 ever
+passed. Tokens $26 as billed (+29% at equal rate for the same pass count), host ~$1.30. Seven sessions were ended by a 27-minute provider
+incident (null completion bodies, fixed as R152 in 4.108.22), two of them on tasks the prior run passed; the clean number is bounded
+at 11–13/66. The budget-visibility line (R151) fired in every session and the continue nudge 13 times, but the median failing session still
+ended at 40 minutes of an 8-hour budget: the mechanism is live and does not change early finishing. The harness changes since the
+first high run did not move the score; the next spend is a third repeat plus a 7-task patch cell on 4.108.22, not another lever.
+
 ## 3. Methodology and disclosures
 - pass@1 = mean over independent full passes; a single-run delta under ~5 points on TB2.1 is inside the measured run-to-run band (32 of 89 tasks flip).
 - Sterile installs: the published npm package, no private memory or skills, no web tools (TB has no browse dependency), the model's own key only.

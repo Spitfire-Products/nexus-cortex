@@ -45,3 +45,40 @@ describe('HB-READONLY-WORKDIR (4.108.6, R131) — resolveCortexStateDir', () => 
     rmSync(p, { recursive: true, force: true });
   });
 });
+
+// R155 HB-STATE-DIR-GIT-EXCLUDE (2026-09-16): runtime state under <project>/.cortex must not ride into git.
+import { readFileSync, writeFileSync as wfs } from 'fs';
+import { ensureGitExcludesRuntimeState, CORTEX_RUNTIME_STATE_EXCLUDES } from '../stateDir';
+describe('R155 ensureGitExcludesRuntimeState', () => {
+  beforeEach(() => resetCortexStateDirCache());
+  it('appends the runtime-state paths to .git/info/exclude once, and resolveCortexStateDir triggers it', () => {
+    const p = mkdtempSync(join(tmpdir(), 'cortex-git-'));
+    mkdirSync(join(p, '.git'));
+    const r = resolveCortexStateDir(p, {} as any);
+    expect(r.dir).toBe(join(p, '.cortex'));
+    const ex = readFileSync(join(p, '.git', 'info', 'exclude'), 'utf8');
+    for (const line of CORTEX_RUNTIME_STATE_EXCLUDES) expect(ex).toContain(line);
+    expect(ex).toContain('R155');
+    expect(ensureGitExcludesRuntimeState(p)).toBe(false); // idempotent
+    expect(readFileSync(join(p, '.git', 'info', 'exclude'), 'utf8')).toBe(ex);
+    rmSync(p, { recursive: true, force: true });
+  });
+  it('preserves an existing exclude file and follows a worktree gitdir file', () => {
+    const p = mkdtempSync(join(tmpdir(), 'cortex-wt-'));
+    const real = mkdtempSync(join(tmpdir(), 'cortex-gitdir-'));
+    mkdirSync(join(real, 'info'));
+    wfs(join(real, 'info', 'exclude'), '*.log');
+    wfs(join(p, '.git'), `gitdir: ${real}\n`);
+    expect(ensureGitExcludesRuntimeState(p)).toBe(true);
+    const ex = readFileSync(join(real, 'info', 'exclude'), 'utf8');
+    expect(ex.startsWith('*.log\n')).toBe(true);
+    expect(ex).toContain('.cortex/sessions/');
+    rmSync(p, { recursive: true, force: true }); rmSync(real, { recursive: true, force: true });
+  });
+  it('is a no-op outside a git repo', () => {
+    const p = mkdtempSync(join(tmpdir(), 'cortex-nogit-'));
+    expect(ensureGitExcludesRuntimeState(p)).toBe(false);
+    expect(existsSync(join(p, '.git'))).toBe(false);
+    rmSync(p, { recursive: true, force: true });
+  });
+});

@@ -9,7 +9,7 @@
  *
  * Order: `CORTEX_STATE_DIR` (explicit override) → `<project>/.cortex` → `~/.cortex/projects/<hash>` → `<tmpdir>/nexus-cortex/<hash>`.
  */
-import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, unlinkSync, readFileSync, appendFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { homedir, tmpdir } from 'os';
 import { createHash } from 'crypto';
@@ -75,6 +75,7 @@ export function resolveCortexStateDir(projectPath?: string, env: NodeJS.ProcessE
     if (err === null) {
       const isPrimary = c.label === 'project' || c.label === 'CORTEX_STATE_DIR';
       result = { dir: c.dir, fallback: !isPrimary, reason: isPrimary ? undefined : reason, projectPath: project };
+      if (c.label === 'project') ensureGitExcludesRuntimeState(project);
       break;
     }
     if (c.label === 'project') reason = err;
@@ -89,6 +90,52 @@ export function resolveCortexStateDir(projectPath?: string, env: NodeJS.ProcessE
   }
   cache.set(project, result);
   return result;
+}
+
+/** Runtime-state paths under <project>/.cortex that must never ride into the project's git history. */
+export const CORTEX_RUNTIME_STATE_EXCLUDES = [
+  '.cortex/sessions/',
+  '.cortex/artifacts/',
+  '.cortex/training/',
+  '.cortex/decisions.jsonl',
+  '.cortex/memory/',
+  '.cortex/projects/',
+  '.cortex/.write-probe-*',
+];
+const GIT_EXCLUDE_MARKER = '# nexus-cortex runtime state (R155) — auto-added; CORTEX.md stays trackable';
+
+/**
+ * R155 HB-STATE-DIR-GIT-EXCLUDE (2026-09-16, tb4-flash-v3 nextjs-performance): the state dir sits inside the
+ * project's working tree, so a model (or a person) running `git add -A` commits live session files and a later
+ * `git checkout <rev> -- .` restores a STALE session over the live one — the trajectory then starts mid-session.
+ * `.git/info/exclude` is the repo-local ignore file that never touches the user's tracked `.gitignore`. Best-effort
+ * and idempotent (marker line); a worktree's `.git` FILE is honoured by resolving its gitdir. Does not cover
+ * `git clean -x` (which removes ignored files by design).
+ */
+export function ensureGitExcludesRuntimeState(project: string): boolean {
+  try {
+    const dotGit = join(project, '.git');
+    if (!existsSync(dotGit)) return false;
+    let gitDir = dotGit;
+    if (statSync(dotGit).isFile()) {
+      const m = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, 'utf8'));
+      if (!m) return false;
+      gitDir = m[1]!.trim();
+      if (!gitDir.startsWith('/')) gitDir = join(project, gitDir);
+    }
+    const infoDir = join(gitDir, 'info');
+    const excludePath = join(infoDir, 'exclude');
+    const current = existsSync(excludePath) ? readFileSync(excludePath, 'utf8') : '';
+    if (current.includes(GIT_EXCLUDE_MARKER)) return false;
+    mkdirSync(infoDir, { recursive: true });
+    const missing = CORTEX_RUNTIME_STATE_EXCLUDES.filter((l) => !current.split(/\r?\n/).includes(l));
+    if (missing.length === 0) return false;
+    const lead = current.length && !current.endsWith('\n') ? '\n' : '';
+    appendFileSync(excludePath, `${lead}${GIT_EXCLUDE_MARKER}\n${missing.join('\n')}\n`);
+    return true;
+  } catch {
+    return false; // never let a git-metadata hiccup break state-dir resolution
+  }
 }
 
 /** Test hook: forget memoized decisions. */

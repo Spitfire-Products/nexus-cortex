@@ -110,3 +110,40 @@ describe('classifyEmptyResponse', () => {
     expect(nudgeForbidsTools('reasoning_only_active')).toBe(false);
   });
 });
+
+// R153 HB-REASONING-EXHAUSTION (2026-09-16): a truncated reasoning-only turn is an exhaustion → effort backoff.
+import { isReasoningExhaustion, stepDownEffort, resolveReasoningExhaustBackoff, reasoningExhaustionNudge, emptyResponseNudgeFor } from '../emptyResponseClassifier.js';
+
+describe('R153 reasoning exhaustion', () => {
+  const exhausted = classifyEmptyResponse([{ type: 'thinking', thinking: 'x'.repeat(200) }], 'length', true);
+  it('classifies as truncated (not reasoning_only_active) when the latest stop reason is length', () => {
+    expect(exhausted.kind).toBe('truncated');
+    expect(isReasoningExhaustion(exhausted)).toBe(true);
+  });
+  it('is not an exhaustion when the cutoff carried a tool call or text, or the stop reason is normal', () => {
+    expect(isReasoningExhaustion(classifyEmptyResponse([{ type: 'text', text: 'partial' }], 'length'))).toBe(false);
+    expect(isReasoningExhaustion(classifyEmptyResponse([{ type: 'thinking', thinking: 'x' }], 'stop', true))).toBe(false);
+    expect(isReasoningExhaustion(null)).toBe(false);
+  });
+  it('steps the effort down one level; unknown effort goes to medium; low floors at low', () => {
+    expect(stepDownEffort('max')).toBe('medium');
+    expect(stepDownEffort('high')).toBe('medium');
+    expect(stepDownEffort('medium')).toBe('low');
+    expect(stepDownEffort('low')).toBe('low');
+    expect(stepDownEffort(undefined)).toBe('medium');
+  });
+  it('lever: default on with 2 turns; false disables; turns clamp 1..10', () => {
+    expect(resolveReasoningExhaustBackoff({})).toEqual({ enabled: true, turns: 2 });
+    expect(resolveReasoningExhaustBackoff({ CORTEX_REASONING_EXHAUST_BACKOFF: 'false' }).enabled).toBe(false);
+    expect(resolveReasoningExhaustBackoff({ CORTEX_REASONING_EXHAUST_BACKOFF_TURNS: '5' }).turns).toBe(5);
+    expect(resolveReasoningExhaustBackoff({ CORTEX_REASONING_EXHAUST_BACKOFF_TURNS: '0' }).turns).toBe(2);
+    expect(resolveReasoningExhaustBackoff({ CORTEX_REASONING_EXHAUST_BACKOFF_TURNS: '99' }).turns).toBe(10);
+  });
+  it('the exhaustion nudge names the waste and the lowered effort; other kinds keep their text', () => {
+    const n = emptyResponseNudgeFor(exhausted, 'medium');
+    expect(n).toContain('ENTIRE output budget');
+    expect(n).toContain("'medium'");
+    expect(reasoningExhaustionNudge(undefined)).not.toContain('temporarily lowered');
+    expect(emptyResponseNudgeFor(classifyEmptyResponse([{ type: 'thinking', thinking: 'x' }], 'stop', true))).toBe(emptyResponseNudge('reasoning_only_active'));
+  });
+});

@@ -21,6 +21,7 @@ import { TmuxManager, SessionPersistence } from '../../utils/index.js';
 import { resolveTerminalBackend, registerPaneOutputHandle, outputAfterCommandEcho, truncateMiddle, type TerminalBackend } from '../../utils/TerminalBackend.js';
 import { stripAnsi } from '../../utils/TextUtils.js';
 import { BackgroundProcessRegistry } from './BackgroundProcessRegistry.js';
+import { bashOomPriorityPrelude } from '../../utils/oomPriority.js';
 import type { ExecutorConfig } from '../../base/ToolRegistry.js';
 import { parseBashFileAccess } from './bashFileAccess.js';
 import { FileReadTracker } from '../file/EditTool.js';
@@ -380,7 +381,9 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
             (process.env.CORTEX_BASH_PIPEFAIL ?? '').trim().toLowerCase() === 'true'
               ? 'set -o pipefail; '
               : '';
-          return `{ ${pipefail}${cmd} }; __code=$?; pgrep -g 0 >${tempFilePath} 2>&1; exit $__code;`;
+          // R156 HB-OOM-CHILD-PRIORITY: the child shell (and every descendant) volunteers for the OOM killer
+          // ahead of the orchestrator; empty string when disabled/off-linux (see utils/oomPriority.ts).
+          return `${bashOomPriorityPrelude()}{ ${pipefail}${cmd} }; __code=$?; pgrep -g 0 >${tempFilePath} 2>&1; exit $__code;`;
         })();
 
     // Determine working directory
@@ -1186,7 +1189,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
             stdio: ['ignore', 'pipe', 'pipe'],
             cwd,
           })
-        : spawn('bash', ['-c', params.command], {
+        : spawn('bash', ['-c', `${bashOomPriorityPrelude()}${params.command}`], { // R156: background children too
             stdio: ['ignore', 'pipe', 'pipe'],
             detached: true,
             cwd,

@@ -67,6 +67,15 @@ export function resolveBudgetContinueMinRemaining(env: NodeJS.ProcessEnv = proce
   return Math.min(1, n);
 }
 
+/** R157: how many continue-with-budget nudges a single turn may receive (CORTEX_BUDGET_CONTINUE_MAX_NUDGES; default 2; 0 = off; max 10). */
+export function resolveBudgetContinueMaxNudges(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = (env.CORTEX_BUDGET_CONTINUE_MAX_NUDGES ?? '').trim();
+  if (raw === '') return 2;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(10, Math.floor(n));
+}
+
 /** 0..bands index of the elapsed fraction; -1 when no deadline. Band changes are the injection points. */
 export function budgetBand(elapsedMs: number, deadlineMs: number, bands = 10): number {
   if (!(deadlineMs > 0)) return -1;
