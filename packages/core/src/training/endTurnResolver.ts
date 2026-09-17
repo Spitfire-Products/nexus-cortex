@@ -32,13 +32,21 @@ export interface EndTurnResolverConfig {
   progressMinCalls: number;
   /** R165: on a re-attest with no progress, re-judge ONCE with reasoning on before accepting-with-gap (CORTEX_JUDGE_ESCALATE_REASONING, default on). */
   escalateReasoning: boolean;
+  /** R166 HB-JUDGE-EVIDENCE-VETO (2026-09-17, tb4 A/B 38x2): the judge's first verdict was GAP on 18 of 19 solutions the grader
+   *  accepted and MEETS on 22 solutions it rejected; its own named checks failed on 6 passing solutions. Opinion has no
+   *  discriminative value, so opinion no longer holds a finish. CORTEX_JUDGE_VETO: 'evidence' (default) — a GAP holds the
+   *  finish only when a judge-named CHECK the harness ran just now FAILED, at most evidenceCap times per session; otherwise the
+   *  finish stands and the plan rides on the event (accept-with-gap). 'opinion' = the R165 policy. 'never' = record only. */
+  vetoMode: 'evidence' | 'opinion' | 'never';
+  /** R166: max evidence-backed vetoes per session (CORTEX_JUDGE_EVIDENCE_MAX_VETOES, default 1, 0..20). */
+  evidenceCap: number;
   /** ABSTENTION (CORTEX_ENDTURN_RESOLVER_ABSTAIN): offer the judge a RETIRE verdict for a
    *  structurally-hopeless finish and HONOR it (accept + stop) instead of burning the reject
    *  cycles on a task the junior can't fix. Dark by default (A/B-able). */
   abstain: boolean;
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, abstain: false };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, abstain: false };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
@@ -48,6 +56,8 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
   const sem = (env.CORTEX_JUDGE_SEMANTIC ?? '').trim().toLowerCase();
   const pm = parseInt((env.CORTEX_JUDGE_PROGRESS_MIN_CALLS ?? '').trim(), 10);
   const esc = (env.CORTEX_JUDGE_ESCALATE_REASONING ?? '').trim().toLowerCase();
+  const vm = (env.CORTEX_JUDGE_VETO ?? '').trim().toLowerCase();
+  const ec = parseInt((env.CORTEX_JUDGE_EVIDENCE_MAX_VETOES ?? '').trim(), 10);
   return {
     outputBudgetTokens: Number.isInteger(n) && n > 0 ? n : DEFAULTS.outputBudgetTokens,
     effort: e || DEFAULTS.effort,
@@ -56,6 +66,8 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
     semantic: sem === '' ? DEFAULTS.semantic : !(sem === 'false' || sem === '0' || sem === 'off'),
     progressMinCalls: Number.isInteger(pm) && pm >= 1 ? Math.min(50, pm) : DEFAULTS.progressMinCalls,
     escalateReasoning: esc === '' ? DEFAULTS.escalateReasoning : !(esc === 'false' || esc === '0' || esc === 'off'),
+    vetoMode: vm === 'opinion' || vm === 'never' || vm === 'evidence' ? vm : DEFAULTS.vetoMode,
+    evidenceCap: Number.isInteger(ec) && ec >= 0 ? Math.min(20, ec) : DEFAULTS.evidenceCap,
     abstain: (env.CORTEX_ENDTURN_RESOLVER_ABSTAIN ?? '').trim().toLowerCase() === 'true',
   };
 }
@@ -206,8 +218,20 @@ export function decideVetoAction(input: {
   rejects: number; cap: number; progressed: boolean; escalated: boolean;
   /** A judge-named check ran and FAILED (objective evidence of the gap). */
   checksFailed: boolean;
+  /** R166: 'evidence' (default) — only a failed harness-run check holds a finish; 'opinion' = R165; 'never' = record only. */
+  vetoMode?: 'evidence' | 'opinion' | 'never';
+  /** R166: max evidence-backed vetoes per session (default 1). */
+  evidenceCap?: number;
 }): VetoAction {
   if (input.meets || input.blank || input.retire) return 'accept';
+  const mode = input.vetoMode ?? 'evidence';
+  if (mode === 'never') return 'accept-with-gap';
+  if (mode === 'evidence') {
+    // R166: the judge asserts, the harness verifies, only a verified failure holds the finish — and only evidenceCap times.
+    if (!input.checksFailed) return 'accept-with-gap';
+    if (input.rejects >= Math.min(input.cap, input.evidenceCap ?? 1)) return 'accept-with-gap';
+    return 'veto';
+  }
   if (input.confidence === 'low' && !input.checksFailed) return 'accept-low-confidence'; // suspicion without a failed check is not a veto
   if (input.rejects >= input.cap) return 'accept-with-gap'; // the liveness/budget ceiling still holds
   if (input.rejects === 0) return 'veto';

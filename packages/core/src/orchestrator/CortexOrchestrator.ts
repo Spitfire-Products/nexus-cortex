@@ -644,6 +644,7 @@ export class CortexOrchestrator {
   // whether the one thinking-on escalation was spent, and whether the judge adjudicated this finish (regex nudges defer).
   private turnToolCallTotal = 0;
   private toolCallsAtLastVeto = 0;
+  private judgePriorNamedPassed = 0; // R166a: named checks passing at the last veto
   private judgeNamedChecks: string[] = [];
   private judgePriorPlan = '';
   private judgeEscalated = false;
@@ -1043,7 +1044,7 @@ export class CortexOrchestrator {
       const combinedCheck = [checkResult, namedResults ? `JUDGE-NAMED CHECKS (from your previous fix plan; executed by the harness just now):\n${namedResults}` : '']
         .filter(Boolean).join('\n\n');
       const callsSince = this.turnToolCallTotal - this.toolCallsAtLastVeto;
-      const progressed = this.endTurnResolverRejects === 0 || callsSince >= cfg.progressMinCalls || namedPassed > 0;
+      const progressed = this.endTurnResolverRejects === 0 || callsSince >= cfg.progressMinCalls || namedPassed > this.judgePriorNamedPassed; // R166a: newly-passing checks, not any passing check
       const priorVetoItems = cfg.semantic && this.endTurnResolverRejects > 0 ? this.judgePriorPlan : undefined;
       const progressSummary = priorVetoItems
         ? `${callsSince} tool call(s) since the veto; judge-named checks: ${namedRan} run, ${namedPassed} passed, ${namedFailed} failed${progressed ? '' : ' — the junior re-attested without working the plan'}`
@@ -1068,8 +1069,18 @@ export class CortexOrchestrator {
       );
       let text = await judgeOnce();
       let verdict = parseResolverVerdict(text ?? ''); // withTimeout → null on timeout; blank → ABSTAIN (below)
+      // R166 HB-JUDGE-EVIDENCE-VETO: in evidence mode the checks THIS verdict names run now — a GAP without a failing
+      // command is an opinion, and opinion no longer holds a finish (18 of 19 grader-accepted solutions were vetoed first).
+      let namedRanNow = 0; let namedResultsNow = '';
+      if (cfg.semantic && cfg.vetoMode === 'evidence' && !verdict.meets && !verdict.blank && verdict.checks.length > 0) {
+        for (const c of verdict.checks.slice(0, 3)) {
+          const r = runCheck(judgeCwd, c, jcfg);
+          namedRanNow += 1; namedRan += 1; if (/→ PASSED/.test(r)) namedPassed += 1; else namedFailed += 1;
+          namedResultsNow += (namedResultsNow ? '\n\n' : '') + r;
+        }
+      }
       let action: VetoAction = cfg.semantic
-        ? decideVetoAction({ meets: verdict.meets, blank: verdict.blank, retire: verdict.retire && cfg.abstain, confidence: verdict.confidence, rejects: this.endTurnResolverRejects, cap: resolverCap, progressed, escalated: this.judgeEscalated, checksFailed: namedFailed > 0 })
+        ? decideVetoAction({ meets: verdict.meets, blank: verdict.blank, retire: verdict.retire && cfg.abstain, confidence: verdict.confidence, rejects: this.endTurnResolverRejects, cap: resolverCap, progressed, escalated: this.judgeEscalated, checksFailed: namedFailed > 0, vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap })
         : (verdict.blank || (verdict.retire && cfg.abstain) || verdict.meets || !verdict.plan ? 'accept' : 'veto');
       if (action === 'escalate') {
         // R165: the junior re-attested without working the plan — one thinking-on adjudication before we accept with the gap recorded.
@@ -1080,7 +1091,7 @@ export class CortexOrchestrator {
           const v2 = parseResolverVerdict(text2 ?? '');
           if (!v2.blank) { text = text2; verdict = v2; }
         }
-        action = decideVetoAction({ meets: verdict.meets, blank: verdict.blank, retire: verdict.retire && cfg.abstain, confidence: verdict.confidence, rejects: this.endTurnResolverRejects, cap: resolverCap, progressed, escalated: true, checksFailed: namedFailed > 0 });
+        action = decideVetoAction({ meets: verdict.meets, blank: verdict.blank, retire: verdict.retire && cfg.abstain, confidence: verdict.confidence, rejects: this.endTurnResolverRejects, cap: resolverCap, progressed, escalated: true, checksFailed: namedFailed > 0, vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap });
         if (action === 'escalate') action = 'accept-with-gap';
       }
       this.judgeAdjudicatedThisFinish = verdict.parsed;
@@ -1099,6 +1110,7 @@ export class CortexOrchestrator {
           planChars: verdict.plan.length, rejects: this.endTurnResolverRejects, parsed: verdict.parsed,
           cap: resolverCap, capLiveness: cfg.maxRejects, capBudgeted: cfg.maxRejectsBudgeted, remainingFrac: resolverRemainingFrac === null ? null : Number(resolverRemainingFrac.toFixed(3)), // R160
           semantic: cfg.semantic, action, confidence: verdict.confidence, namedChecks: verdict.checks.length, namedRan, namedPassed, namedFailed, callsSince, progressed, escalated: this.judgeEscalated, // R165
+          vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap, namedRanNow, // R166
           latencyMs, rawLen: (text ?? '').length,
           deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,
           liftPlanChars: this.liftPlanText.length,
@@ -1121,11 +1133,12 @@ export class CortexOrchestrator {
       } else if (action === 'veto') {
         this.endTurnResolverRejects += 1;
         ev.endTurnCalled = false; // VETO the finish
-        if (cfg.semantic) { this.judgeNamedChecks = verdict.checks; this.judgePriorPlan = verdict.plan.slice(0, 2500); this.toolCallsAtLastVeto = this.turnToolCallTotal; }
+        if (cfg.semantic) { this.judgeNamedChecks = verdict.checks; this.judgePriorPlan = verdict.plan.slice(0, 2500); this.toolCallsAtLastVeto = this.turnToolCallTotal; this.judgePriorNamedPassed = namedPassed; }
         et.is_error = true;
         et.content =
           `EndTurn HELD (finish review) — the work does not yet meet the task's requirements. Fix plan:\n\n` +
           `${verdict.plan}\n\nDo this, verify against the task's own criteria (not your own tests), then call EndTurn again.` +
+          (namedResultsNow ? `\n\nHARNESS-RUN CHECKS (named by the reviewer, executed just now — the failing ones are the gap):\n${namedResultsNow.slice(0, 3000)}` : '') + // R166
           budgetedVetoEscalation(this.endTurnResolverRejects, resolverCap, resolverRemainingMs ?? 0, this.turnDeadlineMsActive); // R160
         console.warn(`[EndTurnResolver] GAP — vetoed finish (${verdict.plan.length}-char plan, reject ${this.endTurnResolverRejects}/${resolverCap}${resolverRemainingFrac === null ? '' : `, budget remaining ${Math.round(resolverRemainingFrac * 100)}%`})`);
       } else if (action === 'accept-with-gap' || action === 'accept-low-confidence') {
@@ -2177,7 +2190,7 @@ export class CortexOrchestrator {
     // R153: the stop reason of the LATEST response (continuation/retry/gate/synth refresh it) — the empty-response
     // classifier used to read the turn's FIRST response, so a `length` cutoff on a continuation was never seen.
     let lastStopReason: string | undefined = convertedResponse.stopReason;
-    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
+    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     let toolCallIteration = 0;
     // R137 HB-POLL-REPEAT-BREAKER: the exact-repeat breaker used to force-exit by overwriting
@@ -4605,7 +4618,7 @@ export class CortexOrchestrator {
 
     let currentAssistantCanonicalMessage = convertedResponse.messages[0]!;
     let lastStopReason: string | undefined = convertedResponse.stopReason; // R153 (see non-streaming loop)
-    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
+    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     const assistantMessageId = currentAssistantCanonicalMessage.uuid;
 

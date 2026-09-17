@@ -166,8 +166,8 @@ describe('endTurnResolver — R165 semantic judge', () => {
     expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_PROGRESS_MIN_CALLS: '7' } as any).progressMinCalls).toBe(7);
     expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_ESCALATE_REASONING: 'off' } as any).escalateReasoning).toBe(false);
   });
-  it('veto policy: first GAP vetoes; progress keeps vetoing under the cap; no progress escalates once then accepts-with-gap; low confidence without a failed check never vetoes', () => {
-    const base = { meets: false, blank: false, retire: false, confidence: 'high' as const, cap: 6, checksFailed: false };
+  it('veto policy (opinion mode, the R165 table; R166 makes evidence the default): first GAP vetoes; progress keeps vetoing under the cap; no progress escalates once then accepts-with-gap; low confidence without a failed check never vetoes', () => {
+    const base = { meets: false, blank: false, retire: false, confidence: 'high' as const, cap: 6, checksFailed: false, vetoMode: 'opinion' as const };
     expect(decideVetoAction({ ...base, rejects: 0, progressed: false, escalated: false })).toBe('veto');
     expect(decideVetoAction({ ...base, rejects: 2, progressed: true, escalated: false })).toBe('veto');
     expect(decideVetoAction({ ...base, rejects: 2, progressed: false, escalated: false })).toBe('escalate');
@@ -182,5 +182,50 @@ describe('endTurnResolver — R165 semantic judge', () => {
     const p = _brp({ task: 'do x', workProduct: 'done', priorVetoItems: '1. u exceeds 500', progressSummary: '12 tool calls; ran named check 1' });
     expect(p).toContain('PRIOR VETO ITEMS'); expect(p).toContain('PROGRESS SINCE THAT VETO');
     expect(RESOLVER_SYSTEM).toMatch(/CONFIDENCE: high/); expect(RESOLVER_SYSTEM).toMatch(/CHECK: <command>/);
+  });
+});
+
+describe('endTurnResolver — R166 evidence-gated veto (HB-JUDGE-EVIDENCE-VETO)', () => {
+  const base = { meets: false, blank: false, retire: false, confidence: 'high' as const, cap: 6, checksFailed: false, progressed: true, escalated: false };
+  it('config: default evidence mode with 1 veto; opinion/never selectable; cap clamped 0..20', () => {
+    const d = resolveEndTurnResolverConfig({} as any);
+    expect(d.vetoMode).toBe('evidence'); expect(d.evidenceCap).toBe(1);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_VETO: 'opinion' } as any).vetoMode).toBe('opinion');
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_VETO: 'NEVER' } as any).vetoMode).toBe('never');
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_VETO: 'bogus' } as any).vetoMode).toBe('evidence');
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_EVIDENCE_MAX_VETOES: '3' } as any).evidenceCap).toBe(3);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_EVIDENCE_MAX_VETOES: '99' } as any).evidenceCap).toBe(20);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_EVIDENCE_MAX_VETOES: '-1' } as any).evidenceCap).toBe(1);
+  });
+  it('evidence mode (default): a GAP without a failed harness-run check never holds the finish', () => {
+    expect(decideVetoAction({ ...base, rejects: 0 })).toBe('accept-with-gap');
+    expect(decideVetoAction({ ...base, rejects: 0, confidence: 'medium' })).toBe('accept-with-gap');
+    expect(decideVetoAction({ ...base, rejects: 0, progressed: false })).toBe('accept-with-gap'); // never escalates on opinion
+  });
+  it('evidence mode: a failed check holds the finish once, then the finish stands', () => {
+    expect(decideVetoAction({ ...base, rejects: 0, checksFailed: true })).toBe('veto');
+    expect(decideVetoAction({ ...base, rejects: 1, checksFailed: true })).toBe('accept-with-gap');
+    expect(decideVetoAction({ ...base, rejects: 1, checksFailed: true, evidenceCap: 2 })).toBe('veto');
+    expect(decideVetoAction({ ...base, rejects: 2, checksFailed: true, evidenceCap: 2 })).toBe('accept-with-gap');
+    expect(decideVetoAction({ ...base, rejects: 0, checksFailed: true, evidenceCap: 0 })).toBe('accept-with-gap');
+    expect(decideVetoAction({ ...base, rejects: 3, cap: 3, checksFailed: true, evidenceCap: 5 })).toBe('accept-with-gap'); // budget cap still binds
+  });
+  it('evidence mode: low confidence with a failed check still vetoes once (evidence beats confidence)', () => {
+    expect(decideVetoAction({ ...base, rejects: 0, confidence: 'low', checksFailed: true })).toBe('veto');
+  });
+  it('MEETS / blank / retire accept in every mode', () => {
+    for (const vetoMode of ['evidence', 'opinion', 'never'] as const) {
+      expect(decideVetoAction({ ...base, rejects: 0, meets: true, vetoMode })).toBe('accept');
+      expect(decideVetoAction({ ...base, rejects: 0, blank: true, vetoMode })).toBe('accept');
+      expect(decideVetoAction({ ...base, rejects: 0, retire: true, vetoMode })).toBe('accept');
+    }
+  });
+  it('never mode records only', () => {
+    expect(decideVetoAction({ ...base, rejects: 0, checksFailed: true, vetoMode: 'never' })).toBe('accept-with-gap');
+  });
+  it('opinion mode is the R165 policy unchanged', () => {
+    expect(decideVetoAction({ ...base, rejects: 0, vetoMode: 'opinion' })).toBe('veto');
+    expect(decideVetoAction({ ...base, rejects: 2, progressed: false, vetoMode: 'opinion' })).toBe('escalate');
+    expect(decideVetoAction({ ...base, rejects: 6, vetoMode: 'opinion' })).toBe('accept-with-gap');
   });
 });

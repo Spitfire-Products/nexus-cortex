@@ -130,6 +130,8 @@ export interface EnvironmentVariables {
   CORTEX_MENTOR_CONSULT_BUDGET_TOKENS?: string; // output cap (tokens) for an AskForAdvice mentor hint (default 800; was 400; 100..4000)
   CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED?: string; // resolver GAP vetoes allowed while >= the budget-continue fraction of the wall budget remains (R160; default 6; 0 = liveness cap only)
   CORTEX_JUDGE_SEMANTIC?: string; // 'false' restores the 4.111 judge gating (task-shape regex gate, regex nudges, fixed veto count) — A/B control (R165; default on)
+  CORTEX_JUDGE_VETO?: string; // 'evidence' (default: only a failed harness-run judge-named check holds a finish) | 'opinion' (R165) | 'never' (record only) — R166
+  CORTEX_JUDGE_EVIDENCE_MAX_VETOES?: string; // max evidence-backed vetoes per session (default 1) — R166
   CORTEX_JUDGE_PROGRESS_MIN_CALLS?: string; // tool calls since the last veto that count as working the plan (R165; default 3; 1..50)
   CORTEX_JUDGE_ESCALATE_REASONING?: string; // 'false' skips the one thinking-on re-judge before accepting a finish with a recorded gap (R165; default on)
   CORTEX_HERDR_REPORTING?: string; // 'false' disables herdr lifecycle reporting inside a herdr pane (R145; default on when HERDR_ENV=1)
@@ -473,6 +475,8 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_MENTOR_CONSULT_BUDGET_TOKENS: '',
   CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED: '',
   CORTEX_JUDGE_SEMANTIC: '',
+  CORTEX_JUDGE_VETO: '',
+  CORTEX_JUDGE_EVIDENCE_MAX_VETOES: '',
   CORTEX_JUDGE_PROGRESS_MIN_CALLS: '',
   CORTEX_JUDGE_ESCALATE_REASONING: '',
   CORTEX_HERDR_REPORTING: '',
@@ -992,6 +996,22 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_JUDGE_SEMANTIC',
     displayName: 'Semantic finish judge',
     description: 'The EndTurn finish judge adjudicates every tool-using finish (no task-shape regex gate), runs the checks it names, grades GAP by confidence, and replaces the fixed veto count with a progress condition plus one thinking-on escalation (R165, HB-JUDGE-SEMANTIC). Default on; false = the 4.111 behavior.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_JUDGE_VETO',
+    displayName: 'Finish judge veto mode',
+    description: "evidence (default): a GAP verdict holds the finish only when a check the judge named and the harness ran just now FAILED, at most CORTEX_JUDGE_EVIDENCE_MAX_VETOES times; otherwise the finish stands and the plan is recorded. opinion: the R165 policy (vetoes on the verdict alone). never: record only. (R166, HB-JUDGE-EVIDENCE-VETO)",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_JUDGE_EVIDENCE_MAX_VETOES',
+    displayName: 'Finish judge evidence vetoes',
+    description: 'Max evidence-backed vetoes per session in evidence mode (default 1, 0..20). (R166)',
     type: 'string',
     category: 'training',
     default: ''

@@ -80,6 +80,8 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   CORTEX_MENTOR_CONSULT_BUDGET_TOKENS: { tier: 'env' },
   CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED: { tier: 'env' },
   CORTEX_JUDGE_SEMANTIC: { tier: 'env' },
+  CORTEX_JUDGE_VETO: { tier: 'env' },
+  CORTEX_JUDGE_EVIDENCE_MAX_VETOES: { tier: 'env' },
   CORTEX_JUDGE_PROGRESS_MIN_CALLS: { tier: 'env' },
   CORTEX_JUDGE_ESCALATE_REASONING: { tier: 'env' },
   CORTEX_HERDR_REPORTING: { tier: 'env' },
