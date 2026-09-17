@@ -28,7 +28,7 @@ import { join as pathJoin } from 'path';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'node:child_process';
 import { ENV_RECON_COMMAND, resolveLiftPlanConfig } from '../training/liftPlanner.js';
-import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage } from '../training/endTurnResolver.js';
+import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage } from '../training/endTurnResolver.js';
 import { resolveDeadlineExitConfig, deadlineExitCallBudget, parseDeadlineExitVerdict } from '../training/deadlineExitMentor.js';
 import { isTaskShaped } from './requirementsVerification.js';
 import { type ServerSideToolMetadata, extractServerSideMetadata, XAIServerSideTools, OpenAIServerSideTools, toCanonicalTool } from '../tools/ServerSideTools.js';
@@ -74,7 +74,7 @@ import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from 
 import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage, memoryIndexLine, upsertMemoryIndex, scaleEstimateToRequestView, approxCharsOf, anchoredRequestEstimate, resolveCompactionHandoffQA, resolveHandoffQAMaxQuestions, runHandoffQA, type HandoffQAResult } from './compactionResume.js';
 import { renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBand, resolveRearmBand } from './compactionResumeTemplate.js';
 import { resolveCortexStateDir, cortexStatePath } from '../utils/stateDir.js';
-import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig, classifyCheckRun } from '../training/judgeEvidence.js';
+import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig, classifyCheckRun, isInvestigateCommandAllowed, readFileSlice, formatEvidenceRound } from '../training/judgeEvidence.js';
 import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, mentorSurfaceTimeoutMs, type MentorCallMeta } from '../training/mentorRole.js';
 import { resolveOuterToolDeadlineMs, resolveOuterToolTimeoutFloorMs } from './outerToolTimeout.js';
 import { resolveSubAgentTimeoutMs } from './subAgentTimeout.js';
@@ -118,6 +118,7 @@ import { closestToolMatches } from './toolNameMatcher.js';
 import { classifyApiError } from './apiErrorClassifier.js';
 import { pinStaticSystemPrompt } from './staticSystemPromptPin.js';
 import { hasVisibleAssistantText, shouldForceSynthesis } from './assistantTextPresence.js';
+import { resolveTurnContractEnforce, checkTurnFormat, buildFormatRejectMessage } from './turnContractValidator.js'; // HB-TURN-CONTRACT-ENFORCE
 import { computeToolBudgetSignal, isToolProgressStalled } from './toolBudgetSignal.js';
 import {
   createStructuredOutputTurnState,
@@ -647,6 +648,9 @@ export class CortexOrchestrator {
   private judgePriorNamedPassed = 0; // R166a: named checks passing at the last veto
   private finishConfirms = 0; // R167: informed finish confirmations issued this turn
   private judgeAcceptedWithGap = false; // R167: the judge accepted this finish WITH a gap → regex nudges may still fire
+  private judgeMeetsUnevidenced = false; // R168: the judge said MEETS but no proving check passed → regex nudges may still fire
+  private turnFormatRejects = 0; // HB-TURN-CONTRACT-ENFORCE: format rejections issued this turn
+  private pendingFormatReject: { missing: string[]; index: number; max: number } | null = null; // set by the loop, consumed by handleToolCalls (all three execution paths)
   private judgeNamedChecks: string[] = [];
   private judgePriorPlan = '';
   private judgeEscalated = false;
@@ -991,6 +995,32 @@ export class CortexOrchestrator {
    * Bounded by CORTEX_ENDTURN_RESOLVER_MAX_REJECTS then fallback-accepts (liveness). No-op when the resolver
    * is unarmed → byte-identical. Fail-open on any error → leaves the finish accepted.
    */
+  /** HB-TURN-CONTRACT-ENFORCE: decide whether this tool-calling response is rejected on format (ANALYSIS + PLAN missing).
+   *  Sets `pendingFormatReject` for handleToolCalls; bounded per turn; finish batches (EndTurn) exempt; events banked. */
+  private armTurnFormatReject(content: any[], toolUseBlocks: Array<{ id: string; name: string }>, iteration: number, streaming: boolean): void {
+    this.pendingFormatReject = null;
+    if (toolUseBlocks.length === 0) return;
+    const tc = resolveTurnContractEnforce(process.env);
+    if (!tc.enforce) return;
+    if (toolUseBlocks.some((t) => t.name === 'EndTurn')) return; // the finish path has its own gates + judge
+    const text = (Array.isArray(content) ? content : []).filter((b: any) => b?.type === 'text').map((b: any) => String(b.text ?? '')).join('\n');
+    const fmt = checkTurnFormat(text);
+    if (fmt.ok) return;
+    const store = this.getDecisionStore(); const sessionId = this.currentSessionId ?? 'unknown';
+    if (this.turnFormatRejects >= tc.max) {
+      if (this.turnFormatRejects === tc.max) { // bank the fallback once per turn
+        this.turnFormatRejects += 1;
+        console.warn(`[TurnContract] format still missing ${fmt.missing.join('+')} after ${tc.max} rejection(s) — executing the batch as-is (fallback)`);
+        if (store) void store.recordEvent({ sessionId, kind: 'turn_contract_fallback', detail: { iteration, rejects: tc.max, missing: fmt.missing, tools: toolUseBlocks.map((t) => t.name).slice(0, 8), streaming } }).catch(() => {});
+      }
+      return;
+    }
+    this.turnFormatRejects += 1;
+    this.pendingFormatReject = { missing: fmt.missing, index: this.turnFormatRejects, max: tc.max };
+    console.warn(`[TurnContract] REJECTED response format (missing ${fmt.missing.join('+')}; ${toolUseBlocks.length} tool call(s) not executed; rejection ${this.turnFormatRejects}/${tc.max})`);
+    if (store) void store.recordEvent({ sessionId, kind: 'turn_contract_reject', detail: { iteration, rejects: this.turnFormatRejects, max: tc.max, missing: fmt.missing, tools: toolUseBlocks.map((t) => t.name).slice(0, 8), textChars: text.length, streaming } }).catch(() => {});
+  }
+
   private async adjudicateEndTurn(
     ev: TurnEvidence,
     toolResults: Array<{ tool_name: string; tool_use_id: string; content?: unknown; is_error?: boolean }>,
@@ -1007,6 +1037,7 @@ export class CortexOrchestrator {
     if (cfg.semantic ? !ev.usedTools : !isTaskShaped(task)) return;
     this.judgeAdjudicatedThisFinish = false;
     this.judgeAcceptedWithGap = false; // R167
+    this.judgeMeetsUnevidenced = false; // R168
     // R160 HB-RESOLVER-BUDGET-CAP: the cap is budget-aware — while >= CORTEX_BUDGET_CONTINUE_MIN_REMAINING of the wall
     // budget remains the judge may veto up to maxRejectsBudgeted times; below that (or with no deadline) the liveness cap.
     const resolverRemainingMs = this.turnDeadlineMsActive > 0 && this.turnLoopStartMs > 0 ? Math.max(0, this.turnDeadlineMsActive - (Date.now() - this.turnLoopStartMs)) : null;
@@ -1054,7 +1085,8 @@ export class CortexOrchestrator {
         : undefined;
       const timeoutMs = mentorSurfaceTimeoutMs('endturn-resolver', parseInt(process.env.CORTEX_ENDTURN_RESOLVER_TIMEOUT_MS ?? '90000', 10)); // thinking-aware
       const t0 = Date.now();
-      const judgeOnce = (reasoning?: 'on') => withTimeout(
+      const evidenceRounds: string[] = []; // R170
+      const judgeOnce = (reasoning?: 'on', investigate?: 'offer' | 'withdraw') => withTimeout(
         this.helperMiddleware!.evaluateEndTurn({
           task,
           liftPlan: this.liftPlanText || undefined,
@@ -1066,16 +1098,45 @@ export class CortexOrchestrator {
           priorVetoItems,
           progressSummary,
           reasoning,
+          evidenceRounds: evidenceRounds.length ? evidenceRounds.slice() : undefined, // R170
+          investigate,
           helperModelId: this.config.reactiveMentorship?.helperModelId,
         }),
         reasoning === 'on' ? mentorSurfaceTimeoutMs('endturn-resolver', Math.max(timeoutMs, 180000)) : timeoutMs,
       );
-      let text = await judgeOnce();
-      let verdict = parseResolverVerdict(text ?? ''); // withTimeout → null on timeout; blank → ABSTAIN (below)
+      // R170 HB-JUDGE-TOOL-LOOP: up to cfg.toolRounds calls; while rounds and the aggregate budget remain the judge may
+      // INVESTIGATE (checks run via the existing runCheck surface behind a read-only denylist; file slices read in-workspace),
+      // each round's EVIDENCE block rides on the next prompt; the last round withdraws the option. toolRounds=1 = one call.
+      let text: string | null = null;
+      let verdict = parseResolverVerdict('');
+      let roundsUsed = 0; let investigateChecks = 0; let investigateReads = 0; let investigateRefused = 0; const roundLatencyMs: number[] = [];
+      for (let round = 1; round <= cfg.toolRounds; round++) {
+        const loopElapsed = Date.now() - t0;
+        const canInvestigate = cfg.toolRounds > 1 && round < cfg.toolRounds && loopElapsed < cfg.toolRoundBudgetMs &&
+          (resolverRemainingMs === null || resolverRemainingMs - loopElapsed > 2 * cfg.toolRoundBudgetMs);
+        const mode = cfg.toolRounds > 1 ? (canInvestigate ? 'offer' : 'withdraw') : undefined;
+        const r0 = Date.now();
+        text = await judgeOnce(undefined, mode);
+        roundLatencyMs.push(Date.now() - r0); roundsUsed = round;
+        verdict = parseResolverVerdict(text ?? ''); // withTimeout → null on timeout; blank → ABSTAIN (below)
+        if (!verdict.investigate) break;
+        if (!canInvestigate) { verdict = { ...verdict, blank: true, parsed: false }; break; } // asked after withdrawal → abstain, never re-loop
+        const checkResults: string[] = []; const readResults: string[] = [];
+        for (const c of verdict.checks.slice(0, 3)) {
+          if (!isInvestigateCommandAllowed(c)) { investigateRefused += 1; checkResults.push(`CHECK RUN: \`${c}\` → REFUSED (investigation checks must be read-only)`); continue; }
+          const r = runCheck(judgeCwd, c, jcfg);
+          investigateChecks += 1; namedRan += 1; { const k = classifyCheckRun(r); if (k === 'passed') namedPassed += 1; else if (k === 'failed') namedFailed += 1; else namedInconclusive += 1; }
+          checkResults.push(r);
+        }
+        for (const p of verdict.reads.slice(0, 3)) { readResults.push(readFileSlice(judgeCwd, p)); investigateReads += 1; }
+        evidenceRounds.push(formatEvidenceRound(round, checkResults, readResults));
+        console.warn(`[EndTurnResolver] R170 INVESTIGATE round ${round}/${cfg.toolRounds} — ${checkResults.length} check(s), ${readResults.length} read(s)`);
+      }
       // R166 HB-JUDGE-EVIDENCE-VETO: in evidence mode the checks THIS verdict names run now — a GAP without a failing
       // command is an opinion, and opinion no longer holds a finish (18 of 19 grader-accepted solutions were vetoed first).
       let namedRanNow = 0; let namedResultsNow = '';
-      if (cfg.semantic && cfg.vetoMode === 'evidence' && !verdict.meets && !verdict.blank && verdict.checks.length > 0) {
+      // R168: with meetsConfirm the checks a MEETS names run too — their passing is what lets the MEETS stand.
+      if (cfg.semantic && cfg.vetoMode === 'evidence' && (!verdict.meets || cfg.meetsConfirm) && !verdict.blank && !verdict.investigate && verdict.checks.length > 0) {
         for (const c of verdict.checks.slice(0, 3)) {
           const r = runCheck(judgeCwd, c, jcfg);
           namedRanNow += 1; namedRan += 1; { const k = classifyCheckRun(r); if (k === 'passed') namedPassed += 1; else if (k === 'failed') namedFailed += 1; else namedInconclusive += 1; } // R166b
@@ -1088,7 +1149,7 @@ export class CortexOrchestrator {
       if (action === 'escalate') {
         // R165: the junior re-attested without working the plan — one thinking-on adjudication before we accept with the gap recorded.
         this.judgeEscalated = true;
-        if (cfg.escalateReasoning) {
+        if (cfg.escalateReasoning && roundsUsed <= 1) { // R170: a multi-round adjudication already spent the extra reasoning
           console.warn(`[EndTurnResolver] R165: re-attest without progress (${callsSince} calls since the veto) — escalating the judge to reasoning-on once.`);
           const text2 = await judgeOnce('on');
           const v2 = parseResolverVerdict(text2 ?? '');
@@ -1114,6 +1175,7 @@ export class CortexOrchestrator {
           cap: resolverCap, capLiveness: cfg.maxRejects, capBudgeted: cfg.maxRejectsBudgeted, remainingFrac: resolverRemainingFrac === null ? null : Number(resolverRemainingFrac.toFixed(3)), // R160
           semantic: cfg.semantic, action, confidence: verdict.confidence, namedChecks: verdict.checks.length, namedRan, namedPassed, namedFailed, callsSince, progressed, escalated: this.judgeEscalated, // R165
           vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap, namedRanNow, namedInconclusive, // R166 / R166b
+          toolRounds: cfg.toolRounds, roundsUsed, investigateChecks, investigateReads, investigateRefused, roundLatencyMs, evidenceChars: evidenceRounds.join('').length, // R170
           latencyMs, rawLen: (text ?? '').length,
           deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,
           liftPlanChars: this.liftPlanText.length,
@@ -1127,7 +1189,7 @@ export class CortexOrchestrator {
         // BLANK → ABSTAIN (operator decision 2026-09-10, cell-m pilot): the judge returned nothing (empty
         // content / no verdict line / timeout). That is a judge FAILURE, not a judgment — the finish stands, no
         // veto, no reject increment, and the event says so (abstained + blank + failOpen) instead of counting as MEETS.
-        if (this.config.debug) console.warn(`[EndTurnResolver] BLANK — abstained (no verdict from the judge, rawLen=${(text ?? '').length})`);
+        if (this.config.debug) console.warn(`[EndTurnResolver] BLANK — abstained (no verdict from the judge, rawLen=${(text ?? '').length}${verdict.investigate ? ', INVESTIGATE after withdrawal' : ''})`);
       } else if (verdict.retire && cfg.abstain) {
         // ABSTENTION — the finish is structurally unclosable; accept it and STOP the reject
         // loop (no veto, no reject increment) instead of burning more pro@max cycles on a task
@@ -1164,6 +1226,24 @@ export class CortexOrchestrator {
         this.judgeAcceptedWithGap = true; // R167: let the budget-continue / surrender nudges see this finish
         console.warn(`[EndTurnResolver] ${action.toUpperCase()} — finish accepted with a recorded gap (rejects ${this.endTurnResolverRejects}/${resolverCap}, confidence ${verdict.confidence}): ${verdict.plan.slice(0, 160).replace(/\s+/g, ' ')}`);
         if (store) void store.recordEvent({ sessionId, kind: 'endturn_gap_accepted', toolName: 'EndTurn', detail: { action, rejects: this.endTurnResolverRejects, cap: resolverCap, confidence: verdict.confidence, plan: verdict.plan.slice(0, 2000), checks: verdict.checks, callsSince, escalated: this.judgeEscalated } }).catch(() => {});
+      } else if (action === 'accept' && verdict.meets) {
+        // R168 HB-MEETS-CONFIRM: a MEETS stands only when a proving check passed. Otherwise, with budget left, hold ONCE
+        // (shared counter with R167) showing what was (not) verified; the next EndTurn stands.
+        const evidencePassed = namedPassed > 0 || (!!checkResult && /→ PASSED/.test(checkResult));
+        if (cfg.meetsConfirm && !evidencePassed) this.judgeMeetsUnevidenced = true; // let the budget-continue / surrender nudges see this finish
+        if (shouldFinishConfirm({ action, remainingFrac: resolverRemainingFrac, confirmsUsed: this.finishConfirms, cfg, meets: true, evidencePassed })) {
+          this.finishConfirms += 1;
+          ev.endTurnCalled = false;
+          et.is_error = true;
+          et.content = buildMeetsConfirmMessage({
+            remainingFrac: resolverRemainingFrac ?? 0, remainingMs: resolverRemainingMs ?? 0,
+            checksNamed: verdict.checks.length, checkResults: namedResultsNow, openItems: (etInput as { open_items?: unknown }).open_items,
+          });
+          console.warn(`[EndTurnResolver] R168 MEETS-CONFIRM — unverified MEETS held once (checks named ${verdict.checks.length}, passed ${namedPassed}, budget remaining ${Math.round((resolverRemainingFrac ?? 0) * 100)}%)`);
+          if (store) void store.recordEvent({ sessionId, kind: 'finish_confirm', toolName: 'EndTurn', detail: { action, meets: true, evidencePassed, checksNamed: verdict.checks.length, namedRanNow, namedPassed, namedFailed, namedInconclusive, remainingFrac: resolverRemainingFrac, confirms: this.finishConfirms, planChars: verdict.plan.length, openItems: Array.isArray((etInput as any).open_items) ? (etInput as any).open_items.length : 0 } }).catch(() => {});
+        } else if (this.config.debug) {
+          console.log(`[EndTurnResolver] MEETS — finish confirmed (parsed=${verdict.parsed}, evidencePassed=${evidencePassed})`);
+        }
       } else if (this.config.debug) {
         console.log(`[EndTurnResolver] MEETS — finish confirmed (parsed=${verdict.parsed})`);
       }
@@ -2208,7 +2288,7 @@ export class CortexOrchestrator {
     // R153: the stop reason of the LATEST response (continuation/retry/gate/synth refresh it) — the empty-response
     // classifier used to read the turn's FIRST response, so a `length` cutoff on a continuation was never seen.
     let lastStopReason: string | undefined = convertedResponse.stopReason;
-    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
+    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     let toolCallIteration = 0;
     // R137 HB-POLL-REPEAT-BREAKER: the exact-repeat breaker used to force-exit by overwriting
@@ -2363,6 +2443,7 @@ export class CortexOrchestrator {
         if (this.config.debug && toolUseBlocks.length > 0) {
           console.log(`[Orchestrator] Extracted tools: ${toolUseBlocks.map((t: any) => t.name).join(', ')}`);
         }
+        this.armTurnFormatReject(currentAssistantCanonicalMessage.content, toolUseBlocks, toolCallIteration, false); // HB-TURN-CONTRACT-ENFORCE
 
         // If no tool calls, we're done — UNLESS the response is empty.
         if (toolUseBlocks.length === 0) {
@@ -2725,7 +2806,7 @@ export class CortexOrchestrator {
                 .join('\n')
             : String(currentAssistantCanonicalMessage.content ?? '');
           // R165: when the semantic judge adjudicated this finish, the regex surrender/open-items nudges defer to it.
-          const judgeOwnsFinish = this.judgeAdjudicatedThisFinish && resolveEndTurnResolverConfig().semantic && !this.judgeAcceptedWithGap; // R167: an accept-with-gap leaves the regex nudges live
+          const judgeOwnsFinish = this.judgeAdjudicatedThisFinish && resolveEndTurnResolverConfig().semantic && !this.judgeAcceptedWithGap && !this.judgeMeetsUnevidenced; // R167: an accept-with-gap leaves the regex nudges live; R168: so does an unverified MEETS
           const surrenderUnsatisfied =
             resolveSurrenderNudgeMode() && ev.usedTools && !surrenderNudgeUsed && !judgeOwnsFinish &&
             detectSurrenderText(surrenderDraftText);
@@ -4636,7 +4717,7 @@ export class CortexOrchestrator {
 
     let currentAssistantCanonicalMessage = convertedResponse.messages[0]!;
     let lastStopReason: string | undefined = convertedResponse.stopReason; // R153 (see non-streaming loop)
-    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
+    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     const assistantMessageId = currentAssistantCanonicalMessage.uuid;
 
@@ -4783,6 +4864,7 @@ export class CortexOrchestrator {
           input: block.toolUse.input
         }));
       ev.noteToolUses(toolUseBlocks);
+      this.armTurnFormatReject(currentAssistantCanonicalMessage.content, toolUseBlocks, toolCallIteration, true); // HB-TURN-CONTRACT-ENFORCE
 
       if (toolUseBlocks.length === 0 && !gateReRequest) {
         // R32 (streaming R18b parity): detect empty/thinking-only responses.
@@ -7635,6 +7717,12 @@ export class CortexOrchestrator {
     signal: AbortSignal,
     structuredOutputState?: StructuredOutputTurnState
   ): Promise<Array<{ tool_use_id: string; tool_name: string; content: string; is_error?: boolean; metadata?: any }>> {
+    // HB-TURN-CONTRACT-ENFORCE: a batch the loop rejected on format carries the re-prompt back as error results; nothing runs.
+    if (this.pendingFormatReject) {
+      const rej = this.pendingFormatReject; this.pendingFormatReject = null;
+      const msg = buildFormatRejectMessage(rej.missing, rej.index, rej.max, toolUseBlocks.map((t) => t.name));
+      return toolUseBlocks.map((t) => ({ tool_use_id: t.id, tool_name: t.name, content: msg, is_error: true, metadata: { formatRejected: true } }));
+    }
     // StructuredOutput (grok-build port): intercept BEFORE any dispatch — the
     // synthetic tool is request-scoped (never in a registry) and must NEVER
     // reach a real executor. Each call gets a synthesized tool_result:

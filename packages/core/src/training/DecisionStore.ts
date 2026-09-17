@@ -63,6 +63,8 @@ export type SteeringEventKind =
   | 'steering_injected'
   | 'loop_escalation'
   | 'endturn_gate_fallback'
+  | 'turn_contract_reject' // HB-TURN-CONTRACT-ENFORCE: a tool-calling response lacking ANALYSIS/PLAN was rejected unexecuted — detail {iteration, rejects, max, missing, tools}
+  | 'turn_contract_fallback' // HB-TURN-CONTRACT-ENFORCE: rejections exhausted, batch executed as-is — detail {iteration, rejects, missing, tools}
   | 'budget_continue_nudge'
   | 'inaction_nudge'
   | 'effort_pulse' // def-efdbb67fd8: think-harder ablation arm fired (mechanism-engagement evidence)

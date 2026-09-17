@@ -135,6 +135,12 @@ export interface EnvironmentVariables {
   CORTEX_FINISH_CONFIRM?: string; // default on: an accept-with-gap finish with budget left is held ONCE with an informed confirmation (budget, reviewer gaps, own open items) — R167 HB-FINISH-CONFIRM
   CORTEX_FINISH_CONFIRM_MIN_REMAINING?: string; // fraction of the wall budget that must remain to confirm (default 0.3) — R167
   CORTEX_FINISH_CONFIRM_MAX?: string; // confirmations per session (default 1, 0..5) — R167
+  CORTEX_MEETS_CONFIRM?: string; // default on: a MEETS verdict must name a proving CHECK that passes; an unverified MEETS with budget left is held once (shares CORTEX_FINISH_CONFIRM_MAX) — R168 HB-MEETS-CONFIRM
+  CORTEX_TURN_CONTRACT_ENFORCE?: string; // 'true': a tool-calling response whose text lacks ANALYSIS + PLAN is rejected unexecuted with a re-prompt, up to CORTEX_TURN_CONTRACT_ENFORCE_MAX times per turn (HB-TURN-CONTRACT-ENFORCE; default off)
+  CORTEX_TURN_CONTRACT_ENFORCE_MAX?: string; // format rejections per turn before the batch executes as-is (default 2, 0..10)
+  CORTEX_JUDGE_TOOL_ROUNDS?: string; // max judge calls per finish adjudication; >1 lets the judge INVESTIGATE (harness runs its read-only CHECK/READ lines between rounds) — R170 HB-JUDGE-TOOL-LOOP (default 1 = single-shot)
+  CORTEX_JUDGE_TOOL_ROUND_BUDGET_MS?: string; // aggregate wall clock for the investigation rounds of one adjudication (default 240000; 10000..1800000) — R170
+  CORTEX_MEETS_CONFIRM_MIN_REMAINING?: string; // fraction of the wall budget that must remain to hold an unverified MEETS (default 0.5) — R168
   CORTEX_JUDGE_EVIDENCE_MAX_VETOES?: string; // max evidence-backed vetoes per session (default 1) — R166
   CORTEX_JUDGE_PROGRESS_MIN_CALLS?: string; // tool calls since the last veto that count as working the plan (R165; default 3; 1..50)
   CORTEX_JUDGE_ESCALATE_REASONING?: string; // 'false' skips the one thinking-on re-judge before accepting a finish with a recorded gap (R165; default on)
@@ -484,6 +490,12 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_FINISH_CONFIRM: '',
   CORTEX_FINISH_CONFIRM_MIN_REMAINING: '',
   CORTEX_FINISH_CONFIRM_MAX: '',
+  CORTEX_MEETS_CONFIRM: '',
+  CORTEX_MEETS_CONFIRM_MIN_REMAINING: '',
+  CORTEX_JUDGE_TOOL_ROUNDS: '',
+  CORTEX_JUDGE_TOOL_ROUND_BUDGET_MS: '',
+  CORTEX_TURN_CONTRACT_ENFORCE: '',
+  CORTEX_TURN_CONTRACT_ENFORCE_MAX: '',
   CORTEX_JUDGE_EVIDENCE_MAX_VETOES: '',
   CORTEX_JUDGE_PROGRESS_MIN_CALLS: '',
   CORTEX_JUDGE_ESCALATE_REASONING: '',
@@ -1036,6 +1048,54 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_FINISH_CONFIRM_MAX',
     displayName: 'Finish confirmations per session',
     description: 'Max informed confirmations per session (default 1, 0..5). (R167)',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_MEETS_CONFIRM',
+    displayName: 'Verified MEETS',
+    description: "The finish judge must back a MEETS verdict with one to three CHECK commands whose passing proves the task's own criteria; the harness runs them. A MEETS with no passing check and at least CORTEX_MEETS_CONFIRM_MIN_REMAINING of the wall budget left is held once (sharing CORTEX_FINISH_CONFIRM_MAX with R167) with the check results, the budget and the model's own open items; the next EndTurn stands. Default on; false = 4.116.2 behavior. (R168, HB-MEETS-CONFIRM)",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_MEETS_CONFIRM_MIN_REMAINING',
+    displayName: 'Verified-MEETS budget floor',
+    description: 'Fraction of the wall budget that must remain to hold an unverified MEETS (default 0.5). (R168)',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_TURN_CONTRACT_ENFORCE',
+    displayName: 'Turn contract enforcement',
+    description: "With CORTEX_TURN_CONTRACT=channel, a tool-calling response whose visible text lacks the ANALYSIS and PLAN sections is REJECTED: its tool calls are returned unexecuted as error results carrying the re-prompt, up to CORTEX_TURN_CONTRACT_ENFORCE_MAX times per turn, then the batch runs as-is. Finish (EndTurn) batches are exempt. Terminus 2's parser-reject, structurally. Default off. (HB-TURN-CONTRACT-ENFORCE)",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_TURN_CONTRACT_ENFORCE_MAX',
+    displayName: 'Turn contract rejections per turn',
+    description: 'Format rejections per turn before the tool batch executes as-is (default 2, 0..10). (HB-TURN-CONTRACT-ENFORCE)',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_JUDGE_TOOL_ROUNDS',
+    displayName: 'Finish judge investigation rounds',
+    description: "Max judge calls per finish adjudication. Above 1 the judge may answer VERDICT: INVESTIGATE with CHECK (read-only command) and READ (file slice) lines; the harness runs them, appends an EVIDENCE block and asks again, withdrawing the option on the last round. The v2 tool-using judge as a harness-driven text loop. Default 1 = single-shot (4.116.2). (R170, HB-JUDGE-TOOL-LOOP)",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_JUDGE_TOOL_ROUND_BUDGET_MS',
+    displayName: 'Finish judge investigation budget',
+    description: 'Aggregate wall clock (ms) the investigation rounds of one adjudication may use before the judge must decide (default 240000). (R170)',
     type: 'string',
     category: 'training',
     default: ''

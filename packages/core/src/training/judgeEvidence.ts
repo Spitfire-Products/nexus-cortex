@@ -18,8 +18,8 @@
  * evidence collection. Pure config resolution is exported for tests.
  */
 import { execSync } from 'child_process';
-import { existsSync, readFileSync, statSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync, statSync, readdirSync } from 'fs';
+import { join, resolve, sep } from 'path';
 
 export interface JudgeGroundingConfig {
   /** CORTEX_JUDGE_DELTA: hand the judges the workspace delta (files changed this task + heads). Default on. */
@@ -208,4 +208,52 @@ export function runCheck(cwd: string, cmd: string, cfg: JudgeGroundingConfig = r
   const body = out.trim().length > 2500 ? out.trim().slice(-2500) : out.trim();
   const verdict = code === 0 ? 'PASSED' : code === 124 ? `TIMED OUT after ${cfg.checkTimeoutMs} ms (not a pass)` : `FAILED (exit ${code})`;
   return `CHECK RUN: \`${cmd}\` → ${verdict} in ${ms} ms\n${body || '(no output)'}`;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// R170 HB-JUDGE-TOOL-LOOP — the read + run surface an investigating judge uses between rounds.
+
+/** Commands an investigation round refuses to run: anything that plausibly mutates the workspace or the box. Pure. */
+const INVESTIGATE_DENY_RE = /(^|[\s;&|(])(rm|mv|dd|mkfs|shred|truncate|chmod|chown|kill|pkill|reboot|shutdown)\b|\bgit\s+(checkout|reset|clean|stash|restore|commit|push|rebase|merge|rm)\b|(^|[^<>&|])>(?!&|>&)\s*[^&\s]|\bsudo\b|\b(pip|npm|apt(-get)?|yum|apk|cargo)\s+(install|remove|uninstall|purge)\b/;
+export function isInvestigateCommandAllowed(cmd: string): boolean {
+  return !INVESTIGATE_DENY_RE.test(String(cmd ?? ''));
+}
+
+/** R170: read a bounded slice of one workspace file for the judge. `spec` = `path` or `path:START-END` (1-based, inclusive).
+ *  The path must resolve INSIDE cwd (no escapes, no absolute paths outside it); binary and oversize files are refused. Pure-ish (fs only). */
+export function readFileSlice(cwd: string, spec: string, maxLines = 120, maxChars = 4000): string {
+  const m = String(spec ?? '').trim().match(/^(.+?)(?::(\d+)(?:-(\d+))?)?$/);
+  const rel = (m?.[1] ?? '').trim();
+  if (!rel) return `READ: (empty path) → REFUSED`;
+  const abs = resolve(cwd, rel);
+  const root = resolve(cwd);
+  if (abs !== root && !abs.startsWith(root + sep)) return `READ: \`${rel}\` → REFUSED (outside the workspace)`;
+  if (BINARY_EXT.test(abs)) return `READ: \`${rel}\` → REFUSED (binary)`;
+  let st; try { st = statSync(abs); } catch { return `READ: \`${rel}\` → NOT FOUND`; }
+  if (st.isDirectory()) {
+    let names: string[] = [];
+    try { names = readdirSync(abs).filter((n) => !SKIP_DIRS.test(n)).slice(0, 80); } catch { /* ignore */ }
+    return `READ: \`${rel}\` → DIRECTORY (${names.length} entries shown)\n${names.join('\n')}`;
+  }
+  if (st.size > 2 * 1024 * 1024) return `READ: \`${rel}\` → REFUSED (${st.size} bytes; over 2 MiB)`;
+  let text = '';
+  try { text = readFileSync(abs, 'utf8'); } catch (e: any) { return `READ: \`${rel}\` → ERROR ${String(e?.message ?? e).slice(0, 120)}`; }
+  const lines = text.split('\n');
+  const start = m?.[2] ? Math.max(1, parseInt(m[2], 10)) : 1;
+  const end = m?.[3] ? Math.max(start, parseInt(m[3], 10)) : Math.min(lines.length, start + maxLines - 1);
+  const slice = lines.slice(start - 1, Math.min(end, start + maxLines - 1));
+  let body = slice.map((l, i) => `${start + i}: ${l}`).join('\n');
+  const truncated = body.length > maxChars;
+  if (truncated) body = body.slice(0, maxChars);
+  const shown = `${start}-${start + slice.length - 1} of ${lines.length}`;
+  return `READ: \`${rel}\` → lines ${shown}${truncated ? ' (truncated)' : ''}\n${body}`;
+}
+
+/** R170: one labelled EVIDENCE block for the judge prompt, bounded. Pure. */
+export function formatEvidenceRound(round: number, checkResults: string[], readResults: string[], maxChars = 6000): string {
+  const parts = [`EVIDENCE (investigation round ${round}, executed by the harness just now; ground truth):`];
+  for (const r of checkResults) parts.push(r.trim());
+  for (const r of readResults) parts.push(r.trim());
+  const out = parts.join('\n\n');
+  return out.length > maxChars ? out.slice(0, maxChars) + '\n… (evidence truncated)' : out;
 }

@@ -1589,8 +1589,12 @@ Give concise, actionable guidance in plain text with these labeled parts:
     progressSummary?: string;
     /** R165: 'on' = one thinking-on escalation call (per-surface reasoning forced on for this call only). */
     reasoning?: 'on';
+    /** R170: EVIDENCE blocks from earlier investigation rounds + whether INVESTIGATE is offered / withdrawn this call. */
+    evidenceRounds?: string[];
+    investigate?: 'offer' | 'withdraw';
   }): Promise<string> {
     const ctx: EndTurnResolverContext = {
+      evidenceRounds: context.evidenceRounds, // R170
       liftPlan: context.liftPlan,
       task: context.task,
       envReport: context.envReport,
@@ -1607,7 +1611,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
       {
         surface: 'endturn-resolver',
         mentor: resolveMentorRoleConfig('endturn-resolver', roleEnv, { modelId: context.helperModelId, effort: cfg.effort, outputBudgetTokens: cfg.outputBudgetTokens }),
-        persona: resolverSystemPrompt(cfg.abstain),
+        persona: resolverSystemPrompt(cfg.abstain, cfg.meetsConfirm, context.investigate), // R168 / R170
         task: cfg.abstain
           ? 'Adjudicate whether the work product meets the task requirements. First line VERDICT: MEETS|GAP|RETIRE; ' +
             'if GAP, a terse numbered fix plan; if RETIRE, one line on why it is unclosable.'

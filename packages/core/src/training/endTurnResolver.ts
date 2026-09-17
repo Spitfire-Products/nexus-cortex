@@ -49,13 +49,30 @@ export interface EndTurnResolverConfig {
   finishConfirm: boolean;
   finishConfirmMinRemaining: number;
   finishConfirmMax: number;
+  /** R168 HB-MEETS-CONFIRM (2026-09-17, pilot-12 rerun): a MEETS was unconditional — `decideVetoAction` accepted it on the
+   *  verdict string alone, the judge's own CHECK lines were never run for a MEETS, and R167's hold excluded MEETS by
+   *  construction. 2–3 sessions per arm finished on a wrong MEETS at 81–92% budget left and walked straight through. With
+   *  meetsConfirm, the persona demands one to three `CHECK:` lines whose PASSING proves the task's own criteria; the harness
+   *  runs them now; a MEETS with no passing evidence (no check named, or every check failed/inconclusive) and
+   *  >= meetsConfirmMinRemaining of the wall budget left is HELD once (sharing finishConfirmMax with R167) with the check
+   *  results, the budget and the junior's open_items. A MEETS backed by a passing check stands. CORTEX_MEETS_CONFIRM=false = 4.116.2. */
+  meetsConfirm: boolean;
+  meetsConfirmMinRemaining: number;
+  /** R170 HB-JUDGE-TOOL-LOOP (2026-09-17; the v2 of LIFT_MENTOR_PLANNER_EXPERIMENT_SPEC §2.2/§2.4, built as a HARNESS-driven
+   *  text protocol over the existing single-shot helper call — no adapter/tool wiring). With toolRounds > 1 the judge may answer
+   *  `VERDICT: INVESTIGATE` with `CHECK: <cmd>` and `READ: <path>[:start-end]` lines instead of a verdict; the harness runs the
+   *  checks (existing runCheck surface, read-only denylist) and reads the file slices, appends an EVIDENCE block, and re-asks —
+   *  at most toolRounds calls per adjudication and toolRoundBudgetMs of aggregate wall clock; the last round must decide.
+   *  Default 1 = 4.116.2 byte-for-byte (INVESTIGATE never offered). */
+  toolRounds: number;
+  toolRoundBudgetMs: number;
   /** ABSTENTION (CORTEX_ENDTURN_RESOLVER_ABSTAIN): offer the judge a RETIRE verdict for a
    *  structurally-hopeless finish and HONOR it (accept + stop) instead of burning the reject
    *  cycles on a task the junior can't fix. Dark by default (A/B-able). */
   abstain: boolean;
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, abstain: false };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, abstain: false };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
@@ -70,6 +87,10 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
   const fc = (env.CORTEX_FINISH_CONFIRM ?? '').trim().toLowerCase();
   const fmin = parseFloat((env.CORTEX_FINISH_CONFIRM_MIN_REMAINING ?? '').trim());
   const fmax = parseInt((env.CORTEX_FINISH_CONFIRM_MAX ?? '').trim(), 10);
+  const mc = (env.CORTEX_MEETS_CONFIRM ?? '').trim().toLowerCase();
+  const mmin = parseFloat((env.CORTEX_MEETS_CONFIRM_MIN_REMAINING ?? '').trim());
+  const tr = parseInt((env.CORTEX_JUDGE_TOOL_ROUNDS ?? '').trim(), 10);
+  const trb = parseInt((env.CORTEX_JUDGE_TOOL_ROUND_BUDGET_MS ?? '').trim(), 10);
   return {
     outputBudgetTokens: Number.isInteger(n) && n > 0 ? n : DEFAULTS.outputBudgetTokens,
     effort: e || DEFAULTS.effort,
@@ -83,6 +104,10 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
     finishConfirm: fc === '' ? DEFAULTS.finishConfirm : !(fc === 'false' || fc === '0' || fc === 'off'),
     finishConfirmMinRemaining: Number.isFinite(fmin) && fmin >= 0 && fmin <= 1 ? fmin : DEFAULTS.finishConfirmMinRemaining,
     finishConfirmMax: Number.isInteger(fmax) && fmax >= 0 ? Math.min(5, fmax) : DEFAULTS.finishConfirmMax,
+    meetsConfirm: mc === '' ? DEFAULTS.meetsConfirm : !(mc === 'false' || mc === '0' || mc === 'off'),
+    meetsConfirmMinRemaining: Number.isFinite(mmin) && mmin >= 0 && mmin <= 1 ? mmin : DEFAULTS.meetsConfirmMinRemaining,
+    toolRounds: Number.isInteger(tr) && tr >= 1 ? Math.min(5, tr) : DEFAULTS.toolRounds,
+    toolRoundBudgetMs: Number.isInteger(trb) && trb >= 10_000 ? Math.min(1_800_000, trb) : DEFAULTS.toolRoundBudgetMs,
     abstain: (env.CORTEX_ENDTURN_RESOLVER_ABSTAIN ?? '').trim().toLowerCase() === 'true',
   };
 }
@@ -125,9 +150,30 @@ export const RESOLVER_ABSTAIN_CLAUSE =
   'doomed fix cycle. 🔴 When in doubt between GAP and RETIRE, choose GAP — only RETIRE when you are CONFIDENT ' +
   'that more attempts cannot help. After `VERDICT: RETIRE`, give ONE short line naming why it is unclosable.';
 
-/** The persona for the judge. With `abstain`, the RETIRE option is offered. */
-export function resolverSystemPrompt(abstain = false): string {
-  return abstain ? RESOLVER_SYSTEM + RESOLVER_ABSTAIN_CLAUSE : RESOLVER_SYSTEM;
+/** R168: the MEETS sentence the persona carries by default, and its evidence-demanding replacement when meetsConfirm is on. */
+export const RESOLVER_MEETS_DEFAULT_LINE = 'If MEETS: stop after those lines (optionally one short confirming clause).\n';
+export const RESOLVER_MEETS_CHECK_LINE =
+  'If MEETS: after the verdict lines, give ONE to THREE lines `CHECK: <command>` whose PASSING (exit 0) proves the task\'s own ' +
+  'acceptance criteria — the exact artifact, output, format or threshold the TASK names, not the junior\'s own tests. The harness ' +
+  'RUNS them now; a MEETS with no passing check is treated as unverified and the finish is held for the junior to prove it. Then stop.\n';
+
+/** R170: offered while investigation rounds remain — the judge may gather evidence instead of deciding. */
+export const RESOLVER_INVESTIGATE_CLAUSE =
+  '\n\nYou may INVESTIGATE before deciding: if the evidence shown is not enough to point at a passing check or a concrete defect, ' +
+  'answer with the first line `VERDICT: INVESTIGATE` followed by up to three `CHECK: <command>` lines (read-only commands and test ' +
+  'runs; the harness executes them from the workspace root) and up to three `READ: <path>[:START-END]` lines (a file, optionally a ' +
+  'line range). The harness runs them and shows you an EVIDENCE block, then asks again. Prefer commands whose exit status settles a ' +
+  'requirement objectively. Do not repeat a check or read whose result you already have.';
+/** R170: on the last round the option is withdrawn — the judge must decide on the evidence gathered. */
+export const RESOLVER_DECIDE_NOW_CLAUSE =
+  '\n\nNo further investigation is available — decide now on the evidence you have (MEETS or GAP; INVESTIGATE is no longer accepted).';
+
+/** The persona for the judge. With `abstain`, the RETIRE option is offered; with `meetsConfirm` (R168), a MEETS must name proving
+ *  checks; `investigate` (R170) = 'offer' while rounds remain, 'withdraw' on the last round of a multi-round adjudication, undefined otherwise. */
+export function resolverSystemPrompt(abstain = false, meetsConfirm = false, investigate?: 'offer' | 'withdraw'): string {
+  const base = meetsConfirm ? RESOLVER_SYSTEM.replace(RESOLVER_MEETS_DEFAULT_LINE, RESOLVER_MEETS_CHECK_LINE) : RESOLVER_SYSTEM;
+  const withAbstain = abstain ? base + RESOLVER_ABSTAIN_CLAUSE : base;
+  return investigate === 'offer' ? withAbstain + RESOLVER_INVESTIGATE_CLAUSE : investigate === 'withdraw' ? withAbstain + RESOLVER_DECIDE_NOW_CLAUSE : withAbstain;
 }
 
 export interface EndTurnResolverContext {
@@ -150,6 +196,8 @@ export interface EndTurnResolverContext {
   priorVetoItems?: string;
   /** R165: what the junior did since that veto (tool-call count, commands that touched the named checks). */
   progressSummary?: string;
+  /** R170: the EVIDENCE blocks gathered by earlier investigation rounds of THIS adjudication (oldest first). */
+  evidenceRounds?: string[];
 }
 
 /** Build the user prompt for the judge. Bounded slices keep the call cheap and cache-stable. */
@@ -171,6 +219,7 @@ export function buildResolverUserPrompt(ctx: EndTurnResolverContext, abstain = f
   if (prior) parts.push(`PRIOR VETO ITEMS (your own fix plan from the previous adjudication of this finish — grade each CLOSED or STILL OPEN before anything else):\n${prior.slice(0, 2500)}`);
   const prog = (ctx.progressSummary || '').trim();
   if (prog) parts.push(`PROGRESS SINCE THAT VETO (harness-observed, ground truth):\n${prog.slice(0, 1500)}`);
+  for (const ev of ctx.evidenceRounds ?? []) { const e = (ev || '').trim(); if (e) parts.push(e.slice(0, 6000)); } // R170
   parts.push(
     abstain
       ? 'Adjudicate now. First line: `VERDICT: MEETS`, `VERDICT: GAP`, or `VERDICT: RETIRE`. If GAP, add the ' +
@@ -199,17 +248,22 @@ export interface ResolverVerdict {
   confidence: 'high' | 'medium' | 'low';
   /** R165: shell checks the judge named (`CHECK: <cmd>` lines), in order, deduplicated, backticks stripped. */
   checks: string[];
+  /** R170: `VERDICT: INVESTIGATE` — the judge asks for evidence instead of deciding (only honored while rounds remain). */
+  investigate: boolean;
+  /** R170: `READ: <path>[:start-end]` lines the judge asked for, in order, deduplicated (≤4). */
+  reads: string[];
 }
 
 /** Parse the judge's response. Empty/verdict-less text → `blank` (ABSTAIN), never MEETS. */
 export function parseResolverVerdict(text: string): ResolverVerdict {
   const t = (text || '').trim();
-  if (!t) return { meets: false, retire: false, plan: '', parsed: false, blank: true, confidence: 'high', checks: [] };
-  const m = t.match(/VERDICT:\s*(MEETS|GAP|RETIRE)/i);
-  if (!m) return { meets: false, retire: false, plan: '', parsed: false, blank: true, confidence: 'high', checks: [] }; // no clear verdict → abstain, do not block
+  if (!t) return { meets: false, retire: false, plan: '', parsed: false, blank: true, confidence: 'high', checks: [], investigate: false, reads: [] };
+  const m = t.match(/VERDICT:\s*(MEETS|GAP|RETIRE|INVESTIGATE)/i);
+  if (!m) return { meets: false, retire: false, plan: '', parsed: false, blank: true, confidence: 'high', checks: [], investigate: false, reads: [] }; // no clear verdict → abstain, do not block
   const verdict = m[1]!.toUpperCase();
   const meets = verdict === 'MEETS';
   const retire = verdict === 'RETIRE';
+  const investigate = verdict === 'INVESTIGATE'; // R170
   // The plan (GAP) / reason (RETIRE) is everything after the verdict line.
   const idx = t.indexOf(m[0]);
   let plan = t.slice(idx + m[0].length).trim();
@@ -217,13 +271,14 @@ export function parseResolverVerdict(text: string): ResolverVerdict {
   const confidence = (cm ? cm[1]!.toLowerCase() : 'high') as 'high' | 'medium' | 'low';
   if (cm) plan = plan.replace(cm[0], '').trim();
   const checks: string[] = [];
+  const reads: string[] = [];
   for (const line of plan.split('\n')) {
     const cl = line.match(/^\s*(?:[-*\d.)]+\s*)?CHECK:\s*(.+?)\s*$/i);
-    if (!cl) continue;
-    const cmd = cl[1]!.replace(/^`+|`+$/g, '').trim();
-    if (cmd && cmd.length <= 400 && !checks.includes(cmd)) checks.push(cmd);
+    if (cl) { const cmd = cl[1]!.replace(/^`+|`+$/g, '').trim(); if (cmd && cmd.length <= 400 && !checks.includes(cmd)) checks.push(cmd); continue; }
+    const rl = line.match(/^\s*(?:[-*\d.)]+\s*)?READ:\s*(.+?)\s*$/i); // R170
+    if (rl) { const spec = rl[1]!.replace(/^`+|`+$/g, '').trim(); if (spec && spec.length <= 300 && !reads.includes(spec)) reads.push(spec); }
   }
-  return { meets, retire, plan, parsed: true, blank: false, confidence, checks: checks.slice(0, 4) };
+  return { meets, retire, plan, parsed: true, blank: false, confidence, checks: checks.slice(0, 4), investigate, reads: reads.slice(0, 4) };
 }
 
 /** R165: what to do with a verdict. Pure, so the policy is unit-testable and readable in one place. */
@@ -278,16 +333,48 @@ export function budgetedVetoEscalation(rejectIndex: number, cap: number, remaini
   );
 }
 
-/** R167: hold the finish for one informed confirmation? Only after an accept-with-gap / accept-low-confidence verdict. */
+/** R167: hold the finish for one informed confirmation? Only after an accept-with-gap / accept-low-confidence verdict —
+ *  or (R168) after a MEETS that no passing check backs, when `meets` is passed and meetsConfirm is on. The two share
+ *  `confirmsUsed` / `finishConfirmMax`, so a session is never held twice. */
 export function shouldFinishConfirm(input: {
   action: VetoAction; remainingFrac: number | null; confirmsUsed: number;
-  cfg: Pick<EndTurnResolverConfig, 'finishConfirm' | 'finishConfirmMinRemaining' | 'finishConfirmMax'>;
+  cfg: Pick<EndTurnResolverConfig, 'finishConfirm' | 'finishConfirmMinRemaining' | 'finishConfirmMax'> & Partial<Pick<EndTurnResolverConfig, 'meetsConfirm' | 'meetsConfirmMinRemaining'>>;
+  /** R168: the verdict was a genuine MEETS (not blank/retire). */
+  meets?: boolean;
+  /** R168: a judge-named check the harness ran just now PASSED, or the workspace's own check entry point passed. */
+  evidencePassed?: boolean;
 }): boolean {
-  if (!input.cfg.finishConfirm) return false;
-  if (input.action !== 'accept-with-gap' && input.action !== 'accept-low-confidence') return false;
   if (input.confirmsUsed >= input.cfg.finishConfirmMax) return false;
   if (input.remainingFrac === null) return false; // no deadline → nothing to confirm against
+  if (input.action === 'accept' && input.meets) {
+    if (!input.cfg.meetsConfirm) return false;
+    if (input.evidencePassed) return false; // a verified MEETS stands
+    return input.remainingFrac >= (input.cfg.meetsConfirmMinRemaining ?? 0.5);
+  }
+  if (!input.cfg.finishConfirm) return false;
+  if (input.action !== 'accept-with-gap' && input.action !== 'accept-low-confidence') return false;
   return input.remainingFrac >= input.cfg.finishConfirmMinRemaining;
+}
+
+/** R168: the hold the junior sees in place of an unverified MEETS — what was (not) checked, the budget, its own open items. */
+export function buildMeetsConfirmMessage(input: {
+  remainingFrac: number; remainingMs: number; checksNamed: number; checkResults: string; openItems: unknown;
+}): string {
+  const mins = Math.max(0, Math.round(input.remainingMs / 60000));
+  const h = mins >= 60 ? `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, '0')}` : `${mins} min`;
+  const pct = Math.round(input.remainingFrac * 100);
+  const items = Array.isArray(input.openItems) ? input.openItems.map((x) => String(x)).filter(Boolean) : (input.openItems ? [String(input.openItems)] : []);
+  const own = items.length ? `\n\nYOUR OWN OPEN ITEMS (from your attestation):\n- ${items.slice(0, 6).map((x) => x.slice(0, 300)).join('\n- ')}` : '';
+  const why = input.checksNamed === 0
+    ? 'The reviewer saw no gap but named NO command that proves the task\'s criteria, so nothing has been verified.'
+    : `The reviewer saw no gap, but none of the ${input.checksNamed} proving check(s) it named PASSED when the harness ran them just now:`;
+  const results = input.checkResults.trim() ? `\n\n${input.checkResults.trim().slice(0, 3000)}` : '';
+  return (
+    `EndTurn NOT YET ACCEPTED — the finish is UNVERIFIED. ${why}${results}\n\nFinishing ends the task and it is graded as-is; ` +
+    `you cannot correct anything afterwards. You have ~${h} of the wall budget left (${pct}%).` + own +
+    `\n\nBefore finishing: re-read the TASK's own acceptance criteria (the exact artifact, output, format, path or threshold it names), ` +
+    `verify each one with a command you actually run, fix whatever that reveals, then call EndTurn again and it will stand.`
+  );
 }
 
 /** R167: the confirmation the junior sees in place of the accepted EndTurn — budget, the reviewer's gaps, its own open items. */

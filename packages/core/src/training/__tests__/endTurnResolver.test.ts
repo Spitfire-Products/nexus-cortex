@@ -145,7 +145,7 @@ describe('endTurnResolver — R160 budget-aware reject cap', () => {
 });
 
 // R165 HB-JUDGE-SEMANTIC (2026-09-16): confidence + named checks parsed; the veto policy is a pure table.
-import { decideVetoAction, buildResolverUserPrompt as _brp, shouldFinishConfirm, buildFinishConfirmMessage } from '../endTurnResolver.js';
+import { decideVetoAction, buildResolverUserPrompt as _brp, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage, resolverSystemPrompt as rsp, RESOLVER_MEETS_CHECK_LINE, RESOLVER_MEETS_DEFAULT_LINE, RESOLVER_INVESTIGATE_CLAUSE, RESOLVER_DECIDE_NOW_CLAUSE, buildResolverUserPrompt as brp2 } from '../endTurnResolver.js';
 describe('endTurnResolver — R165 semantic judge', () => {
   it('parses CONFIDENCE and CHECK lines out of a GAP plan and strips them from the plan text', () => {
     const v = parseResolverVerdict('VERDICT: GAP\nCONFIDENCE: medium\n1. u exceeds ±500.\nCHECK: `python3 -c "import numpy as np; d=np.load(\'/app/results/run.npz\'); assert abs(d[\'u\']).max()<=500"`\n2. dt spacing.\n   CHECK: python3 /app/check_dt.py\n');
@@ -258,5 +258,74 @@ describe('endTurnResolver — R167 informed finish confirmation (HB-FINISH-CONFI
     expect(m).toContain('call EndTurn again');
     const m2 = buildFinishConfirmMessage({ remainingFrac: 0.4, remainingMs: 20 * 60000, gapPlan: '', openItems: undefined });
     expect(m2).not.toContain('REVIEWER'); expect(m2).not.toContain('OWN OPEN ITEMS'); expect(m2).toContain('20 min');
+  });
+});
+
+describe('endTurnResolver — R168 verified MEETS (HB-MEETS-CONFIRM)', () => {
+  const cfg = { finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5 };
+  it('config: default on, floor 0.5; overridable; clamped', () => {
+    const d = resolveEndTurnResolverConfig({} as any);
+    expect(d.meetsConfirm).toBe(true); expect(d.meetsConfirmMinRemaining).toBe(0.5);
+    expect(resolveEndTurnResolverConfig({ CORTEX_MEETS_CONFIRM: 'false' } as any).meetsConfirm).toBe(false);
+    expect(resolveEndTurnResolverConfig({ CORTEX_MEETS_CONFIRM_MIN_REMAINING: '0.8' } as any).meetsConfirmMinRemaining).toBe(0.8);
+    expect(resolveEndTurnResolverConfig({ CORTEX_MEETS_CONFIRM_MIN_REMAINING: '3' } as any).meetsConfirmMinRemaining).toBe(0.5);
+  });
+  it('persona: the MEETS line demands proving checks only when the lever is on; abstain clause still composes', () => {
+    expect(rsp(false, false)).toContain(RESOLVER_MEETS_DEFAULT_LINE); expect(rsp(false, false)).not.toContain('whose PASSING');
+    expect(rsp(false, true)).toContain(RESOLVER_MEETS_CHECK_LINE); expect(rsp(false, true)).not.toContain(RESOLVER_MEETS_DEFAULT_LINE);
+    expect(rsp(true, true)).toContain('VERDICT: RETIRE'); expect(rsp(true, true)).toContain(RESOLVER_MEETS_CHECK_LINE);
+    expect(rsp(false, true).length).toBeGreaterThan(rsp(false, false).length);
+  });
+  it('parser: a MEETS with CHECK lines carries them (unchanged behaviour, now load-bearing)', () => {
+    const v = parseResolverVerdict('VERDICT: MEETS\nCONFIDENCE: high\nCHECK: test -f out/report.csv\nCHECK: `python3 -m pytest -q tests/`\n');
+    expect(v.meets).toBe(true); expect(v.checks).toEqual(['test -f out/report.csv', 'python3 -m pytest -q tests/']);
+  });
+  it('hold: an unverified MEETS with budget left is held once; a verified one stands; lever off = 4.116.2', () => {
+    expect(shouldFinishConfirm({ action: 'accept', meets: true, evidencePassed: false, remainingFrac: 0.85, confirmsUsed: 0, cfg })).toBe(true);
+    expect(shouldFinishConfirm({ action: 'accept', meets: true, evidencePassed: true, remainingFrac: 0.85, confirmsUsed: 0, cfg })).toBe(false); // proven
+    expect(shouldFinishConfirm({ action: 'accept', meets: true, evidencePassed: false, remainingFrac: 0.49, confirmsUsed: 0, cfg })).toBe(false); // below the floor
+    expect(shouldFinishConfirm({ action: 'accept', meets: true, evidencePassed: false, remainingFrac: 0.85, confirmsUsed: 1, cfg })).toBe(false); // shared counter spent
+    expect(shouldFinishConfirm({ action: 'accept', meets: true, evidencePassed: false, remainingFrac: null, confirmsUsed: 0, cfg })).toBe(false); // no deadline
+    expect(shouldFinishConfirm({ action: 'accept', meets: true, evidencePassed: false, remainingFrac: 0.85, confirmsUsed: 0, cfg: { ...cfg, meetsConfirm: false } })).toBe(false);
+    expect(shouldFinishConfirm({ action: 'accept', remainingFrac: 0.9, confirmsUsed: 0, cfg })).toBe(false); // no meets flag = blank/retire accepts stand
+    expect(shouldFinishConfirm({ action: 'accept-with-gap', remainingFrac: 0.73, confirmsUsed: 0, cfg })).toBe(true); // R167 untouched
+    expect(shouldFinishConfirm({ action: 'accept-with-gap', remainingFrac: 0.73, confirmsUsed: 0, cfg: { ...cfg, finishConfirm: false } })).toBe(false);
+  });
+  it('message: names the missing evidence, shows failed checks, budget, own items, and the consequence', () => {
+    const m0 = buildMeetsConfirmMessage({ remainingFrac: 0.88, remainingMs: 79 * 60000, checksNamed: 0, checkResults: '', openItems: ['edge case NOT_FOUND untested'] });
+    expect(m0).toContain('UNVERIFIED'); expect(m0).toContain('named NO command'); expect(m0).toContain('88%'); expect(m0).toContain('1h19');
+    expect(m0).toContain('YOUR OWN OPEN ITEMS'); expect(m0).toContain('NOT_FOUND'); expect(m0).toContain('call EndTurn again');
+    const m1 = buildMeetsConfirmMessage({ remainingFrac: 0.6, remainingMs: 30 * 60000, checksNamed: 2, checkResults: 'CHECK RUN: `test -f out.csv` → FAILED (exit 1) in 12 ms\n(no output)', openItems: undefined });
+    expect(m1).toContain('none of the 2 proving check(s)'); expect(m1).toContain('FAILED (exit 1)'); expect(m1).not.toContain('OWN OPEN ITEMS'); expect(m1).toContain('30 min');
+  });
+});
+
+describe('endTurnResolver — R170 bounded investigation loop (HB-JUDGE-TOOL-LOOP)', () => {
+  it('config: default 1 round / 240 s; clamped 1..5 and 10 s..30 min', () => {
+    const d = resolveEndTurnResolverConfig({} as any);
+    expect(d.toolRounds).toBe(1); expect(d.toolRoundBudgetMs).toBe(240_000);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_TOOL_ROUNDS: '3' } as any).toolRounds).toBe(3);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_TOOL_ROUNDS: '9' } as any).toolRounds).toBe(5);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_TOOL_ROUNDS: '0' } as any).toolRounds).toBe(1);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_TOOL_ROUND_BUDGET_MS: '5000' } as any).toolRoundBudgetMs).toBe(240_000);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_TOOL_ROUND_BUDGET_MS: '600000' } as any).toolRoundBudgetMs).toBe(600_000);
+  });
+  it('persona: INVESTIGATE offered only on request, withdrawn on the last round, absent by default', () => {
+    expect(rsp(false, false)).not.toContain('VERDICT: INVESTIGATE'); expect(rsp(false, true)).not.toContain('INVESTIGATE');
+    expect(rsp(false, true, 'offer')).toContain(RESOLVER_INVESTIGATE_CLAUSE); expect(rsp(true, true, 'offer')).toContain('VERDICT: RETIRE');
+    expect(rsp(false, false, 'withdraw')).toContain(RESOLVER_DECIDE_NOW_CLAUSE); expect(rsp(false, false, 'withdraw')).not.toContain(RESOLVER_INVESTIGATE_CLAUSE);
+  });
+  it('parser: INVESTIGATE with CHECK and READ lines; reads deduped and capped; plain verdicts carry investigate=false', () => {
+    const v = parseResolverVerdict('VERDICT: INVESTIGATE\nCONFIDENCE: low\nCHECK: ls -la out/\nREAD: src/main.py:1-40\nREAD: `README.md`\nREAD: src/main.py:1-40\n- READ: a\n2. READ: b\nREAD: c\n');
+    expect(v.investigate).toBe(true); expect(v.meets).toBe(false); expect(v.blank).toBe(false); expect(v.parsed).toBe(true);
+    expect(v.checks).toEqual(['ls -la out/']); expect(v.reads).toEqual(['src/main.py:1-40', 'README.md', 'a', 'b']);
+    const g = parseResolverVerdict('VERDICT: GAP\nCONFIDENCE: high\n1. missing file\nCHECK: test -f x');
+    expect(g.investigate).toBe(false); expect(g.reads).toEqual([]); expect(g.checks).toEqual(['test -f x']);
+    expect(parseResolverVerdict('').investigate).toBe(false);
+  });
+  it('prompt: evidence rounds ride between progress and the closing instruction, bounded', () => {
+    const p = brp2({ task: 'T', workProduct: 'W', evidenceRounds: ['EVIDENCE (investigation round 1, executed by the harness just now; ground truth):\nCHECK RUN: `ls` → PASSED in 3 ms\nout'] });
+    expect(p).toContain('EVIDENCE (investigation round 1'); expect(p.indexOf('EVIDENCE')).toBeLessThan(p.indexOf('Adjudicate now'));
+    expect(brp2({ task: 'T', workProduct: 'W' })).not.toContain('EVIDENCE');
   });
 });

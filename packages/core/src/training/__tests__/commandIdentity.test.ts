@@ -109,3 +109,4 @@ describe('extractCommandIdentity', () => {
     expect(commandIdentityDigest(undefined)).toBeUndefined();
   });
 });
+
