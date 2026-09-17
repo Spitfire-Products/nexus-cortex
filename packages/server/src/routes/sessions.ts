@@ -386,12 +386,14 @@ sessionsRouter.get('/sessions/:id/stats', async (req: Request, res: Response) =>
     let totalOutputTokens = 0;
     let totalCacheReadTokens = 0;
     let totalCacheWriteTokens = 0;
+    let totalReasoningTokens = 0;
 
     for (const message of messages) {
       if ((message as any).usage) {
         const usage = (message as any).usage;
-        totalInputTokens += usage.input_tokens || 0;
-        totalOutputTokens += usage.output_tokens || 0;
+        totalInputTokens += usage.input_tokens || usage.inputTokens || 0;
+        totalOutputTokens += usage.output_tokens || usage.outputTokens || 0;
+        totalReasoningTokens += usage.reasoning_tokens || usage.reasoningTokens || usage.completion_tokens_details?.reasoning_tokens || 0;
         totalCacheReadTokens += usage.cache_read_input_tokens || 0;
         totalCacheWriteTokens += usage.cache_creation_input_tokens || 0;
       }
@@ -408,6 +410,7 @@ sessionsRouter.get('/sessions/:id/stats', async (req: Request, res: Response) =>
       tokens: {
         input: totalInputTokens,
         output: totalOutputTokens,
+        reasoning: totalReasoningTokens,
         cacheRead: totalCacheReadTokens,
         cacheWrite: totalCacheWriteTokens,
         total: totalInputTokens + totalOutputTokens + totalCacheReadTokens

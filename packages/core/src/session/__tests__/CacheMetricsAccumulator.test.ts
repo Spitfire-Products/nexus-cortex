@@ -288,3 +288,15 @@ describe('CacheMetricsAccumulator', () => {
     });
   });
 });
+
+describe('reasoning tokens (2026-09-17)', () => {
+  it('sums usage.reasoningTokens when reported and reports the share', () => {
+    const acc = new CacheMetricsAccumulator();
+    acc.addUsage({ inputTokens: 100, outputTokens: 1000, totalTokens: 1100, reasoningTokens: 700 } as any, 'deepseek');
+    acc.addUsage({ inputTokens: 100, outputTokens: 500, totalTokens: 600 } as any, 'deepseek');
+    const m = acc.getMetrics();
+    expect(m.totalOutputTokens).toBe(1500);
+    expect(m.totalReasoningTokens).toBe(700);
+    expect(acc.formatReport()).toContain('of which reasoning: 700 (47%)');
+  });
+});

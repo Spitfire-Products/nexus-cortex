@@ -30,6 +30,8 @@ export interface SessionMetadata {
     requestCount: number;
     totalInputTokens: number;
     totalOutputTokens: number;
+    /** Internal-reasoning tokens summed across requests (optional; providers that report them). */
+    totalReasoningTokens?: number;
     totalCacheCreationTokens: number;
     totalCacheReadTokens: number;
     totalUncachedInputTokens: number;

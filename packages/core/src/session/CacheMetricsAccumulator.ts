@@ -17,6 +17,8 @@ export interface SessionCacheMetrics {
 
   /** Total output tokens */
   totalOutputTokens: number;
+  /** 2026-09-17: internal-reasoning tokens (DeepSeek completion_tokens_details.reasoning_tokens; billed as output). */
+  totalReasoningTokens?: number;
 
   /** Total cache creation tokens (new writes) */
   totalCacheCreationTokens: number;
@@ -60,6 +62,7 @@ export class CacheMetricsAccumulator {
     requestCount: 0,
     totalInputTokens: 0,
     totalOutputTokens: 0,
+    totalReasoningTokens: 0,
     totalCacheCreationTokens: 0,
     totalCacheReadTokens: 0,
     totalUncachedInputTokens: 0,
@@ -76,6 +79,7 @@ export class CacheMetricsAccumulator {
     this.metrics.requestCount++;
     this.metrics.totalInputTokens += usage.inputTokens;
     this.metrics.totalOutputTokens += usage.outputTokens;
+    if (typeof usage.reasoningTokens === 'number') this.metrics.totalReasoningTokens = (this.metrics.totalReasoningTokens ?? 0) + usage.reasoningTokens;
 
     if (usage.cache) {
       this.metrics.totalCacheCreationTokens += usage.cache.cacheCreationTokens;
@@ -140,6 +144,7 @@ export class CacheMetricsAccumulator {
       requestCount: 0,
       totalInputTokens: 0,
       totalOutputTokens: 0,
+    totalReasoningTokens: 0,
       totalCacheCreationTokens: 0,
       totalCacheReadTokens: 0,
       totalUncachedInputTokens: 0,
@@ -173,6 +178,7 @@ export class CacheMetricsAccumulator {
     }
 
     lines.push(`Total Output Tokens: ${m.totalOutputTokens.toLocaleString()}\n`);
+    if (m.totalReasoningTokens) lines.push(`  of which reasoning: ${m.totalReasoningTokens.toLocaleString()} (${m.totalOutputTokens > 0 ? Math.round(100 * m.totalReasoningTokens / m.totalOutputTokens) : 0}%)\n`);
 
     if (m.overallCacheHitRate > 0) {
       lines.push(`Overall Cache Hit Rate: ${(m.overallCacheHitRate * 100).toFixed(1)}%`);
