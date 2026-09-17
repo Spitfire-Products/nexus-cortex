@@ -176,6 +176,24 @@ export function detectCheckCommand(cwd: string): string | null {
 }
 
 /** Run a check command bounded by the config; returns a labeled, capped result the judge can cite. */
+/**
+ * R166b (2026-09-17): classify a runCheck() result as EVIDENCE. Only a check that ran to completion, exited non-zero AND printed
+ * something is a failure the veto may rest on. A timeout is inconclusive (a slow legitimate check is not a defect), and a
+ * non-zero exit with no output is inconclusive too (the A/B showed judge-authored commands that were simply broken: exit 1,
+ * no output, on a solution the grader accepted). PASSED is a pass.
+ */
+export type CheckClass = 'passed' | 'failed' | 'inconclusive';
+export function classifyCheckRun(result: string): CheckClass {
+  const head = result.split('\n', 1)[0] ?? '';
+  if (/→ PASSED/.test(head)) return 'passed';
+  if (/→ TIMED OUT/.test(head)) return 'inconclusive';
+  if (/→ FAILED \(exit \d+\)/.test(head)) {
+    const body = result.slice(head.length).trim();
+    return body && body !== '(no output)' ? 'failed' : 'inconclusive';
+  }
+  return 'inconclusive';
+}
+
 export function runCheck(cwd: string, cmd: string, cfg: JudgeGroundingConfig = resolveJudgeGroundingConfig()): string {
   const t0 = Date.now();
   let out = '';

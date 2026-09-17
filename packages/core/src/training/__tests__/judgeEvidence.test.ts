@@ -11,6 +11,7 @@ import {
   resolveJudgeGroundingConfig, selectDeltaFiles, formatWorkspaceDelta, collectWorkspaceDelta,
   detectCheckCommand, runCheck,
 } from '../judgeEvidence.js';
+import { classifyCheckRun } from '../judgeEvidence.js';
 
 const cfg = { ...resolveJudgeGroundingConfig({}), checkTimeoutMs: 10_000 };
 
@@ -117,5 +118,15 @@ describe('prioritizeDeltaCandidates (R162)', () => {
     expect(out.some((p) => p.startsWith('target/'))).toBe(false);
     expect(out.some((p) => p.startsWith('.cortex/'))).toBe(false);
     expect(_sdf(out, 8)[0]).toBe('submission/src/main/scala/tb/dedup/submission/SubmissionDedup.scala');
+  });
+});
+
+describe('R166b classifyCheckRun — only a completed, non-zero, non-silent check is evidence', () => {
+  it('passed / failed / inconclusive', () => {
+    expect(classifyCheckRun('CHECK RUN: `pytest -q` → PASSED in 12 ms\n3 passed')).toBe('passed');
+    expect(classifyCheckRun('CHECK RUN: `pytest -q` → FAILED (exit 1) in 12 ms\nAssertionError: expected 3 got 2')).toBe('failed');
+    expect(classifyCheckRun('CHECK RUN: `python3 -c "..."` → FAILED (exit 1) in 5 ms\n(no output)')).toBe('inconclusive');
+    expect(classifyCheckRun('CHECK RUN: `make test` → TIMED OUT after 45000 ms (not a pass) in 45001 ms\npartial output')).toBe('inconclusive');
+    expect(classifyCheckRun('garbage')).toBe('inconclusive');
   });
 });

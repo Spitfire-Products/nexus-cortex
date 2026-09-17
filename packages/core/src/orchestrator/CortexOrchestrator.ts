@@ -74,7 +74,7 @@ import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from 
 import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage, memoryIndexLine, upsertMemoryIndex, scaleEstimateToRequestView, approxCharsOf, anchoredRequestEstimate, resolveCompactionHandoffQA, resolveHandoffQAMaxQuestions, runHandoffQA, type HandoffQAResult } from './compactionResume.js';
 import { renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBand, resolveRearmBand } from './compactionResumeTemplate.js';
 import { resolveCortexStateDir, cortexStatePath } from '../utils/stateDir.js';
-import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig } from '../training/judgeEvidence.js';
+import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig, classifyCheckRun } from '../training/judgeEvidence.js';
 import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, mentorSurfaceTimeoutMs, type MentorCallMeta } from '../training/mentorRole.js';
 import { resolveOuterToolDeadlineMs, resolveOuterToolTimeoutFloorMs } from './outerToolTimeout.js';
 import { resolveSubAgentTimeoutMs } from './subAgentTimeout.js';
@@ -1033,11 +1033,11 @@ export class CortexOrchestrator {
       }
       // R165: run the checks the judge itself named at the previous veto — the objective qualifier. The judge asserts,
       // the harness verifies, the junior sees a real failing command instead of prose.
-      let namedRan = 0; let namedPassed = 0; let namedFailed = 0; let namedResults = '';
+      let namedRan = 0; let namedPassed = 0; let namedFailed = 0; let namedInconclusive = 0; let namedResults = ''; // R166b: timeouts / silent non-zero exits are not evidence
       if (cfg.semantic && this.judgeNamedChecks.length > 0) {
         for (const c of this.judgeNamedChecks.slice(0, 3)) {
           const r = runCheck(judgeCwd, c, jcfg);
-          namedRan += 1; if (/→ PASSED/.test(r)) namedPassed += 1; else namedFailed += 1;
+          namedRan += 1; { const k = classifyCheckRun(r); if (k === 'passed') namedPassed += 1; else if (k === 'failed') namedFailed += 1; else namedInconclusive += 1; } // R166b
           namedResults += (namedResults ? '\n\n' : '') + r;
         }
       }
@@ -1075,7 +1075,7 @@ export class CortexOrchestrator {
       if (cfg.semantic && cfg.vetoMode === 'evidence' && !verdict.meets && !verdict.blank && verdict.checks.length > 0) {
         for (const c of verdict.checks.slice(0, 3)) {
           const r = runCheck(judgeCwd, c, jcfg);
-          namedRanNow += 1; namedRan += 1; if (/→ PASSED/.test(r)) namedPassed += 1; else namedFailed += 1;
+          namedRanNow += 1; namedRan += 1; { const k = classifyCheckRun(r); if (k === 'passed') namedPassed += 1; else if (k === 'failed') namedFailed += 1; else namedInconclusive += 1; } // R166b
           namedResultsNow += (namedResultsNow ? '\n\n' : '') + r;
         }
       }
@@ -1110,7 +1110,7 @@ export class CortexOrchestrator {
           planChars: verdict.plan.length, rejects: this.endTurnResolverRejects, parsed: verdict.parsed,
           cap: resolverCap, capLiveness: cfg.maxRejects, capBudgeted: cfg.maxRejectsBudgeted, remainingFrac: resolverRemainingFrac === null ? null : Number(resolverRemainingFrac.toFixed(3)), // R160
           semantic: cfg.semantic, action, confidence: verdict.confidence, namedChecks: verdict.checks.length, namedRan, namedPassed, namedFailed, callsSince, progressed, escalated: this.judgeEscalated, // R165
-          vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap, namedRanNow, // R166
+          vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap, namedRanNow, namedInconclusive, // R166 / R166b
           latencyMs, rawLen: (text ?? '').length,
           deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,
           liftPlanChars: this.liftPlanText.length,
