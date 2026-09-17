@@ -28,7 +28,7 @@ import { join as pathJoin } from 'path';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'node:child_process';
 import { ENV_RECON_COMMAND, resolveLiftPlanConfig } from '../training/liftPlanner.js';
-import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction } from '../training/endTurnResolver.js';
+import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage } from '../training/endTurnResolver.js';
 import { resolveDeadlineExitConfig, deadlineExitCallBudget, parseDeadlineExitVerdict } from '../training/deadlineExitMentor.js';
 import { isTaskShaped } from './requirementsVerification.js';
 import { type ServerSideToolMetadata, extractServerSideMetadata, XAIServerSideTools, OpenAIServerSideTools, toCanonicalTool } from '../tools/ServerSideTools.js';
@@ -645,6 +645,8 @@ export class CortexOrchestrator {
   private turnToolCallTotal = 0;
   private toolCallsAtLastVeto = 0;
   private judgePriorNamedPassed = 0; // R166a: named checks passing at the last veto
+  private finishConfirms = 0; // R167: informed finish confirmations issued this turn
+  private judgeAcceptedWithGap = false; // R167: the judge accepted this finish WITH a gap → regex nudges may still fire
   private judgeNamedChecks: string[] = [];
   private judgePriorPlan = '';
   private judgeEscalated = false;
@@ -1004,6 +1006,7 @@ export class CortexOrchestrator {
     // gates the legacy path (CORTEX_JUDGE_SEMANTIC=false).
     if (cfg.semantic ? !ev.usedTools : !isTaskShaped(task)) return;
     this.judgeAdjudicatedThisFinish = false;
+    this.judgeAcceptedWithGap = false; // R167
     // R160 HB-RESOLVER-BUDGET-CAP: the cap is budget-aware — while >= CORTEX_BUDGET_CONTINUE_MIN_REMAINING of the wall
     // budget remains the judge may veto up to maxRejectsBudgeted times; below that (or with no deadline) the liveness cap.
     const resolverRemainingMs = this.turnDeadlineMsActive > 0 && this.turnLoopStartMs > 0 ? Math.max(0, this.turnDeadlineMsActive - (Date.now() - this.turnLoopStartMs)) : null;
@@ -1141,9 +1144,24 @@ export class CortexOrchestrator {
           (namedResultsNow ? `\n\nHARNESS-RUN CHECKS (named by the reviewer, executed just now — the failing ones are the gap):\n${namedResultsNow.slice(0, 3000)}` : '') + // R166
           budgetedVetoEscalation(this.endTurnResolverRejects, resolverCap, resolverRemainingMs ?? 0, this.turnDeadlineMsActive); // R160
         console.warn(`[EndTurnResolver] GAP — vetoed finish (${verdict.plan.length}-char plan, reject ${this.endTurnResolverRejects}/${resolverCap}${resolverRemainingFrac === null ? '' : `, budget remaining ${Math.round(resolverRemainingFrac * 100)}%`})`);
+      } else if ((action === 'accept-with-gap' || action === 'accept-low-confidence') &&
+                 shouldFinishConfirm({ action, remainingFrac: resolverRemainingFrac, confirmsUsed: this.finishConfirms, cfg })) {
+        // R167 HB-FINISH-CONFIRM: the judge would accept with a gap and budget remains — hold ONCE with an informed
+        // confirmation (zero model calls): budget left, the reviewer's gap plan, the junior's own open_items. The next
+        // EndTurn stands unless an evidence veto applies. Terminus-2's double-confirm, carrying information.
+        this.finishConfirms += 1;
+        ev.endTurnCalled = false;
+        et.is_error = true;
+        et.content = buildFinishConfirmMessage({
+          remainingFrac: resolverRemainingFrac ?? 0, remainingMs: resolverRemainingMs ?? 0,
+          gapPlan: verdict.plan, openItems: (etInput as { open_items?: unknown }).open_items, confidence: verdict.confidence,
+        });
+        console.warn(`[EndTurnResolver] R167 FINISH-CONFIRM — held once for confirmation (budget remaining ${Math.round((resolverRemainingFrac ?? 0) * 100)}%, ${action})`);
+        if (store) void store.recordEvent({ sessionId, kind: 'finish_confirm', toolName: 'EndTurn', detail: { action, remainingFrac: resolverRemainingFrac, confirms: this.finishConfirms, planChars: verdict.plan.length, openItems: Array.isArray((etInput as any).open_items) ? (etInput as any).open_items.length : 0 } }).catch(() => {});
       } else if (action === 'accept-with-gap' || action === 'accept-low-confidence') {
         // R165: the judge still sees a gap but the finish stands — cap reached, no progress after the escalation, or a
         // low-confidence suspicion with no failed check. Recorded, not hidden: the gap rides on the event for adjudication.
+        this.judgeAcceptedWithGap = true; // R167: let the budget-continue / surrender nudges see this finish
         console.warn(`[EndTurnResolver] ${action.toUpperCase()} — finish accepted with a recorded gap (rejects ${this.endTurnResolverRejects}/${resolverCap}, confidence ${verdict.confidence}): ${verdict.plan.slice(0, 160).replace(/\s+/g, ' ')}`);
         if (store) void store.recordEvent({ sessionId, kind: 'endturn_gap_accepted', toolName: 'EndTurn', detail: { action, rejects: this.endTurnResolverRejects, cap: resolverCap, confidence: verdict.confidence, plan: verdict.plan.slice(0, 2000), checks: verdict.checks, callsSince, escalated: this.judgeEscalated } }).catch(() => {});
       } else if (this.config.debug) {
@@ -2190,7 +2208,7 @@ export class CortexOrchestrator {
     // R153: the stop reason of the LATEST response (continuation/retry/gate/synth refresh it) — the empty-response
     // classifier used to read the turn's FIRST response, so a `length` cutoff on a continuation was never seen.
     let lastStopReason: string | undefined = convertedResponse.stopReason;
-    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
+    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     let toolCallIteration = 0;
     // R137 HB-POLL-REPEAT-BREAKER: the exact-repeat breaker used to force-exit by overwriting
@@ -2707,7 +2725,7 @@ export class CortexOrchestrator {
                 .join('\n')
             : String(currentAssistantCanonicalMessage.content ?? '');
           // R165: when the semantic judge adjudicated this finish, the regex surrender/open-items nudges defer to it.
-          const judgeOwnsFinish = this.judgeAdjudicatedThisFinish && resolveEndTurnResolverConfig().semantic;
+          const judgeOwnsFinish = this.judgeAdjudicatedThisFinish && resolveEndTurnResolverConfig().semantic && !this.judgeAcceptedWithGap; // R167: an accept-with-gap leaves the regex nudges live
           const surrenderUnsatisfied =
             resolveSurrenderNudgeMode() && ev.usedTools && !surrenderNudgeUsed && !judgeOwnsFinish &&
             detectSurrenderText(surrenderDraftText);
@@ -4618,7 +4636,7 @@ export class CortexOrchestrator {
 
     let currentAssistantCanonicalMessage = convertedResponse.messages[0]!;
     let lastStopReason: string | undefined = convertedResponse.stopReason; // R153 (see non-streaming loop)
-    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
+    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     const assistantMessageId = currentAssistantCanonicalMessage.uuid;
 

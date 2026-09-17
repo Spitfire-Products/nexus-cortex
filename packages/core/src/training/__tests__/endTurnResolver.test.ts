@@ -145,7 +145,7 @@ describe('endTurnResolver — R160 budget-aware reject cap', () => {
 });
 
 // R165 HB-JUDGE-SEMANTIC (2026-09-16): confidence + named checks parsed; the veto policy is a pure table.
-import { decideVetoAction, buildResolverUserPrompt as _brp } from '../endTurnResolver.js';
+import { decideVetoAction, buildResolverUserPrompt as _brp, shouldFinishConfirm, buildFinishConfirmMessage } from '../endTurnResolver.js';
 describe('endTurnResolver — R165 semantic judge', () => {
   it('parses CONFIDENCE and CHECK lines out of a GAP plan and strips them from the plan text', () => {
     const v = parseResolverVerdict('VERDICT: GAP\nCONFIDENCE: medium\n1. u exceeds ±500.\nCHECK: `python3 -c "import numpy as np; d=np.load(\'/app/results/run.npz\'); assert abs(d[\'u\']).max()<=500"`\n2. dt spacing.\n   CHECK: python3 /app/check_dt.py\n');
@@ -227,5 +227,36 @@ describe('endTurnResolver — R166 evidence-gated veto (HB-JUDGE-EVIDENCE-VETO)'
     expect(decideVetoAction({ ...base, rejects: 0, vetoMode: 'opinion' })).toBe('veto');
     expect(decideVetoAction({ ...base, rejects: 2, progressed: false, vetoMode: 'opinion' })).toBe('escalate');
     expect(decideVetoAction({ ...base, rejects: 6, vetoMode: 'opinion' })).toBe('accept-with-gap');
+  });
+});
+
+describe('endTurnResolver — R167 informed finish confirmation (HB-FINISH-CONFIRM)', () => {
+  const cfg = { finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1 };
+  it('config: default on, floor 0.3, max 1; overridable; clamped', () => {
+    const d = resolveEndTurnResolverConfig({} as any);
+    expect(d.finishConfirm).toBe(true); expect(d.finishConfirmMinRemaining).toBe(0.3); expect(d.finishConfirmMax).toBe(1);
+    expect(resolveEndTurnResolverConfig({ CORTEX_FINISH_CONFIRM: 'false' } as any).finishConfirm).toBe(false);
+    expect(resolveEndTurnResolverConfig({ CORTEX_FINISH_CONFIRM_MIN_REMAINING: '0.5' } as any).finishConfirmMinRemaining).toBe(0.5);
+    expect(resolveEndTurnResolverConfig({ CORTEX_FINISH_CONFIRM_MIN_REMAINING: '7' } as any).finishConfirmMinRemaining).toBe(0.3);
+    expect(resolveEndTurnResolverConfig({ CORTEX_FINISH_CONFIRM_MAX: '9' } as any).finishConfirmMax).toBe(5);
+  });
+  it('fires only on an accept-with-gap / accept-low-confidence with budget left and confirmations remaining', () => {
+    expect(shouldFinishConfirm({ action: 'accept-with-gap', remainingFrac: 0.73, confirmsUsed: 0, cfg })).toBe(true);
+    expect(shouldFinishConfirm({ action: 'accept-low-confidence', remainingFrac: 0.31, confirmsUsed: 0, cfg })).toBe(true);
+    expect(shouldFinishConfirm({ action: 'accept-with-gap', remainingFrac: 0.29, confirmsUsed: 0, cfg })).toBe(false); // near end of budget: let it finish
+    expect(shouldFinishConfirm({ action: 'accept-with-gap', remainingFrac: 0.9, confirmsUsed: 1, cfg })).toBe(false); // already confirmed once
+    expect(shouldFinishConfirm({ action: 'accept', remainingFrac: 0.9, confirmsUsed: 0, cfg })).toBe(false); // MEETS stands
+    expect(shouldFinishConfirm({ action: 'veto', remainingFrac: 0.9, confirmsUsed: 0, cfg })).toBe(false);
+    expect(shouldFinishConfirm({ action: 'accept-with-gap', remainingFrac: null, confirmsUsed: 0, cfg })).toBe(false); // no deadline
+    expect(shouldFinishConfirm({ action: 'accept-with-gap', remainingFrac: 0.9, confirmsUsed: 0, cfg: { ...cfg, finishConfirm: false } })).toBe(false);
+  });
+  it('message carries budget, the reviewer plan and the own open items, and names the consequence', () => {
+    const m = buildFinishConfirmMessage({ remainingFrac: 0.73, remainingMs: 65 * 60000, gapPlan: '1. target_theorem is still Admitted', openItems: ['Admitted remains in Main.v'], confidence: 'high' });
+    expect(m).toContain('73%'); expect(m).toContain('1h05'); expect(m).toContain('graded as-is');
+    expect(m).toContain("REVIEWER'S NOTES (high"); expect(m).toContain('still Admitted');
+    expect(m).toContain('YOUR OWN OPEN ITEMS'); expect(m).toContain('Admitted remains');
+    expect(m).toContain('call EndTurn again');
+    const m2 = buildFinishConfirmMessage({ remainingFrac: 0.4, remainingMs: 20 * 60000, gapPlan: '', openItems: undefined });
+    expect(m2).not.toContain('REVIEWER'); expect(m2).not.toContain('OWN OPEN ITEMS'); expect(m2).toContain('20 min');
   });
 });

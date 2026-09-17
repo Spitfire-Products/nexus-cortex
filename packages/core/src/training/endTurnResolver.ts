@@ -40,13 +40,22 @@ export interface EndTurnResolverConfig {
   vetoMode: 'evidence' | 'opinion' | 'never';
   /** R166: max evidence-backed vetoes per session (CORTEX_JUDGE_EVIDENCE_MAX_VETOES, default 1, 0..20). */
   evidenceCap: number;
+  /** R167 HB-FINISH-CONFIRM (2026-09-17, pilot-12): Terminus-2's "are you sure" made informative. When the judge accepts a
+   *  finish WITH a recorded gap (accept-with-gap / accept-low-confidence) and >= finishConfirmMinRemaining of the wall budget
+   *  remains, the finish is HELD once (finishConfirmMax) with a zero-model-call message carrying the budget left, the judge's
+   *  gap plan and the junior's own open_items; the junior either continues or calls EndTurn again (which stands unless an
+   *  evidence veto applies). Pilot-12 evidence: coq-block-bound surrendered honestly at 73% budget left and the R165 deferral
+   *  silenced the budget-continue nudge; 8/12 first finishes per arm had >= 70% budget left. CORTEX_FINISH_CONFIRM=false = off. */
+  finishConfirm: boolean;
+  finishConfirmMinRemaining: number;
+  finishConfirmMax: number;
   /** ABSTENTION (CORTEX_ENDTURN_RESOLVER_ABSTAIN): offer the judge a RETIRE verdict for a
    *  structurally-hopeless finish and HONOR it (accept + stop) instead of burning the reject
    *  cycles on a task the junior can't fix. Dark by default (A/B-able). */
   abstain: boolean;
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, abstain: false };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, abstain: false };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
@@ -58,6 +67,9 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
   const esc = (env.CORTEX_JUDGE_ESCALATE_REASONING ?? '').trim().toLowerCase();
   const vm = (env.CORTEX_JUDGE_VETO ?? '').trim().toLowerCase();
   const ec = parseInt((env.CORTEX_JUDGE_EVIDENCE_MAX_VETOES ?? '').trim(), 10);
+  const fc = (env.CORTEX_FINISH_CONFIRM ?? '').trim().toLowerCase();
+  const fmin = parseFloat((env.CORTEX_FINISH_CONFIRM_MIN_REMAINING ?? '').trim());
+  const fmax = parseInt((env.CORTEX_FINISH_CONFIRM_MAX ?? '').trim(), 10);
   return {
     outputBudgetTokens: Number.isInteger(n) && n > 0 ? n : DEFAULTS.outputBudgetTokens,
     effort: e || DEFAULTS.effort,
@@ -68,6 +80,9 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
     escalateReasoning: esc === '' ? DEFAULTS.escalateReasoning : !(esc === 'false' || esc === '0' || esc === 'off'),
     vetoMode: vm === 'opinion' || vm === 'never' || vm === 'evidence' ? vm : DEFAULTS.vetoMode,
     evidenceCap: Number.isInteger(ec) && ec >= 0 ? Math.min(20, ec) : DEFAULTS.evidenceCap,
+    finishConfirm: fc === '' ? DEFAULTS.finishConfirm : !(fc === 'false' || fc === '0' || fc === 'off'),
+    finishConfirmMinRemaining: Number.isFinite(fmin) && fmin >= 0 && fmin <= 1 ? fmin : DEFAULTS.finishConfirmMinRemaining,
+    finishConfirmMax: Number.isInteger(fmax) && fmax >= 0 ? Math.min(5, fmax) : DEFAULTS.finishConfirmMax,
     abstain: (env.CORTEX_ENDTURN_RESOLVER_ABSTAIN ?? '').trim().toLowerCase() === 'true',
   };
 }
@@ -260,5 +275,35 @@ export function budgetedVetoEscalation(rejectIndex: number, cap: number, remaini
     `\n\nThis is veto ${rejectIndex} of ${cap}. About ${left} of the wall budget remains — that time is for closing the gap above, ` +
     `not for re-describing the work. Work it with tools until the task's own criterion is met, or, if it genuinely cannot be met in ` +
     `this box, name the hard limit under open_items and finish.`
+  );
+}
+
+/** R167: hold the finish for one informed confirmation? Only after an accept-with-gap / accept-low-confidence verdict. */
+export function shouldFinishConfirm(input: {
+  action: VetoAction; remainingFrac: number | null; confirmsUsed: number;
+  cfg: Pick<EndTurnResolverConfig, 'finishConfirm' | 'finishConfirmMinRemaining' | 'finishConfirmMax'>;
+}): boolean {
+  if (!input.cfg.finishConfirm) return false;
+  if (input.action !== 'accept-with-gap' && input.action !== 'accept-low-confidence') return false;
+  if (input.confirmsUsed >= input.cfg.finishConfirmMax) return false;
+  if (input.remainingFrac === null) return false; // no deadline → nothing to confirm against
+  return input.remainingFrac >= input.cfg.finishConfirmMinRemaining;
+}
+
+/** R167: the confirmation the junior sees in place of the accepted EndTurn — budget, the reviewer's gaps, its own open items. */
+export function buildFinishConfirmMessage(input: {
+  remainingFrac: number; remainingMs: number; gapPlan: string; openItems: unknown; confidence?: string;
+}): string {
+  const mins = Math.max(0, Math.round(input.remainingMs / 60000));
+  const h = mins >= 60 ? `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, '0')}` : `${mins} min`;
+  const pct = Math.round(input.remainingFrac * 100);
+  const items = Array.isArray(input.openItems) ? input.openItems.map((x) => String(x)).filter(Boolean) : (input.openItems ? [String(input.openItems)] : []);
+  const own = items.length ? `\n\nYOUR OWN OPEN ITEMS (from your attestation):\n- ${items.slice(0, 6).map((x) => x.slice(0, 300)).join('\n- ')}` : '';
+  const gap = input.gapPlan.trim() ? `\n\nREVIEWER'S NOTES (${input.confidence ?? 'medium'} confidence; advisory, not verified):\n${input.gapPlan.trim().slice(0, 2500)}` : '';
+  return (
+    `EndTurn NOT YET ACCEPTED — confirm before finishing. Finishing now ends the task and it will be graded as-is; you cannot ` +
+    `correct anything afterwards. You have ~${h} of the wall budget left (${pct}%).` + gap + own +
+    `\n\nIf every requirement in the TASK's own words is verified by a command you actually ran, call EndTurn again and it will ` +
+    `stand. Otherwise continue: pick the most valuable open item, work it with tools, verify against the task's criteria, then finish.`
   );
 }

@@ -132,6 +132,9 @@ export interface EnvironmentVariables {
   CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED?: string; // resolver GAP vetoes allowed while >= the budget-continue fraction of the wall budget remains (R160; default 6; 0 = liveness cap only)
   CORTEX_JUDGE_SEMANTIC?: string; // 'false' restores the 4.111 judge gating (task-shape regex gate, regex nudges, fixed veto count) — A/B control (R165; default on)
   CORTEX_JUDGE_VETO?: string; // 'evidence' (default: only a failed harness-run judge-named check holds a finish) | 'opinion' (R165) | 'never' (record only) — R166
+  CORTEX_FINISH_CONFIRM?: string; // default on: an accept-with-gap finish with budget left is held ONCE with an informed confirmation (budget, reviewer gaps, own open items) — R167 HB-FINISH-CONFIRM
+  CORTEX_FINISH_CONFIRM_MIN_REMAINING?: string; // fraction of the wall budget that must remain to confirm (default 0.3) — R167
+  CORTEX_FINISH_CONFIRM_MAX?: string; // confirmations per session (default 1, 0..5) — R167
   CORTEX_JUDGE_EVIDENCE_MAX_VETOES?: string; // max evidence-backed vetoes per session (default 1) — R166
   CORTEX_JUDGE_PROGRESS_MIN_CALLS?: string; // tool calls since the last veto that count as working the plan (R165; default 3; 1..50)
   CORTEX_JUDGE_ESCALATE_REASONING?: string; // 'false' skips the one thinking-on re-judge before accepting a finish with a recorded gap (R165; default on)
@@ -478,6 +481,9 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED: '',
   CORTEX_JUDGE_SEMANTIC: '',
   CORTEX_JUDGE_VETO: '',
+  CORTEX_FINISH_CONFIRM: '',
+  CORTEX_FINISH_CONFIRM_MIN_REMAINING: '',
+  CORTEX_FINISH_CONFIRM_MAX: '',
   CORTEX_JUDGE_EVIDENCE_MAX_VETOES: '',
   CORTEX_JUDGE_PROGRESS_MIN_CALLS: '',
   CORTEX_JUDGE_ESCALATE_REASONING: '',
@@ -1006,6 +1012,30 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_JUDGE_SEMANTIC',
     displayName: 'Semantic finish judge',
     description: 'The EndTurn finish judge adjudicates every tool-using finish (no task-shape regex gate), runs the checks it names, grades GAP by confidence, and replaces the fixed veto count with a progress condition plus one thinking-on escalation (R165, HB-JUDGE-SEMANTIC). Default on; false = the 4.111 behavior.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_FINISH_CONFIRM',
+    displayName: 'Informed finish confirmation',
+    description: "When the finish judge would accept a finish with a recorded gap and at least CORTEX_FINISH_CONFIRM_MIN_REMAINING of the wall budget remains, hold the finish once (CORTEX_FINISH_CONFIRM_MAX) with a zero-model-call confirmation carrying the budget left, the reviewer's gap plan and the model's own open items; the next EndTurn stands unless an evidence veto applies. Default on; false = off. (R167, HB-FINISH-CONFIRM)",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_FINISH_CONFIRM_MIN_REMAINING',
+    displayName: 'Finish confirmation budget floor',
+    description: 'Fraction of the wall budget that must remain for the confirmation to fire (default 0.3). (R167)',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_FINISH_CONFIRM_MAX',
+    displayName: 'Finish confirmations per session',
+    description: 'Max informed confirmations per session (default 1, 0..5). (R167)',
     type: 'string',
     category: 'training',
     default: ''
