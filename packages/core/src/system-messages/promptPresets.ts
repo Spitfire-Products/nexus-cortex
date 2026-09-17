@@ -42,16 +42,40 @@ export const BOOT_MINIMAL_PROMPT =
  */
 export function buildBootMinimalPrompt(orientPath?: string, env: NodeJS.ProcessEnv = process.env): string {
   const hint = resolveDelegationHint(env) ? DELEGATION_HINT_CLAUSE : '';
-  if (!orientPath) return BOOT_MINIMAL_PROMPT + hint;
-  return (
+  if (!orientPath) return applyTurnContract(BOOT_MINIMAL_PROMPT + hint, env);
+  return applyTurnContract(
     'You are Cortex, a coding agent working in this workspace through the provided tools. ' +
     'Complete the user\'s task by reading and running real code — never answer from memory ' +
     'when a command can verify. Prefer acting over deliberating. For workspace tasks, orient ' +
     `first: run \`sh ${orientPath}\` via Bash — its output maps the workspace and indexes ` +
     'your skill guides; consult a guide when the task matches its domain. If you did not ' +
     'finish the task, say so plainly — never claim work you have not done. When the task is ' +
-    'complete, reply with the final answer only.' + hint
+    'complete, reply with the final answer only.' + hint,
+    env,
   );
+}
+
+/**
+ * HB-TURN-CONTRACT (2026-09-17, Terminus-2 disparity #3 — suppress vs channel). The boot-minimal door SUPPRESSES
+ * deliberation ("Prefer acting over deliberating") and was tuned at low effort; at high effort the model fought it
+ * (R153: 58 turns/63 sessions reasoned to the 65536 cap and emitted nothing). Terminus 2 CHANNELS deliberation instead:
+ * think as long as you like, then every response must carry analysis + plan + the action. CORTEX_TURN_CONTRACT=channel
+ * swaps the suppression clause for that output contract; '' (default) = the shipped door, byte-identical.
+ */
+export type TurnContract = 'channel' | '';
+export function resolveTurnContract(env: NodeJS.ProcessEnv = process.env): TurnContract {
+  const v = String(env.CORTEX_TURN_CONTRACT ?? '').trim().toLowerCase();
+  return v === 'channel' ? 'channel' : '';
+}
+export const SUPPRESS_CLAUSE = 'Prefer acting over deliberating. ';
+export const TURN_CONTRACT_CLAUSE =
+  ' Think as long as you need before you answer. Then every response must contain, in this order: ANALYSIS — what the ' +
+  'latest outputs show, what is done and what is still open; PLAN — the next concrete steps and what each should ' +
+  'prove; then the tool call(s) that carry out the first step. Keep each step small enough that its output fits ' +
+  'comfortably, and verify against the task\'s own criteria, not your own tests.';
+export function applyTurnContract(prompt: string, env: NodeJS.ProcessEnv = process.env): string {
+  if (resolveTurnContract(env) !== 'channel') return prompt;
+  return prompt.replace(SUPPRESS_CLAUSE, '') + TURN_CONTRACT_CLAUSE;
 }
 
 /**

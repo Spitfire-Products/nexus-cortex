@@ -2425,7 +2425,7 @@ export class CortexOrchestrator {
                 role: 'user',
                 content: [{
                   type: 'text',
-                  text: `<system-reminder>${emptyResponseNudgeFor(emptyClass, exhaustionLevel)}${nudgeForbidsTools(emptyClass.kind) ? ' Do not call any more tools.' : ''}</system-reminder>`,
+                  text: `<system-reminder>${emptyResponseNudgeFor(emptyClass, exhaustionLevel, (effectiveModel as any)?.limits?.outputTokens)}${nudgeForbidsTools(emptyClass.kind) ? ' Do not call any more tools.' : ''}</system-reminder>`,
                 }],
               },
               timeline: {
@@ -4816,7 +4816,7 @@ export class CortexOrchestrator {
               role: 'user',
               content: [{
                 type: 'text',
-                text: `<system-reminder>${emptyResponseNudgeFor(emptyClass, exhaustionLevel)}${nudgeForbidsTools(emptyClass.kind) ? ' Do not call any more tools.' : ''}</system-reminder>`,
+                text: `<system-reminder>${emptyResponseNudgeFor(emptyClass, exhaustionLevel, (effectiveModel as any)?.limits?.outputTokens)}${nudgeForbidsTools(emptyClass.kind) ? ' Do not call any more tools.' : ''}</system-reminder>`,
               }],
             },
             timeline: {

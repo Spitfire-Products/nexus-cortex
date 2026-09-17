@@ -117,6 +117,7 @@ export interface EnvironmentVariables {
   CORTEX_LIFT_PLAN_DOCTRINE?: string; // 'v1' | 'v2' — planner doctrine bullets (4.107.2 lever)
   CORTEX_ENDTURN_TIER?: string; // 'standard' | 'essential' — EndTurn discovery tier (4.107.2 lever)
   CORTEX_DELEGATION_HINT?: string; // 'true' | 'false' — DARK: boot-minimal clause naming the Task tool for delegation (4.108.1)
+  CORTEX_TURN_CONTRACT?: string; // '' (shipped door) | 'channel' — boot prompt drops 'prefer acting over deliberating' and asks for ANALYSIS + PLAN + action every turn; length recovery re-issues at the same effort (HB-TURN-CONTRACT)
   CORTEX_SUBAGENT_TIMEOUT_MS?: string; // Task sub-agent wall-clock limit (ms) when no parent turn deadline is set (R133; default 300000)
   CORTEX_SUBAGENT_TIMEOUT_MAX_MS?: string; // upper cap (ms) on the deadline-derived Task sub-agent limit (R133; empty = no cap)
   CORTEX_OUTER_TOOL_TIMEOUT_MS?: string; // floor (ms) for the outer per-batch tool abort: deadline = max(computed, floor + grace); empty = no floor
@@ -462,6 +463,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_STATE_DIR: '',
   CORTEX_COMPACTION_CHECKPOINT_STEP: '',
   CORTEX_DELEGATION_HINT: '',
+  CORTEX_TURN_CONTRACT: '',
   CORTEX_SUBAGENT_TIMEOUT_MS: '',
   CORTEX_SUBAGENT_TIMEOUT_MAX_MS: '',
   CORTEX_OUTER_TOOL_TIMEOUT_MS: '',
@@ -902,6 +904,14 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     description: 'v1 (default, 4.107.0 prompt) | v2 (adds the census bullets: one install layer, no long sleeps, byte-level exact output, literals verbatim). Lever for the cell-n-r6 2×2.',
     type: 'string',
     category: 'mentorship',
+    default: ''
+  },
+  {
+    key: 'CORTEX_TURN_CONTRACT',
+    displayName: 'Turn contract (suppress vs channel)',
+    description: "'' = the shipped boot-minimal door (suppresses deliberation: 'prefer acting'). 'channel' = think freely, then every response carries ANALYSIS, PLAN, then the tool call; a reasoning-exhausted turn is re-issued at the same effort with the Terminus-2 style message instead of an effort step-down. (HB-TURN-CONTRACT, 2026-09-17)",
+    type: 'string',
+    category: 'training',
     default: ''
   },
   {

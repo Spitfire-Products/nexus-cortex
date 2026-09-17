@@ -130,14 +130,26 @@ export interface ReasoningExhaustBackoffConfig { enabled: boolean; turns: number
 /** CORTEX_REASONING_EXHAUST_BACKOFF (default on; 'false' disables) / CORTEX_REASONING_EXHAUST_BACKOFF_TURNS (default 2, 1..10). */
 export function resolveReasoningExhaustBackoff(env: NodeJS.ProcessEnv = process.env): ReasoningExhaustBackoffConfig {
   const v = (env.CORTEX_REASONING_EXHAUST_BACKOFF ?? '').trim().toLowerCase();
-  const enabled = v === '' ? true : !(v === 'false' || v === '0' || v === 'off');
+  // HB-TURN-CONTRACT: the channel contract re-issues at the SAME effort — backoff defaults OFF there (explicit 'true' overrides).
+  const channel = String(env.CORTEX_TURN_CONTRACT ?? '').trim().toLowerCase() === 'channel';
+  const enabled = v === '' ? !channel : !(v === 'false' || v === '0' || v === 'off');
   const rawTurns = (env.CORTEX_REASONING_EXHAUST_BACKOFF_TURNS ?? '').trim();
   const n = rawTurns === '' ? 2 : Number(rawTurns);
   const turns = Number.isFinite(n) && n >= 1 ? Math.min(10, Math.floor(n)) : 2;
   return { enabled, turns };
 }
 
-export function reasoningExhaustionNudge(level: ReasoningEffortLevel | undefined): string {
+export function reasoningExhaustionNudge(level: ReasoningEffortLevel | undefined, opts: { contract?: string; outputCap?: number; env?: NodeJS.ProcessEnv } = {}): string {
+  const contract = opts.contract ?? String((opts.env ?? process.env).CORTEX_TURN_CONTRACT ?? '').trim().toLowerCase();
+  if (contract === 'channel') {
+    // HB-TURN-CONTRACT: the Terminus-2 recovery — say exactly what happened and re-issue at the SAME effort (no step-down).
+    const cap = opts.outputCap && opts.outputCap > 0 ? `${opts.outputCap} tokens` : 'the maximum output length';
+    return (
+      `NONE of the actions you intended were performed: your reasoning consumed the entire output budget (${cap}, reasoning ` +
+      'counts against it) and no answer was produced. Re-issue this turn: state ANALYSIS and PLAN in a few sentences, then ' +
+      'make the tool call. Break the work into smaller steps, each well under that budget.'
+    );
+  }
   const lv = level ? ` Reasoning effort is temporarily lowered to '${level}' for your next calls.` : '';
   return (
     'Your previous turn spent the ENTIRE output budget on internal reasoning and delivered nothing — no text, no tool ' +
@@ -148,7 +160,7 @@ export function reasoningExhaustionNudge(level: ReasoningEffortLevel | undefined
 }
 
 /** Kind-tailored nudge that also knows the exhaustion special case (falls back to emptyResponseNudge). */
-export function emptyResponseNudgeFor(cls: EmptyResponseClassification, backoffLevel?: ReasoningEffortLevel): string {
-  if (isReasoningExhaustion(cls)) return reasoningExhaustionNudge(backoffLevel);
+export function emptyResponseNudgeFor(cls: EmptyResponseClassification, backoffLevel?: ReasoningEffortLevel, outputCap?: number): string {
+  if (isReasoningExhaustion(cls)) return reasoningExhaustionNudge(backoffLevel, { outputCap });
   return emptyResponseNudge(cls.kind);
 }
