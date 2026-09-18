@@ -27,7 +27,7 @@ import { buildRouterSample, appendJsonlRotating } from './cortexTrainingRecord.j
 import { join as pathJoin } from 'path';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'node:child_process';
-import { ENV_RECON_COMMAND, resolveLiftPlanConfig } from '../training/liftPlanner.js';
+import { ENV_RECON_COMMAND, resolveLiftPlanConfig, parsePlannerResponse } from '../training/liftPlanner.js';
 import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage } from '../training/endTurnResolver.js';
 import { resolveDeadlineExitConfig, deadlineExitCallBudget, parseDeadlineExitVerdict } from '../training/deadlineExitMentor.js';
 import { isTaskShaped } from './requirementsVerification.js';
@@ -865,19 +865,51 @@ export class CortexOrchestrator {
       const envReport = this.gatherEnvReport();
       const timeoutMs = mentorSurfaceTimeoutMs('lift-plan', parseInt(process.env.CORTEX_LIFT_PLAN_TIMEOUT_MS ?? '90000', 10)); // thinking-aware
       const t0 = Date.now();
-      const plan = await withTimeout(
-        this.helperMiddleware.generateTaskPlan({
-          task: this.lastRealUserText(),
-          observations,
-          envReport,
-          helperModelId: this.config.reactiveMentorship?.helperModelId,
-        }),
-        timeoutMs,
-      );
+      // R171 HB-LIFT-PLAN-TOOL-LOOP: up to lpCfg.toolRounds planner calls; while rounds and the aggregate budget remain the
+      // planner may INVESTIGATE (read-only checks via runCheck + denylist, in-workspace file slices); each round's EVIDENCE block
+      // rides on the next prompt; the last round withdraws the option. toolRounds=1 = the single-shot v1 call.
+      const lpCfg = resolveLiftPlanConfig();
+      const jcfg = resolveJudgeGroundingConfig();
+      const planCwd = this.config.projectPath || process.cwd();
+      const evidenceRounds: string[] = [];
+      let plan: string | null = null; let roundsUsed = 0; let investigateChecks = 0; let investigateReads = 0; let investigateRefused = 0; const roundLatencyMs: number[] = [];
+      let investigateAfterWithdraw = false;
+      for (let round = 1; round <= lpCfg.toolRounds; round++) {
+        const loopElapsed = Date.now() - t0;
+        const remainingMs = this.turnDeadlineMsActive > 0 && this.turnLoopStartMs > 0 ? Math.max(0, this.turnDeadlineMsActive - (Date.now() - this.turnLoopStartMs)) : null;
+        const canInvestigate = lpCfg.toolRounds > 1 && round < lpCfg.toolRounds && loopElapsed < lpCfg.toolRoundBudgetMs &&
+          (remainingMs === null || remainingMs > 2 * lpCfg.toolRoundBudgetMs);
+        const mode = lpCfg.toolRounds > 1 ? (canInvestigate ? 'offer' : 'withdraw') : undefined;
+        const r0 = Date.now();
+        const text = await withTimeout(
+          this.helperMiddleware.generateTaskPlan({
+            task: this.lastRealUserText(),
+            observations,
+            envReport,
+            evidenceRounds: evidenceRounds.length ? evidenceRounds.slice() : undefined,
+            investigate: mode,
+            helperModelId: this.config.reactiveMentorship?.helperModelId,
+          }),
+          timeoutMs,
+        );
+        roundLatencyMs.push(Date.now() - r0); roundsUsed = round;
+        const parsed = parsePlannerResponse(text ?? '');
+        if (!parsed.investigate) { plan = parsed.plan; break; }
+        if (!canInvestigate) { investigateAfterWithdraw = true; plan = ''; break; } // asked after withdrawal → no plan (fail-open), never re-loop
+        const checkResults: string[] = []; const readResults: string[] = [];
+        for (const c of parsed.checks.slice(0, 3)) {
+          if (!isInvestigateCommandAllowed(c)) { investigateRefused += 1; checkResults.push(`CHECK RUN: \`${c}\` → REFUSED (investigation checks must be read-only)`); continue; }
+          checkResults.push(runCheck(planCwd, c, jcfg)); investigateChecks += 1;
+        }
+        for (const p of parsed.reads.slice(0, 3)) { readResults.push(readFileSlice(planCwd, p)); investigateReads += 1; }
+        evidenceRounds.push(formatEvidenceRound(round, checkResults, readResults));
+        console.warn(`[LiftPlan] R171 INVESTIGATE round ${round}/${lpCfg.toolRounds} — ${checkResults.length} check(s), ${readResults.length} read(s)`);
+      }
       const latencyMs = Date.now() - t0;
+      const r171 = { toolRounds: lpCfg.toolRounds, roundsUsed, investigateChecks, investigateReads, investigateRefused, investigateAfterWithdraw, roundLatencyMs, evidenceChars: evidenceRounds.join('').length };
       if (!plan || !plan.trim()) {
         if (store) void store.recordEvent({
-          sessionId, kind: 'lift_plan', detail: { fired: true, planChars: 0, empty: true, mentor: this.mentorWire('lift-plan', resolveLiftPlanConfig().effort, resolveLiftPlanConfig().outputBudgetTokens) },
+          sessionId, kind: 'lift_plan', detail: { fired: true, planChars: 0, empty: true, ...r171, mentor: this.mentorWire('lift-plan', resolveLiftPlanConfig().effort, resolveLiftPlanConfig().outputBudgetTokens) },
         }).catch(() => {});
         return; // fail-open: proceed without a plan
       }
@@ -896,7 +928,7 @@ export class CortexOrchestrator {
         kind: 'lift_plan',
         // OBSERVABILITY (resolver-AB follow-up): bank the plan TEXT + latency, not just counts —
         // so a k=5 run can score plan QUALITY (and read the reasoning behind a RETIRE).
-        detail: { fired: true, planChars: plan.length, retire, criteriaStated, latencyMs, mentor: this.mentorWire('lift-plan', resolveLiftPlanConfig().effort, resolveLiftPlanConfig().outputBudgetTokens), planText: plan.slice(0, 4000) },
+        detail: { fired: true, planChars: plan.length, retire, criteriaStated, latencyMs, ...r171, mentor: this.mentorWire('lift-plan', resolveLiftPlanConfig().effort, resolveLiftPlanConfig().outputBudgetTokens), planText: plan.slice(0, 4000) },
       }).catch(() => {});
       if (this.config.debug) {
         console.log(`[LiftPlan] plan delivered at lift (${plan.length} chars, retire=${retire}, criteria=${criteriaStated})`);

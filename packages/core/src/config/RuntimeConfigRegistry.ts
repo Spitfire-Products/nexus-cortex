@@ -58,6 +58,8 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   CORTEX_MENTOR_THINKING_TIMEOUT_MS: { tier: 'env' },
   CORTEX_LIFT_PLAN_REASONING: { tier: 'env' },
   CORTEX_LIFT_PLAN_DOCTRINE: { tier: 'env' },
+  CORTEX_LIFT_PLAN_TOOL_ROUNDS: { tier: 'env' },
+  CORTEX_LIFT_PLAN_TOOL_ROUND_BUDGET_MS: { tier: 'env' },
   CORTEX_ENDTURN_TIER: { tier: 'env' },
   CORTEX_COMPACTION_RESUME: { tier: 'env' },
   CORTEX_COMPACTION_CHECKPOINT_PCT: { tier: 'env' },

@@ -34,18 +34,29 @@ export interface LiftPlanConfig {
   /** Timeout (ms) for the orchestrator-side environment recon that feeds the planner. Bounded so a
    *  slow box can't stall the lift; fail-open to an empty report. */
   reconTimeoutMs: number;
+  /** R171 HB-LIFT-PLAN-TOOL-LOOP (2026-09-18; the spec's §2.2 v2 "adaptive tool-using planner", built the R170 way — a
+   *  harness-driven text protocol over the single-shot helper call). With toolRounds > 1 the planner may answer
+   *  `INVESTIGATE` + `CHECK: <read-only cmd>` / `READ: <path>[:a-b]` lines instead of a plan; the harness runs them,
+   *  appends an EVIDENCE block and asks again; the last round withdraws the option. Bounded by rounds + toolRoundBudgetMs
+   *  (aggregate wall clock) — a turn cap, never a token cap (spec §2.4). Default 1 = single-shot, byte-identical. */
+  toolRounds: number;
+  toolRoundBudgetMs: number;
 }
 
-const DEFAULTS: LiftPlanConfig = { outputBudgetTokens: 4000, effort: 'max', reconTimeoutMs: 8000 };
+const DEFAULTS: LiftPlanConfig = { outputBudgetTokens: 4000, effort: 'max', reconTimeoutMs: 8000, toolRounds: 1, toolRoundBudgetMs: 240_000 };
 
 export function resolveLiftPlanConfig(env: NodeJS.ProcessEnv = process.env): LiftPlanConfig {
   const n = parseInt((env.CORTEX_LIFT_PLAN_BUDGET_TOKENS ?? '').trim(), 10);
   const e = (env.CORTEX_LIFT_PLAN_EFFORT ?? '').trim();
   const r = parseInt((env.CORTEX_LIFT_PLAN_RECON_TIMEOUT_MS ?? '').trim(), 10);
+  const tr = parseInt((env.CORTEX_LIFT_PLAN_TOOL_ROUNDS ?? '').trim(), 10);
+  const trb = parseInt((env.CORTEX_LIFT_PLAN_TOOL_ROUND_BUDGET_MS ?? '').trim(), 10);
   return {
     outputBudgetTokens: Number.isInteger(n) && n > 0 ? n : DEFAULTS.outputBudgetTokens,
     effort: e || DEFAULTS.effort,
     reconTimeoutMs: Number.isInteger(r) && r > 0 ? r : DEFAULTS.reconTimeoutMs,
+    toolRounds: Number.isInteger(tr) && tr >= 1 ? Math.min(5, tr) : DEFAULTS.toolRounds,
+    toolRoundBudgetMs: Number.isInteger(trb) && trb >= 10_000 ? Math.min(1_800_000, trb) : DEFAULTS.toolRoundBudgetMs,
   };
 }
 
@@ -129,9 +140,48 @@ export const PLANNER_SYSTEM =
 /** The 4.107.0 planner system prompt (no v2 doctrine bullets). */
 export const PLANNER_SYSTEM_V1 = PLANNER_SYSTEM.replace(DOCTRINE_V2, '');
 
-/** Select the planner persona by CORTEX_LIFT_PLAN_DOCTRINE ('v2' → bullets on; anything else → v1 baseline). */
-export function plannerSystem(env: NodeJS.ProcessEnv = process.env): string {
-  return (env.CORTEX_LIFT_PLAN_DOCTRINE || '').trim().toLowerCase() === 'v2' ? PLANNER_SYSTEM : PLANNER_SYSTEM_V1;
+/** R171: offered while investigation rounds remain — the planner may look before it plans. */
+export const PLANNER_INVESTIGATE_CLAUSE =
+  '\n\nYou may INVESTIGATE before planning: if the report and observations do not show what you need — the real test file, the ' +
+  'grader\'s entry point, an input format, a config, what a tool actually prints — answer with the first line `INVESTIGATE` ' +
+  'followed by up to three `CHECK: <read-only command>` lines (ls / cat / head / grep / a test runner in list mode; the harness ' +
+  'runs them from the workspace root) and up to three `READ: <path>[:START-END]` lines (a file, optionally a line range). The ' +
+  'harness runs them and shows you an EVIDENCE block, then asks again. Prefer reading the real tests and criteria over guessing them.';
+/** R171: on the last round the option is withdrawn — plan now on what has been gathered. */
+export const PLANNER_DECIDE_NOW_CLAUSE =
+  '\n\nNo further investigation is available — write the plan now on the evidence you have (INVESTIGATE is no longer accepted).';
+
+/** Select the planner persona by CORTEX_LIFT_PLAN_DOCTRINE ('v2' → bullets on; anything else → v1 baseline); R171 `investigate`
+ *  = 'offer' while rounds remain, 'withdraw' on the last round of a multi-round plan, undefined for the single-shot default. */
+export function plannerSystem(env: NodeJS.ProcessEnv = process.env, investigate?: 'offer' | 'withdraw'): string {
+  const base = (env.CORTEX_LIFT_PLAN_DOCTRINE || '').trim().toLowerCase() === 'v2' ? PLANNER_SYSTEM : PLANNER_SYSTEM_V1;
+  return investigate === 'offer' ? base + PLANNER_INVESTIGATE_CLAUSE : investigate === 'withdraw' ? base + PLANNER_DECIDE_NOW_CLAUSE : base;
+}
+
+/** R171: what the planner answered — a plan, or an investigation request (only honored while rounds remain). */
+export interface PlannerResponse {
+  investigate: boolean;
+  /** `CHECK: <cmd>` lines (deduped, ≤4, backticks stripped). */
+  checks: string[];
+  /** `READ: <path>[:a-b]` lines (deduped, ≤4). */
+  reads: string[];
+  /** The plan text when not investigating (the raw response, trimmed). */
+  plan: string;
+}
+export function parsePlannerResponse(text: string): PlannerResponse {
+  const t = (text || '').trim();
+  const first = t.split('\n').find((l) => l.trim()) ?? '';
+  const investigate = /^\s*(?:[-*#>]+\s*)?(?:VERDICT:\s*)?INVESTIGATE\b/i.test(first);
+  const checks: string[] = []; const reads: string[] = [];
+  if (investigate) {
+    for (const line of t.split('\n')) {
+      const cl = line.match(/^\s*(?:[-*\d.)]+\s*)?CHECK:\s*(.+?)\s*$/i);
+      if (cl) { const cmd = cl[1]!.replace(/^`+|`+$/g, '').trim(); if (cmd && cmd.length <= 400 && !checks.includes(cmd)) checks.push(cmd); continue; }
+      const rl = line.match(/^\s*(?:[-*\d.)]+\s*)?READ:\s*(.+?)\s*$/i);
+      if (rl) { const spec = rl[1]!.replace(/^`+|`+$/g, '').trim(); if (spec && spec.length <= 300 && !reads.includes(spec)) reads.push(spec); }
+    }
+  }
+  return { investigate, checks: checks.slice(0, 4), reads: reads.slice(0, 4), plan: investigate ? '' : t };
 }
 
 export interface LiftPlanContext {
@@ -142,12 +192,14 @@ export interface LiftPlanContext {
   /** Orchestrator-gathered environment report (ENV_RECON_COMMAND output): tooling present, installed
    *  packages, resources, test files. Lets the planner steer installs + timeouts accurately. */
   envReport?: string;
+  /** R171: EVIDENCE blocks from earlier investigation rounds of THIS planning call (oldest first). */
+  evidenceRounds?: string[];
 }
 
 /**
  * Build the user prompt sent to the planner. Bounded slices keep the call cheap and cache-stable.
  */
-export function buildPlannerUserPrompt(ctx: LiftPlanContext): string {
+export function buildPlannerUserPrompt(ctx: LiftPlanContext, investigate?: 'offer' | 'withdraw'): string {
   const parts: string[] = [];
   parts.push(`TASK:\n${(ctx.task || '').trim().slice(0, 2000)}`);
   const env = (ctx.envReport || '').trim();
@@ -158,9 +210,21 @@ export function buildPlannerUserPrompt(ctx: LiftPlanContext): string {
   if (obs) {
     parts.push(`WHAT THE AGENT HAS OBSERVED SO FAR (its first action + output):\n${obs.slice(0, 2000)}`);
   }
-  parts.push(
-    'Produce the criteria-anchored numbered plan now (or a RETIRE plan if there is no viable path ' +
-      'within budget). Steer installs/timeouts from the ENVIRONMENT REPORT. The junior will follow it verbatim.',
-  );
+  for (const ev of ctx.evidenceRounds ?? []) { const e = (ev || '').trim(); if (e) parts.push(e.slice(0, 6000)); } // R171
+  if (investigate === 'offer') {
+    parts.push(
+      'Decide whether you can name the REAL criteria and the first steps from what is shown. If not — the real tests, the grader ' +
+        'entry point, an input/output format or a tool\'s behavior are still unknown — your first line is `INVESTIGATE`, followed by ' +
+        'up to three `CHECK: <read-only command>` lines and up to three `READ: <path>[:START-END]` lines; the harness runs them and asks ' +
+        'you again with the results. Otherwise produce the criteria-anchored numbered plan now (or a RETIRE plan if there is no viable ' +
+        'path within budget). Steer installs/timeouts from the ENVIRONMENT REPORT. The junior will follow it verbatim.',
+    );
+  } else {
+    parts.push(
+      (investigate === 'withdraw' ? 'No further investigation is available. ' : '') +
+        'Produce the criteria-anchored numbered plan now (or a RETIRE plan if there is no viable path ' +
+        'within budget). Steer installs/timeouts from the ENVIRONMENT REPORT. The junior will follow it verbatim.',
+    );
+  }
   return parts.join('\n\n');
 }

@@ -6,8 +6,7 @@ import {
   plannerSystem,
   buildPlannerUserPrompt,
   resolveLiftPlanConfig,
-  ENV_RECON_COMMAND,
-} from '../liftPlanner.js';
+  ENV_RECON_COMMAND, parsePlannerResponse, PLANNER_INVESTIGATE_CLAUSE, PLANNER_DECIDE_NOW_CLAUSE } from '../liftPlanner.js';
 
 describe('liftPlanner — resolveLiftPlanConfig', () => {
   it('defaults the output budget to 4000 (max reasoning needs room or the plan is empty)', () => {
@@ -130,3 +129,40 @@ describe('CORTEX_LIFT_PLAN_DOCTRINE (4.107.2 lever)', () => {
   });
 });
 
+
+describe('liftPlanner — R171 bounded investigation loop (HB-LIFT-PLAN-TOOL-LOOP)', () => {
+  it('config: default 1 round / 240 s; clamped 1..5 and 10 s..30 min', () => {
+    const d = resolveLiftPlanConfig({} as any);
+    expect(d.toolRounds).toBe(1); expect(d.toolRoundBudgetMs).toBe(240_000);
+    expect(resolveLiftPlanConfig({ CORTEX_LIFT_PLAN_TOOL_ROUNDS: '3' } as any).toolRounds).toBe(3);
+    expect(resolveLiftPlanConfig({ CORTEX_LIFT_PLAN_TOOL_ROUNDS: '9' } as any).toolRounds).toBe(5);
+    expect(resolveLiftPlanConfig({ CORTEX_LIFT_PLAN_TOOL_ROUNDS: '0' } as any).toolRounds).toBe(1);
+    expect(resolveLiftPlanConfig({ CORTEX_LIFT_PLAN_TOOL_ROUND_BUDGET_MS: '5000' } as any).toolRoundBudgetMs).toBe(240_000);
+  });
+  it('persona: INVESTIGATE offered only on request, withdrawn on the last round, absent by default (both doctrines)', () => {
+    expect(plannerSystem({} as any)).not.toContain('INVESTIGATE');
+    expect(plannerSystem({ CORTEX_LIFT_PLAN_DOCTRINE: 'v2' } as any)).not.toContain('INVESTIGATE');
+    expect(plannerSystem({} as any, 'offer')).toContain(PLANNER_INVESTIGATE_CLAUSE);
+    expect(plannerSystem({ CORTEX_LIFT_PLAN_DOCTRINE: 'v2' } as any, 'offer')).toContain('ONE INSTALL LAYER');
+    expect(plannerSystem({} as any, 'withdraw')).toContain(PLANNER_DECIDE_NOW_CLAUSE);
+    expect(plannerSystem({} as any, 'withdraw')).not.toContain(PLANNER_INVESTIGATE_CLAUSE);
+  });
+  it('parser: INVESTIGATE first line with CHECK/READ lines; a plan is not an investigation; INVESTIGATE mid-text does not count', () => {
+    const v = parsePlannerResponse('INVESTIGATE\nCHECK: ls tests/\nREAD: tests/test_main.py:1-60\nREAD: `README.md`\nCHECK: ls tests/\n');
+    expect(v.investigate).toBe(true); expect(v.checks).toEqual(['ls tests/']); expect(v.reads).toEqual(['tests/test_main.py:1-60', 'README.md']); expect(v.plan).toBe('');
+    const v2 = parsePlannerResponse('VERDICT: INVESTIGATE\n- CHECK: cat Makefile');
+    expect(v2.investigate).toBe(true); expect(v2.checks).toEqual(['cat Makefile']);
+    const p = parsePlannerResponse('1. Read tests/test_main.py first.\n2. Do not INVESTIGATE further; build.\nCHECK: not-a-request');
+    expect(p.investigate).toBe(false); expect(p.plan).toContain('1. Read tests'); expect(p.checks).toEqual([]);
+    expect(parsePlannerResponse('').investigate).toBe(false); expect(parsePlannerResponse('').plan).toBe('');
+  });
+  it('prompt: evidence rounds ride before the closing instruction; offer/withdraw wording; default byte-identical', () => {
+    const base = buildPlannerUserPrompt({ task: 'T', observations: 'O' });
+    expect(base).toContain('Produce the criteria-anchored numbered plan now'); expect(base).not.toContain('INVESTIGATE');
+    const offer = buildPlannerUserPrompt({ task: 'T', observations: 'O', evidenceRounds: ['EVIDENCE (investigation round 1, executed by the harness just now; ground truth):\nCHECK RUN: `ls tests/` → PASSED in 2 ms\ntest_main.py'] }, 'offer');
+    expect(offer).toContain('EVIDENCE (investigation round 1'); expect(offer.indexOf('EVIDENCE')).toBeLessThan(offer.indexOf('your first line is `INVESTIGATE`'));
+    expect(offer).toContain('READ: <path>');
+    const wd = buildPlannerUserPrompt({ task: 'T', observations: 'O' }, 'withdraw');
+    expect(wd).toContain('No further investigation is available.'); expect(wd).not.toContain('`INVESTIGATE`');
+  });
+});

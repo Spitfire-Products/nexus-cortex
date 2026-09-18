@@ -1541,22 +1541,27 @@ Give concise, actionable guidance in plain text with these labeled parts:
     observations: string;
     envReport?: string;
     helperModelId?: string;
+    /** R171: EVIDENCE blocks from earlier investigation rounds + whether INVESTIGATE is offered / withdrawn this call. */
+    evidenceRounds?: string[];
+    investigate?: 'offer' | 'withdraw';
   }): Promise<string> {
     const ctx: LiftPlanContext = {
       task: context.task,
       observations: context.observations,
       envReport: context.envReport,
+      evidenceRounds: context.evidenceRounds, // R171
     };
-    const body = buildPlannerUserPrompt(ctx);
+    const body = buildPlannerUserPrompt(ctx, context.investigate);
     const cfg = resolveLiftPlanConfig();
     return this.generateGuidance(
       {
         surface: 'lift-plan',
         mentor: resolveMentorRoleConfig('lift-plan', process.env, { modelId: context.helperModelId, effort: cfg.effort, outputBudgetTokens: cfg.outputBudgetTokens }),
-        persona: plannerSystem(),
-        task:
-          'Produce the criteria-anchored numbered plan (or a RETIRE plan). Do not write the full ' +
-          'solution.',
+        persona: plannerSystem(process.env, context.investigate), // R171
+        task: context.investigate === 'offer'
+          ? 'Either investigate first (first line INVESTIGATE, then CHECK:/READ: lines) or produce the criteria-anchored numbered plan (or a RETIRE plan). Do not write the full solution.'
+          : 'Produce the criteria-anchored numbered plan (or a RETIRE plan). Do not write the full ' +
+            'solution.',
         outputBudgetTokens: cfg.outputBudgetTokens,
         // Max reasoning: the pro card ships 'medium', but a bounded single-shot planner can't grind,
         // and max produced markedly better plans in the eval. Needs a large budget (see cfg) so the
