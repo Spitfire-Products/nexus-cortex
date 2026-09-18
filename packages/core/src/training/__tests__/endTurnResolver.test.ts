@@ -343,3 +343,11 @@ describe('endTurnResolver — R170 fix (4.117.1): the closing instruction offers
     expect(abst).toContain('`VERDICT: RETIRE`'); expect(abst).toContain('unclosable'); expect(abst).toContain('proves the task');
   });
 });
+
+describe('endTurnResolver — R170b auto-loop lever', () => {
+  it('config: off by default; true/1/on enables', () => {
+    expect(resolveEndTurnResolverConfig({} as any).toolAutoLoop).toBe(false);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_TOOL_AUTOLOOP: 'true' } as any).toolAutoLoop).toBe(true);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_TOOL_AUTOLOOP: 'false' } as any).toolAutoLoop).toBe(false);
+  });
+});

@@ -1109,7 +1109,8 @@ export class CortexOrchestrator {
       // each round's EVIDENCE block rides on the next prompt; the last round withdraws the option. toolRounds=1 = one call.
       let text: string | null = null;
       let verdict = parseResolverVerdict('');
-      let roundsUsed = 0; let investigateChecks = 0; let investigateReads = 0; let investigateRefused = 0; const roundLatencyMs: number[] = [];
+      let roundsUsed = 0; let investigateChecks = 0; let investigateReads = 0; let investigateRefused = 0; let autoLooped = 0; const roundLatencyMs: number[] = [];
+      const ranCache = new Map<string, string>(); // R170b: a check run inside the loop is not re-run by the R166 evidence pass
       for (let round = 1; round <= cfg.toolRounds; round++) {
         const loopElapsed = Date.now() - t0;
         const canInvestigate = cfg.toolRounds > 1 && round < cfg.toolRounds && loopElapsed < cfg.toolRoundBudgetMs &&
@@ -1119,18 +1120,21 @@ export class CortexOrchestrator {
         text = await judgeOnce(undefined, mode);
         roundLatencyMs.push(Date.now() - r0); roundsUsed = round;
         verdict = parseResolverVerdict(text ?? ''); // withTimeout → null on timeout; blank → ABSTAIN (below)
-        if (!verdict.investigate) break;
+        // R170b: the judge decided without asking but named CHECK lines → run them and re-ask once with the results (auto-loop).
+        const autoLoop = cfg.toolAutoLoop && round === 1 && canInvestigate && !verdict.investigate && !verdict.blank && verdict.checks.length > 0;
+        if (!verdict.investigate && !autoLoop) break;
         if (!canInvestigate) { verdict = { ...verdict, blank: true, parsed: false }; break; } // asked after withdrawal → abstain, never re-loop
         const checkResults: string[] = []; const readResults: string[] = [];
+        if (autoLoop) { autoLooped += 1; checkResults.push(`Your provisional verdict was \`${(text ?? '').split('\n', 1)[0]?.trim().slice(0, 80)}\`. The harness ran the CHECK lines you named before accepting it — decide again on these results:`); }
         for (const c of verdict.checks.slice(0, 3)) {
           if (!isInvestigateCommandAllowed(c)) { investigateRefused += 1; checkResults.push(`CHECK RUN: \`${c}\` → REFUSED (investigation checks must be read-only)`); continue; }
-          const r = runCheck(judgeCwd, c, jcfg);
+          const r = runCheck(judgeCwd, c, jcfg); ranCache.set(c, r);
           investigateChecks += 1; namedRan += 1; { const k = classifyCheckRun(r); if (k === 'passed') namedPassed += 1; else if (k === 'failed') namedFailed += 1; else namedInconclusive += 1; }
           checkResults.push(r);
         }
         for (const p of verdict.reads.slice(0, 3)) { readResults.push(readFileSlice(judgeCwd, p)); investigateReads += 1; }
         evidenceRounds.push(formatEvidenceRound(round, checkResults, readResults));
-        console.warn(`[EndTurnResolver] R170 INVESTIGATE round ${round}/${cfg.toolRounds} — ${checkResults.length} check(s), ${readResults.length} read(s)`);
+        console.warn(`[EndTurnResolver] R170 ${autoLoop ? 'AUTO-LOOP' : 'INVESTIGATE'} round ${round}/${cfg.toolRounds} — ${checkResults.length} check(s), ${readResults.length} read(s)`);
       }
       // R166 HB-JUDGE-EVIDENCE-VETO: in evidence mode the checks THIS verdict names run now — a GAP without a failing
       // command is an opinion, and opinion no longer holds a finish (18 of 19 grader-accepted solutions were vetoed first).
@@ -1138,8 +1142,9 @@ export class CortexOrchestrator {
       // R168: with meetsConfirm the checks a MEETS names run too — their passing is what lets the MEETS stand.
       if (cfg.semantic && cfg.vetoMode === 'evidence' && (!verdict.meets || cfg.meetsConfirm) && !verdict.blank && !verdict.investigate && verdict.checks.length > 0) {
         for (const c of verdict.checks.slice(0, 3)) {
-          const r = runCheck(judgeCwd, c, jcfg);
-          namedRanNow += 1; namedRan += 1; { const k = classifyCheckRun(r); if (k === 'passed') namedPassed += 1; else if (k === 'failed') namedFailed += 1; else namedInconclusive += 1; } // R166b
+          const cached = ranCache.get(c); // R170b: already run (and counted) inside the loop this adjudication
+          const r = cached ?? runCheck(judgeCwd, c, jcfg);
+          if (!cached) { namedRanNow += 1; namedRan += 1; { const k = classifyCheckRun(r); if (k === 'passed') namedPassed += 1; else if (k === 'failed') namedFailed += 1; else namedInconclusive += 1; } } // R166b
           namedResultsNow += (namedResultsNow ? '\n\n' : '') + r;
         }
       }
@@ -1175,7 +1180,7 @@ export class CortexOrchestrator {
           cap: resolverCap, capLiveness: cfg.maxRejects, capBudgeted: cfg.maxRejectsBudgeted, remainingFrac: resolverRemainingFrac === null ? null : Number(resolverRemainingFrac.toFixed(3)), // R160
           semantic: cfg.semantic, action, confidence: verdict.confidence, namedChecks: verdict.checks.length, namedRan, namedPassed, namedFailed, callsSince, progressed, escalated: this.judgeEscalated, // R165
           vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap, namedRanNow, namedInconclusive, // R166 / R166b
-          toolRounds: cfg.toolRounds, roundsUsed, investigateChecks, investigateReads, investigateRefused, roundLatencyMs, evidenceChars: evidenceRounds.join('').length, // R170
+          toolRounds: cfg.toolRounds, roundsUsed, investigateChecks, investigateReads, investigateRefused, autoLooped, toolAutoLoop: cfg.toolAutoLoop, roundLatencyMs, evidenceChars: evidenceRounds.join('').length, // R170 / R170b
           latencyMs, rawLen: (text ?? '').length,
           deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,
           liftPlanChars: this.liftPlanText.length,

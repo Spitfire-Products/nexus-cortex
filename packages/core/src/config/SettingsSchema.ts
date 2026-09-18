@@ -140,6 +140,7 @@ export interface EnvironmentVariables {
   CORTEX_TURN_CONTRACT_ENFORCE_MAX?: string; // format rejections per turn before the batch executes as-is (default 2, 0..10)
   CORTEX_JUDGE_TOOL_ROUNDS?: string; // max judge calls per finish adjudication; >1 lets the judge INVESTIGATE (harness runs its read-only CHECK/READ lines between rounds) — R170 HB-JUDGE-TOOL-LOOP (default 1 = single-shot)
   CORTEX_JUDGE_TOOL_ROUND_BUDGET_MS?: string; // aggregate wall clock for the investigation rounds of one adjudication (default 240000; 10000..1800000) — R170
+  CORTEX_JUDGE_TOOL_AUTOLOOP?: string; // 'true': a first-round MEETS/GAP that names CHECK lines is re-asked once with the harness-run results (needs CORTEX_JUDGE_TOOL_ROUNDS >= 2) — R170b (default off)
   CORTEX_MEETS_CONFIRM_MIN_REMAINING?: string; // fraction of the wall budget that must remain to hold an unverified MEETS (default 0.5) — R168
   CORTEX_JUDGE_EVIDENCE_MAX_VETOES?: string; // max evidence-backed vetoes per session (default 1) — R166
   CORTEX_JUDGE_PROGRESS_MIN_CALLS?: string; // tool calls since the last veto that count as working the plan (R165; default 3; 1..50)
@@ -494,6 +495,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_MEETS_CONFIRM_MIN_REMAINING: '',
   CORTEX_JUDGE_TOOL_ROUNDS: '',
   CORTEX_JUDGE_TOOL_ROUND_BUDGET_MS: '',
+  CORTEX_JUDGE_TOOL_AUTOLOOP: '',
   CORTEX_TURN_CONTRACT_ENFORCE: '',
   CORTEX_TURN_CONTRACT_ENFORCE_MAX: '',
   CORTEX_JUDGE_EVIDENCE_MAX_VETOES: '',
@@ -1096,6 +1098,14 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_JUDGE_TOOL_ROUND_BUDGET_MS',
     displayName: 'Finish judge investigation budget',
     description: 'Aggregate wall clock (ms) the investigation rounds of one adjudication may use before the judge must decide (default 240000). (R170)',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_JUDGE_TOOL_AUTOLOOP',
+    displayName: 'Finish judge auto-loop on named checks',
+    description: "With CORTEX_JUDGE_TOOL_ROUNDS >= 2: when the judge's first verdict (MEETS or GAP) names CHECK lines, the harness runs them and asks the judge again with the results before accepting the verdict — the investigation loop no longer depends on the judge choosing VERDICT: INVESTIGATE. Default off. (R170b)",
     type: 'string',
     category: 'training',
     default: ''

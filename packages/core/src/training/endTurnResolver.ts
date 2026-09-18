@@ -66,13 +66,18 @@ export interface EndTurnResolverConfig {
    *  Default 1 = 4.116.2 byte-for-byte (INVESTIGATE never offered). */
   toolRounds: number;
   toolRoundBudgetMs: number;
+  /** R170b (4.117.3, rerun-3 field read): a thinking-off flash judge never CHOSE to investigate when offered (0 of 27+ adjudications
+   *  at ROUNDS=3). With toolAutoLoop the loop no longer depends on the judge asking: when a first-round MEETS/GAP names `CHECK:`
+   *  lines, the harness runs them and re-asks ONCE with the results before accepting the verdict — every check-naming
+   *  adjudication becomes a two-round one. Needs toolRounds >= 2. CORTEX_JUDGE_TOOL_AUTOLOOP=true; default off. */
+  toolAutoLoop: boolean;
   /** ABSTENTION (CORTEX_ENDTURN_RESOLVER_ABSTAIN): offer the judge a RETIRE verdict for a
    *  structurally-hopeless finish and HONOR it (accept + stop) instead of burning the reject
    *  cycles on a task the junior can't fix. Dark by default (A/B-able). */
   abstain: boolean;
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, abstain: false };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
@@ -91,6 +96,7 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
   const mmin = parseFloat((env.CORTEX_MEETS_CONFIRM_MIN_REMAINING ?? '').trim());
   const tr = parseInt((env.CORTEX_JUDGE_TOOL_ROUNDS ?? '').trim(), 10);
   const trb = parseInt((env.CORTEX_JUDGE_TOOL_ROUND_BUDGET_MS ?? '').trim(), 10);
+  const tal = (env.CORTEX_JUDGE_TOOL_AUTOLOOP ?? '').trim().toLowerCase();
   return {
     outputBudgetTokens: Number.isInteger(n) && n > 0 ? n : DEFAULTS.outputBudgetTokens,
     effort: e || DEFAULTS.effort,
@@ -108,6 +114,7 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
     meetsConfirmMinRemaining: Number.isFinite(mmin) && mmin >= 0 && mmin <= 1 ? mmin : DEFAULTS.meetsConfirmMinRemaining,
     toolRounds: Number.isInteger(tr) && tr >= 1 ? Math.min(5, tr) : DEFAULTS.toolRounds,
     toolRoundBudgetMs: Number.isInteger(trb) && trb >= 10_000 ? Math.min(1_800_000, trb) : DEFAULTS.toolRoundBudgetMs,
+    toolAutoLoop: tal === 'true' || tal === '1' || tal === 'on',
     abstain: (env.CORTEX_ENDTURN_RESOLVER_ABSTAIN ?? '').trim().toLowerCase() === 'true',
   };
 }

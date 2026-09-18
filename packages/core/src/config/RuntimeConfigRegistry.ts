@@ -89,6 +89,7 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   CORTEX_MEETS_CONFIRM_MIN_REMAINING: { tier: 'env' },
   CORTEX_JUDGE_TOOL_ROUNDS: { tier: 'env' },
   CORTEX_JUDGE_TOOL_ROUND_BUDGET_MS: { tier: 'env' },
+  CORTEX_JUDGE_TOOL_AUTOLOOP: { tier: 'env' },
   CORTEX_TURN_CONTRACT_ENFORCE: { tier: 'env' },
   CORTEX_TURN_CONTRACT_ENFORCE_MAX: { tier: 'env' },
   CORTEX_JUDGE_EVIDENCE_MAX_VETOES: { tier: 'env' },
