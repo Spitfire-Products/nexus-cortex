@@ -8,6 +8,7 @@
  */
 
 import type { CanonicalToolDefinition, ToolRegistry, ToolCategory } from '../types/CanonicalTool.js';
+import { resolveActionPlanFields, ACTION_PLAN_TOOLS, ACTION_PLAN_FIELD_PROPERTIES } from '../../orchestrator/turnContractValidator.js'; // R172
 
 /**
  * All 25 base tools in pure canonical format
@@ -2314,6 +2315,19 @@ export class BaseToolRegistry implements ToolRegistry {
     const endTurn = this.tools.get('EndTurn');
     if (endTurn && endTurn.discoveryTier !== tier) {
       this.tools.set('EndTurn', { ...endTurn, discoveryTier: tier });
+    }
+    // R172 HB-ACTION-PLAN-FIELDS (4.119.0): with CORTEX_ACTION_PLAN_FIELDS=true the action tools (Bash/Edit/Write) carry REQUIRED
+    // `analysis` + `plan` string fields — the per-step plan as part of the action's own JSON (Terminus 2's shape through function
+    // calling). The orchestrator validates + strips them before dispatch; executors never see them. Off = byte-identical schemas.
+    if (resolveActionPlanFields(env)) {
+      for (const name of ACTION_PLAN_TOOLS) {
+        const t = this.tools.get(name);
+        if (!t) continue;
+        const schema = (t as any).schema ?? {};
+        const props = { ...(schema.properties ?? {}), ...ACTION_PLAN_FIELD_PROPERTIES };
+        const required = Array.from(new Set([...(schema.required ?? []), 'analysis', 'plan']));
+        this.tools.set(name, { ...t, schema: { ...schema, properties: props, required } } as any);
+      }
     }
   }
 

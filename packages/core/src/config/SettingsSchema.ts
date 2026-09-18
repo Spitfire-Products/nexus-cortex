@@ -139,6 +139,7 @@ export interface EnvironmentVariables {
   CORTEX_FINISH_CONFIRM_MAX?: string; // confirmations per session (default 1, 0..5) — R167
   CORTEX_MEETS_CONFIRM?: string; // default on: a MEETS verdict must name a proving CHECK that passes; an unverified MEETS with budget left is held once (shares CORTEX_FINISH_CONFIRM_MAX) — R168 HB-MEETS-CONFIRM
   CORTEX_TURN_CONTRACT_ENFORCE?: string; // 'true': a tool-calling response whose text lacks ANALYSIS + PLAN is rejected unexecuted with a re-prompt, up to CORTEX_TURN_CONTRACT_ENFORCE_MAX times per turn (HB-TURN-CONTRACT-ENFORCE; default off)
+  CORTEX_ACTION_PLAN_FIELDS?: string; // 'true': Bash/Edit/Write calls must carry required `analysis` + `plan` fields (the per-step plan inside the action's own JSON; invalid calls are returned unexecuted, no cap) — R172 HB-ACTION-PLAN-FIELDS (default off)
   CORTEX_TURN_CONTRACT_ENFORCE_MAX?: string; // format rejections per turn before the batch executes as-is (default 2, 0..10)
   CORTEX_JUDGE_TOOL_ROUNDS?: string; // max judge calls per finish adjudication; >1 lets the judge INVESTIGATE (harness runs its read-only CHECK/READ lines between rounds) — R170 HB-JUDGE-TOOL-LOOP (default 1 = single-shot)
   CORTEX_JUDGE_TOOL_ROUND_BUDGET_MS?: string; // aggregate wall clock for the investigation rounds of one adjudication (default 240000; 10000..1800000) — R170
@@ -502,6 +503,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_JUDGE_TOOL_AUTOLOOP: '',
   CORTEX_TURN_CONTRACT_ENFORCE: '',
   CORTEX_TURN_CONTRACT_ENFORCE_MAX: '',
+  CORTEX_ACTION_PLAN_FIELDS: '',
   CORTEX_JUDGE_EVIDENCE_MAX_VETOES: '',
   CORTEX_JUDGE_PROGRESS_MIN_CALLS: '',
   CORTEX_JUDGE_ESCALATE_REASONING: '',
@@ -1086,6 +1088,14 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_MEETS_CONFIRM_MIN_REMAINING',
     displayName: 'Verified-MEETS budget floor',
     description: 'Fraction of the wall budget that must remain to hold an unverified MEETS (default 0.5). (R168)',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_ACTION_PLAN_FIELDS',
+    displayName: 'Action plan fields',
+    description: "The Bash, Edit and Write tool schemas gain REQUIRED `analysis` and `plan` string fields; a call missing either is returned unexecuted with a corrective error every time (no cap), valid calls have the fields stripped before dispatch and keep them in the trajectory. The per-step analysis + plan as part of the action's own JSON — Terminus 2's shape through function calling. Default off. (R172, HB-ACTION-PLAN-FIELDS)",
     type: 'string',
     category: 'training',
     default: ''

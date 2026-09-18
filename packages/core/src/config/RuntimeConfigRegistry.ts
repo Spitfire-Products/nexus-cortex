@@ -94,6 +94,7 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   CORTEX_JUDGE_TOOL_AUTOLOOP: { tier: 'env' },
   CORTEX_TURN_CONTRACT_ENFORCE: { tier: 'env' },
   CORTEX_TURN_CONTRACT_ENFORCE_MAX: { tier: 'env' },
+  CORTEX_ACTION_PLAN_FIELDS: { tier: 'env' },
   CORTEX_JUDGE_EVIDENCE_MAX_VETOES: { tier: 'env' },
   CORTEX_JUDGE_PROGRESS_MIN_CALLS: { tier: 'env' },
   CORTEX_JUDGE_ESCALATE_REASONING: { tier: 'env' },

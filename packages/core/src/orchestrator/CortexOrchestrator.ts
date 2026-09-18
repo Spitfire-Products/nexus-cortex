@@ -118,7 +118,7 @@ import { closestToolMatches } from './toolNameMatcher.js';
 import { classifyApiError } from './apiErrorClassifier.js';
 import { pinStaticSystemPrompt } from './staticSystemPromptPin.js';
 import { hasVisibleAssistantText, shouldForceSynthesis } from './assistantTextPresence.js';
-import { resolveTurnContractEnforce, checkTurnFormat, buildFormatRejectMessage } from './turnContractValidator.js'; // HB-TURN-CONTRACT-ENFORCE
+import { resolveTurnContractEnforce, checkTurnFormat, buildFormatRejectMessage, resolveActionPlanFields, ACTION_PLAN_TOOLS, planFieldsMissing, stripPlanFields, buildPlanFieldsRejectMessage } from './turnContractValidator.js'; // HB-TURN-CONTRACT-ENFORCE / R172
 import { computeToolBudgetSignal, isToolProgressStalled } from './toolBudgetSignal.js';
 import {
   createStructuredOutputTurnState,
@@ -651,6 +651,8 @@ export class CortexOrchestrator {
   private judgeMeetsUnevidenced = false; // R168: the judge said MEETS but no proving check passed → regex nudges may still fire
   private turnFormatRejects = 0; // HB-TURN-CONTRACT-ENFORCE: format rejections issued this turn
   private pendingFormatReject: { missing: string[]; index: number; max: number } | null = null; // set by the loop, consumed by handleToolCalls (all three execution paths)
+  private pendingPlanFieldRejects = new Map<string, string[]>(); // R172: tool_use id → missing fields; consumed by handleToolCalls
+  private actionPlanRejects = 0; // R172: per-turn count (observability only; there is no cap)
   private judgeNamedChecks: string[] = [];
   private judgePriorPlan = '';
   private judgeEscalated = false;
@@ -1051,6 +1053,26 @@ export class CortexOrchestrator {
     this.pendingFormatReject = { missing: fmt.missing, index: this.turnFormatRejects, max: tc.max };
     console.warn(`[TurnContract] REJECTED response format (missing ${fmt.missing.join('+')}; ${toolUseBlocks.length} tool call(s) not executed; rejection ${this.turnFormatRejects}/${tc.max})`);
     if (store) void store.recordEvent({ sessionId, kind: 'turn_contract_reject', detail: { iteration, rejects: this.turnFormatRejects, max: tc.max, missing: fmt.missing, tools: toolUseBlocks.map((t) => t.name).slice(0, 8), textChars: text.length, streaming } }).catch(() => {});
+  }
+
+  /** R172 HB-ACTION-PLAN-FIELDS: validate the required analysis/plan fields on action-tool calls; mark invalid calls for rejection
+   *  (no cap) and replace valid calls' inputs with stripped copies so executors and the loop guards see the bare parameters.
+   *  The canonical message keeps the model's original input (the trajectory records every action's rationale). */
+  private applyActionPlanFields(toolUseBlocks: Array<{ id: string; name: string; input: any }>, iteration: number, streaming: boolean): void {
+    if (toolUseBlocks.length === 0 || !resolveActionPlanFields(process.env)) return;
+    const store = this.getDecisionStore(); const sessionId = this.currentSessionId ?? 'unknown';
+    for (const t of toolUseBlocks) {
+      if (!ACTION_PLAN_TOOLS.has(t.name)) continue;
+      const missing = planFieldsMissing(t.input);
+      if (missing.length) {
+        this.actionPlanRejects += 1;
+        this.pendingPlanFieldRejects.set(t.id, missing);
+        console.warn(`[ActionPlanFields] REJECTED ${t.name} call (missing ${missing.join('+')}; rejection ${this.actionPlanRejects} this turn)`);
+        if (store) void store.recordEvent({ sessionId, kind: 'action_plan_reject', toolName: t.name, detail: { iteration, rejects: this.actionPlanRejects, missing, streaming } }).catch(() => {});
+      } else {
+        t.input = stripPlanFields(t.input);
+      }
+    }
   }
 
   private async adjudicateEndTurn(
@@ -2325,7 +2347,7 @@ export class CortexOrchestrator {
     // R153: the stop reason of the LATEST response (continuation/retry/gate/synth refresh it) — the empty-response
     // classifier used to read the turn's FIRST response, so a `length` cutoff on a continuation was never seen.
     let lastStopReason: string | undefined = convertedResponse.stopReason;
-    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
+    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     let toolCallIteration = 0;
     // R137 HB-POLL-REPEAT-BREAKER: the exact-repeat breaker used to force-exit by overwriting
@@ -2481,6 +2503,7 @@ export class CortexOrchestrator {
           console.log(`[Orchestrator] Extracted tools: ${toolUseBlocks.map((t: any) => t.name).join(', ')}`);
         }
         this.armTurnFormatReject(currentAssistantCanonicalMessage.content, toolUseBlocks, toolCallIteration, false); // HB-TURN-CONTRACT-ENFORCE
+        this.applyActionPlanFields(toolUseBlocks, toolCallIteration, false); // R172
 
         // If no tool calls, we're done — UNLESS the response is empty.
         if (toolUseBlocks.length === 0) {
@@ -4754,7 +4777,7 @@ export class CortexOrchestrator {
 
     let currentAssistantCanonicalMessage = convertedResponse.messages[0]!;
     let lastStopReason: string | undefined = convertedResponse.stopReason; // R153 (see non-streaming loop)
-    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
+    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     const assistantMessageId = currentAssistantCanonicalMessage.uuid;
 
@@ -4902,6 +4925,7 @@ export class CortexOrchestrator {
         }));
       ev.noteToolUses(toolUseBlocks);
       this.armTurnFormatReject(currentAssistantCanonicalMessage.content, toolUseBlocks, toolCallIteration, true); // HB-TURN-CONTRACT-ENFORCE
+      this.applyActionPlanFields(toolUseBlocks, toolCallIteration, true); // R172
 
       if (toolUseBlocks.length === 0 && !gateReRequest) {
         // R32 (streaming R18b parity): detect empty/thinking-only responses.
@@ -7759,6 +7783,18 @@ export class CortexOrchestrator {
       const rej = this.pendingFormatReject; this.pendingFormatReject = null;
       const msg = buildFormatRejectMessage(rej.missing, rej.index, rej.max, toolUseBlocks.map((t) => t.name));
       return toolUseBlocks.map((t) => ({ tool_use_id: t.id, tool_name: t.name, content: msg, is_error: true, metadata: { formatRejected: true } }));
+    }
+    // R172 HB-ACTION-PLAN-FIELDS: calls missing the required analysis/plan fields come back as error results; the rest dispatch normally.
+    if (this.pendingPlanFieldRejects.size > 0 && toolUseBlocks.some((t) => this.pendingPlanFieldRejects.has(t.id))) {
+      const rejected = toolUseBlocks.filter((t) => this.pendingPlanFieldRejects.has(t.id));
+      const others = toolUseBlocks.filter((t) => !this.pendingPlanFieldRejects.has(t.id));
+      const rejectedResults = rejected.map((t) => {
+        const missing = this.pendingPlanFieldRejects.get(t.id) ?? ['analysis', 'plan'];
+        this.pendingPlanFieldRejects.delete(t.id);
+        return { tool_use_id: t.id, tool_name: t.name, content: buildPlanFieldsRejectMessage(t.name, missing), is_error: true, metadata: { planFieldsRejected: true, missing } };
+      });
+      const otherResults = others.length > 0 ? await this.handleToolCalls(others, signal, structuredOutputState) : [];
+      return [...rejectedResults, ...otherResults];
     }
     // StructuredOutput (grok-build port): intercept BEFORE any dispatch — the
     // synthetic tool is request-scoped (never in a registry) and must NEVER
