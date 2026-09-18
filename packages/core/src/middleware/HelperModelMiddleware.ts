@@ -1612,15 +1612,13 @@ Give concise, actionable guidance in plain text with these labeled parts:
         surface: 'endturn-resolver',
         mentor: resolveMentorRoleConfig('endturn-resolver', roleEnv, { modelId: context.helperModelId, effort: cfg.effort, outputBudgetTokens: cfg.outputBudgetTokens }),
         persona: resolverSystemPrompt(cfg.abstain, cfg.meetsConfirm, context.investigate), // R168 / R170
-        task: cfg.abstain
-          ? 'Adjudicate whether the work product meets the task requirements. First line VERDICT: MEETS|GAP|RETIRE; ' +
-            'if GAP, a terse numbered fix plan; if RETIRE, one line on why it is unclosable.'
-          : 'Adjudicate whether the work product meets the task requirements. First line VERDICT: MEETS|GAP; ' +
-            'if GAP, a terse numbered fix plan.',
+        task: (context.investigate === 'offer' ? 'Adjudicate whether the work product meets the task requirements, investigating first if the evidence does not settle it. First line VERDICT: INVESTIGATE (with CHECK:/READ: lines)' : 'Adjudicate whether the work product meets the task requirements. First line VERDICT: ') +
+          (context.investigate === 'offer' ? ' or ' : '') + (cfg.abstain ? 'MEETS|GAP|RETIRE; ' : 'MEETS|GAP; ') +
+          'if GAP, a terse numbered fix plan' + (cfg.meetsConfirm ? '; if MEETS, the proving CHECK lines' : '') + (cfg.abstain ? '; if RETIRE, one line on why it is unclosable.' : '.'), // R170 fix 4.117.1
         outputBudgetTokens: cfg.outputBudgetTokens,
         effort: cfg.effort,
       },
-      buildResolverUserPrompt(ctx, cfg.abstain),
+      buildResolverUserPrompt(ctx, cfg.abstain, cfg.meetsConfirm, context.investigate), // R168 / R170
       context.helperModelId,
     );
   }

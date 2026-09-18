@@ -329,3 +329,17 @@ describe('endTurnResolver — R170 bounded investigation loop (HB-JUDGE-TOOL-LOO
     expect(brp2({ task: 'T', workProduct: 'W' })).not.toContain('EVIDENCE');
   });
 });
+
+describe('endTurnResolver — R170 fix (4.117.1): the closing instruction offers INVESTIGATE when the persona does', () => {
+  it('offer: INVESTIGATE named first, with CHECK/READ syntax; withdraw: decide-now; default: byte-identical MEETS/GAP line', () => {
+    const offer = brp2({ task: 'T', workProduct: 'W' }, false, true, 'offer');
+    expect(offer).toContain('VERDICT: INVESTIGATE'); expect(offer).toContain('READ: <path>'); expect(offer).toContain('CHECK: <read-only command>'); expect(offer).toContain('proves'); expect(offer).not.toContain('Adjudicate now.');
+    const withdraw = brp2({ task: 'T', workProduct: 'W' }, false, false, 'withdraw');
+    expect(withdraw).toContain('No further investigation'); expect(withdraw).not.toContain('INVESTIGATE`');
+    const plain = brp2({ task: 'T', workProduct: 'W' });
+    expect(plain).toContain('Adjudicate now. First line: `VERDICT: MEETS` or `VERDICT: GAP`. If GAP, add the numbered fix plan anchored to the TASK\'s real criteria.');
+    expect(plain).not.toContain('INVESTIGATE'); expect(plain).not.toContain('proves the task');
+    const abst = brp2({ task: 'T', workProduct: 'W' }, true, true);
+    expect(abst).toContain('`VERDICT: RETIRE`'); expect(abst).toContain('unclosable'); expect(abst).toContain('proves the task');
+  });
+});

@@ -200,8 +200,28 @@ export interface EndTurnResolverContext {
   evidenceRounds?: string[];
 }
 
+/** R170 fix (4.117.1): the closing instruction must OFFER the same verdict set the persona does — in 4.117.0 it said
+ *  "First line: MEETS or GAP" under an INVESTIGATE persona and the judge never investigated once in 25 adjudications. */
+export function resolverClosingInstruction(abstain: boolean, meetsConfirm = false, investigate?: 'offer' | 'withdraw'): string {
+  const meetsLine = meetsConfirm ? ' If MEETS, add the one to three `CHECK:` lines whose passing proves the task\'s own criteria.' : '';
+  const gapLine = abstain
+    ? ' If GAP, add the numbered fix plan anchored to the TASK\'s real criteria; if RETIRE, one line on why it is unclosable.'
+    : ' If GAP, add the numbered fix plan anchored to the TASK\'s real criteria.';
+  const verdicts = abstain ? '`VERDICT: MEETS`, `VERDICT: GAP`, or `VERDICT: RETIRE`' : '`VERDICT: MEETS` or `VERDICT: GAP`';
+  if (investigate === 'offer') {
+    return (
+      'Decide whether the evidence shown SETTLES the verdict. If it does not — no passing check and no concrete defect you can point ' +
+      'at — your first line is `VERDICT: INVESTIGATE`, followed by up to three `CHECK: <read-only command>` lines and up to three ' +
+      '`READ: <path>[:START-END]` lines; the harness runs them and asks you again with the results. If it does settle it, adjudicate ' +
+      `now: first line ${verdicts}.` + gapLine + meetsLine
+    );
+  }
+  const decideNow = investigate === 'withdraw' ? 'No further investigation is available — decide now on the evidence you have. ' : 'Adjudicate now. ';
+  return decideNow + `First line: ${verdicts}.` + gapLine + meetsLine;
+}
+
 /** Build the user prompt for the judge. Bounded slices keep the call cheap and cache-stable. */
-export function buildResolverUserPrompt(ctx: EndTurnResolverContext, abstain = false): string {
+export function buildResolverUserPrompt(ctx: EndTurnResolverContext, abstain = false, meetsConfirm = false, investigate?: 'offer' | 'withdraw'): string {
   const parts: string[] = [];
   parts.push(`TASK:\n${(ctx.task || '').trim().slice(0, 2500)}`);
   const lift = (ctx.liftPlan || '').trim();
@@ -220,13 +240,7 @@ export function buildResolverUserPrompt(ctx: EndTurnResolverContext, abstain = f
   const prog = (ctx.progressSummary || '').trim();
   if (prog) parts.push(`PROGRESS SINCE THAT VETO (harness-observed, ground truth):\n${prog.slice(0, 1500)}`);
   for (const ev of ctx.evidenceRounds ?? []) { const e = (ev || '').trim(); if (e) parts.push(e.slice(0, 6000)); } // R170
-  parts.push(
-    abstain
-      ? 'Adjudicate now. First line: `VERDICT: MEETS`, `VERDICT: GAP`, or `VERDICT: RETIRE`. If GAP, add the ' +
-          'numbered fix plan anchored to the TASK\'s real criteria; if RETIRE, one line on why it is unclosable.'
-      : 'Adjudicate now. First line: `VERDICT: MEETS` or `VERDICT: GAP`. If GAP, add the numbered fix plan ' +
-          'anchored to the TASK\'s real criteria.',
-  );
+  parts.push(resolverClosingInstruction(abstain, meetsConfirm, investigate));
   return parts.join('\n\n');
 }
 
