@@ -120,7 +120,11 @@ jobs:
               ( cd "$dir" && $NPM11 publish --access public --provenance --dry-run )
             else
               echo "::notice::publishing $name@$version"
+              # 2026-09-18: the package published immediately after a successful one has been left STAGED four times in two days
+              # (core after types ×3, executors after core ×1) — never the first. Pace the sequence: 45 s between publishes.
+              if [ "${published_any:-0}" = 1 ]; then echo "::notice::pacing 45 s before $name (staged-publish guard)"; sleep 45; fi
               ( cd "$dir" && $NPM11 publish --access public --provenance )
+              published_any=1
               # 2026-09-18: npm has answered "+ $name@$version" and then left the version STAGED (never promoted into the
               # registry document) three times in two days (executors 4.116.0, core+executors 4.117.1, core 4.118.0). A
               # staged version is unrecoverable from our side; the only fix is a bumped republish. Verify the registry
