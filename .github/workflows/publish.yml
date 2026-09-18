@@ -131,12 +131,12 @@ jobs:
               # DOCUMENT (not the publish exit code) before moving on, so the job fails loudly instead of reporting success.
               enc=$(printf %s "$name" | sed 's#/#%2F#')
               landed=0
-              for i in $(seq 1 16); do
+              for i in $(seq 1 40); do   # 10 min: tui@4.119.1 promoted after ~5 min and was falsely flagged staged at 4 min
                 if curl -sfL -m 20 "https://registry.npmjs.org/$enc" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const j=JSON.parse(d);process.exit(j.versions&&j.versions[process.argv[1]]?0:1)})' "$version"; then landed=1; break; fi
                 sleep 15
               done
               if [ "$landed" != 1 ]; then
-                echo "::error::$name@$version is NOT in the registry document 4 min after publish — npm left it STAGED. Bump every package and republish (see npm-token-90-day-expiry memory)."
+                echo "::error::$name@$version is NOT in the registry document 10 min after publish — npm left it STAGED. Bump every package and republish (see npm-token-90-day-expiry memory)."
                 exit 1
               fi
               echo "::notice::$name@$version verified in the registry document"
