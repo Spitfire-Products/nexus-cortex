@@ -28,7 +28,8 @@ import { join as pathJoin } from 'path';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'node:child_process';
 import { ENV_RECON_COMMAND, resolveLiftPlanConfig, parsePlannerResponse } from '../training/liftPlanner.js';
-import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage } from '../training/endTurnResolver.js';
+import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage, gapHoldable, parseSpecChecks } from '../training/endTurnResolver.js';
+import { jevAvailable, jevNoul, buildGapHoldState, GAP_HOLD_QUESTIONS } from '../training/jevGate.js'; // R173b
 import { resolveDeadlineExitConfig, deadlineExitCallBudget, parseDeadlineExitVerdict } from '../training/deadlineExitMentor.js';
 import { isTaskShaped } from './requirementsVerification.js';
 import { type ServerSideToolMetadata, extractServerSideMetadata, XAIServerSideTools, OpenAIServerSideTools, toCanonicalTool } from '../tools/ServerSideTools.js';
@@ -657,6 +658,8 @@ export class CortexOrchestrator {
   private judgePriorPlan = '';
   private judgeEscalated = false;
   private judgeAdjudicatedThisFinish = false;
+  private specChecks: string[] | null = null; // R174: blind spec-derived checks authored for this turn (null = not yet)
+  private specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; // R174
   private liftPlanText = '';          // 4.107.0: the PLAN OF ATTACK delivered at lift — handed to the resolver / deadline-exit / loop-exit judges as an advisory anchor
   private effectiveDeferredLoading = true; // per-turn resolved deferred-loading (card > env > settings); set at assembly
 
@@ -1129,7 +1132,30 @@ export class CortexOrchestrator {
           namedResults += (namedResults ? '\n\n' : '') + r;
         }
       }
-      const combinedCheck = [checkResult, namedResults ? `JUDGE-NAMED CHECKS (from your previous fix plan; executed by the harness just now):\n${namedResults}` : '']
+      // R174 HB-SPEC-TESTS: blind spec-derived checks — authored ONCE per turn from the task text alone (never the work product),
+      // run at EVERY adjudication; a FAILED one is objective evidence for the veto (R166 checksFailed) and is shown to the judge.
+      let specRan = 0; let specPassed = 0; let specFailed = 0; let specInconclusive = 0; let specResults = '';
+      if (cfg.specTests && this.helperMiddleware.deriveSpecChecks) {
+        if (this.specChecks === null) {
+          const g0 = Date.now();
+          const specTimeoutMs = mentorSurfaceTimeoutMs('endturn-resolver', parseInt(process.env.CORTEX_ENDTURN_RESOLVER_TIMEOUT_MS ?? '90000', 10));
+          try {
+            const raw = await withTimeout(this.helperMiddleware.deriveSpecChecks({ task, envReport: this.gatherEnvReport({ fresh: false }), max: cfg.specTestsMax, helperModelId: this.config.reactiveMentorship?.helperModelId }), specTimeoutMs);
+            const parsed = parseSpecChecks(raw ?? '', cfg.specTestsMax);
+            const allowed = parsed.filter((c) => isInvestigateCommandAllowed(c));
+            this.specChecks = allowed; this.specChecksMeta = { genLatencyMs: Date.now() - g0, refused: parsed.length - allowed.length, raw: (raw ?? '').length };
+          } catch { this.specChecks = []; this.specChecksMeta = { genLatencyMs: Date.now() - g0, refused: 0, raw: 0 }; }
+          if (store) void store.recordEvent({ sessionId, kind: 'spec_tests', toolName: 'EndTurn', detail: { checks: this.specChecks, ...this.specChecksMeta, mentor: this.mentorWire('endturn-resolver', cfg.effort, 1200) } }).catch(() => {});
+          console.warn(`[EndTurnResolver] R174 SPEC-TESTS — ${this.specChecks.length} blind check(s) authored in ${this.specChecksMeta.genLatencyMs} ms (${this.specChecksMeta.refused} refused)`);
+        }
+        for (const c of this.specChecks) {
+          const r = runCheck(judgeCwd, c, jcfg);
+          specRan += 1; { const k = classifyCheckRun(r); if (k === 'passed') specPassed += 1; else if (k === 'failed') specFailed += 1; else specInconclusive += 1; }
+          specResults += (specResults ? '\n\n' : '') + r;
+        }
+      }
+      const combinedCheck = [checkResult, namedResults ? `JUDGE-NAMED CHECKS (from your previous fix plan; executed by the harness just now):\n${namedResults}` : '',
+        specResults ? `SPEC CHECKS (derived from the TASK text before any work was seen; executed by the harness just now — a FAILED one is a requirement not yet met):\n${specResults}` : ''] // R174
         .filter(Boolean).join('\n\n');
       const callsSince = this.turnToolCallTotal - this.toolCallsAtLastVeto;
       const progressed = this.endTurnResolverRejects === 0 || callsSince >= cfg.progressMinCalls || namedPassed > this.judgePriorNamedPassed; // R166a: newly-passing checks, not any passing check
@@ -1202,8 +1228,16 @@ export class CortexOrchestrator {
           namedResultsNow += (namedResultsNow ? '\n\n' : '') + r;
         }
       }
+      // R173 HB-GAP-HOLD (+ R173b Jev gate): may an unevidenced GAP hold the finish while budget remains?
+      let jevFixable: number | null = null; let jevLatencyMs = 0;
+      if (cfg.gapHold && cfg.gapHoldJev !== 'off' && !verdict.meets && !verdict.blank && verdict.plan.length >= 20 && jevAvailable()) {
+        const jr = await jevNoul(buildGapHoldState({ task, plan: verdict.plan, remainingFrac: resolverRemainingFrac, remainingMs: resolverRemainingMs, openItems: (etInput as { open_items?: unknown }).open_items, rejects: this.endTurnResolverRejects }), GAP_HOLD_QUESTIONS);
+        if (jr) { jevFixable = jr.probabilities.fixable_with_more_turns ?? null; jevLatencyMs = jr.latencyMs; }
+      }
+      const holdable = gapHoldable({ gapHold: cfg.gapHold, remainingFrac: resolverRemainingFrac, minRemaining: resolveBudgetContinueMinRemaining(), planChars: verdict.plan.length, jevMode: cfg.gapHoldJev, jevFixable, jevMin: cfg.gapHoldJevMin });
+      const checksFailed = namedFailed > 0 || specFailed > 0; // R166 + R174
       let action: VetoAction = cfg.semantic
-        ? decideVetoAction({ meets: verdict.meets, blank: verdict.blank, retire: verdict.retire && cfg.abstain, confidence: verdict.confidence, rejects: this.endTurnResolverRejects, cap: resolverCap, progressed, escalated: this.judgeEscalated, checksFailed: namedFailed > 0, vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap })
+        ? decideVetoAction({ meets: verdict.meets, blank: verdict.blank, retire: verdict.retire && cfg.abstain, confidence: verdict.confidence, rejects: this.endTurnResolverRejects, cap: resolverCap, progressed, escalated: this.judgeEscalated, checksFailed, vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap, gapHoldable: holdable })
         : (verdict.blank || (verdict.retire && cfg.abstain) || verdict.meets || !verdict.plan ? 'accept' : 'veto');
       if (action === 'escalate') {
         // R165: the junior re-attested without working the plan — one thinking-on adjudication before we accept with the gap recorded.
@@ -1214,7 +1248,7 @@ export class CortexOrchestrator {
           const v2 = parseResolverVerdict(text2 ?? '');
           if (!v2.blank) { text = text2; verdict = v2; }
         }
-        action = decideVetoAction({ meets: verdict.meets, blank: verdict.blank, retire: verdict.retire && cfg.abstain, confidence: verdict.confidence, rejects: this.endTurnResolverRejects, cap: resolverCap, progressed, escalated: true, checksFailed: namedFailed > 0, vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap });
+        action = decideVetoAction({ meets: verdict.meets, blank: verdict.blank, retire: verdict.retire && cfg.abstain, confidence: verdict.confidence, rejects: this.endTurnResolverRejects, cap: resolverCap, progressed, escalated: true, checksFailed, vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap, gapHoldable: holdable });
         if (action === 'escalate') action = 'accept-with-gap';
       }
       this.judgeAdjudicatedThisFinish = verdict.parsed;
@@ -1235,6 +1269,8 @@ export class CortexOrchestrator {
           semantic: cfg.semantic, action, confidence: verdict.confidence, namedChecks: verdict.checks.length, namedRan, namedPassed, namedFailed, callsSince, progressed, escalated: this.judgeEscalated, // R165
           vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap, namedRanNow, namedInconclusive, // R166 / R166b
           toolRounds: cfg.toolRounds, roundsUsed, investigateChecks, investigateReads, investigateRefused, autoLooped, toolAutoLoop: cfg.toolAutoLoop, roundLatencyMs, evidenceChars: evidenceRounds.join('').length, // R170 / R170b
+          gapHold: cfg.gapHold, gapHoldable: holdable, jevMode: cfg.gapHoldJev, jevFixable, jevLatencyMs, // R173 / R173b
+          specTests: cfg.specTests, specChecks: this.specChecks?.length ?? 0, specRan, specPassed, specFailed, specInconclusive, specGenLatencyMs: this.specChecksMeta.genLatencyMs, // R174
           latencyMs, rawLen: (text ?? '').length,
           deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,
           liftPlanChars: this.liftPlanText.length,
@@ -1263,6 +1299,8 @@ export class CortexOrchestrator {
           `EndTurn HELD (finish review) — the work does not yet meet the task's requirements. Fix plan:\n\n` +
           `${verdict.plan}\n\nDo this, verify against the task's own criteria (not your own tests), then call EndTurn again.` +
           (namedResultsNow ? `\n\nHARNESS-RUN CHECKS (named by the reviewer, executed just now — the failing ones are the gap):\n${namedResultsNow.slice(0, 3000)}` : '') + // R166
+          (specFailed > 0 ? `\n\nSPEC CHECKS (derived from the TASK text before your work was seen, executed just now — a FAILED one is a stated requirement not yet met):\n${specResults.slice(0, 3000)}` : '') + // R174
+          (holdable && !checksFailed ? `\n\nNo harness-run check failed, but the reviewer named open items and budget remains — this hold returns them to you (hold ${this.endTurnResolverRejects}/${resolverCap}).` : '') + // R173
           budgetedVetoEscalation(this.endTurnResolverRejects, resolverCap, resolverRemainingMs ?? 0, this.turnDeadlineMsActive); // R160
         console.warn(`[EndTurnResolver] GAP — vetoed finish (${verdict.plan.length}-char plan, reject ${this.endTurnResolverRejects}/${resolverCap}${resolverRemainingFrac === null ? '' : `, budget remaining ${Math.round(resolverRemainingFrac * 100)}%`})`);
       } else if ((action === 'accept-with-gap' || action === 'accept-low-confidence') &&
@@ -2347,7 +2385,7 @@ export class CortexOrchestrator {
     // R153: the stop reason of the LATEST response (continuation/retry/gate/synth refresh it) — the empty-response
     // classifier used to read the turn's FIRST response, so a `length` cutoff on a continuation was never seen.
     let lastStopReason: string | undefined = convertedResponse.stopReason;
-    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
+    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; this.specChecks = null; this.specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; // R165 per-turn / R174
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     let toolCallIteration = 0;
     // R137 HB-POLL-REPEAT-BREAKER: the exact-repeat breaker used to force-exit by overwriting
@@ -4777,7 +4815,7 @@ export class CortexOrchestrator {
 
     let currentAssistantCanonicalMessage = convertedResponse.messages[0]!;
     let lastStopReason: string | undefined = convertedResponse.stopReason; // R153 (see non-streaming loop)
-    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; // R165 per-turn
+    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; this.specChecks = null; this.specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; // R165 per-turn / R174
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     const assistantMessageId = currentAssistantCanonicalMessage.uuid;
 

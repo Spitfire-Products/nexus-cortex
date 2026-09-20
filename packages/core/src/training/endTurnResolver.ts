@@ -75,9 +75,27 @@ export interface EndTurnResolverConfig {
    *  structurally-hopeless finish and HONOR it (accept + stop) instead of burning the reject
    *  cycles on a task the junior can't fix. Dark by default (A/B-able). */
   abstain: boolean;
+  /** R173 HB-GAP-HOLD (2026-09-20, f1 curation: the judge often named the real defect and the finish was accepted "with gap" because no
+   *  harness-run check had FAILED — 96/100 failing sessions gave up with ~85% of the budget unused). With gapHold, an evidence-mode GAP
+   *  that names open items is RETURNED to the junior while >= CORTEX_BUDGET_CONTINUE_MIN_REMAINING of the wall budget remains and the
+   *  budgeted cap (maxRejectsBudgeted) has not been reached — the veto no longer needs a failed check to hold the finish; the R165
+   *  progress rules (escalate once, then accept) still apply. Below the budget floor, or with no deadline, R166 evidence mode is unchanged.
+   *  CORTEX_JUDGE_GAP_HOLD=true; default off. */
+  gapHold: boolean;
+  /** R173b: typed gate on the hold — `shadow` calls Jev (fixable_with_more_turns over task + gap plan + budget) and BANKS the probability
+   *  without changing the decision; `gate` holds only when P(fixable) >= gapHoldJevMin; `off` = no call. Needs TYPESAFE_API_KEY. */
+  gapHoldJev: 'off' | 'shadow' | 'gate';
+  gapHoldJevMin: number;
+  /** R174 HB-SPEC-TESTS (2026-09-20): BLIND spec-derived checks — at the first finish of a turn a mentor call that sees ONLY the task
+   *  text + environment report writes up to specTestsMax read-only `CHECK:` commands that must fail when a stated requirement is unmet;
+   *  the harness runs them at every adjudication (same runner/denylist as R170), feeds the results to the judge as evidence, and a FAILED
+   *  spec check is objective evidence for the veto (R166 checksFailed). Independent of the agent's own tests and of the judge's post-hoc
+   *  checks, which the f1 curation found confirm the agent's reading of the spec. CORTEX_JUDGE_SPEC_TESTS=true; default off. */
+  specTests: boolean;
+  specTestsMax: number;
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4 };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
@@ -97,6 +115,11 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
   const tr = parseInt((env.CORTEX_JUDGE_TOOL_ROUNDS ?? '').trim(), 10);
   const trb = parseInt((env.CORTEX_JUDGE_TOOL_ROUND_BUDGET_MS ?? '').trim(), 10);
   const tal = (env.CORTEX_JUDGE_TOOL_AUTOLOOP ?? '').trim().toLowerCase();
+  const gh = (env.CORTEX_JUDGE_GAP_HOLD ?? '').trim().toLowerCase(); // R173
+  const gj = (env.CORTEX_JUDGE_GAP_HOLD_JEV ?? '').trim().toLowerCase(); // R173b
+  const gjm = parseFloat((env.CORTEX_JUDGE_GAP_HOLD_JEV_MIN ?? '').trim());
+  const st = (env.CORTEX_JUDGE_SPEC_TESTS ?? '').trim().toLowerCase(); // R174
+  const stm = parseInt((env.CORTEX_JUDGE_SPEC_TESTS_MAX ?? '').trim(), 10);
   return {
     outputBudgetTokens: Number.isInteger(n) && n > 0 ? n : DEFAULTS.outputBudgetTokens,
     effort: e || DEFAULTS.effort,
@@ -116,6 +139,11 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
     toolRoundBudgetMs: Number.isInteger(trb) && trb >= 10_000 ? Math.min(1_800_000, trb) : DEFAULTS.toolRoundBudgetMs,
     toolAutoLoop: tal === 'true' || tal === '1' || tal === 'on',
     abstain: (env.CORTEX_ENDTURN_RESOLVER_ABSTAIN ?? '').trim().toLowerCase() === 'true',
+    gapHold: gh === 'true' || gh === '1' || gh === 'on',
+    gapHoldJev: gj === 'shadow' || gj === 'gate' ? gj : 'off',
+    gapHoldJevMin: Number.isFinite(gjm) && gjm >= 0 && gjm <= 1 ? gjm : DEFAULTS.gapHoldJevMin,
+    specTests: st === 'true' || st === '1' || st === 'on',
+    specTestsMax: Number.isInteger(stm) && stm >= 1 ? Math.min(8, stm) : DEFAULTS.specTestsMax,
   };
 }
 
@@ -313,11 +341,21 @@ export function decideVetoAction(input: {
   vetoMode?: 'evidence' | 'opinion' | 'never';
   /** R166: max evidence-backed vetoes per session (default 1). */
   evidenceCap?: number;
+  /** R173: hold an unevidenced GAP while budget remains (see gapHoldable). */
+  gapHoldable?: boolean;
 }): VetoAction {
   if (input.meets || input.blank || input.retire) return 'accept';
   const mode = input.vetoMode ?? 'evidence';
   if (mode === 'never') return 'accept-with-gap';
   if (mode === 'evidence') {
+    if (input.gapHoldable) {
+      // R173 HB-GAP-HOLD: while the budget floor and the budgeted cap allow it, the judge's named items go BACK to the junior —
+      // with or without a failed check — under the R165 progress rules (a re-attestation without progress escalates once, then stands).
+      if (input.rejects >= input.cap) return 'accept-with-gap';
+      if (input.rejects === 0) return 'veto';
+      if (!input.progressed) return input.escalated ? 'accept-with-gap' : 'escalate';
+      return 'veto';
+    }
     // R166: the judge asserts, the harness verifies, only a verified failure holds the finish — and only evidenceCap times.
     if (!input.checksFailed) return 'accept-with-gap';
     if (input.rejects >= Math.min(input.cap, input.evidenceCap ?? 1)) return 'accept-with-gap';
@@ -340,6 +378,52 @@ export function effectiveMaxRejects(cfg: EndTurnResolverConfig, remainingFrac: n
   if (remainingFrac === null || !(minRemaining > 0)) return cfg.maxRejects;
   if (cfg.maxRejectsBudgeted <= cfg.maxRejects) return cfg.maxRejects;
   return remainingFrac >= minRemaining ? cfg.maxRejectsBudgeted : cfg.maxRejects;
+}
+
+/** R173: may an unevidenced GAP hold the finish right now? Pure. Requires the lever, a live deadline with at least `minRemaining`
+ *  of the wall budget left, a plan that names open items, and (when the Jev gate is on) a fixable probability at or above the floor. */
+export function gapHoldable(input: {
+  gapHold: boolean; remainingFrac: number | null; minRemaining: number; planChars: number;
+  jevMode?: 'off' | 'shadow' | 'gate'; jevFixable?: number | null; jevMin?: number;
+}): boolean {
+  if (!input.gapHold) return false;
+  if (input.remainingFrac === null || !(input.minRemaining > 0) || input.remainingFrac < input.minRemaining) return false;
+  if (!(input.planChars >= 20)) return false; // no named items → nothing to return
+  if (input.jevMode === 'gate') {
+    if (typeof input.jevFixable !== 'number') return false; // gate unavailable → fail-closed to the R166 behaviour
+    return input.jevFixable >= (input.jevMin ?? 0.3);
+  }
+  return true;
+}
+
+/** R174: the blind spec-check author. Sees ONLY the task text (+ environment report) — never the work product. */
+export const SPEC_TESTS_SYSTEM =
+  'You write ACCEPTANCE CHECKS for a task in a real terminal container BEFORE any solution exists. You are given only the TASK ' +
+  'text and an ENVIRONMENT REPORT. Write shell commands that a hidden grader could run after the work is done; each command must ' +
+  'EXIT NON-ZERO when a requirement the task states is NOT met (artifact missing, wrong path/format, wrong value, threshold unmet, ' +
+  'a command the task says must work failing) and must PRINT a one-line reason on failure. Rules: read-only (never create, modify or ' +
+  'delete anything; no installs); prefer the exact artifacts, paths, commands and thresholds the task names; use the task\'s own test ' +
+  'command if it names one; keep each check under 15 seconds; no assumptions about how the work was done. Output ONLY lines of the form ' +
+  '`CHECK: <command>` (a single shell line each, `||` with an echo + exit 1 for the reason), nothing else.';
+
+export function buildSpecTestsPrompt(task: string, envReport: string | undefined, max: number): string {
+  const parts = [`TASK:\n${(task || '').trim().slice(0, 6000)}`];
+  if (envReport && envReport.trim()) parts.push(`ENVIRONMENT REPORT (at task start):\n${envReport.trim().slice(0, 2500)}`);
+  parts.push(`Write at most ${max} CHECK lines, the most discriminating requirements first. Example form:\nCHECK: test -f /app/out.csv || { echo "MISSING /app/out.csv"; exit 1; }`);
+  return parts.join('\n\n');
+}
+
+/** R174: parse `CHECK:` lines out of the author's reply; dedup; cap. Pure. */
+export function parseSpecChecks(text: string, max = 4): string[] {
+  const out: string[] = [];
+  for (const line of (text || '').split('\n')) {
+    const m = line.match(/^\s*(?:[-*]|\d+[.)])?\s*CHECK:\s*(.+?)\s*$/i);
+    if (!m) continue;
+    const cmd = m[1]!.replace(/^`+|`+$/g, '').trim();
+    if (cmd && cmd.length <= 400 && !out.includes(cmd)) out.push(cmd);
+    if (out.length >= max) break;
+  }
+  return out;
 }
 
 /** R160: escalation line appended to the GAP fix plan from the second veto on. */

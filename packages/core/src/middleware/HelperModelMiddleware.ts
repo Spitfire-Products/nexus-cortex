@@ -37,6 +37,7 @@ import {
   buildResolverUserPrompt,
   resolveEndTurnResolverConfig,
   type EndTurnResolverContext,
+  SPEC_TESTS_SYSTEM, buildSpecTestsPrompt,
 } from '../training/endTurnResolver.js';
 import {
   DEADLINE_EXIT_SYSTEM,
@@ -1624,6 +1625,29 @@ Give concise, actionable guidance in plain text with these labeled parts:
         effort: cfg.effort,
       },
       buildResolverUserPrompt(ctx, cfg.abstain, cfg.meetsConfirm, context.investigate), // R168 / R170
+      context.helperModelId,
+    );
+  }
+
+  /**
+   * deriveSpecChecks (R174 HB-SPEC-TESTS) — the BLIND spec-check author. Same mentor wire as the EndTurn judge
+   * (endturn-resolver surface: model/reasoning/effort) but a different persona and a prompt that carries ONLY the task
+   * text + the environment report — never the work product — so the checks are written from the spec, not from the
+   * solution. Returns the raw reply; the orchestrator parses `CHECK:` lines (parseSpecChecks) and runs them.
+   */
+  async deriveSpecChecks(context: { task: string; envReport?: string; max: number; helperModelId?: string }): Promise<string> {
+    const cfg = resolveEndTurnResolverConfig();
+    const budget = 1200;
+    return this.generateGuidance(
+      {
+        surface: 'endturn-resolver',
+        mentor: resolveMentorRoleConfig('endturn-resolver', process.env, { modelId: context.helperModelId, effort: cfg.effort, outputBudgetTokens: budget }),
+        persona: SPEC_TESTS_SYSTEM,
+        task: `Write at most ${context.max} read-only CHECK lines that exit non-zero (with a printed reason) when a requirement stated in the task is not met. Output only CHECK: lines.`,
+        outputBudgetTokens: budget,
+        effort: cfg.effort,
+      },
+      buildSpecTestsPrompt(context.task, context.envReport, context.max),
       context.helperModelId,
     );
   }

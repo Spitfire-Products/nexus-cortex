@@ -5,6 +5,7 @@ import {
   buildResolverUserPrompt,
   resolveEndTurnResolverConfig,
   parseResolverVerdict,
+  gapHoldable, buildSpecTestsPrompt, SPEC_TESTS_SYSTEM, parseSpecChecks,
 } from '../endTurnResolver.js';
 
 describe('endTurnResolver — resolveEndTurnResolverConfig', () => {
@@ -349,5 +350,63 @@ describe('endTurnResolver — R170b auto-loop lever', () => {
     expect(resolveEndTurnResolverConfig({} as any).toolAutoLoop).toBe(false);
     expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_TOOL_AUTOLOOP: 'true' } as any).toolAutoLoop).toBe(true);
     expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_TOOL_AUTOLOOP: 'false' } as any).toolAutoLoop).toBe(false);
+  });
+});
+
+describe('endTurnResolver — R173 budget-aware gap hold (HB-GAP-HOLD)', () => {
+  const base = { meets: false, blank: false, retire: false, confidence: 'high' as const, cap: 6, checksFailed: false, progressed: true, escalated: false };
+  it('config: off by default; on/true/1; jev off|shadow|gate with a 0.3 floor', () => {
+    const d = resolveEndTurnResolverConfig({} as any);
+    expect(d.gapHold).toBe(false); expect(d.gapHoldJev).toBe('off'); expect(d.gapHoldJevMin).toBe(0.3);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_GAP_HOLD: 'true' } as any).gapHold).toBe(true);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_GAP_HOLD_JEV: 'gate', CORTEX_JUDGE_GAP_HOLD_JEV_MIN: '0.5' } as any)).toMatchObject({ gapHoldJev: 'gate', gapHoldJevMin: 0.5 });
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_GAP_HOLD_JEV: 'bogus', CORTEX_JUDGE_GAP_HOLD_JEV_MIN: '7' } as any)).toMatchObject({ gapHoldJev: 'off', gapHoldJevMin: 0.3 });
+  });
+  it('gapHoldable: needs the lever, a live deadline above the floor, and named items', () => {
+    expect(gapHoldable({ gapHold: false, remainingFrac: 0.9, minRemaining: 0.5, planChars: 200 })).toBe(false);
+    expect(gapHoldable({ gapHold: true, remainingFrac: null, minRemaining: 0.5, planChars: 200 })).toBe(false); // no deadline → R166 unchanged
+    expect(gapHoldable({ gapHold: true, remainingFrac: 0.4, minRemaining: 0.5, planChars: 200 })).toBe(false); // below the floor
+    expect(gapHoldable({ gapHold: true, remainingFrac: 0.9, minRemaining: 0, planChars: 200 })).toBe(false); // floor disabled
+    expect(gapHoldable({ gapHold: true, remainingFrac: 0.9, minRemaining: 0.5, planChars: 5 })).toBe(false); // nothing named
+    expect(gapHoldable({ gapHold: true, remainingFrac: 0.9, minRemaining: 0.5, planChars: 200 })).toBe(true);
+  });
+  it('gapHoldable: the Jev gate holds only at/above the floor and fails closed when unavailable; shadow never changes the decision', () => {
+    const ok = { gapHold: true, remainingFrac: 0.9, minRemaining: 0.5, planChars: 200 };
+    expect(gapHoldable({ ...ok, jevMode: 'gate', jevFixable: 0.31, jevMin: 0.3 })).toBe(true);
+    expect(gapHoldable({ ...ok, jevMode: 'gate', jevFixable: 0.2, jevMin: 0.3 })).toBe(false);
+    expect(gapHoldable({ ...ok, jevMode: 'gate', jevFixable: null })).toBe(false);
+    expect(gapHoldable({ ...ok, jevMode: 'shadow', jevFixable: 0.01 })).toBe(true);
+  });
+  it('decideVetoAction: a holdable GAP vetoes without a failed check, under the R165 progress rules and the budgeted cap', () => {
+    expect(decideVetoAction({ ...base, rejects: 0, gapHoldable: true })).toBe('veto');
+    expect(decideVetoAction({ ...base, rejects: 1, gapHoldable: true })).toBe('veto'); // past the evidence cap of 1 — the hold does not count vetoes by evidence
+    expect(decideVetoAction({ ...base, rejects: 2, progressed: false, gapHoldable: true })).toBe('escalate');
+    expect(decideVetoAction({ ...base, rejects: 2, progressed: false, escalated: true, gapHoldable: true })).toBe('accept-with-gap');
+    expect(decideVetoAction({ ...base, rejects: 6, gapHoldable: true })).toBe('accept-with-gap'); // budgeted cap binds
+    expect(decideVetoAction({ ...base, rejects: 0, gapHoldable: false })).toBe('accept-with-gap'); // R166 unchanged when not holdable
+    expect(decideVetoAction({ ...base, rejects: 0, meets: true, gapHoldable: true })).toBe('accept');
+  });
+});
+
+describe('endTurnResolver — R174 blind spec-derived tests (HB-SPEC-TESTS)', () => {
+  it('config: off by default; max 4, clamped 1..8', () => {
+    const d = resolveEndTurnResolverConfig({} as any);
+    expect(d.specTests).toBe(false); expect(d.specTestsMax).toBe(4);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_SPEC_TESTS: 'true', CORTEX_JUDGE_SPEC_TESTS_MAX: '6' } as any)).toMatchObject({ specTests: true, specTestsMax: 6 });
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_SPEC_TESTS_MAX: '40' } as any).specTestsMax).toBe(8);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_SPEC_TESTS_MAX: '0' } as any).specTestsMax).toBe(4);
+  });
+  it('the author sees only the task + environment, never the work product', () => {
+    const p = buildSpecTestsPrompt('Write /app/out.csv with 3 columns', 'ENV: python3 3.11, /app/data present', 3);
+    expect(p).toContain('TASK:'); expect(p).toContain('/app/out.csv'); expect(p).toContain('ENVIRONMENT REPORT'); expect(p).toContain('at most 3 CHECK lines');
+    expect(SPEC_TESTS_SYSTEM).toContain('BEFORE any solution exists'); expect(SPEC_TESTS_SYSTEM).toContain('read-only');
+    expect(p).not.toMatch(/WORK PRODUCT|ATTESTATION/);
+  });
+  it('parseSpecChecks: CHECK lines only, backticks stripped, deduped, capped, list prefixes tolerated', () => {
+    const txt = 'Here are checks:\nCHECK: test -f /app/out.csv || { echo MISSING; exit 1; }\n- CHECK: `head -1 /app/out.csv | grep -q "a,b,c" || { echo BAD HEADER; exit 1; }`\n2. check: python3 -c "import x" || exit 1\nCHECK: test -f /app/out.csv || { echo MISSING; exit 1; }\nnot a check\nCHECK: ls\nCHECK: pwd\n';
+    const c = parseSpecChecks(txt, 4);
+    expect(c).toEqual(['test -f /app/out.csv || { echo MISSING; exit 1; }', 'head -1 /app/out.csv | grep -q "a,b,c" || { echo BAD HEADER; exit 1; }', 'python3 -c "import x" || exit 1', 'ls']);
+    expect(parseSpecChecks('VERDICT: MEETS\nno checks here')).toEqual([]);
+    expect(parseSpecChecks('CHECK: ' + 'x'.repeat(500))).toEqual([]);
   });
 });

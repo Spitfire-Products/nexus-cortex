@@ -144,6 +144,11 @@ export interface EnvironmentVariables {
   CORTEX_JUDGE_TOOL_ROUNDS?: string; // max judge calls per finish adjudication; >1 lets the judge INVESTIGATE (harness runs its read-only CHECK/READ lines between rounds) — R170 HB-JUDGE-TOOL-LOOP (default 1 = single-shot)
   CORTEX_JUDGE_TOOL_ROUND_BUDGET_MS?: string; // aggregate wall clock for the investigation rounds of one adjudication (default 240000; 10000..1800000) — R170
   CORTEX_JUDGE_TOOL_AUTOLOOP?: string; // 'true': a first-round MEETS/GAP that names CHECK lines is re-asked once with the harness-run results (needs CORTEX_JUDGE_TOOL_ROUNDS >= 2) — R170b (default off)
+  CORTEX_JUDGE_GAP_HOLD?: string; // 'true': an evidence-mode GAP that names open items is returned to the junior while >= CORTEX_BUDGET_CONTINUE_MIN_REMAINING of the budget remains and the budgeted cap allows — R173 HB-GAP-HOLD (default off)
+  CORTEX_JUDGE_GAP_HOLD_JEV?: string; // off|shadow|gate: Jev fixable_with_more_turns over the hold — shadow banks the probability, gate holds only at >= CORTEX_JUDGE_GAP_HOLD_JEV_MIN (needs TYPESAFE_API_KEY) — R173b (default off)
+  CORTEX_JUDGE_GAP_HOLD_JEV_MIN?: string; // probability floor for the Jev gate (default 0.3) — R173b
+  CORTEX_JUDGE_SPEC_TESTS?: string; // 'true': blind spec-derived CHECK lines authored from the task text alone at the first finish, run at every adjudication; a FAILED one is veto evidence — R174 HB-SPEC-TESTS (default off)
+  CORTEX_JUDGE_SPEC_TESTS_MAX?: string; // max spec checks per turn (default 4; 1..8) — R174
   CORTEX_MEETS_CONFIRM_MIN_REMAINING?: string; // fraction of the wall budget that must remain to hold an unverified MEETS (default 0.5) — R168
   CORTEX_JUDGE_EVIDENCE_MAX_VETOES?: string; // max evidence-backed vetoes per session (default 1) — R166
   CORTEX_JUDGE_PROGRESS_MIN_CALLS?: string; // tool calls since the last veto that count as working the plan (R165; default 3; 1..50)
@@ -501,6 +506,11 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_JUDGE_TOOL_ROUNDS: '',
   CORTEX_JUDGE_TOOL_ROUND_BUDGET_MS: '',
   CORTEX_JUDGE_TOOL_AUTOLOOP: '',
+  CORTEX_JUDGE_GAP_HOLD: '',
+  CORTEX_JUDGE_GAP_HOLD_JEV: '',
+  CORTEX_JUDGE_GAP_HOLD_JEV_MIN: '',
+  CORTEX_JUDGE_SPEC_TESTS: '',
+  CORTEX_JUDGE_SPEC_TESTS_MAX: '',
   CORTEX_TURN_CONTRACT_ENFORCE: '',
   CORTEX_TURN_CONTRACT_ENFORCE_MAX: '',
   CORTEX_ACTION_PLAN_FIELDS: '',
@@ -1136,6 +1146,30 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_JUDGE_TOOL_AUTOLOOP',
     displayName: 'Finish judge auto-loop on named checks',
     description: "With CORTEX_JUDGE_TOOL_ROUNDS >= 2: when the judge's first verdict (MEETS or GAP) names CHECK lines, the harness runs them and asks the judge again with the results before accepting the verdict — the investigation loop no longer depends on the judge choosing VERDICT: INVESTIGATE. Default off. (R170b)",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_JUDGE_GAP_HOLD',
+    displayName: 'Finish judge gap hold (budget-aware)',
+    description: "true: in evidence mode a GAP verdict that names open items is RETURNED to the junior — with or without a failed check — while at least CORTEX_BUDGET_CONTINUE_MIN_REMAINING of the wall budget remains and the budgeted reject cap allows; the R165 progress rules still apply (escalate once, then the finish stands). Below the budget floor R166 evidence mode is unchanged. Default off. (R173, HB-GAP-HOLD)",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_JUDGE_GAP_HOLD_JEV',
+    displayName: 'Finish judge gap hold — Jev gate',
+    description: "off (default) | shadow | gate. With CORTEX_JUDGE_GAP_HOLD, ask TypeSafe Jev (typed yes/no, ~0.3 s) whether the reviewer's open items are fixable with more turns: shadow banks the probability on the endturn_resolver event; gate holds only when it is >= CORTEX_JUDGE_GAP_HOLD_JEV_MIN. Needs TYPESAFE_API_KEY; fail-open to R166 when unavailable. (R173b)",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_JUDGE_SPEC_TESTS',
+    displayName: 'Finish judge blind spec tests',
+    description: "true: at the first finish of a turn a mentor call that sees ONLY the task text and the environment report writes up to CORTEX_JUDGE_SPEC_TESTS_MAX read-only CHECK commands that fail when a stated requirement is unmet; the harness runs them at every adjudication, shows the results to the judge, and a FAILED spec check is objective evidence for the veto (independent of the agent's own tests and of the judge's post-hoc checks). Default off. (R174, HB-SPEC-TESTS)",
     type: 'string',
     category: 'training',
     default: ''

@@ -114,3 +114,16 @@ lengthened the sessions (median 137 min vs 28 min for the same tasks) without ch
 EndTurn in the turn-1 tool set (cell-n-r6 2×2, +4/26 on the hard core), mentor reasoning off for lift/resolver (cell-n-r1/r3: thinking-on judges
 false-accept 50–67%), loop-tool-block + near-dup lens, deadline-exit mentor (dark: fires, no flips), action effort high on flash (no lift), planner
 doctrine v2 (neutral). 4.108.0 adds resume memory across proactive compaction (unmeasured: the first 8-hour-budget runs are the field test).
+
+
+### Terminal-Bench 4.0 — full run on nexus-cortex 4.119.1, control vs full lever stack (2026-09-19)
+
+| arm | pass@1 (62 executed, 3 GPU tasks + 1 excluded scored as fails) | tokens |
+|---|---|---|
+| control: flash action model at effort high, pro mentor thinking-on, resolver thinking-off | **12/66 = 18.2%** (Wilson 10.7–29.0) | $22.88 |
+| stack: mentor pro high + judge reasoning on + R170 investigate rounds + R172 per-action analysis/plan fields | **12/66 = 18.2%** | $21.80 |
+
+Paired on 62 tasks: 5 pass in both arms, 7 flip each way (p = 1.00). Every stack lever fired (per-action rejections, 2–3 judge rounds
+with 122 checks and 183 reads, judge and planner at high). Verdict: the steering-lever stack does not move V4.1 Flash on TB4.0; the
+same-version control equals the 4.108.x runs (11–14/66). Reference: Terminus 2 + V4.1 Flash = 26.8 (3 repeats). Host ≈ $52 on four
+Vast 64-vCPU VMs; ledger `.cortex/bench/r-tb4-full-f1-2026-09-18.md`.
