@@ -126,13 +126,29 @@ export function buildDerivationHoldMessage(input: { methodIndependent: string; c
   );
 }
 
-/** Is the task value-shaped (its correctness reduces to computed values / exact outputs)? Heuristic v1 (a typed Jev noul can replace
- *  it): the text names an output artifact AND uses computation/answer language. Pure. Measured against the 09-21 taxonomy before use. */
-const VALUE_WORDS = /\b(compute|calculat\w*|determine|estimate|derive|predict|report (the|a|an|each) (value|number|result|answer)|numeric\w*|tolerance|within \d|exact(ly)? match|the answer|final answer|the value of|total|ratio|percent\w*|probability|coefficient|energy|activity|distance|frequency|pitch|decrypt\w*|cipher|flag|golden)\b/i;
-const ARTIFACT_RE = /(?:^|[\s`'"(])(\/[A-Za-z0-9_./-]+\.(?:json|csv|tsv|txt|yaml|yml|md|out|dat|xlsx))\b/g;
+/** Is the task value-shaped (its correctness reduces to computed values / exact outputs)? Heuristic v1.1 (a typed Jev noul can replace
+ *  it): the text names an OUTPUT artifact (a path or file name that follows write/save/create/produce/output… language within the
+ *  preceding ~160 chars) AND uses computation/answer language. Pure. Measured 2026-09-21 on the 64 TB4.0 task texts
+ *  (`.bench/tb4-value-shaped-2026-09-21.json`): v1 matched INPUT paths (`/app/data/x.csv`) as artifacts and missed `save it as
+ *  /app/score.musicxml` / `named X.csv and save it inside /results/` / `Create:\n- /app/rules.json`. */
+const VALUE_WORDS = /\b(compute|calculat\w*|determine|estimate|derive|predict\w*|transcrib\w*|recover(?:ed)? (?:the|all|every)|recovered|reconstruct\w*|report (the|a|an|each) (value|number|result|answer)|numeric\w*|tolerance|within \d|exact(ly)? match|the answer|final answer|answers?|the value of|total|ratio|percent\w*|probability|coefficient|energy|activity|distance|frequency|pitch\w*|decrypt\w*|cipher|flag|golden)\b/i;
+const OUTPUT_VERB = /\b(report(s|ed|ing)?|record(s|ed)?|print(s|ed)?|writ(e|es|ten|ing)|sav(e|es|ed|ing)|creat(e|es|ed|ing)|produc(e|es|ed|ing)|output(s|ting)?|generat(e|es|ed|ing)|emit(s|ted)?|export(s|ed)?|stor(e|es|ed)|put|plac(e|es|ed)|deliver\w*|provide\w*|submit\w*)\b/i;
+const DATA_EXT = 'json|jsonl|csv|tsv|txt|yaml|yml|md|out|dat|xlsx|xml|musicxml|npz|npy|mol|pdb|fasta|fa|wav|mp3|png|svg';
+const ARTIFACT_RE = new RegExp(`(?:^|[\\s\`'"(])((?:\\/[A-Za-z0-9_.-]+)*\\/(?:[A-Za-z0-9_.-]+\\.(?:${DATA_EXT}))?)(?=[\\s\`'"),.;:]|$)`, 'g'); // a DATA file (code files are not values) or a directory
 export function isValueShapedTask(task: string): { valueShaped: boolean; artifacts: string[]; reason: string } {
-  const artifacts = [...new Set([...(task || '').matchAll(ARTIFACT_RE)].map((m) => m[1]!))].slice(0, 6);
-  const words = (task || '').match(VALUE_WORDS);
+  const text = task || '';
+  const artifacts: string[] = [];
+  for (const m of text.matchAll(ARTIFACT_RE)) {
+    const path = m[1]!; const at = m.index! + m[0].indexOf(path);
+    const isDir = path.endsWith('/');
+    if (path === '/' || (isDir && !/\b(inside|into|in|under|to|at)[\s`'"(]*$/i.test(text.slice(Math.max(0, at - 14), at)))) continue; // a bare dir counts only as "save it inside /results/"
+    const before = text.slice(Math.max(0, at - 160), at);
+    if (!OUTPUT_VERB.test(before)) continue;                       // an INPUT path ("the data in /app/data/x.csv") is not a deliverable
+    if (/\b(read|from|given|provided|input|using|use|described|documented|per|according to|reference|are in|is in|lives? in|located|available|found|match(es)?|identical to|compare\w*)\b[\s\S]{0,40}$/i.test(before)) continue;
+    if (!artifacts.includes(path)) artifacts.push(path);
+    if (artifacts.length >= 6) break;
+  }
+  const words = text.match(VALUE_WORDS);
   const valueShaped = artifacts.length > 0 && !!words;
   return { valueShaped, artifacts, reason: valueShaped ? `artifact ${artifacts[0]} + "${words![0]}"` : (artifacts.length ? 'no value language' : 'no output artifact named') };
 }

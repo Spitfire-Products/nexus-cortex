@@ -47,14 +47,24 @@ describe('R176 independentDerivation — reconciliation', () => {
   });
 });
 
-describe('R176 independentDerivation — value-shaped task heuristic', () => {
-  it('needs an output artifact AND value language', () => {
+describe('R176 independentDerivation — value-shaped task heuristic (v1.1, measured on the 64 TB4.0 texts 2026-09-21)', () => {
+  it('needs an OUTPUT artifact AND value language', () => {
     expect(isValueShapedTask('Compute the beta activity of the sample and write it to /app/results.txt with 3 decimals.').valueShaped).toBe(true);
     expect(isValueShapedTask('Decrypt the ciphertext in /app/data/cipher.txt and write the plaintext to /app/out/plain.txt').valueShaped).toBe(true);
     expect(isValueShapedTask('Fix the failing build of the web server so that `make test` passes.').valueShaped).toBe(false);
     expect(isValueShapedTask('Write /app/out.step containing the CAD model described in the drawing.').valueShaped).toBe(false);
     expect(isValueShapedTask('Calculate the total but do not write any file').valueShaped).toBe(false);
     expect(isValueShapedTask('Compute X and save /app/out/summary.json').artifacts).toEqual(['/app/out/summary.json']);
+  });
+  it('an input path is not a deliverable; save-as / named-and-save-inside / Create: lists are', () => {
+    expect(isValueShapedTask('Use the `/app/data/InterPro-domain-information.tsv` table to determine the most C-terminal domain.').valueShaped).toBe(false);
+    expect(isValueShapedTask('The measurements are in `/app/data/TB3_Conf_Properties.csv`. Provide your answers as a CSV file named `TB3_Conf_Answers.csv` and save it inside `/results/`.').artifacts).toEqual(['/results/']);
+    expect(isValueShapedTask('Transcribe the four-part SATB chorale in `/app/audio/task.mp3` into MusicXML and save it as `/app/score.musicxml`.').valueShaped).toBe(true);
+    const r = isValueShapedTask('Recover the ordered rule set. Create:\n- `/app/rules.json` — a JSON array of rule objects\n- `/app/ordering.txt` — one rule name per line');
+    expect(r.valueShaped).toBe(true); expect(r.artifacts).toEqual(['/app/rules.json', '/app/ordering.txt']);
+    expect(isValueShapedTask('Determine the detection limit. Report the results in a file named `results.txt` at `/app/results.txt`, using exactly this format.').artifacts).toEqual(['/app/results.txt']);
+    expect(isValueShapedTask('Compute the total. The training observations are in `/app/data/temperature_profiles.csv`; the key set must match `/app/reference_output/expected_keys.json` exactly.').valueShaped).toBe(false);
+    expect(isValueShapedTask('Build a `dispatch` CLI as described in `/app/packet/OUTPUT_SCHEMA.md`; the executable must be available at `/workspace/dispatch`.').valueShaped).toBe(false);
   });
 });
 
