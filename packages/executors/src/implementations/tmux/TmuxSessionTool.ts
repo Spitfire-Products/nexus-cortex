@@ -32,6 +32,12 @@ export interface TmuxSessionParams {
    */
   command?: string;
 
+  /** R179: send `command` as tmux KEY NAMES (C-c, Escape) — no literal mode, no implicit Enter. */
+  raw?: boolean;
+
+  /** R179: append Enter after the literal text (default true); false types without running (REPL input, partial lines). */
+  enter?: boolean;
+
   /**
    * Working directory (optional for 'create' action)
    */
@@ -108,6 +114,8 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
             type: 'string',
             description: 'Command to send to session (required for send action)'
           },
+          raw: { type: 'boolean', description: 'Send command as tmux key names (C-c, Escape) with no implicit Enter (R179)' },
+          enter: { type: 'boolean', description: 'Append Enter after the literal text (default true) (R179)' },
           cwd: {
             type: 'string',
             description: 'Working directory for new session (optional for create action)'
@@ -536,7 +544,8 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
 
     updateOutput?.(`Sending command to session ${sessionId}...\n`);
 
-    await this.tmux.sendKeys(sessionId, command);
+    if (params.raw) await this.tmux.sendRawKeys(sessionId, [command]);
+    else await this.tmux.sendKeys(sessionId, command, { enter: params.enter !== false });
 
     // Update lastUsed timestamp
     await this.persistence.touchSession(sessionId);

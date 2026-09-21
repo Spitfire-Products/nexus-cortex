@@ -92,3 +92,20 @@ Leg C: uninformative (2 loops in 396). The raw-PANE hypothesis is untested until
 TmuxSession tool + R138–R143 tmux levers (built); R172 action plan fields (built; Terminus shape); jevGate.ts (built; noul, fail-open);
 turn-prediction store + reducer (built, dark in the harness); Terminus trajectories `tinkersnot/tb2-t4pt-ctl` (banked); decision traces in
 the lake (`decision_trace` rows, 09-20 backfill). Not built: the frame port, the candidate author, the chooser call, the sender, the E0 scripts.
+
+## 9. Jev in the autoresearch architecture (operator question, 09-21)
+Today: candidate diff → build → graded benchmark → statistical gate (Monte-Carlo / FWER / holdout) → LLM judge gate (reads the diff; vetoes
+eval-gaming/unsafe) → `mergeEligible = gate-keep ∧ judge-approve`; swarm width N arms/round, best accepted merges (nexus-autoresearch
+CONTRACT). The expensive step is the benchmark run per candidate. Typed decisions fit BEFORE it and BESIDE the judge:
+1. **Pre-run triage (biggest saving):** nouls over the diff + the goal + the metric definition — on-goal? touches only allowed files? plausibly
+   games the metric (edits the eval, hardcodes outputs)? trivial/no-op? — a cheap veto before any benchmark compute; false vetoes cost one
+   candidate, false passes cost what they cost today. Measure on banked campaign ledgers first (replay: diffs + gate outcomes exist).
+2. **Judge AND Jev at merge:** the measured pattern (precision up, 24/51 false accepts removed on the finish gate) applied to the merge
+   decision; the reader sees the diff, the metric delta, the holdout result — never the judge's verdict (gate independence).
+3. **Arm ranking under a budget:** `choice` over the N arms' diffs — which to evaluate first when the round cannot afford all N; a ranker,
+   not a veto (E0: rankers are what a 0.62-AUC signal is good for).
+4. **Round control:** typed questions over the campaign ledger — plateaued? widen? stop? — replacing heuristics; banked as decisions.
+5. **Persona arms:** the NPC swarm's differentiated arms already carry Elo; the reader can score "did this arm's change follow its brief?"
+   as a typed label for the Elo update instead of the outcome alone.
+Order: replay (1) and (2) on persisted campaigns ($0.1 class), then wire (1) as `preflight: jev` on `start_autoresearch_campaign` (dark).
+

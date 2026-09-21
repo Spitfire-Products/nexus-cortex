@@ -66,7 +66,7 @@ export function promptIsBack(screen: string): boolean {
 }
 
 /** Keep the tail of the screen (the pane is 40 rows; a capture with history can be longer). Pure. */
-export function clipScreen(screen: string, maxChars = FRAME_DEFAULTS.screenMaxChars): { text: string; clipped: boolean } {
+export function clipScreen(screen: string, maxChars: number = FRAME_DEFAULTS.screenMaxChars): { text: string; clipped: boolean } {
   const t = stripAnsi(screen).replace(/[ \t]+\n/g, '\n');
   if (t.length <= maxChars) return { text: t, clipped: false };
   return { text: '…[earlier output hidden — the SHOW MORE OUTPUT template reveals it]\n' + t.slice(-maxChars), clipped: true };
@@ -99,7 +99,7 @@ export function repeatCount(history: HistoryEntry[], keystrokes: string): number
 }
 
 /** The parsed truth both the writer and the reader receive. Numbers are computed here, never inferred by a model. Pure. */
-export function buildStateCard(input: StateCardInput, maxChars = FRAME_DEFAULTS.stateCardMaxChars): string {
+export function buildStateCard(input: StateCardInput, maxChars: number = FRAME_DEFAULTS.stateCardMaxChars): string {
   const last = input.history[input.history.length - 1];
   const repeats = input.history.filter((h, i) => input.history.slice(0, i).some((p) => normalizeKeys(p.keystrokes) === normalizeKeys(h.keystrokes))).length;
   const lines = [

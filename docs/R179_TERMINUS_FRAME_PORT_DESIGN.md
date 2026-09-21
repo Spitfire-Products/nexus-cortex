@@ -78,3 +78,23 @@ as a safety net only.
 - 40-line screens hide long outputs (Terminus's known weakness) → SHOW MORE template + the harness keeps the full capture for the reader.
 - Two variables at once → E1 before E2, always.
 - The writer may game the menu (always candidate[0] = its own plan) → the chooser's pick rate and override outcomes are the engagement read.
+
+## 8. Beyond Terminus 2: the non-essential tool tier THROUGH the menu (operator question, 09-21)
+Terminus has one channel (keystrokes) and no tools. We keep the one OBSERVATION channel (the screen) and add capabilities as MENU OPS, not
+as schemas in the prefix — the same shape the SPA already runs (14 essential tools + `searchTools`/`dispatch` progressive discovery) and the
+harness's deferred loading + anchor lift, with a typed gate between "suggested" and "called":
+- **Capability index in the prefix, once:** name + one line + cost class for every MCP server / web tool / skill (hundreds of entries are a
+  few KB; the TypeSafe essay's "100s of tools + 1000s of docs" point). No schemas. The prefix stays cached.
+- **The writer proposes** a capability call as a candidate `{op:"tool", name, args?, why}` in its normal action JSON (its ghost text).
+- **The reader decides** with typed questions over the raw screen + state + task: `need` (does the task need information or a capability the
+  container lacks right now?), `allowed` (is the call within the task's rules and scope?), `pick` (is this the right capability among the
+  listed ones?), and where a cost table exists a `score` for expected value vs. cost. For bench arms `allowed` is CODE (TB4.0 forbids online
+  solutions; `ENABLE_WEBTOOLS=false` stays a hard floor) with Jev advisory; for the product harness it is the gate.
+- **On "call":** the harness loads that ONE schema, executes through `dispatch`, and writes the result INTO THE PANE (or to a scratch file the
+  pane shows) — tool output arrives as screen text, so the writer's view and the reader's raw view stay one channel and the prefix never
+  changes. **Connecting** an MCP server is itself a menu op with a cost (handshake + schema load) gated by a noul ("will this server's
+  capabilities be needed in the next few steps?"); loaded schemas live in the suffix only while connected.
+- Banking: the same turn row (candidate = the proposed call, pick, provenance) — tool proposals become Lens A rows and DPO pairs too.
+- Later authors slot in unchanged: the helper-model middleware as a second candidate author (cheap drafts), the apprentice, speculative
+  drafts scored by the j-space acceptor; the reader is whichever typed model is best calibrated at the time (Jev, own readout, Laya-class encoder).
+

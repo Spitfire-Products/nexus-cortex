@@ -1060,6 +1060,40 @@ Use plan mode for tasks with genuine ambiguity — multiple reasonable architect
     }
   },
   {
+    name: 'FrameAction',
+    description: `TERMINAL FRAME action (only available when CORTEX_FRAME=terminus). You work in one interactive terminal (a tmux pane). Give your analysis of the current screen, your plan, and 1-3 candidate actions with exact keystrokes (end a command with \\n to run it; tmux key names such as C-c are allowed; an empty keystrokes string with a duration just waits) and the seconds to wait before looking again. The harness executes ONE candidate (your first unless a gate chooses otherwise), waits, and returns the screen + a STATE line + the templates it can run for you. When the task is complete call EndTurn instead.`,
+    schema: {
+      type: 'object',
+      properties: {
+        analysis: { type: 'string', description: 'What the current screen shows and what it means for the task (2-4 sentences).' },
+        plan: { type: 'string', description: 'What you will do next and why (1-3 sentences).' },
+        candidates: {
+          type: 'array',
+          description: 'One to three candidate actions, best first.',
+          items: {
+            type: 'object',
+            properties: {
+              label: { type: 'string', description: 'Short label for this action.' },
+              keystrokes: { type: 'string', description: 'Exact keystrokes to type. End with \\n to run a command. Empty string = wait only.' },
+              duration_s: { type: 'number', description: 'Seconds to wait before the next observation (default 5, max 300).' },
+              why: { type: 'string', description: 'One line: why this is the right next step.' }
+            },
+            required: ['keystrokes']
+          }
+        }
+      },
+      required: ['analysis', 'plan', 'candidates']
+    },
+    category: 'base',
+    discoveryTier: 'essential',
+    metadata: {
+      immutable: true,
+      executionEnvironment: 'client',
+      version: '1.0.0'
+    }
+  },
+
+  {
     name: 'EndTurn',
     description: `MANDATORY final step when your turn used any tool. You MUST call EndTurn before your user-facing answer — the turn cannot complete until you do. It requires RECONSTRUCTING the evidence for your work, not ticking boxes:
 

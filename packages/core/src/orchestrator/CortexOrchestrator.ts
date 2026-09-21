@@ -30,6 +30,8 @@ import { execSync } from 'node:child_process';
 import { ENV_RECON_COMMAND, resolveLiftPlanConfig, parsePlannerResponse } from '../training/liftPlanner.js';
 import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage, gapHoldable, parseSpecChecks, applyVetoFloor, holdProgressed, planSimilarity, specCheckEvidence } from '../training/endTurnResolver.js';
 import { jevAvailable, jevNoul, buildGapHoldState, GAP_HOLD_QUESTIONS } from '../training/jevGate.js'; // R173b
+import { resolveFrameConfig, FRAME_CONTRACT, FRAME_TOOL_NAME } from '../frames/frameConfig.js'; // R179
+import { FrameRunner } from '../frames/frameRunner.js'; // R179
 import { isValueShapedTask, parseDerivationReply, methodsDiffer, parseValueLines, extractNumbers, reconcile, buildDerivationHoldMessage, isDerivationCommandAllowed, checkRunPassed, checkRunBody } from '../training/independentDerivation.js'; // R176
 import { resolveDeadlineExitConfig, deadlineExitCallBudget, parseDeadlineExitVerdict } from '../training/deadlineExitMentor.js';
 import { isTaskShaped } from './requirementsVerification.js';
@@ -642,6 +644,7 @@ export class CortexOrchestrator {
   private herdrReporter: HerdrReporter | null | undefined = undefined;
   private herdrTurnLabel = 'turn:0';
   private turnDeadlineMsActive = 0;   // R133: the active turn's wall-clock budget (0 = no deadline) — sub-agent timeouts derive from what remains
+  private frameRunner: FrameRunner | null = null; // R179 HB-TERMINUS-FRAME: lazy; the tmux session lives across turns
   private endTurnResolverRejects = 0; // endTurnResolver: GAP vetoes so far this task (bounded by maxRejects → fallback-accept)
   // R165 HB-JUDGE-SEMANTIC: per-turn judge state — progress since the last veto, the judge's own named checks and plan,
   // whether the one thinking-on escalation was spent, and whether the judge adjudicated this finish (regex nudges defer).
@@ -1843,8 +1846,10 @@ export class CortexOrchestrator {
     // Vision gate (item 7): ReadImage is offered ONLY to probe-verified vision
     // cards — a text-only model must never see or reach the image path.
     const visionOn = (model as { vision?: boolean } | undefined)?.vision === true;
+    const frameCfg = resolveFrameConfig(process.env); // R179: the terminus frame exposes FrameAction (+ EndTurn) and nothing else
     const factoryTools = this.applyBaseToolAllowlist(
       toolFactory.getAllTools()
+        .filter(t => frameCfg.frame === 'terminus' ? (t.name === FRAME_TOOL_NAME || t.name === 'EndTurn') : t.name !== FRAME_TOOL_NAME)
         .filter(t => endTurnGateOn || t.name !== 'EndTurn')
         .filter(t => visionOn || !!resolveVisionHelperModel(process.env) || t.name !== 'ReadImage'),
     );
@@ -1852,9 +1857,9 @@ export class CortexOrchestrator {
     // bash-only arm must suppress them here or the surface leaks (lean keeps
     // them — they are part of the "guided" surface under test).
     const bashOnlyProfile = isNarrowProfile();
-    const mcpTools = this.mcpAutoInject && !bashOnlyProfile ? this.getMcpToolsAsCanonical() : [];
-    const mcpManagementTools = bashOnlyProfile ? [] : this.getMcpManagementTools();
-    const contextManagementTools = bashOnlyProfile ? [] : this.getContextManagementTools();
+    const mcpTools = this.mcpAutoInject && !bashOnlyProfile && frameCfg.frame !== 'terminus' ? this.getMcpToolsAsCanonical() : [];
+    const mcpManagementTools = (bashOnlyProfile || frameCfg.frame === 'terminus') ? [] : this.getMcpManagementTools();
+    const contextManagementTools = (bashOnlyProfile || frameCfg.frame === 'terminus') ? [] : this.getContextManagementTools();
 
     // Per-model deferred-loading resolved ONCE per turn (card > env > settings), so every per-request
     // deferred gate below flips together — this is what makes the pro card's deferredToolLoading:false
@@ -1933,7 +1938,7 @@ export class CortexOrchestrator {
       this.currentStaticSystemPrompt = pinStaticSystemPrompt(
         this.staticSystemPromptByConversation,
         this.currentConversationId,
-        split.systemPrompt
+        resolveFrameConfig(process.env).frame === 'terminus' ? `${split.systemPrompt}\n\n${FRAME_CONTRACT}` : split.systemPrompt // R179: turn-0 contract (the pin freezes it)
       );
 
       if (this.config.debug) {
@@ -4558,7 +4563,7 @@ export class CortexOrchestrator {
       this.currentStaticSystemPrompt = pinStaticSystemPrompt(
         this.staticSystemPromptByConversation,
         this.currentConversationId,
-        split.systemPrompt
+        resolveFrameConfig(process.env).frame === 'terminus' ? `${split.systemPrompt}\n\n${FRAME_CONTRACT}` : split.systemPrompt // R179: turn-0 contract (the pin freezes it)
       );
     } else {
       injectedContent = content;
@@ -6548,6 +6553,23 @@ export class CortexOrchestrator {
    * tools are filtered elsewhere — never here — so an allowlisted sub-agent
    * still receives its injected MCP tools on top of its base whitelist.
    */
+  /** R179: the frame runner — one per orchestrator; drives tmux through the executor registry (no model tool call, no permission gates). */
+  private getFrameRunner(): FrameRunner {
+    if (!this.frameRunner) {
+      const cfg = resolveFrameConfig(process.env);
+      this.frameRunner = new FrameRunner(cfg, {
+        execute: (name, input, signal) => this.executorRegistry.execute(name, input as any, signal as any) as Promise<unknown>,
+        recordEvent: (kind, detail) => { const st = this.getDecisionStore(); if (st) void st.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: kind as any, toolName: FRAME_TOOL_NAME, detail }).catch(() => {}); },
+        jev: cfg.chooser === 'jev' && jevAvailable() ? async (state, questions) => { const r = await jevNoul(state, questions); return r ? r.probabilities : null; } : undefined,
+      });
+    }
+    return this.frameRunner;
+  }
+  private async runFrameAction(input: unknown, signal: AbortSignal): Promise<{ content: string; isError: boolean; meta: Record<string, unknown> }> {
+    const elapsedMs = this.turnLoopStartMs > 0 ? Date.now() - this.turnLoopStartMs : 0;
+    return this.getFrameRunner().step({ action: input, task: this.lastRealUserText(), elapsedMs, deadlineMs: this.turnDeadlineMsActive, cwd: this.config.workingDirectory || process.cwd(), sessionId: this.currentSessionId ?? 'session', signal, predictorModel: 'generator' });
+  }
+
   private applyBaseToolAllowlist<T extends { name: string }>(tools: T[]): T[] {
     const allow = this.config.allowedBaseTools;
     if (!allow || allow.length === 0) return tools;
@@ -7926,6 +7948,22 @@ export class CortexOrchestrator {
       });
       const otherResults = others.length > 0 ? await this.handleToolCalls(others, signal, structuredOutputState) : [];
       return [...rejectedResults, ...otherResults];
+    }
+    // R179 HB-TERMINUS-FRAME: FrameAction never reaches a real executor — the frame runner drives the pane and returns the observation.
+    if (toolUseBlocks.some((t) => t.name === FRAME_TOOL_NAME)) {
+      const frameCalls = toolUseBlocks.filter((t) => t.name === FRAME_TOOL_NAME);
+      const otherCalls = toolUseBlocks.filter((t) => t.name !== FRAME_TOOL_NAME);
+      const frameResults: Array<{ tool_use_id: string; tool_name: string; content: string; is_error?: boolean; metadata?: any }> = [];
+      for (const call of frameCalls) {
+        try {
+          const r = await this.runFrameAction(call.input, signal);
+          frameResults.push({ tool_use_id: call.id, tool_name: call.name, content: r.content, is_error: r.isError, metadata: r.meta });
+        } catch (e: any) {
+          frameResults.push({ tool_use_id: call.id, tool_name: call.name, content: `Frame error: ${String(e?.message ?? e).slice(0, 300)}`, is_error: true, metadata: { frame: 'terminus', error: true } });
+        }
+      }
+      const otherResults = otherCalls.length > 0 ? await this.handleToolCalls(otherCalls, signal, structuredOutputState) : [];
+      return [...otherResults, ...frameResults];
     }
     // StructuredOutput (grok-build port): intercept BEFORE any dispatch — the
     // synthetic tool is request-scoped (never in a registry) and must NEVER

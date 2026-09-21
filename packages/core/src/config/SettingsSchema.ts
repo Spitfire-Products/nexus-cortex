@@ -156,6 +156,11 @@ export interface EnvironmentVariables {
   CORTEX_JUDGE_SPEC_TESTS_AT?: string; // When the blind spec checks are authored: finish (first adjudication) | lift (background at task lift) (R174b) (default finish)
   CORTEX_JUDGE_INDEPENDENT_DERIVATION?: string; // On a value-shaped task, recompute the result by a different method before a standing finish; disagreement holds once (R176 HB-INDEPENDENT-DERIVATION): off | on (default off)
   CORTEX_JUDGE_INDEPENDENT_DERIVATION_TOL?: string; // Relative tolerance for numeric agreement in the independent derivation (R176) (default 0.001)
+  CORTEX_FRAME?: string; // tools (default) | terminus: one tmux pane as the only action surface (FrameAction + EndTurn), screen + state card + menu each turn (R179)
+  CORTEX_FRAME_CHOOSER?: string; // off (default) | jev: a typed reader picks among the writer's candidates + templates; fail-open to the first candidate (R179/R178)
+  CORTEX_FRAME_CANDIDATES?: string; // max candidate actions per FrameAction, 1..3 (default 1) (R179)
+  CORTEX_FRAME_WAIT_CAP_S?: string; // cap on waiting for one action's command, seconds (default 300) (R179)
+  CORTEX_FRAME_SCREEN_LINES?: string; // pane lines captured per observation (default 60) (R179)
   CORTEX_MEETS_CONFIRM_MIN_REMAINING?: string; // fraction of the wall budget that must remain to hold an unverified MEETS (default 0.5) — R168
   CORTEX_JUDGE_EVIDENCE_MAX_VETOES?: string; // max evidence-backed vetoes per session (default 1) — R166
   CORTEX_JUDGE_PROGRESS_MIN_CALLS?: string; // tool calls since the last veto that count as working the plan (R165; default 3; 1..50)
@@ -525,6 +530,11 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_JUDGE_SPEC_TESTS_AT: '',
   CORTEX_JUDGE_INDEPENDENT_DERIVATION: '',
   CORTEX_JUDGE_INDEPENDENT_DERIVATION_TOL: '',
+  CORTEX_FRAME: '',
+  CORTEX_FRAME_CHOOSER: '',
+  CORTEX_FRAME_CANDIDATES: '',
+  CORTEX_FRAME_WAIT_CAP_S: '',
+  CORTEX_FRAME_SCREEN_LINES: '',
   CORTEX_TURN_CONTRACT_ENFORCE: '',
   CORTEX_TURN_CONTRACT_ENFORCE_MAX: '',
   CORTEX_ACTION_PLAN_FIELDS: '',
@@ -1208,6 +1218,22 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_JUDGE_INDEPENDENT_DERIVATION',
     displayName: 'Independent derivation before finish',
     description: "on: on a value-shaped task (names an output artifact + computation language), before a finish that would otherwise stand, a mentor call authors a recomputation by a DIFFERENT method; the harness runs it (read-only runner) and holds the finish ONCE when the values disagree, showing both. Targets the largest never-passed class (computed answers with no in-container ground truth). Default off. (R176)",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_FRAME',
+    displayName: 'Action frame',
+    description: "tools (default) | terminus: the Terminus-2-style frame — one tmux pane is the only action surface (FrameAction + EndTurn); each turn returns the screen, a parsed state card and the harness templates (R179 HB-TERMINUS-FRAME).",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_FRAME_CHOOSER',
+    displayName: 'Frame menu chooser',
+    description: "off (default) | jev: a typed reader (Jev) sees the raw screen + state + the writer's candidates and picks the action to execute, refuses unsafe ones, restricts repeats; never sees the judge; fail-open to the first candidate (R178).",
     type: 'string',
     category: 'training',
     default: ''

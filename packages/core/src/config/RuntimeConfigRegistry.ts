@@ -104,6 +104,11 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   CORTEX_JUDGE_SPEC_TESTS_AT: { tier: 'env' },
   CORTEX_JUDGE_INDEPENDENT_DERIVATION: { tier: 'env' },
   CORTEX_JUDGE_INDEPENDENT_DERIVATION_TOL: { tier: 'env' },
+  CORTEX_FRAME: { tier: 'env' }, // R179
+  CORTEX_FRAME_CHOOSER: { tier: 'env' },
+  CORTEX_FRAME_CANDIDATES: { tier: 'env' },
+  CORTEX_FRAME_WAIT_CAP_S: { tier: 'env' },
+  CORTEX_FRAME_SCREEN_LINES: { tier: 'env' },
   CORTEX_TURN_CONTRACT_ENFORCE: { tier: 'env' },
   CORTEX_TURN_CONTRACT_ENFORCE_MAX: { tier: 'env' },
   CORTEX_ACTION_PLAN_FIELDS: { tier: 'env' },
