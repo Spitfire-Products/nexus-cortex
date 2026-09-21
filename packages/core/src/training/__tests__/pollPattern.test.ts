@@ -127,3 +127,13 @@ describe('detectPollPattern — negatives (conservative: not a poll)', () => {
     expect(detectPollPattern('make test').probe).toBeUndefined();
   });
 });
+
+describe('R177: prototype-key command heads never throw (takens-embedding-lean: `constructor` typed at the shell aborted the turn loop)', () => {
+  it.each([['constructor'], ['constructor foo'], ['toString status'], ['__proto__ ps'], ['hasOwnProperty logs'], ['valueOf; sleep 5']])('%s', (cmd) => {
+    expect(() => detectPollPattern(cmd)).not.toThrow();
+    expect(detectPollPattern(cmd).isPoll).toBe(false);
+  });
+  it('a real verb tool still classifies', () => {
+    expect(detectPollPattern('docker ps; sleep 5').isPoll).toBe(true);
+  });
+});

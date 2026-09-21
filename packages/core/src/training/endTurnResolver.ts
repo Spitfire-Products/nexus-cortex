@@ -447,7 +447,9 @@ export function planSimilarity(a: string, b: string): number {
 /** R173c: did the junior do real work since the last hold? Elapsed time OR a materially changed open-items list. Pure. */
 export function holdProgressed(input: { rejects: number; msSinceLastHold: number | null; priorPlan: string; plan: string; minIntervalMs: number; maxSimilarity: number }): boolean {
   if (input.rejects === 0) return true;
-  if (input.msSinceLastHold !== null && input.msSinceLastHold >= input.minIntervalMs) return true;
+  // R173c-b (cell g2, 2026-09-21): elapsed time is REQUIRED when it is known. Under the OR rule six holds 45–137 s apart all counted as
+  // progressed because the judge rewrote its plan text each time; a changed plan is evidence on top of the time, never a substitute.
+  if (input.msSinceLastHold !== null && input.msSinceLastHold < input.minIntervalMs) return false;
   return planSimilarity(input.priorPlan, input.plan) < input.maxSimilarity;
 }
 

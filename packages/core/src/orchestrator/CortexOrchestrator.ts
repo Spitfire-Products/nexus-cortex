@@ -28,7 +28,7 @@ import { join as pathJoin } from 'path';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'node:child_process';
 import { ENV_RECON_COMMAND, resolveLiftPlanConfig, parsePlannerResponse } from '../training/liftPlanner.js';
-import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage, gapHoldable, parseSpecChecks, applyVetoFloor, holdProgressed, specCheckEvidence } from '../training/endTurnResolver.js';
+import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage, gapHoldable, parseSpecChecks, applyVetoFloor, holdProgressed, planSimilarity, specCheckEvidence } from '../training/endTurnResolver.js';
 import { jevAvailable, jevNoul, buildGapHoldState, GAP_HOLD_QUESTIONS } from '../training/jevGate.js'; // R173b
 import { isValueShapedTask, parseDerivationReply, methodsDiffer, parseValueLines, extractNumbers, reconcile, buildDerivationHoldMessage, isDerivationCommandAllowed } from '../training/independentDerivation.js'; // R176
 import { resolveDeadlineExitConfig, deadlineExitCallBudget, parseDeadlineExitVerdict } from '../training/deadlineExitMentor.js';
@@ -1350,7 +1350,7 @@ export class CortexOrchestrator {
           toolRounds: cfg.toolRounds, roundsUsed, investigateChecks, investigateReads, investigateRefused, autoLooped, toolAutoLoop: cfg.toolAutoLoop, roundLatencyMs, evidenceChars: evidenceRounds.join('').length, // R170 / R170b
           gapHold: cfg.gapHold, gapHoldable: holdable, jevMode: cfg.gapHoldJev, jevFixable, jevLatencyMs, // R173 / R173b
           specTests: cfg.specTests, specChecks: this.specChecks?.length ?? 0, specRan, specPassed, specFailed, specInconclusive, specSuspect, specGenLatencyMs: this.specChecksMeta.genLatencyMs, specTestsAt: cfg.specTestsAt, // R174 / R174b
-          vetoMinRemaining: cfg.vetoMinRemaining, belowFloor, holdProgressed: holdProg, msSinceLastHold, // R173c
+          vetoMinRemaining: cfg.vetoMinRemaining, belowFloor, holdProgressed: holdProg, holdGapMs: msSinceLastHold, planSim: Number(planSimilarity(this.judgePriorPlan, verdict.plan).toFixed(3)), msSinceLastHold, // R173c
           derivation: cfg.derivation, derivationAgreement: derivationInfo?.agreement ?? null, derivationHeld: !!derivationHold, // R176
           latencyMs, rawLen: (text ?? '').length,
           deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,

@@ -427,12 +427,15 @@ describe('endTurnResolver — R173c budget floor + hold progress, R174b spec rep
     expect(applyVetoFloor('veto', 0.1, 0)).toBe('veto');
     expect(applyVetoFloor('veto', null, 0.25)).toBe('veto');
   });
-  it('holdProgressed: first hold always; a re-hold needs elapsed time OR a changed plan', () => {
+  it('holdProgressed: first hold always; a re-hold needs the elapsed time AND a changed plan (R173c-b: a rewritten plan alone is not progress)', () => {
     const plan = '1. write /app/out.csv with header a,b,c\n2. run the checker script';
+    const changed = '1. the NMD-escaping variant position is off by one; recompute from the CDS join';
     expect(holdProgressed({ rejects: 0, msSinceLastHold: 0, priorPlan: '', plan, minIntervalMs: 180_000, maxSimilarity: 0.6 })).toBe(true);
     expect(holdProgressed({ rejects: 1, msSinceLastHold: 40_000, priorPlan: plan, plan, minIntervalMs: 180_000, maxSimilarity: 0.6 })).toBe(false); // same items, 40 s later
-    expect(holdProgressed({ rejects: 1, msSinceLastHold: 200_000, priorPlan: plan, plan, minIntervalMs: 180_000, maxSimilarity: 0.6 })).toBe(true);
-    expect(holdProgressed({ rejects: 2, msSinceLastHold: 10_000, priorPlan: plan, plan: '1. the NMD-escaping variant position is off by one; recompute from the CDS join', minIntervalMs: 180_000, maxSimilarity: 0.6 })).toBe(true);
+    expect(holdProgressed({ rejects: 1, msSinceLastHold: 200_000, priorPlan: plan, plan, minIntervalMs: 180_000, maxSimilarity: 0.6 })).toBe(false); // time passed, same items → R165 path
+    expect(holdProgressed({ rejects: 1, msSinceLastHold: 200_000, priorPlan: plan, plan: changed, minIntervalMs: 180_000, maxSimilarity: 0.6 })).toBe(true);
+    expect(holdProgressed({ rejects: 2, msSinceLastHold: 10_000, priorPlan: plan, plan: changed, minIntervalMs: 180_000, maxSimilarity: 0.6 })).toBe(false); // the g2 production-planning shape: rewritten plan 45–137 s later
+    expect(holdProgressed({ rejects: 2, msSinceLastHold: null, priorPlan: plan, plan: changed, minIntervalMs: 180_000, maxSimilarity: 0.6 })).toBe(true); // time unknown → the plan decides
     expect(planSimilarity(plan, plan)).toBe(1); expect(planSimilarity('', '')).toBe(1); expect(planSimilarity('abc def', 'xyz')).toBe(0);
   });
   it('specCheckEvidence: identical repeated failures become suspect at the repeat max unless another check failed; a pass or a different failure resets', () => {

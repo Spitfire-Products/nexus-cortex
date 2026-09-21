@@ -191,7 +191,9 @@ function classifySegment(raw: string): Seg {
   if (head === 'wget') return classifyWget(args);
   if (head === 'http' || head === 'https' || head === 'xh') return classifyHttpie(args);
   if (NEUTRAL_HEADS.has(head)) return { kind: 'neutral' };
-  const verbs = VERB_TOOLS[head];
+  // R177: own-property lookup — a head such as `constructor`/`toString`/`__proto__` (a Lean tactic typed at the shell, a prototype key)
+  // resolved to an Object.prototype function and `.has` threw, aborting the whole multi-turn loop (takens-embedding-lean, g1c + g2x).
+  const verbs = Object.prototype.hasOwnProperty.call(VERB_TOOLS, head) ? VERB_TOOLS[head] : undefined;
   if (verbs) return verbs.has(args[0] ?? '') ? { kind: 'probe', probe: probeId(`${head} ${args[0]}`, args.slice(1)), status: head !== 'git' } : { kind: 'unsafe' };
   if (PROBE_HEADS.has(head)) {
     if (head === 'sqlite3' && !args.some((a) => /^\s*select\b/i.test(a))) return { kind: 'unsafe' };
@@ -209,6 +211,11 @@ function classifySegment(raw: string): Seg {
  * and NO unsafe segment; `probe` is the identity of the first probe (set for bare probes too).
  */
 export function detectPollPattern(command: string): PollPattern {
+  // R177: a classifier is a hint; it must never throw into the turn loop.
+  try { return detectPollPatternInner(command); } catch { return { isPoll: false }; }
+}
+
+function detectPollPatternInner(command: string): PollPattern {
   const cmd = String(command ?? '').trim();
   if (!cmd) return { isPoll: false };
   const loop = /\b(until|while)\b[\s\S]*\bdo\b[\s\S]*\bdone\b/.test(cmd);
