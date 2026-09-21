@@ -1,0 +1,73 @@
+import { describe, it, expect } from 'vitest';
+import { DERIVATION_SYSTEM, buildDerivationPrompt, parseDerivationReply, methodsDiffer, parseValueLines, extractNumbers, reconcile, buildDerivationHoldMessage, isValueShapedTask, isDerivationCommandAllowed } from '../independentDerivation.js';
+import { isInvestigateCommandAllowed } from '../judgeEvidence.js';
+
+describe('R176 independentDerivation — elicitation + parsing', () => {
+  it('persona demands a different route and VALUE lines; prompt carries task, deliverable, summary, value names', () => {
+    expect(DERIVATION_SYSTEM).toContain('genuinely different route'); expect(DERIVATION_SYSTEM).toContain('VALUE <name>=');
+    const p = buildDerivationPrompt({ task: 'Compute beta activity', deliverable: '{"beta": 0.412}', agentSummary: 'used numpy trapezoid', values: ['beta'] });
+    expect(p).toContain('TASK:'); expect(p).toContain('"beta": 0.412'); expect(p).toContain('numpy trapezoid'); expect(p).toContain('VALUES TO RECOMPUTE'); expect(p).toContain('beta');
+  });
+  it('parses METHOD lines and CHECK lines, deduped and capped', () => {
+    const r = parseDerivationReply('METHOD_AGENT: numpy trapezoid over the spectrum\nMETHOD_INDEPENDENT: analytic integral of the fitted gaussian\nCHECK: python3 /tmp/a.py\n- CHECK: `python3 /tmp/b.py`\nCHECK: python3 /tmp/a.py\nCHECK: c\nCHECK: d\n', 3);
+    expect(r.methodAgent).toBe('numpy trapezoid over the spectrum'); expect(r.methodIndependent).toBe('analytic integral of the fitted gaussian');
+    expect(r.checks).toEqual(['python3 /tmp/a.py', 'python3 /tmp/b.py', 'c']);
+    expect(parseDerivationReply('nothing here').checks).toEqual([]);
+  });
+  it('methodsDiffer: same tokens → not different; distinct routes → different', () => {
+    expect(methodsDiffer('numpy trapezoid over the spectrum', 'numpy trapezoid over the spectrum again')).toBe(false);
+    expect(methodsDiffer('numpy trapezoid over the spectrum', 'analytic integral of the fitted gaussian')).toBe(true);
+    expect(methodsDiffer('', 'brute force enumeration')).toBe(true);
+  });
+});
+
+describe('R176 independentDerivation — reconciliation', () => {
+  it('parses VALUE lines and extracts numbers from JSON/CSV/prose', () => {
+    expect(parseValueLines('junk\nVALUE total=82\nVALUE max_id = 4\nVALUE name=Alice Smith\n')).toEqual({ total: '82', max_id: '4', name: 'Alice Smith' });
+    expect(extractNumbers('{"total": 82, "ratio": 0.4125, "id": "x1"}')).toEqual([82, 0.4125]);
+    expect(extractNumbers('a,b\n1.5e3,-2\n')).toEqual([1500, -2]);
+  });
+  it('agrees within tolerance, disagrees outside it, string values by containment, inconclusive with nothing derived', () => {
+    const d = '{"total": 82, "max_id": 4, "beta": 0.41249}';
+    expect(reconcile(d, { total: '82', beta: '0.4125' }).agreement).toBe('agree');
+    expect(reconcile(d, { total: '91' }).agreement).toBe('disagree');
+    expect(reconcile(d, { beta: '0.4131' }, 1e-3).agreement).toBe('disagree');
+    expect(reconcile(d, { beta: '0.4131' }, 5e-3).agreement).toBe('agree');
+    expect(reconcile('answer: c.1234A>G', { hgvs: 'c.1234A>G' }).agreement).toBe('agree');
+    expect(reconcile('answer: c.1234A>G', { hgvs: 'c.1235A>G' }).agreement).toBe('disagree');
+    expect(reconcile(d, {}).agreement).toBe('inconclusive');
+    expect(reconcile(d, { total: '82', keys: 'max_id,mean,total' }).agreement).toBe('agree'); // numbers decide; a descriptive string cannot override them
+    const r = reconcile(d, { total: '91' }); expect(r.compared[0]).toMatchObject({ name: 'total', derived: '91', matched: null }); expect(r.compared[0]!.rel).toBeCloseTo(0.0989, 3);
+  });
+  it('hold message names the disputed values and the independent method', () => {
+    const r = reconcile('{"total": 82}', { total: '91', count: '4' });
+    const m = buildDerivationHoldMessage({ methodIndependent: 'awk sum over the CSV', compared: r.compared, remainingFrac: 0.7 });
+    expect(m).toContain('EndTurn HELD (independent check)'); expect(m).toContain('awk sum over the CSV'); expect(m).toContain('total: your deliverable contains no value matching it; an independent recomputation gives 91');
+    expect(m).toContain('count: your deliverable contains no value matching it; an independent recomputation gives 4'); expect(m).toContain('70% of the wall budget');
+  });
+});
+
+describe('R176 independentDerivation — value-shaped task heuristic', () => {
+  it('needs an output artifact AND value language', () => {
+    expect(isValueShapedTask('Compute the beta activity of the sample and write it to /app/results.txt with 3 decimals.').valueShaped).toBe(true);
+    expect(isValueShapedTask('Decrypt the ciphertext in /app/data/cipher.txt and write the plaintext to /app/out/plain.txt').valueShaped).toBe(true);
+    expect(isValueShapedTask('Fix the failing build of the web server so that `make test` passes.').valueShaped).toBe(false);
+    expect(isValueShapedTask('Write /app/out.step containing the CAD model described in the drawing.').valueShaped).toBe(false);
+    expect(isValueShapedTask('Calculate the total but do not write any file').valueShaped).toBe(false);
+    expect(isValueShapedTask('Compute X and save /app/out/summary.json').artifacts).toEqual(['/app/out/summary.json']);
+  });
+});
+
+describe('R176 independentDerivation — runner allow rule', () => {
+  it('allows scratch writes under /tmp, refuses writes elsewhere and the R170 denylist', () => {
+    const ok = (c: string) => isDerivationCommandAllowed(c, isInvestigateCommandAllowed);
+    expect(ok("cat > /tmp/d.py <<'EOF'\nprint(1)\nEOF\npython3 /tmp/d.py")).toBe(true);
+    expect(ok('python3 -c "print(sum(1 for _ in open(\'/app/data/x.csv\')))" > /tmp/out.txt; cat /tmp/out.txt')).toBe(true);
+    expect(ok('awk -F, "NR>1{s+=$2} END{print \"VALUE total=\" s}" data/scores.csv | tee /tmp/v.txt')).toBe(true);
+    expect(ok('python3 -c "print(1)" > /app/out/summary.json')).toBe(false);
+    expect(ok('rm -rf /app/out; python3 /tmp/d.py')).toBe(false);
+    expect(ok('sort data/scores.csv > results.txt')).toBe(false);
+    expect(ok('python3 -c "import csv; print(\"VALUE total=1\")"')).toBe(true);
+  });
+});
+

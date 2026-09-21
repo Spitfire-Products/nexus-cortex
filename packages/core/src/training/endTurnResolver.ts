@@ -107,9 +107,13 @@ export interface EndTurnResolverConfig {
   /** R174b: when to author the blind spec checks — `finish` (first adjudication, 4.120.0) or `lift` (at task lift, in the background,
    *  so a session whose first finish comes late still has them). */
   specTestsAt: 'finish' | 'lift';
+  /** R176 HB-INDEPENDENT-DERIVATION (docs/R176_INDEPENDENT_DERIVATION_DESIGN.md): on a value-shaped task, before an otherwise-standing
+   *  finish, elicit a SECOND derivation by a different method, run it, reconcile; disagreement holds the finish ONCE. off | on. */
+  derivation: 'off' | 'on';
+  derivationTol: number;
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish' };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', derivation: 'off', derivationTol: 1e-3 };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
@@ -139,6 +143,8 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
   const ghs = parseFloat((env.CORTEX_JUDGE_GAP_HOLD_PLAN_MAX_SIMILARITY ?? '').trim());
   const srm = parseInt((env.CORTEX_JUDGE_SPEC_REPEAT_MAX ?? '').trim(), 10); // R174b
   const sta = (env.CORTEX_JUDGE_SPEC_TESTS_AT ?? '').trim().toLowerCase();
+  const idv = (env.CORTEX_JUDGE_INDEPENDENT_DERIVATION ?? '').trim().toLowerCase(); // R176
+  const idt = parseFloat((env.CORTEX_JUDGE_INDEPENDENT_DERIVATION_TOL ?? '').trim());
   return {
     outputBudgetTokens: Number.isInteger(n) && n > 0 ? n : DEFAULTS.outputBudgetTokens,
     effort: e || DEFAULTS.effort,
@@ -168,6 +174,8 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
     gapHoldPlanMaxSimilarity: Number.isFinite(ghs) && ghs >= 0 && ghs <= 1 ? ghs : DEFAULTS.gapHoldPlanMaxSimilarity,
     specRepeatMax: Number.isInteger(srm) && srm >= 1 ? Math.min(10, srm) : DEFAULTS.specRepeatMax,
     specTestsAt: sta === 'lift' ? 'lift' : 'finish',
+    derivation: idv === 'on' || idv === 'true' || idv === '1' ? 'on' : 'off',
+    derivationTol: Number.isFinite(idt) && idt > 0 && idt < 1 ? idt : DEFAULTS.derivationTol,
   };
 }
 

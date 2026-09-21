@@ -39,6 +39,7 @@ import {
   type EndTurnResolverContext,
   SPEC_TESTS_SYSTEM, buildSpecTestsPrompt,
 } from '../training/endTurnResolver.js';
+import { DERIVATION_SYSTEM, buildDerivationPrompt } from '../training/independentDerivation.js'; // R176
 import {
   DEADLINE_EXIT_SYSTEM,
   buildDeadlineExitPrompt,
@@ -1648,6 +1649,28 @@ Give concise, actionable guidance in plain text with these labeled parts:
         effort: cfg.effort,
       },
       buildSpecTestsPrompt(context.task, context.envReport, context.max),
+      context.helperModelId,
+    );
+  }
+
+  /**
+   * deriveIndependentCheck (R176 HB-INDEPENDENT-DERIVATION) — the independent recomputation author. Same mentor wire as the
+   * judge; sees the task, the deliverable the harness read, the agent's own summary, and the value names — and must pick a
+   * DIFFERENT method and emit CHECK lines that print `VALUE <name>=…`. Returns the raw reply (parseDerivationReply).
+   */
+  async deriveIndependentCheck(context: { task: string; deliverable: string; agentSummary: string; envReport?: string; values: string[]; helperModelId?: string }): Promise<string> {
+    const cfg = resolveEndTurnResolverConfig();
+    const budget = 1600;
+    return this.generateGuidance(
+      {
+        surface: 'endturn-resolver',
+        mentor: resolveMentorRoleConfig('endturn-resolver', process.env, { modelId: context.helperModelId, effort: cfg.effort, outputBudgetTokens: budget }),
+        persona: DERIVATION_SYSTEM,
+        task: 'Recompute the agent\'s result by a genuinely different method. Output METHOD_AGENT:, METHOD_INDEPENDENT:, then CHECK: lines whose commands print VALUE <name>=<value>.',
+        outputBudgetTokens: budget,
+        effort: cfg.effort,
+      },
+      buildDerivationPrompt(context),
       context.helperModelId,
     );
   }

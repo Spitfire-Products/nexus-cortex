@@ -154,6 +154,8 @@ export interface EnvironmentVariables {
   CORTEX_JUDGE_GAP_HOLD_PLAN_MAX_SIMILARITY?: string; // Token-Jaccard threshold below which the judge plan counts as changed for a re-hold (R173c) (default 0.6)
   CORTEX_JUDGE_SPEC_REPEAT_MAX?: string; // Consecutive identical spec-check failures before the check is suspect, not veto evidence (R174b) (default 2)
   CORTEX_JUDGE_SPEC_TESTS_AT?: string; // When the blind spec checks are authored: finish (first adjudication) | lift (background at task lift) (R174b) (default finish)
+  CORTEX_JUDGE_INDEPENDENT_DERIVATION?: string; // On a value-shaped task, recompute the result by a different method before a standing finish; disagreement holds once (R176 HB-INDEPENDENT-DERIVATION): off | on (default off)
+  CORTEX_JUDGE_INDEPENDENT_DERIVATION_TOL?: string; // Relative tolerance for numeric agreement in the independent derivation (R176) (default 0.001)
   CORTEX_MEETS_CONFIRM_MIN_REMAINING?: string; // fraction of the wall budget that must remain to hold an unverified MEETS (default 0.5) — R168
   CORTEX_JUDGE_EVIDENCE_MAX_VETOES?: string; // max evidence-backed vetoes per session (default 1) — R166
   CORTEX_JUDGE_PROGRESS_MIN_CALLS?: string; // tool calls since the last veto that count as working the plan (R165; default 3; 1..50)
@@ -521,6 +523,8 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_JUDGE_GAP_HOLD_PLAN_MAX_SIMILARITY: '',
   CORTEX_JUDGE_SPEC_REPEAT_MAX: '',
   CORTEX_JUDGE_SPEC_TESTS_AT: '',
+  CORTEX_JUDGE_INDEPENDENT_DERIVATION: '',
+  CORTEX_JUDGE_INDEPENDENT_DERIVATION_TOL: '',
   CORTEX_TURN_CONTRACT_ENFORCE: '',
   CORTEX_TURN_CONTRACT_ENFORCE_MAX: '',
   CORTEX_ACTION_PLAN_FIELDS: '',
@@ -1196,6 +1200,14 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_JUDGE_SPEC_TESTS_AT',
     displayName: 'Blind spec tests authored at',
     description: "finish (default): at the first finish adjudication. lift: in the background at task lift, so a session whose first finish comes late still has its checks. (R174b)",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_JUDGE_INDEPENDENT_DERIVATION',
+    displayName: 'Independent derivation before finish',
+    description: "on: on a value-shaped task (names an output artifact + computation language), before a finish that would otherwise stand, a mentor call authors a recomputation by a DIFFERENT method; the harness runs it (read-only runner) and holds the finish ONCE when the values disagree, showing both. Targets the largest never-passed class (computed answers with no in-container ground truth). Default off. (R176)",
     type: 'string',
     category: 'training',
     default: ''

@@ -30,6 +30,7 @@ import { execSync } from 'node:child_process';
 import { ENV_RECON_COMMAND, resolveLiftPlanConfig, parsePlannerResponse } from '../training/liftPlanner.js';
 import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage, gapHoldable, parseSpecChecks, applyVetoFloor, holdProgressed, specCheckEvidence } from '../training/endTurnResolver.js';
 import { jevAvailable, jevNoul, buildGapHoldState, GAP_HOLD_QUESTIONS } from '../training/jevGate.js'; // R173b
+import { isValueShapedTask, parseDerivationReply, methodsDiffer, parseValueLines, extractNumbers, reconcile, buildDerivationHoldMessage, isDerivationCommandAllowed } from '../training/independentDerivation.js'; // R176
 import { resolveDeadlineExitConfig, deadlineExitCallBudget, parseDeadlineExitVerdict } from '../training/deadlineExitMentor.js';
 import { isTaskShaped } from './requirementsVerification.js';
 import { type ServerSideToolMetadata, extractServerSideMetadata, XAIServerSideTools, OpenAIServerSideTools, toCanonicalTool } from '../tools/ServerSideTools.js';
@@ -663,6 +664,7 @@ export class CortexOrchestrator {
   private specChecksPromise: Promise<string[]> | null = null; // R174b: authored at lift in the background (CORTEX_JUDGE_SPEC_TESTS_AT=lift)
   private specFailHistory = new Map<string, { streak: number; sig: string }>(); // R174b: consecutive identical spec failures
   private lastHoldMs = 0; // R173c: wall clock of the last hold/veto this turn
+  private derivationHolds = 0; // R176: independent-derivation holds this turn (max 1)
   private liftPlanText = '';          // 4.107.0: the PLAN OF ATTACK delivered at lift — handed to the resolver / deadline-exit / loop-exit judges as an advisory anchor
   private effectiveDeferredLoading = true; // per-turn resolved deferred-loading (card > env > settings); set at assembly
 
@@ -1081,6 +1083,16 @@ export class CortexOrchestrator {
     }
   }
 
+  /** R176: read the artifact the task names (the agent's deliverable) for reconciliation — direct, bounded, text only;
+   *  an absolute path outside the workspace is still the task's own file, so it is read rather than refused. */
+  private readDeliverable(cwd: string, artifact: string, maxChars = 1500): string {
+    try {
+      const abs = artifact.startsWith('/') ? artifact : `${cwd}/${artifact}`;
+      if (!existsSync(abs)) return `${artifact}: NOT FOUND`;
+      const text = readFileSync(abs, 'utf8');
+      return `${artifact}:\n${text.length > maxChars ? text.slice(0, maxChars) + '\n…' : text}`;
+    } catch (e: any) { return `${artifact}: unreadable (${String(e?.message ?? e).slice(0, 80)})`; }
+  }
   /** R174/R174b: author the blind spec checks (task text + env report ONLY). Sets specChecks/specChecksMeta; never throws. */
   private async authorSpecChecks(task: string): Promise<string[]> {
     const cfg = resolveEndTurnResolverConfig();
@@ -1283,6 +1295,41 @@ export class CortexOrchestrator {
       // R173c: the budget floor — below CORTEX_JUDGE_VETO_MIN_REMAINING nothing holds the finish (the gap is recorded).
       const belowFloor = cfg.vetoMinRemaining > 0 && resolverRemainingFrac !== null && resolverRemainingFrac < cfg.vetoMinRemaining && (action as VetoAction) === 'veto';
       action = applyVetoFloor(action, resolverRemainingFrac, cfg.vetoMinRemaining);
+      // R176 HB-INDEPENDENT-DERIVATION: on a value-shaped task, before a finish that would otherwise STAND, recompute the result by a
+      // different method and hold ONCE on disagreement. Never below the budget floor; never more than once per turn.
+      let derivationHold: { message: string } | null = null;
+      let derivationInfo: Record<string, unknown> | null = null;
+      if (cfg.derivation === 'on' && action !== 'veto' && action !== 'escalate' && this.derivationHolds < 1 && !belowFloor &&
+          !(cfg.vetoMinRemaining > 0 && resolverRemainingFrac !== null && resolverRemainingFrac < cfg.vetoMinRemaining) && this.helperMiddleware.deriveIndependentCheck) {
+        const shape = isValueShapedTask(task);
+        derivationInfo = { valueShaped: shape.valueShaped, reason: shape.reason, artifacts: shape.artifacts };
+        if (shape.valueShaped) {
+          const d0 = Date.now();
+          try {
+            const deliverable = shape.artifacts.map((a) => this.readDeliverable(judgeCwd, a)).join('\n\n');
+            const raw = await withTimeout(this.helperMiddleware.deriveIndependentCheck({ task, deliverable: `${deliverable}\n\nAGENT FINAL MESSAGE:\n${this.lastAssistantText().slice(0, 2000)}`, agentSummary: attestation, envReport: this.gatherEnvReport({ fresh: false }), values: [], helperModelId: this.config.reactiveMentorship?.helperModelId }), timeoutMs);
+            const plan = parseDerivationReply(raw ?? '', 3);
+            const allowed = plan.checks.filter((c) => isDerivationCommandAllowed(c, isInvestigateCommandAllowed));
+            const refusedCmds = plan.checks.filter((c) => !allowed.includes(c)).map((c) => c.slice(0, 200));
+            const derived: Record<string, string> = {}; const outputs: string[] = [];
+            for (const c of allowed) { const r = runCheck(judgeCwd, c, jcfg); outputs.push(r); Object.assign(derived, parseValueLines(r)); }
+            // Fallback when the author printed values without the `VALUE name=` contract: take the LAST few numbers each check printed
+            // and require that at least one matches the deliverable — conservative (a disagreement needs every printed number to miss).
+            let fallback = false;
+            if (!Object.keys(derived).length && outputs.length) {
+              const tail = outputs.flatMap((o) => extractNumbers(o.split('\n').slice(1).join('\n')).slice(-3));
+              tail.slice(-6).forEach((v, i) => { derived[`printed${i + 1}`] = String(v); }); fallback = tail.length > 0;
+            }
+            let rec = reconcile(`${deliverable}\n${this.lastAssistantText()}`, derived, cfg.derivationTol);
+            if (fallback && rec.compared.some((c) => c.matched !== null)) rec = { ...rec, agreement: 'agree' };
+            const differ = methodsDiffer(plan.methodAgent, plan.methodIndependent);
+            derivationInfo = { ...derivationInfo, methodAgent: plan.methodAgent, methodIndependent: plan.methodIndependent, methodsDiffer: differ, checks: allowed.length, refused: refusedCmds.length, refusedCmds, fallback, checkOutputs: outputs.map((o) => o.slice(0, 600)), derived, agreement: rec.agreement, compared: rec.compared, latencyMs: Date.now() - d0 };
+            if (rec.agreement === 'disagree' && differ) derivationHold = { message: buildDerivationHoldMessage({ methodIndependent: plan.methodIndependent, compared: rec.compared, remainingFrac: resolverRemainingFrac }) };
+            console.warn(`[EndTurnResolver] R176 DERIVATION — ${rec.agreement} (${allowed.length} check(s), methodsDiffer=${differ}) in ${Date.now() - d0} ms`);
+          } catch (e: any) { derivationInfo = { ...derivationInfo, error: String(e?.message ?? e).slice(0, 120) }; }
+        }
+        if (store) void store.recordEvent({ sessionId, kind: 'independent_derivation', toolName: 'EndTurn', detail: { ...derivationInfo, held: !!derivationHold, remainingFrac: resolverRemainingFrac } }).catch(() => {});
+      }
       this.judgeAdjudicatedThisFinish = verdict.parsed;
       const latencyMs = Date.now() - t0;
       // OBSERVABILITY (resolver-AB follow-up, 2026-09-05): bank the TEXT the resolver produced +
@@ -1304,6 +1351,7 @@ export class CortexOrchestrator {
           gapHold: cfg.gapHold, gapHoldable: holdable, jevMode: cfg.gapHoldJev, jevFixable, jevLatencyMs, // R173 / R173b
           specTests: cfg.specTests, specChecks: this.specChecks?.length ?? 0, specRan, specPassed, specFailed, specInconclusive, specSuspect, specGenLatencyMs: this.specChecksMeta.genLatencyMs, specTestsAt: cfg.specTestsAt, // R174 / R174b
           vetoMinRemaining: cfg.vetoMinRemaining, belowFloor, holdProgressed: holdProg, msSinceLastHold, // R173c
+          derivation: cfg.derivation, derivationAgreement: derivationInfo?.agreement ?? null, derivationHeld: !!derivationHold, // R176
           latencyMs, rawLen: (text ?? '').length,
           deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,
           liftPlanChars: this.liftPlanText.length,
@@ -1337,6 +1385,14 @@ export class CortexOrchestrator {
           (holdable && !checksFailed ? `\n\nNo harness-run check failed, but the reviewer named open items and budget remains — this hold returns them to you (hold ${this.endTurnResolverRejects}/${resolverCap}).` : '') + // R173
           budgetedVetoEscalation(this.endTurnResolverRejects, resolverCap, resolverRemainingMs ?? 0, this.turnDeadlineMsActive); // R160
         console.warn(`[EndTurnResolver] GAP — vetoed finish (${verdict.plan.length}-char plan, reject ${this.endTurnResolverRejects}/${resolverCap}${resolverRemainingFrac === null ? '' : `, budget remaining ${Math.round(resolverRemainingFrac * 100)}%`})`);
+      } else if (derivationHold) {
+        // R176: the finish would stand, but an independent recomputation disagrees — hold once with both values shown.
+        this.derivationHolds += 1;
+        this.lastHoldMs = Date.now();
+        ev.endTurnCalled = false;
+        et.is_error = true;
+        et.content = derivationHold.message;
+        console.warn(`[EndTurnResolver] R176 DERIVATION-HOLD — finish held once on a disagreeing independent recomputation`);
       } else if ((action === 'accept-with-gap' || action === 'accept-low-confidence') &&
                  shouldFinishConfirm({ action, remainingFrac: resolverRemainingFrac, confirmsUsed: this.finishConfirms, cfg })) {
         // R167 HB-FINISH-CONFIRM: the judge would accept with a gap and budget remains — hold ONCE with an informed
@@ -2419,7 +2475,7 @@ export class CortexOrchestrator {
     // R153: the stop reason of the LATEST response (continuation/retry/gate/synth refresh it) — the empty-response
     // classifier used to read the turn's FIRST response, so a `length` cutoff on a continuation was never seen.
     let lastStopReason: string | undefined = convertedResponse.stopReason;
-    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; this.specChecks = null; this.specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; this.specChecksPromise = null; this.specFailHistory.clear(); this.lastHoldMs = 0; // R165 per-turn / R174 / R173c
+    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; this.specChecks = null; this.specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; this.specChecksPromise = null; this.specFailHistory.clear(); this.lastHoldMs = 0; this.derivationHolds = 0; // R165 per-turn / R174 / R173c / R176
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     let toolCallIteration = 0;
     // R137 HB-POLL-REPEAT-BREAKER: the exact-repeat breaker used to force-exit by overwriting
@@ -4850,7 +4906,7 @@ export class CortexOrchestrator {
 
     let currentAssistantCanonicalMessage = convertedResponse.messages[0]!;
     let lastStopReason: string | undefined = convertedResponse.stopReason; // R153 (see non-streaming loop)
-    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; this.specChecks = null; this.specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; this.specChecksPromise = null; this.specFailHistory.clear(); this.lastHoldMs = 0; // R165 per-turn / R174 / R173c
+    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; this.specChecks = null; this.specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; this.specChecksPromise = null; this.specFailHistory.clear(); this.lastHoldMs = 0; this.derivationHolds = 0; // R165 per-turn / R174 / R173c / R176
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     const assistantMessageId = currentAssistantCanonicalMessage.uuid;
 

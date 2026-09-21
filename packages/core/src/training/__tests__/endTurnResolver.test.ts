@@ -447,3 +447,12 @@ describe('endTurnResolver — R173c budget floor + hold progress, R174b spec rep
     expect(specCheckEvidence(h, 'y', 'CHECK RUN: `y` → TIMED OUT after 45000 ms (not a pass)\n', 'inconclusive', 2, false)).toBe('inconclusive');
   });
 });
+
+describe('endTurnResolver — R176 independent derivation config', () => {
+  it('off by default; on/true/1; tolerance in (0,1) else 1e-3', () => {
+    const d = resolveEndTurnResolverConfig({} as any);
+    expect(d.derivation).toBe('off'); expect(d.derivationTol).toBe(1e-3);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_INDEPENDENT_DERIVATION: 'on', CORTEX_JUDGE_INDEPENDENT_DERIVATION_TOL: '0.01' } as any)).toMatchObject({ derivation: 'on', derivationTol: 0.01 });
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_INDEPENDENT_DERIVATION: 'bogus', CORTEX_JUDGE_INDEPENDENT_DERIVATION_TOL: '5' } as any)).toMatchObject({ derivation: 'off', derivationTol: 1e-3 });
+  });
+});
