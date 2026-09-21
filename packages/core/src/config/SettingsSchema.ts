@@ -149,6 +149,11 @@ export interface EnvironmentVariables {
   CORTEX_JUDGE_GAP_HOLD_JEV_MIN?: string; // probability floor for the Jev gate (default 0.3) — R173b
   CORTEX_JUDGE_SPEC_TESTS?: string; // 'true': blind spec-derived CHECK lines authored from the task text alone at the first finish, run at every adjudication; a FAILED one is veto evidence — R174 HB-SPEC-TESTS (default off)
   CORTEX_JUDGE_SPEC_TESTS_MAX?: string; // max spec checks per turn (default 4; 1..8) — R174
+  CORTEX_JUDGE_VETO_MIN_REMAINING?: string; // Budget floor: below this fraction of the wall budget no veto or hold of any kind holds the finish (R173c; 0 = off) (default 0)
+  CORTEX_JUDGE_GAP_HOLD_MIN_INTERVAL_MS?: string; // A re-hold needs this much elapsed time since the last hold OR a changed open-items list (R173c) (default 180000)
+  CORTEX_JUDGE_GAP_HOLD_PLAN_MAX_SIMILARITY?: string; // Token-Jaccard threshold below which the judge plan counts as changed for a re-hold (R173c) (default 0.6)
+  CORTEX_JUDGE_SPEC_REPEAT_MAX?: string; // Consecutive identical spec-check failures before the check is suspect, not veto evidence (R174b) (default 2)
+  CORTEX_JUDGE_SPEC_TESTS_AT?: string; // When the blind spec checks are authored: finish (first adjudication) | lift (background at task lift) (R174b) (default finish)
   CORTEX_MEETS_CONFIRM_MIN_REMAINING?: string; // fraction of the wall budget that must remain to hold an unverified MEETS (default 0.5) — R168
   CORTEX_JUDGE_EVIDENCE_MAX_VETOES?: string; // max evidence-backed vetoes per session (default 1) — R166
   CORTEX_JUDGE_PROGRESS_MIN_CALLS?: string; // tool calls since the last veto that count as working the plan (R165; default 3; 1..50)
@@ -511,6 +516,11 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_JUDGE_GAP_HOLD_JEV_MIN: '',
   CORTEX_JUDGE_SPEC_TESTS: '',
   CORTEX_JUDGE_SPEC_TESTS_MAX: '',
+  CORTEX_JUDGE_VETO_MIN_REMAINING: '',
+  CORTEX_JUDGE_GAP_HOLD_MIN_INTERVAL_MS: '',
+  CORTEX_JUDGE_GAP_HOLD_PLAN_MAX_SIMILARITY: '',
+  CORTEX_JUDGE_SPEC_REPEAT_MAX: '',
+  CORTEX_JUDGE_SPEC_TESTS_AT: '',
   CORTEX_TURN_CONTRACT_ENFORCE: '',
   CORTEX_TURN_CONTRACT_ENFORCE_MAX: '',
   CORTEX_ACTION_PLAN_FIELDS: '',
@@ -1170,6 +1180,22 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_JUDGE_SPEC_TESTS',
     displayName: 'Finish judge blind spec tests',
     description: "true: at the first finish of a turn a mentor call that sees ONLY the task text and the environment report writes up to CORTEX_JUDGE_SPEC_TESTS_MAX read-only CHECK commands that fail when a stated requirement is unmet; the harness runs them at every adjudication, shows the results to the judge, and a FAILED spec check is objective evidence for the veto (independent of the agent's own tests and of the judge's post-hoc checks). Default off. (R174, HB-SPEC-TESTS)",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_JUDGE_VETO_MIN_REMAINING',
+    displayName: 'Finish judge budget floor',
+    description: "Fraction of the wall budget below which NO verdict holds the finish (veto or gap hold): the gap is recorded and the finish stands. The one attributable cell-g1 regression was an evidence veto at 15% budget. 0 = off. (R173c)",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_JUDGE_SPEC_TESTS_AT',
+    displayName: 'Blind spec tests authored at',
+    description: "finish (default): at the first finish adjudication. lift: in the background at task lift, so a session whose first finish comes late still has its checks. (R174b)",
     type: 'string',
     category: 'training',
     default: ''

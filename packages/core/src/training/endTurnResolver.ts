@@ -93,9 +93,23 @@ export interface EndTurnResolverConfig {
    *  checks, which the f1 curation found confirm the agent's reading of the spec. CORTEX_JUDGE_SPEC_TESTS=true; default off. */
   specTests: boolean;
   specTestsMax: number;
+  /** R173c (4.121.0, cell g1 attribution): NO veto or hold of any kind below this fraction of the wall budget — the one attributable
+   *  regression (cumulative-layout-shift) was an evidence veto at 15% that left 27 min to act. 0 = off (4.120.0 behaviour). */
+  vetoMinRemaining: number;
+  /** R173c: a RE-hold needs real work since the last hold — at least this many ms elapsed OR a materially different open-items list
+   *  (token Jaccard below gapHoldPlanMaxSimilarity); otherwise the R165 no-progress path (escalate once, then accept). The three 6-hold
+   *  failures re-finished six times inside 2–4% of the budget. */
+  gapHoldMinIntervalMs: number;
+  gapHoldPlanMaxSimilarity: number;
+  /** R174b: a spec check that FAILS with the identical first output line at this many consecutive adjudications, while no other check
+   *  failed, is downgraded to `suspect` (shown to the judge, not veto evidence). 4 of 8 passing g1 sessions had a "failing" spec check. */
+  specRepeatMax: number;
+  /** R174b: when to author the blind spec checks — `finish` (first adjudication, 4.120.0) or `lift` (at task lift, in the background,
+   *  so a session whose first finish comes late still has them). */
+  specTestsAt: 'finish' | 'lift';
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4 };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish' };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
@@ -120,6 +134,11 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
   const gjm = parseFloat((env.CORTEX_JUDGE_GAP_HOLD_JEV_MIN ?? '').trim());
   const st = (env.CORTEX_JUDGE_SPEC_TESTS ?? '').trim().toLowerCase(); // R174
   const stm = parseInt((env.CORTEX_JUDGE_SPEC_TESTS_MAX ?? '').trim(), 10);
+  const vmr = parseFloat((env.CORTEX_JUDGE_VETO_MIN_REMAINING ?? '').trim()); // R173c
+  const ghi = parseInt((env.CORTEX_JUDGE_GAP_HOLD_MIN_INTERVAL_MS ?? '').trim(), 10);
+  const ghs = parseFloat((env.CORTEX_JUDGE_GAP_HOLD_PLAN_MAX_SIMILARITY ?? '').trim());
+  const srm = parseInt((env.CORTEX_JUDGE_SPEC_REPEAT_MAX ?? '').trim(), 10); // R174b
+  const sta = (env.CORTEX_JUDGE_SPEC_TESTS_AT ?? '').trim().toLowerCase();
   return {
     outputBudgetTokens: Number.isInteger(n) && n > 0 ? n : DEFAULTS.outputBudgetTokens,
     effort: e || DEFAULTS.effort,
@@ -144,6 +163,11 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
     gapHoldJevMin: Number.isFinite(gjm) && gjm >= 0 && gjm <= 1 ? gjm : DEFAULTS.gapHoldJevMin,
     specTests: st === 'true' || st === '1' || st === 'on',
     specTestsMax: Number.isInteger(stm) && stm >= 1 ? Math.min(8, stm) : DEFAULTS.specTestsMax,
+    vetoMinRemaining: Number.isFinite(vmr) && vmr >= 0 && vmr <= 1 ? vmr : DEFAULTS.vetoMinRemaining,
+    gapHoldMinIntervalMs: Number.isInteger(ghi) && ghi >= 0 ? Math.min(3_600_000, ghi) : DEFAULTS.gapHoldMinIntervalMs,
+    gapHoldPlanMaxSimilarity: Number.isFinite(ghs) && ghs >= 0 && ghs <= 1 ? ghs : DEFAULTS.gapHoldPlanMaxSimilarity,
+    specRepeatMax: Number.isInteger(srm) && srm >= 1 ? Math.min(10, srm) : DEFAULTS.specRepeatMax,
+    specTestsAt: sta === 'lift' ? 'lift' : 'finish',
   };
 }
 
@@ -394,6 +418,42 @@ export function gapHoldable(input: {
     return input.jevFixable >= (input.jevMin ?? 0.3);
   }
   return true;
+}
+
+/** R173c: the budget floor — below `minRemaining` of the wall budget no verdict may hold the finish; the gap is recorded instead. Pure. */
+export function applyVetoFloor(action: VetoAction, remainingFrac: number | null, minRemaining: number): VetoAction {
+  if (!(minRemaining > 0) || remainingFrac === null) return action;
+  if (remainingFrac >= minRemaining) return action;
+  return action === 'veto' || action === 'escalate' ? 'accept-with-gap' : action;
+}
+
+/** Token Jaccard similarity of two plans (lower-cased word tokens ≥ 3 chars). Pure. */
+export function planSimilarity(a: string, b: string): number {
+  const tok = (s: string) => new Set((s || '').toLowerCase().match(/[a-z0-9_./-]{3,}/g) ?? []);
+  const A = tok(a), B = tok(b);
+  if (!A.size && !B.size) return 1;
+  let inter = 0; for (const t of A) if (B.has(t)) inter += 1;
+  return inter / (A.size + B.size - inter);
+}
+
+/** R173c: did the junior do real work since the last hold? Elapsed time OR a materially changed open-items list. Pure. */
+export function holdProgressed(input: { rejects: number; msSinceLastHold: number | null; priorPlan: string; plan: string; minIntervalMs: number; maxSimilarity: number }): boolean {
+  if (input.rejects === 0) return true;
+  if (input.msSinceLastHold !== null && input.msSinceLastHold >= input.minIntervalMs) return true;
+  return planSimilarity(input.priorPlan, input.plan) < input.maxSimilarity;
+}
+
+/** R174b: spec-check evidence with repeat suppression. `history` = per-command consecutive identical-failure counts (mutated). A FAILED
+ *  result whose first output line matches the previous failure of the same command increments the streak; at `repeatMax` (or beyond)
+ *  the check is `suspect` unless another, different check failed this round (`otherFailed`). A pass or a different failure resets. Pure over its inputs. */
+export type SpecEvidence = 'passed' | 'failed' | 'suspect' | 'inconclusive';
+export function specCheckEvidence(history: Map<string, { streak: number; sig: string }>, cmd: string, result: string, cls: 'passed' | 'failed' | 'inconclusive', repeatMax: number, otherFailed: boolean): SpecEvidence {
+  if (cls !== 'failed') { history.delete(cmd); return cls; }
+  const sig = (result.split('\n', 2)[1] ?? '').trim().slice(0, 200);
+  const prev = history.get(cmd);
+  const streak = prev && prev.sig === sig ? prev.streak + 1 : 1;
+  history.set(cmd, { streak, sig });
+  return streak >= repeatMax && !otherFailed ? 'suspect' : 'failed';
 }
 
 /** R174: the blind spec-check author. Sees ONLY the task text (+ environment report) — never the work product. */

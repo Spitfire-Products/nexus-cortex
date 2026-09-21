@@ -5,7 +5,7 @@ import {
   buildResolverUserPrompt,
   resolveEndTurnResolverConfig,
   parseResolverVerdict,
-  gapHoldable, buildSpecTestsPrompt, SPEC_TESTS_SYSTEM, parseSpecChecks,
+  gapHoldable, buildSpecTestsPrompt, SPEC_TESTS_SYSTEM, parseSpecChecks, applyVetoFloor, holdProgressed, planSimilarity, specCheckEvidence,
 } from '../endTurnResolver.js';
 
 describe('endTurnResolver — resolveEndTurnResolverConfig', () => {
@@ -408,5 +408,42 @@ describe('endTurnResolver — R174 blind spec-derived tests (HB-SPEC-TESTS)', ()
     expect(c).toEqual(['test -f /app/out.csv || { echo MISSING; exit 1; }', 'head -1 /app/out.csv | grep -q "a,b,c" || { echo BAD HEADER; exit 1; }', 'python3 -c "import x" || exit 1', 'ls']);
     expect(parseSpecChecks('VERDICT: MEETS\nno checks here')).toEqual([]);
     expect(parseSpecChecks('CHECK: ' + 'x'.repeat(500))).toEqual([]);
+  });
+});
+
+describe('endTurnResolver — R173c budget floor + hold progress, R174b spec repeat suppression (cell g1 attribution)', () => {
+  it('config: floor 0 (off), 3-min interval, 0.6 similarity, repeat max 2, spec at finish; overridable + clamped', () => {
+    const d = resolveEndTurnResolverConfig({} as any);
+    expect(d.vetoMinRemaining).toBe(0); expect(d.gapHoldMinIntervalMs).toBe(180_000); expect(d.gapHoldPlanMaxSimilarity).toBe(0.6); expect(d.specRepeatMax).toBe(2); expect(d.specTestsAt).toBe('finish');
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_VETO_MIN_REMAINING: '0.25', CORTEX_JUDGE_GAP_HOLD_MIN_INTERVAL_MS: '60000', CORTEX_JUDGE_GAP_HOLD_PLAN_MAX_SIMILARITY: '0.5', CORTEX_JUDGE_SPEC_REPEAT_MAX: '3', CORTEX_JUDGE_SPEC_TESTS_AT: 'lift' } as any))
+      .toMatchObject({ vetoMinRemaining: 0.25, gapHoldMinIntervalMs: 60_000, gapHoldPlanMaxSimilarity: 0.5, specRepeatMax: 3, specTestsAt: 'lift' });
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_VETO_MIN_REMAINING: '2', CORTEX_JUDGE_SPEC_REPEAT_MAX: '0', CORTEX_JUDGE_SPEC_TESTS_AT: 'bogus' } as any)).toMatchObject({ vetoMinRemaining: 0, specRepeatMax: 2, specTestsAt: 'finish' });
+  });
+  it('applyVetoFloor: below the floor a veto/escalate becomes accept-with-gap; accepts and MEETS untouched; off when 0 or no deadline', () => {
+    expect(applyVetoFloor('veto', 0.15, 0.25)).toBe('accept-with-gap');
+    expect(applyVetoFloor('escalate', 0.2, 0.25)).toBe('accept-with-gap');
+    expect(applyVetoFloor('veto', 0.3, 0.25)).toBe('veto');
+    expect(applyVetoFloor('accept', 0.1, 0.25)).toBe('accept');
+    expect(applyVetoFloor('veto', 0.1, 0)).toBe('veto');
+    expect(applyVetoFloor('veto', null, 0.25)).toBe('veto');
+  });
+  it('holdProgressed: first hold always; a re-hold needs elapsed time OR a changed plan', () => {
+    const plan = '1. write /app/out.csv with header a,b,c\n2. run the checker script';
+    expect(holdProgressed({ rejects: 0, msSinceLastHold: 0, priorPlan: '', plan, minIntervalMs: 180_000, maxSimilarity: 0.6 })).toBe(true);
+    expect(holdProgressed({ rejects: 1, msSinceLastHold: 40_000, priorPlan: plan, plan, minIntervalMs: 180_000, maxSimilarity: 0.6 })).toBe(false); // same items, 40 s later
+    expect(holdProgressed({ rejects: 1, msSinceLastHold: 200_000, priorPlan: plan, plan, minIntervalMs: 180_000, maxSimilarity: 0.6 })).toBe(true);
+    expect(holdProgressed({ rejects: 2, msSinceLastHold: 10_000, priorPlan: plan, plan: '1. the NMD-escaping variant position is off by one; recompute from the CDS join', minIntervalMs: 180_000, maxSimilarity: 0.6 })).toBe(true);
+    expect(planSimilarity(plan, plan)).toBe(1); expect(planSimilarity('', '')).toBe(1); expect(planSimilarity('abc def', 'xyz')).toBe(0);
+  });
+  it('specCheckEvidence: identical repeated failures become suspect at the repeat max unless another check failed; a pass or a different failure resets', () => {
+    const h = new Map();
+    const fail = (msg: string) => `CHECK RUN: \`test -f /app/x\` → FAILED (exit 1) in 5 ms\n${msg}`;
+    expect(specCheckEvidence(h, 'test -f /app/x', fail('MISSING /app/x'), 'failed', 2, false)).toBe('failed');
+    expect(specCheckEvidence(h, 'test -f /app/x', fail('MISSING /app/x'), 'failed', 2, false)).toBe('suspect');
+    expect(specCheckEvidence(h, 'test -f /app/x', fail('MISSING /app/x'), 'failed', 2, true)).toBe('failed'); // another check failed too → still evidence
+    expect(specCheckEvidence(h, 'test -f /app/x', fail('WRONG HEADER'), 'failed', 2, false)).toBe('failed'); // different failure → streak resets
+    expect(specCheckEvidence(h, 'test -f /app/x', 'CHECK RUN: `test -f /app/x` → PASSED in 3 ms\n', 'passed', 2, false)).toBe('passed');
+    expect(h.has('test -f /app/x')).toBe(false);
+    expect(specCheckEvidence(h, 'y', 'CHECK RUN: `y` → TIMED OUT after 45000 ms (not a pass)\n', 'inconclusive', 2, false)).toBe('inconclusive');
   });
 });
