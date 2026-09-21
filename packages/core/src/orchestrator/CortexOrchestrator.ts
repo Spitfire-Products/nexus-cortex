@@ -3637,7 +3637,7 @@ export class CortexOrchestrator {
       // so neither commands a still-advancing model to stop.
       const progressStalled = isToolProgressStalled(recentToolCalls);
       const budgetSignal = computeToolBudgetSignal(effectiveToolBudgetCount, TOOL_BUDGET_SOFT, progressStalled);
-      const diversityWarning = this.getDiversityWarning(toolCallCounts);
+      const diversityWarning = resolveFrameConfig(process.env).frame === 'terminus' ? null : this.getDiversityWarning(toolCallCounts); // R179: one tool by design — tool diversity is meaningless in the frame
       // #2: one-shot wall-clock warning at 90% of the deadline — tell the model to converge + EndTurn.
       // DARK deadline-exit-mentor (CORTEX_DEADLINE_EXIT_MENTOR): at the warn rung, a bounded mentor
       // may decide FINISH/RETIRE (end now, cleanly) or ACTION (one directed step) instead of the dumb
@@ -5648,7 +5648,7 @@ export class CortexOrchestrator {
         const effectiveToolBudgetCount = Math.max(toolCallIteration, allToolCalls.length);
         const progressStalled = isToolProgressStalled(allToolCalls);
         const budgetSignal = computeToolBudgetSignal(effectiveToolBudgetCount, TOOL_BUDGET_SOFT, progressStalled);
-        const diversityWarning = this.getDiversityWarning(toolCallCounts);
+        const diversityWarning = resolveFrameConfig(process.env).frame === 'terminus' ? null : this.getDiversityWarning(toolCallCounts); // R179: one tool by design — tool diversity is meaningless in the frame
         // #2: one-shot wall-clock warning at 90% of the deadline (streaming parity). DARK
         // deadline-exit-mentor may FINISH/RETIRE (end cleanly) or ACTION (one step) here.
         let timeSignal: string | null = null;

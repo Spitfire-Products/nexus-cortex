@@ -39,7 +39,7 @@ export interface MenuItem extends FrameCandidate {
   op?: TemplateOp;
 }
 
-export const FRAME_DEFAULTS = { maxCandidates: 3, defaultDurationS: 5, maxDurationS: 300, waitExtendS: 30, stateCardMaxChars: 1500, screenMaxChars: 8000, digestLen: 12 } as const;
+export const FRAME_DEFAULTS = { maxCandidates: 3, defaultDurationS: 3, maxDurationS: 60, graceS: 5, waitExtendS: 30, stateCardMaxChars: 1500, screenMaxChars: 6000, digestLen: 12 } as const;
 
 /* ---------- screen ---------- */
 
@@ -185,22 +185,30 @@ export function buildMenu(input: MenuInput): MenuItem[] {
 }
 
 /** The per-turn suffix text the writer sees (the prefix is fixed; only this changes). Pure. */
-export function buildFrameSuffix(input: { screen: string; stateCard: string; menu: MenuItem[]; consequences?: string[] }): string {
+export function buildFrameSuffix(input: { screen: string; stateCard: string; menu: MenuItem[]; consequences?: string[]; showTemplates?: boolean; templatesChanged?: boolean }): string {
   const parts = [`STATE:\n${input.stateCard}`, `SCREEN (tmux pane, most recent at the bottom):\n${input.screen}`];
   if (input.consequences?.length) parts.push(`FROM THE HARNESS:\n${input.consequences.map((c) => `- ${c}`).join('\n')}`);
-  parts.push(`MENU (templates the harness can run for you; name one in a candidate's label to use it):\n${input.menu.filter((m) => m.source === 'template').map((m) => `- ${m.label}`).join('\n')}`);
+  const templates = input.menu.filter((m) => m.source === 'template');
+  // TOKEN DIET (2026-09-21): the standing templates are in the frame contract (turn 0); the per-turn list is sent only when it changes
+  // (a running command adds WAIT/INTERRUPT; a clipped screen adds SHOW MORE) or when the caller asks for it.
+  if (input.showTemplates !== false && (input.templatesChanged ?? true)) parts.push(`MENU (name one in a candidate's label to use it):\n${templates.map((m) => `- ${m.label}`).join('\n')}`);
+  else if (templates.some((m) => m.op === 'wait' || m.op === 'interrupt' || m.op === 'show_more')) parts.push(`MENU: ${templates.filter((m) => ['wait', 'interrupt', 'show_more'].includes(m.op ?? '')).map((m) => m.label.split(' (')[0]).join(' · ')}`);
   return parts.join('\n\n');
 }
 
 /* ---------- waiting ---------- */
 
 export type WaitDecision = 'done' | 'extend' | 'cap';
-/** After the candidate's own duration: the command is done when the prompt is back; extend while the screen still changes; stop at the
- *  cap and hand the running command to the next turn's menu (WAIT / INTERRUPT). Pure. */
-export function waitPolicy(input: { promptBack: boolean; screenChanged: boolean; waitedS: number; capS: number }): WaitDecision {
+/** TIME-EFFICIENT WAIT (rewritten 2026-09-21 after cell E1/E2: the first version extended while the screen kept changing, up to 300 s, and
+ *  polled 60 s on a missed prompt — 25–44 turns per session sat in that loop; the model itself takes 4–10 s a turn). Now: wait exactly the
+ *  model's duration (capped at maxDurationS); if the prompt is back → done; otherwise allow ONE short grace (graceS) only while the screen is
+ *  still changing; then hand the screen back marked STILL RUNNING — the WAIT / INTERRUPT templates are the model's way to wait longer. Pure. */
+export function waitPolicy(input: { promptBack: boolean; screenChanged: boolean; waitedS: number; durationS: number; graceS?: number }): WaitDecision {
   if (input.promptBack) return 'done';
-  if (input.waitedS >= input.capS) return 'cap';
-  return input.screenChanged ? 'extend' : (input.waitedS < Math.min(input.capS, 60) ? 'extend' : 'cap');
+  if (input.waitedS < input.durationS) return 'extend';
+  const grace = input.graceS ?? FRAME_DEFAULTS.graceS;
+  if (input.screenChanged && input.waitedS < input.durationS + grace) return 'extend';
+  return 'cap';
 }
 
 /** The task's own test command, when the task text states one (a fenced or backticked `make test` / `pytest …` / `npm test` / `./run_tests.sh`). Pure. */

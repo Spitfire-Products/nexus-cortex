@@ -48,7 +48,7 @@ describe('R179 terminusFrame — action parsing (ours and Terminus 2\'s shape)',
     const a = parseFrameAction('```json\n{"analysis":"tests fail on empty input","plan":"add a guard","candidates":[{"label":"edit parser","keystrokes":"vim parser.py\\n","durationS":3,"why":"guard"},{"keystrokes":"pytest -q\\n","duration_s":900},{"keystrokes":"","duration":10},{"keystrokes":"echo 4\\n"}],"task_complete":false}\n```');
     expect(a.parsed).toBe(true); expect(a.candidates.length).toBe(FRAME_DEFAULTS.maxCandidates);
     expect(a.candidates[0]).toMatchObject({ label: 'edit parser', keystrokes: 'vim parser.py\n', durationS: 3, why: 'guard' });
-    expect(a.candidates[1]!.durationS).toBe(FRAME_DEFAULTS.maxDurationS); expect(a.candidates[1]!.label).toBe('pytest -q');
+    expect(a.candidates[1]!.durationS).toBe(FRAME_DEFAULTS.maxDurationS); // 900 requested → capped at 60 expect(a.candidates[1]!.label).toBe('pytest -q');
     expect(a.candidates[2]).toMatchObject({ label: 'wait', keystrokes: '', durationS: 10 });
   });
   it('accepts Terminus 2\'s {commands:[{keystrokes,duration}]} and task_complete-only; rejects empty', () => {
@@ -76,13 +76,17 @@ describe('R179 terminusFrame — menu, suffix, waiting, test command', () => {
   it('the suffix carries state, screen, consequences and the template list — never probabilities', () => {
     const s = buildFrameSuffix({ screen: 'root@x:/app# ', stateCard: 'turn 3', menu: buildMenu({ candidates: cands }), consequences: ['The harness chose "inspect" over your first candidate.'] });
     expect(s).toContain('STATE:\nturn 3'); expect(s).toContain('SCREEN'); expect(s).toContain('FROM THE HARNESS:\n- The harness chose'); expect(s).toContain('- FINISH'); expect(s).not.toMatch(/0\.\d\d/);
+    const quiet = buildFrameSuffix({ screen: 'x', stateCard: 'turn 4', menu: buildMenu({ candidates: cands }), templatesChanged: false });
+    expect(quiet).not.toContain('- FINISH'); // unchanged standing templates are not resent (token diet)
+    const running = buildFrameSuffix({ screen: 'x', stateCard: 'turn 5', menu: buildMenu({ candidates: cands, commandStillRunning: true }), templatesChanged: false });
+    expect(running).toContain('MENU: WAIT'); expect(running).toContain('INTERRUPT');
   });
-  it('waitPolicy: done on prompt; extend while changing; cap', () => {
-    expect(waitPolicy({ promptBack: true, screenChanged: false, waitedS: 5, capS: 300 })).toBe('done');
-    expect(waitPolicy({ promptBack: false, screenChanged: true, waitedS: 100, capS: 300 })).toBe('extend');
-    expect(waitPolicy({ promptBack: false, screenChanged: false, waitedS: 30, capS: 300 })).toBe('extend');
-    expect(waitPolicy({ promptBack: false, screenChanged: false, waitedS: 90, capS: 300 })).toBe('cap');
-    expect(waitPolicy({ promptBack: false, screenChanged: true, waitedS: 300, capS: 300 })).toBe('cap');
+  it('waitPolicy: exactly the requested duration, one short grace while the screen still changes, then hand back STILL RUNNING', () => {
+    expect(waitPolicy({ promptBack: true, screenChanged: false, waitedS: 1, durationS: 5 })).toBe('done');
+    expect(waitPolicy({ promptBack: false, screenChanged: false, waitedS: 2, durationS: 5 })).toBe('extend');   // still inside the requested wait
+    expect(waitPolicy({ promptBack: false, screenChanged: true, waitedS: 7, durationS: 5, graceS: 5 })).toBe('extend'); // grace, screen moving
+    expect(waitPolicy({ promptBack: false, screenChanged: false, waitedS: 6, durationS: 5, graceS: 5 })).toBe('cap');   // nothing moving → hand back
+    expect(waitPolicy({ promptBack: false, screenChanged: true, waitedS: 11, durationS: 5, graceS: 5 })).toBe('cap');   // grace exhausted
   });
   it('extracts a stated test command, else empty', () => {
     expect(extractTaskTestCommand('The build command `coqc -Q . Top Main.v` must exit 0. Run `make test` from /app.')).toBe('make test');

@@ -39,6 +39,7 @@ export class FrameRunner {
   private running = false;
   private lastScreen = '';
   private lastClipped = false;
+  private lastTemplateKey = '';
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
   constructor(private readonly cfg: FrameConfig, private readonly deps: FrameDeps) {
@@ -69,21 +70,20 @@ export class FrameRunner {
     await this.deps.execute('TmuxSession', { action: 'send', sessionId: this.tmuxSession!, command: enter ? k.replace(/\n+$/, '') : k, enter }, signal);
   }
 
-  /** Wait the candidate's duration, then extend while the screen still changes (bounded by the cap). Returns the screen. */
+  /** Wait exactly the candidate's duration (capped), then one short grace while the screen still changes; never longer. Returns the screen. */
   private async waitAndObserve(durationS: number, signal?: AbortSignal): Promise<{ screen: string; running: boolean; waitedS: number }> {
-    const cap = this.cfg.waitCapS; const t0 = this.now();
-    let waited = 0; const first = Math.min(Math.max(0, durationS), cap);
-    while (waited < first) { const step = Math.min(2000, (first - waited) * 1000); await this.sleep(step); waited = (this.now() - t0) / 1000; if (signal?.aborted) break; }
-    let screen = await this.capture(this.cfg.screenLines, signal);
-    let prev = screen;
-    for (;;) {
-      const back = promptIsBack(screen);
-      const d = waitPolicy({ promptBack: back, screenChanged: screen !== prev || waited < 1, waitedS: waited, capS: cap });
+    const t0 = this.now();
+    const dur = Math.min(Math.max(0, durationS), this.cfg.waitCapS); // the cell's cap on one action's requested wait
+    let waited = 0;
+    while (waited < dur && !signal?.aborted) { await this.sleep(Math.min(2000, Math.max(200, (dur - waited) * 1000))); waited = (this.now() - t0) / 1000; }
+    let screen = await this.capture(this.cfg.screenLines, signal); let prev = screen;
+    for (let i = 0; i < 4; i++) {
+      const d = waitPolicy({ promptBack: promptIsBack(screen), screenChanged: i === 0 ? true : screen !== prev, waitedS: waited, durationS: dur, graceS: FRAME_DEFAULTS.graceS });
       if (d === 'done') return { screen, running: false, waitedS: waited };
       if (d === 'cap' || signal?.aborted) return { screen, running: true, waitedS: waited };
-      await this.sleep(Math.min(5000, Math.max(1000, (cap - waited) * 1000)));
-      waited = (this.now() - t0) / 1000; prev = screen; screen = await this.capture(this.cfg.screenLines, signal);
+      await this.sleep(1500); waited = (this.now() - t0) / 1000; prev = screen; screen = await this.capture(this.cfg.screenLines, signal);
     }
+    return { screen, running: !promptIsBack(screen), waitedS: waited };
   }
 
   async step(input: FrameStepInput): Promise<FrameStepResult> {
@@ -128,7 +128,9 @@ export class FrameRunner {
     this.lastScreen = screen; this.lastClipped = clipped.clipped;
     const stateCard = buildStateCard({ cwd: input.cwd, turn: this.turn, budgetUsedFrac: input.deadlineMs > 0 ? Math.min(1, (input.elapsedMs + (this.now() - t0)) / input.deadlineMs) : null, budgetLeftS: input.deadlineMs > 0 ? Math.max(0, (input.deadlineMs - input.elapsedMs - (this.now() - t0)) / 1000) : null, history: this.history, lastElapsedS: waitedS, commandStillRunning: running });
     const nextMenu = buildMenu({ candidates: [], taskTestCommand: extractTaskTestCommand(input.task), commandStillRunning: running, screenClipped: clipped.clipped });
-    const content = buildFrameSuffix({ screen: clipped.text, stateCard, menu: nextMenu, consequences }) + (extra ? `\n\n${extra}` : '');
+    const tplKey = nextMenu.filter((m) => m.source === 'template').map((m) => m.id).join(',');
+    const templatesChanged = tplKey !== this.lastTemplateKey; this.lastTemplateKey = tplKey;
+    const content = buildFrameSuffix({ screen: clipped.text, stateCard, menu: nextMenu, consequences, templatesChanged: templatesChanged || this.turn === 1 }) + (extra ? `\n\n${extra}` : '');
     const row = buildChooserRow({ sessionId: input.sessionId, turn: this.turn, predictorModel: input.predictorModel + (this.cfg.chooser === 'jev' ? '+jev-chooser' : ''), menu, decision, executedKeys, nowMs: this.now() });
     this.deps.recordEvent('frame_turn', { ...row, analysis: action.analysis.slice(0, 600), plan: action.plan.slice(0, 600), rc, waitedS: Math.round(waitedS), running, screenChars: screen.length, chooser: this.cfg.chooser, chooserLatencyMs, answers: answers ? Object.fromEntries(Object.entries(answers).map(([k, v]) => [k, Number(v.toFixed(3))])) : null, stepMs: this.now() - t0 });
     return { content, isError: false, meta: { frame: 'terminus', turn: this.turn, pick: pick?.id ?? null, action: decision.action, rc, running, executedKeys: executedKeys ? normalizeKeys(executedKeys).slice(0, 120) : executedKeys } };

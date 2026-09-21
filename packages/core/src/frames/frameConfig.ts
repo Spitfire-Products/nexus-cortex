@@ -3,9 +3,9 @@ export const FRAME_TOOL_NAME = 'FrameAction';
 export type FrameMode = 'tools' | 'terminus';
 export type ChooserMode = 'off' | 'jev';
 export interface FrameConfig { frame: FrameMode; chooser: ChooserMode; candidates: number; waitCapS: number; screenLines: number }
-export const FRAME_CONFIG_DEFAULTS: FrameConfig = { frame: 'tools', chooser: 'off', candidates: 1, waitCapS: 300, screenLines: 60 };
+export const FRAME_CONFIG_DEFAULTS: FrameConfig = { frame: 'tools', chooser: 'off', candidates: 1, waitCapS: 60, screenLines: 45 };
 
-/** `CORTEX_FRAME=tools|terminus`, `CORTEX_FRAME_CHOOSER=off|jev`, `CORTEX_FRAME_CANDIDATES` 1..3, `CORTEX_FRAME_WAIT_CAP_S` 5..3600. */
+/** `CORTEX_FRAME=tools|terminus`, `CORTEX_FRAME_CHOOSER=off|jev`, `CORTEX_FRAME_CANDIDATES` 1..3, `CORTEX_FRAME_WAIT_CAP_S` 5..600 (the cap on ONE action's requested wait; default 60). */
 export function resolveFrameConfig(env: NodeJS.ProcessEnv = process.env): FrameConfig {
   const frame = (env.CORTEX_FRAME || '').trim().toLowerCase() === 'terminus' ? 'terminus' : 'tools';
   const chooser = (env.CORTEX_FRAME_CHOOSER || '').trim().toLowerCase() === 'jev' ? 'jev' : 'off';
@@ -13,10 +13,10 @@ export function resolveFrameConfig(env: NodeJS.ProcessEnv = process.env): FrameC
   return {
     frame, chooser,
     candidates: Number.isInteger(c) && c >= 1 ? Math.min(3, c) : FRAME_CONFIG_DEFAULTS.candidates,
-    waitCapS: Number.isFinite(w) && w >= 5 ? Math.min(3600, w) : FRAME_CONFIG_DEFAULTS.waitCapS,
+    waitCapS: Number.isFinite(w) && w >= 5 ? Math.min(600, w) : FRAME_CONFIG_DEFAULTS.waitCapS,
     screenLines: Number.isInteger(l) && l >= 10 ? Math.min(400, l) : FRAME_CONFIG_DEFAULTS.screenLines,
   };
 }
 
 /** Appended to the system prompt on turn 0 (the static prefix is pinned per conversation — never changes after). */
-export const FRAME_CONTRACT = `TERMINAL FRAME. You work in ONE interactive terminal (a tmux pane). Your only action is the FrameAction tool: give your analysis of the current screen, your plan, and one to three candidate actions, each with the exact keystrokes to type (end a command with \\n to run it; tmux key names such as C-c are allowed) and how many seconds to wait before looking again. The harness executes ONE candidate (your first unless a harness gate chooses otherwise), waits, and returns the screen, a STATE line (turn, commands run, last exit code, budget) and the templates it can run for you. Read the screen before every action; do not repeat a command that already ran with nothing changed; when a command is still running you can wait or interrupt it. When the task is complete, call EndTurn with your attestation as usual.`;
+export const FRAME_CONTRACT = `TERMINAL FRAME. You work in ONE interactive terminal (a tmux pane). Your only action is the FrameAction tool: give your analysis of the current screen, your plan, and one to three candidate actions, each with the exact keystrokes to type (end a command with \\n to run it; tmux key names such as C-c are allowed) and how many seconds to wait before looking again (default 3; use larger waits only for commands you know run long; a command still running is handed back to you marked STILL RUNNING, and the WAIT / INTERRUPT / SHOW MORE OUTPUT / RUN THE TASK'S TEST / RE-READ THE TASK / FINISH templates are always available by naming one in a candidate label). The harness executes ONE candidate (your first unless a harness gate chooses otherwise), waits, and returns the screen, a STATE line (turn, commands run, last exit code, budget) and the templates it can run for you. Read the screen before every action; do not repeat a command that already ran with nothing changed; when a command is still running you can wait or interrupt it. When the task is complete, call EndTurn with your attestation as usual.`;
