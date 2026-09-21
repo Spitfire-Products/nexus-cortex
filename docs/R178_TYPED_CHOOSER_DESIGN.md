@@ -74,6 +74,12 @@ labeled by session outcome, exactly the lake's listed consumer. This is Lens A w
   evidence = the rows in §5 (candidates, pick, probability, provenance) — an arm that cannot show its picks is a second control.
 - E3 ($0 + training): apprentice in the author slot, graded by Lens A on the E2 rows.
 
+### 6a. E0 RESULT (run 2026-09-21, `omniclaude-v4/.cortex/research/jev-e0-2026-09-21/results.md`)
+Leg B: v1 (claim + tool rows) AUC 0.638 / ECE 0.056 / 0 confident-wrong on 97 g1/g2 sessions; adding the banked 1500-char raw-output sample
+did not help (v3 0.603 / 0.069); adding the judge's opinion made Jev ECHO the judge (v4 AUC 0.645 but ECE 0.229, recall = the judge's) →
+RULE: the gate's state never contains the decision it gates. Leg A: p_fail AUC 0.62 (weak ranker input; literal repeat detection 0.98).
+Leg C: uninformative (2 loops in 396). The raw-PANE hypothesis is untested until the frame exists (E1/E2); the banked sample is not the pane.
+
 ## 7. Risks named now
 - Label leakage in E0: D2's "process exited within K s" is available only because the recording continued; fine for replay, not for live.
 - Menu-authoring bias: if the generator's three candidates share one misreading of the spec, the chooser cannot rescue it — expect D4 to help on

@@ -93,6 +93,10 @@ describe('R176b — multi-line CHECK blocks, failed checks derive nothing, hered
     const failed = 'CHECK RUN: `python3 -c "` → FAILED (exit 2) in 9 ms\n/bin/sh: 1: Syntax error: Unterminated quoted string';
     const passed = 'CHECK RUN: `python3 /tmp/d.py` → PASSED in 40 ms\n0.412\nVALUE eff=0.412';
     expect(checkRunPassed(failed)).toBe(false); expect(checkRunPassed(passed)).toBe(true);
+    const multi = "CHECK RUN: `python3 - <<'EOF'\nimport pandas as pd\nprint('VALUE eff=0.412')\nEOF` → PASSED in 812 ms\nVALUE eff=0.412\n";
+    expect(checkRunPassed(multi)).toBe(true); expect(checkRunBody(multi)).toBe('VALUE eff=0.412\n'); // R176c: the verdict sits after a multi-line command
+    const multiFail = "CHECK RUN: `python3 - <<'EOF'\nprint(1)\nEOF` → FAILED (exit 1) in 30 ms\nTraceback\n";
+    expect(checkRunPassed(multiFail)).toBe(false); expect(checkRunBody(multiFail)).toBe('Traceback\n');
     expect(checkRunBody(passed)).toBe('0.412\nVALUE eff=0.412');
     expect(parseValueLines(checkRunBody(passed))).toEqual({ eff: '0.412' });
     expect(extractNumbers(checkRunBody(failed))).toEqual([1]); // the trap: this "1" is a shell diagnostic — callers must gate on checkRunPassed first

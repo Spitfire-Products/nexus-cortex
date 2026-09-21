@@ -56,14 +56,18 @@ export function parseDerivationReply(text: string, maxChecks = 3): DerivationPla
   return { methodAgent, methodIndependent, checks };
 }
 
-/** Did a runCheck output come from a PASSED run? (its first line is the harness header `CHECK RUN: … → PASSED in …`). Pure. */
+/** The harness header is `CHECK RUN: \`<cmd>\` → <verdict> in <ms> ms\n<body>` — and <cmd> may span lines (heredocs), so the verdict is
+ *  found by its marker, not on line 1 (R176c: with the line-1 rule every multi-line check read as failed in cell r176b). Pure. */
+const VERDICT_RE = /` → (PASSED in \d+ ms|FAILED \(exit -?\d+\) in \d+ ms|TIMED OUT[^\n]*)\n?/;
 export function checkRunPassed(output: string): boolean {
-  return /→ PASSED in/.test((output || '').split('\n')[0] ?? '');
+  const m = String(output || '').match(VERDICT_RE);
+  return !!m && m[1]!.startsWith('PASSED');
 }
 
-/** The body of a runCheck output (everything after the harness header line). Pure. */
+/** The body of a runCheck output (everything after the verdict line). Pure. */
 export function checkRunBody(output: string): string {
-  return (output || '').split('\n').slice(1).join('\n');
+  const s = String(output || ''); const m = s.match(VERDICT_RE);
+  return m ? s.slice((m.index ?? 0) + m[0].length) : s.split('\n').slice(1).join('\n');
 }
 
 /** Is the independent method actually different from the agent's? A cheap token-overlap test the orchestrator banks (the field read
