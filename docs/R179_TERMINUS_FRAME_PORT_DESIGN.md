@@ -98,3 +98,15 @@ harness's deferred loading + anchor lift, with a typed gate between "suggested" 
 - Later authors slot in unchanged: the helper-model middleware as a second candidate author (cheap drafts), the apprentice, speculative
   drafts scored by the j-space acceptor; the reader is whichever typed model is best calibrated at the time (Jev, own readout, Laya-class encoder).
 
+## 9. After E2: frame agents as herdr panes, the predictor as author, Jev as PM (operator 09-21)
+Already true today: the runner drives `TmuxSession`, and R146's terminal backend (`CORTEX_TERMINAL_BACKEND=herdr`, auto when HERDR_ENV=1)
+maps those verbs onto herdr panes — so a frame agent IS a herdr pane the moment the backend resolves to herdr (herdr 0.9.0 installed on the
+repl 09-13; R145 status reporting verified; R148 bench panes on the VM, `TB2_HERDR=1`). What the PM layer adds:
+- Observation: `herdr agent list` / `pane read` / lifecycle states (working / idle / done / blocked) + each pane's `frame_turn` rows = the
+  PM's state, built in code per decision (the same discipline as the state card).
+- Typed PM decisions over panes: which pane needs attention (blocked / repeating / error on screen), which to advance next under a budget
+  (the arm-ranking leg), which to stop or restart, when to widen (R178 §9 items 3–4). Choice over pane ids ≤ 255 — Jev's shape exactly.
+- Authors per pane: the turn predictor / apprentice write each pane's candidates; the PM never writes keystrokes, it routes attention and
+  budget. Keystrokes into a pane go through the same menu step with the same gates.
+- Order: E1 → E2 (single pane, measured) → a two-pane PM pilot on one task family with the PM's picks banked as rows before any width.
+

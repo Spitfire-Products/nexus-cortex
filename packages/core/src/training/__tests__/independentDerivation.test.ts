@@ -107,3 +107,13 @@ describe('R176b — multi-line CHECK blocks, failed checks derive nothing, hered
     expect(ok("cat > /tmp/d.py <<'EOF'\nprint(1)\nEOF\npython3 /tmp/d.py > /app/out.txt")).toBe(false);
   });
 });
+
+describe('R176d — fenced code blocks count as checks when the author wrote no CHECK: line (cell r176c)', () => {
+  it('wraps a bare python body in a heredoc; keeps a shell one-liner; CHECK lines still win', () => {
+    const r = parseDerivationReply("METHOD_AGENT: ran the planner\nMETHOD_INDEPENDENT: first principles\n```python\nimport json\nprint('VALUE total=' + str(1+1))\n```\n```sh\nawk 'NR>1{s+=$2} END{print \"VALUE s=\" s}' /app/x.csv\n```\n");
+    expect(r.checks.length).toBe(2);
+    expect(r.checks[0]).toBe("python3 - <<'EOF'\nimport json\nprint('VALUE total=' + str(1+1))\nEOF");
+    expect(r.checks[1]).toBe("awk 'NR>1{s+=$2} END{print \"VALUE s=\" s}' /app/x.csv");
+    const c = parseDerivationReply("CHECK: echo VALUE a=1\n```python\nprint(2)\n```").checks; expect(c.length).toBe(1); expect(c[0]!.startsWith('echo VALUE a=1')).toBe(true); // a fenced block after a CHECK line belongs to that check
+  });
+});

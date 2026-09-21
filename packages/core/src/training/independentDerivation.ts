@@ -53,6 +53,16 @@ export function parseDerivationReply(text: string, maxChecks = 3): DerivationPla
     if (cur) cur.push(line);
   }
   flush();
+  // R176d (cell r176c): some replies name the methods and put the recomputation in fenced code blocks with no CHECK: prefix — treat each
+  // fenced block as a check when no CHECK line was found (a heredoc-wrapped script or a shell one-liner both run through the same runner).
+  if (!checks.length) {
+    for (const m of (text || '').matchAll(/```[a-z]*\s*\n([\s\S]*?)```/gi)) {
+      const body = m[1]!.trim();
+      if (!body || body.length > 2000 || checks.length >= maxChecks) continue;
+      const cmd = /^(python3?|awk|sort|grep|cat|jq|sqlite3|bash|sh)\b/.test(body) || body.includes('<<') ? body : `python3 - <<'EOF'\n${body}\nEOF`;
+      if (!checks.includes(cmd)) checks.push(cmd);
+    }
+  }
   return { methodAgent, methodIndependent, checks };
 }
 
