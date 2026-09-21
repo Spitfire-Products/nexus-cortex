@@ -30,7 +30,7 @@ import { execSync } from 'node:child_process';
 import { ENV_RECON_COMMAND, resolveLiftPlanConfig, parsePlannerResponse } from '../training/liftPlanner.js';
 import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage, gapHoldable, parseSpecChecks, applyVetoFloor, holdProgressed, planSimilarity, specCheckEvidence } from '../training/endTurnResolver.js';
 import { jevAvailable, jevNoul, buildGapHoldState, GAP_HOLD_QUESTIONS } from '../training/jevGate.js'; // R173b
-import { isValueShapedTask, parseDerivationReply, methodsDiffer, parseValueLines, extractNumbers, reconcile, buildDerivationHoldMessage, isDerivationCommandAllowed } from '../training/independentDerivation.js'; // R176
+import { isValueShapedTask, parseDerivationReply, methodsDiffer, parseValueLines, extractNumbers, reconcile, buildDerivationHoldMessage, isDerivationCommandAllowed, checkRunPassed, checkRunBody } from '../training/independentDerivation.js'; // R176
 import { resolveDeadlineExitConfig, deadlineExitCallBudget, parseDeadlineExitVerdict } from '../training/deadlineExitMentor.js';
 import { isTaskShaped } from './requirementsVerification.js';
 import { type ServerSideToolMetadata, extractServerSideMetadata, XAIServerSideTools, OpenAIServerSideTools, toCanonicalTool } from '../tools/ServerSideTools.js';
@@ -1312,18 +1312,19 @@ export class CortexOrchestrator {
             const allowed = plan.checks.filter((c) => isDerivationCommandAllowed(c, isInvestigateCommandAllowed));
             const refusedCmds = plan.checks.filter((c) => !allowed.includes(c)).map((c) => c.slice(0, 200));
             const derived: Record<string, string> = {}; const outputs: string[] = [];
-            for (const c of allowed) { const r = runCheck(judgeCwd, c, jcfg); outputs.push(r); Object.assign(derived, parseValueLines(r)); }
+            for (const c of allowed) { const r = runCheck(judgeCwd, c, jcfg); outputs.push(r); if (checkRunPassed(r)) Object.assign(derived, parseValueLines(checkRunBody(r))); } // R176b: a FAILED check derives nothing
             // Fallback when the author printed values without the `VALUE name=` contract: take the LAST few numbers each check printed
             // and require that at least one matches the deliverable — conservative (a disagreement needs every printed number to miss).
             let fallback = false;
-            if (!Object.keys(derived).length && outputs.length) {
-              const tail = outputs.flatMap((o) => extractNumbers(o.split('\n').slice(1).join('\n')).slice(-3));
+            const passedOutputs = outputs.filter(checkRunPassed);
+            if (!Object.keys(derived).length && passedOutputs.length) { // R176b: never read numbers out of a failed check's diagnostics
+              const tail = passedOutputs.flatMap((o) => extractNumbers(checkRunBody(o)).slice(-3));
               tail.slice(-6).forEach((v, i) => { derived[`printed${i + 1}`] = String(v); }); fallback = tail.length > 0;
             }
             let rec = reconcile(`${deliverable}\n${this.lastAssistantText()}`, derived, cfg.derivationTol);
             if (fallback && rec.compared.some((c) => c.matched !== null)) rec = { ...rec, agreement: 'agree' };
             const differ = methodsDiffer(plan.methodAgent, plan.methodIndependent);
-            derivationInfo = { ...derivationInfo, methodAgent: plan.methodAgent, methodIndependent: plan.methodIndependent, methodsDiffer: differ, checks: allowed.length, refused: refusedCmds.length, refusedCmds, fallback, checkOutputs: outputs.map((o) => o.slice(0, 600)), derived, agreement: rec.agreement, compared: rec.compared, latencyMs: Date.now() - d0 };
+            derivationInfo = { ...derivationInfo, methodAgent: plan.methodAgent, methodIndependent: plan.methodIndependent, methodsDiffer: differ, checks: allowed.length, checksPassed: passedOutputs.length, checkCmds: allowed.map((c) => c.slice(0, 300)), refused: refusedCmds.length, refusedCmds, fallback, checkOutputs: outputs.map((o) => o.slice(0, 600)), derived, agreement: rec.agreement, compared: rec.compared, latencyMs: Date.now() - d0 };
             if (rec.agreement === 'disagree' && differ) derivationHold = { message: buildDerivationHoldMessage({ methodIndependent: plan.methodIndependent, compared: rec.compared, remainingFrac: resolverRemainingFrac }) };
             console.warn(`[EndTurnResolver] R176 DERIVATION — ${rec.agreement} (${allowed.length} check(s), methodsDiffer=${differ}) in ${Date.now() - d0} ms`);
           } catch (e: any) { derivationInfo = { ...derivationInfo, error: String(e?.message ?? e).slice(0, 120) }; }

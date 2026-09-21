@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DERIVATION_SYSTEM, buildDerivationPrompt, parseDerivationReply, methodsDiffer, parseValueLines, extractNumbers, reconcile, buildDerivationHoldMessage, isValueShapedTask, isDerivationCommandAllowed } from '../independentDerivation.js';
+import { DERIVATION_SYSTEM, buildDerivationPrompt, parseDerivationReply, methodsDiffer, parseValueLines, extractNumbers, reconcile, buildDerivationHoldMessage, isValueShapedTask, isDerivationCommandAllowed, checkRunPassed, checkRunBody } from '../independentDerivation.js';
 import { isInvestigateCommandAllowed } from '../judgeEvidence.js';
 
 describe('R176 independentDerivation — elicitation + parsing', () => {
@@ -81,3 +81,25 @@ describe('R176 independentDerivation — runner allow rule', () => {
   });
 });
 
+describe('R176b — multi-line CHECK blocks, failed checks derive nothing, heredoc bodies are not redirects (cell r176 field read 2026-09-21)', () => {
+  it('a heredoc CHECK is kept whole; fences stripped; the next marker ends it', () => {
+    const r = parseDerivationReply("METHOD_AGENT: xlrd\nMETHOD_INDEPENDENT: openpyxl from first principles\nCHECK: cat > /tmp/d.py <<'EOF'\nimport sys\nif 3 > 2: print('VALUE eff=0.412')\nEOF\npython3 /tmp/d.py\nCHECK: ```sh\nawk 'NR>1{s+=$2} END{print \"VALUE total=\" s}' /app/data/x.csv\n```\n");
+    expect(r.checks.length).toBe(2);
+    expect(r.checks[0]).toBe("cat > /tmp/d.py <<'EOF'\nimport sys\nif 3 > 2: print('VALUE eff=0.412')\nEOF\npython3 /tmp/d.py");
+    expect(r.checks[1]).toBe("awk 'NR>1{s+=$2} END{print \"VALUE total=\" s}' /app/data/x.csv");
+    expect(parseDerivationReply('CHECK: python3 -c "\nprint(1)\n"').checks[0]).toBe('python3 -c "\nprint(1)\n"');
+  });
+  it('checkRunPassed / checkRunBody read the harness header; a FAILED run must not feed the fallback', () => {
+    const failed = 'CHECK RUN: `python3 -c "` → FAILED (exit 2) in 9 ms\n/bin/sh: 1: Syntax error: Unterminated quoted string';
+    const passed = 'CHECK RUN: `python3 /tmp/d.py` → PASSED in 40 ms\n0.412\nVALUE eff=0.412';
+    expect(checkRunPassed(failed)).toBe(false); expect(checkRunPassed(passed)).toBe(true);
+    expect(checkRunBody(passed)).toBe('0.412\nVALUE eff=0.412');
+    expect(parseValueLines(checkRunBody(passed))).toEqual({ eff: '0.412' });
+    expect(extractNumbers(checkRunBody(failed))).toEqual([1]); // the trap: this "1" is a shell diagnostic — callers must gate on checkRunPassed first
+  });
+  it('the heredoc body may contain > comparisons and still pass the allow rule; a real redirect outside /tmp is still refused', () => {
+    const ok = (c: string) => isDerivationCommandAllowed(c, isInvestigateCommandAllowed);
+    expect(ok("cat > /tmp/d.py <<'EOF'\nimport csv\nrows=[r for r in csv.reader(open('/app/data/x.csv')) if float(r[1]) > 0.5]\nprint('VALUE n=' + str(len(rows)))\nEOF\npython3 /tmp/d.py")).toBe(true);
+    expect(ok("cat > /tmp/d.py <<'EOF'\nprint(1)\nEOF\npython3 /tmp/d.py > /app/out.txt")).toBe(false);
+  });
+});

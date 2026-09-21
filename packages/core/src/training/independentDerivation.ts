@@ -31,16 +31,39 @@ export function buildDerivationPrompt(input: { task: string; deliverable: string
 }
 
 export interface DerivationPlan { methodAgent: string; methodIndependent: string; checks: string[] }
-/** Parse the author's reply. Pure. */
+/** Parse the author's reply. Pure. A CHECK may span several lines (the persona asks for heredocs under /tmp): its command is the
+ *  rest of its line plus every following line up to the next CHECK:/METHOD_* marker, with ``` fences stripped. R176b (cell r176, 2026-09-21):
+ *  the line-based v1 kept only `python3 -c "` of a heredoc, the check failed with a shell syntax error, and the printed-numbers fallback
+ *  read the "1" in `/bin/sh: 1: Syntax error` as the derived value. */
 export function parseDerivationReply(text: string, maxChecks = 3): DerivationPlan {
   let methodAgent = ''; let methodIndependent = ''; const checks: string[] = [];
-  for (const line of (text || '').split('\n')) {
-    const ma = line.match(/^\s*METHOD_AGENT:\s*(.+?)\s*$/i); if (ma) { methodAgent = ma[1]!.slice(0, 300); continue; }
-    const mi = line.match(/^\s*METHOD_INDEPENDENT:\s*(.+?)\s*$/i); if (mi) { methodIndependent = mi[1]!.slice(0, 300); continue; }
-    const c = line.match(/^\s*(?:[-*]|\d+[.)])?\s*CHECK:\s*(.+?)\s*$/i);
-    if (c) { const cmd = c[1]!.replace(/^`+|`+$/g, '').trim(); if (cmd && cmd.length <= 600 && !checks.includes(cmd) && checks.length < maxChecks) checks.push(cmd); }
+  const lines = (text || '').split('\n');
+  let cur: string[] | null = null;
+  const flush = () => {
+    if (!cur) return;
+    const cmd = cur.join('\n').replace(/^\s*```[a-z]*\s*\n?/i, '').replace(/\n?\s*```\s*$/, '').replace(/^`+|`+$/g, '').trim();
+    if (cmd && cmd.length <= 2000 && !checks.includes(cmd) && checks.length < maxChecks) checks.push(cmd);
+    cur = null;
+  };
+  for (const line of lines) {
+    const ma = line.match(/^\s*METHOD_AGENT:\s*(.+?)\s*$/i); if (ma) { flush(); methodAgent = ma[1]!.slice(0, 300); continue; }
+    const mi = line.match(/^\s*METHOD_INDEPENDENT:\s*(.+?)\s*$/i); if (mi) { flush(); methodIndependent = mi[1]!.slice(0, 300); continue; }
+    const c = line.match(/^\s*(?:[-*]|\d+[.)])?\s*CHECK:\s*(.*?)\s*$/i);
+    if (c) { flush(); cur = [c[1]!]; continue; }
+    if (cur) cur.push(line);
   }
+  flush();
   return { methodAgent, methodIndependent, checks };
+}
+
+/** Did a runCheck output come from a PASSED run? (its first line is the harness header `CHECK RUN: … → PASSED in …`). Pure. */
+export function checkRunPassed(output: string): boolean {
+  return /→ PASSED in/.test((output || '').split('\n')[0] ?? '');
+}
+
+/** The body of a runCheck output (everything after the harness header line). Pure. */
+export function checkRunBody(output: string): string {
+  return (output || '').split('\n').slice(1).join('\n');
 }
 
 /** Is the independent method actually different from the agent's? A cheap token-overlap test the orchestrator banks (the field read
@@ -157,6 +180,7 @@ export function isValueShapedTask(task: string): { valueShaped: boolean; artifac
  *  denylist. Pure: strips `> /tmp/…` / `>> /tmp/…` / `tee /tmp/…` targets before delegating. */
 export function isDerivationCommandAllowed(cmd: string, base: (c: string) => boolean): boolean {
   const scrubbed = String(cmd ?? '')
+    .replace(/<<-?\s*['"]?(\w+)['"]?[^\n]*\n[\s\S]*?\n\s*\1\b/g, ' heredoc ') // a heredoc BODY is data (python `a > b`), not a shell redirect
     .replace(/\s>{1,2}\s*\/tmp\/[^\s;&|)]+/g, ' ')
     .replace(/\btee\s+(-a\s+)?\/tmp\/[^\s;&|)]+/g, ' tee_tmp ')
     .replace(/([A-Za-z0-9_)\]])\s*>=?\s*(\d)/g, '$1 GT $2'); // awk/python comparisons (NR>1, x>=0) are not redirects
