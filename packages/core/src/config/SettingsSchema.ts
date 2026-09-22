@@ -1255,6 +1255,30 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     default: ''
   },
   {
+    key: 'CORTEX_JUDGE_REQ_LEDGER_JEV',
+    displayName: 'Requirement ledger: Jev per-line verifier',
+    description: "on (default) | off: at each finish Jev is asked one typed question per ledger line the shell could not decide (no check, or never ran) — exercised AND met, judging only from the writer's attestation, the work-product tail and the harness output; a line at or above CORTEX_JUDGE_REQ_LEDGER_JEV_MIN (0.7) closes. (R187b)",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO',
+    displayName: 'Requirement ledger: failed-check veto',
+    description: "on: a finish the judge would accept 'with gap' while a stated-requirement ledger line FAILED its harness-run check at this very finish is returned to the writer with the failing check and its output — at most CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO_MAX (2) times per session, never below CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO_MIN_REMAINING (0.25) of the budget. Precedence: judge veto > this > R187 open-line hold > derivation hold. Default off. (R192)",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_JUDGE_REQ_LEDGER_FAIL_JEV',
+    displayName: 'Requirement ledger: Jev arbitration of a failed check',
+    description: "off | shadow (default) | on: before the failed-check veto, Jev is asked per failed line whether the failure is a defect of the CHECK itself (wrong arguments, path or logic) rather than of the work. shadow banks the answers in the endturn_resolver event (reqFailJev) and acts on nothing; on downgrades a line at or above CORTEX_JUDGE_REQ_LEDGER_FAIL_JEV_MIN (0.7) to unverifiable so it cannot veto. Runs only with FAIL_VETO on. (R192)",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
     key: 'CORTEX_JUDGE_INDEPENDENT_DERIVATION',
     displayName: 'Independent derivation before finish',
     description: "on: on a value-shaped task (names an output artifact + computation language), before a finish that would otherwise stand, a mentor call authors a recomputation by a DIFFERENT method; the harness runs it (read-only runner) and holds the finish ONCE when the values disagree, showing both. Targets the largest never-passed class (computed answers with no in-container ground truth). Default off. (R176)",
