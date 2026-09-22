@@ -967,11 +967,12 @@ export class CortexOrchestrator {
   private async deliverRequirementLedgerToWriter(lastMsg: any): Promise<void> {
     const cfg = resolveEndTurnResolverConfig();
     if (!cfg.reqLedger || this.reqLedgerDelivered) return;
-    this.reqLedgerDelivered = true;
     try {
+      if (this.reqLedger === null && !this.reqLedgerPromise) this.maybeAuthorRequirementLedgerAtLift(); // the plan path ran before the lift hook
       const entries = this.reqLedger ?? (this.reqLedgerPromise ? await withTimeout(this.reqLedgerPromise, mentorSurfaceTimeoutMs('endturn-resolver', parseInt(process.env.CORTEX_ENDTURN_RESOLVER_TIMEOUT_MS ?? '90000', 10))) : null);
       const text = formatLedgerForWriter(entries ?? []);
-      if (!text) return;
+      if (!text) return; // nothing authored (yet) — leave the one-shot open
+      this.reqLedgerDelivered = true;
       lastMsg?.message?.content?.push?.({ type: 'text', text: `<system-reminder>\n${text}\n</system-reminder>` });
       const store = this.getDecisionStore();
       if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'requirement_ledger_delivered', toolName: 'EndTurn', detail: { lines: (entries ?? []).length, chars: text.length } }).catch(() => {});
@@ -3894,8 +3895,8 @@ export class CortexOrchestrator {
         // full tool catalog (no-op unless CORTEX_PROMPT_MASS=defer).
         await this.deliverDeferredCorpusAtLift(effectiveModel);
         this.deliverLiftNudge(allTools, effectiveModel); // A′ proposal-1: SearchTools/AskForAdvice signpost at lift
+        this.maybeAuthorRequirementLedgerAtLift(); // R187: the stated-requirement ledger, authored in the background at lift — BEFORE the plan call so it is ready to ride with the plan
         await this.deliverLiftPlanAtLift(effectiveModel); // LIFT_MENTOR_PLANNER: bounded mentor-planner at lift (dark unless CORTEX_LIFT_PLAN)
-        this.maybeAuthorRequirementLedgerAtLift(); // R187: the stated-requirement ledger, authored in the background at lift
         this.maybeAuthorSpecChecksAtLift(); // R174b: blind spec checks authored in the background at lift (CORTEX_JUDGE_SPEC_TESTS_AT=lift)
         if (this.config.debug) console.log('[Anchor] lifted at first tool_result boundary — session profile applies');
       }
@@ -5890,8 +5891,8 @@ export class CortexOrchestrator {
           // P6 deferral: same one-shot corpus delivery as the sendMessage path.
           await this.deliverDeferredCorpusAtLift(effectiveModel);
           this.deliverLiftNudge(allTools, effectiveModel); // A′ proposal-1: SearchTools/AskForAdvice signpost at lift
+        this.maybeAuthorRequirementLedgerAtLift(); // R187: the stated-requirement ledger, authored in the background at lift — BEFORE the plan call so it is ready to ride with the plan
         await this.deliverLiftPlanAtLift(effectiveModel); // LIFT_MENTOR_PLANNER: bounded mentor-planner at lift (dark unless CORTEX_LIFT_PLAN)
-        this.maybeAuthorRequirementLedgerAtLift(); // R187: the stated-requirement ledger, authored in the background at lift
         this.maybeAuthorSpecChecksAtLift(); // R174b: blind spec checks authored in the background at lift (CORTEX_JUDGE_SPEC_TESTS_AT=lift)
           if (this.config.debug) console.log('[Anchor] lifted at first tool_result boundary — session profile applies');
         }
