@@ -128,18 +128,32 @@ jobs:
               # 2026-09-18: npm has answered "+ $name@$version" and then left the version STAGED (never promoted into the
               # registry document) three times in two days (executors 4.116.0, core+executors 4.117.1, core 4.118.0). A
               # staged version is unrecoverable from our side; the only fix is a bumped republish. Verify the registry
-              # DOCUMENT (not the publish exit code) before moving on, so the job fails loudly instead of reporting success.
-              enc=$(printf %s "$name" | sed 's#/#%2F#')
-              landed=0
-              for i in $(seq 1 40); do   # 10 min: tui@4.119.1 promoted after ~5 min and was falsely flagged staged at 4 min
-                if curl -sfL -m 20 "https://registry.npmjs.org/$enc" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const j=JSON.parse(d);process.exit(j.versions&&j.versions[process.argv[1]]?0:1)})' "$version"; then landed=1; break; fi
-                sleep 15
-              done
-              if [ "$landed" != 1 ]; then
-                echo "::error::$name@$version is NOT in the registry document 10 min after publish — npm left it STAGED. Bump every package and republish (see npm-token-90-day-expiry memory)."
-                exit 1
-              fi
-              echo "::notice::$name@$version verified in the registry document"
+              # DOCUMENT (not the publish exit code) — but for ALL packages in ONE loop after the last publish (2026-09-23:
+              # verifying one at a time made every release 30–36 min, 2–9.5 min of registry lag per package × 8, sequential).
+              pending="${pending:-} $name@$version"
             fi
           done
+          if [ -n "${pending:-}" ]; then
+            echo "::notice::verifying in the registry document:${pending}"
+            deadline=$(( $(date +%s) + 600 ))   # 10 min for the whole batch: tui@4.119.1 promoted after ~5 min, core@4.124.16 after 9.5 min
+            while :; do
+              still=""
+              for nv in $pending; do
+                name="${nv%@*}"; version="${nv##*@}"
+                enc=$(printf %s "$name" | sed 's#/#%2F#')
+                if curl -sfL -m 20 "https://registry.npmjs.org/$enc" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const j=JSON.parse(d);process.exit(j.versions&&j.versions[process.argv[1]]?0:1)})' "$version"; then
+                  echo "::notice::$nv verified in the registry document"
+                else
+                  still="$still $nv"
+                fi
+              done
+              pending="${still# }"
+              [ -z "$pending" ] && break
+              if [ "$(date +%s)" -ge "$deadline" ]; then
+                echo "::error::NOT in the registry document 10 min after publish — npm left these STAGED:$still. Bump every package and republish (see npm-token-90-day-expiry memory)."
+                exit 1
+              fi
+              sleep 15
+            done
+          fi
           echo "Done."
