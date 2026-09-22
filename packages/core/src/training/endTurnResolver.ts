@@ -111,9 +111,18 @@ export interface EndTurnResolverConfig {
    *  finish, elicit a SECOND derivation by a different method, run it, reconcile; disagreement holds the finish ONCE. off | on. */
   derivation: 'off' | 'on';
   derivationTol: number;
+  /** R187 HB-REQUIREMENT-LEDGER (training/requirementLedger.ts): at lift the mentor extracts each requirement the TASK STATES as a typed
+   *  line with a read-only CHECK; the writer sees the ledger with its plan; every finish runs the checks; a FAILED line is R166 evidence;
+   *  a finish that would otherwise stand with a line still OPEN (never exercised) is held once (reqLedgerHoldMax). off | on (dark). */
+  reqLedger: boolean;
+  reqLedgerMax: number;
+  reqLedgerHoldMax: number;
+  /** R187b: Jev closes OPEN/UNVERIFIABLE lines from the writer's attestation + harness evidence (one call per finish); off | on; threshold. */
+  reqLedgerJev: boolean;
+  reqLedgerJevMin: number;
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', derivation: 'off', derivationTol: 1e-3 };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7 };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
@@ -176,6 +185,11 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
     specTestsAt: sta === 'lift' ? 'lift' : 'finish',
     derivation: idv === 'on' || idv === 'true' || idv === '1' ? 'on' : 'off',
     derivationTol: Number.isFinite(idt) && idt > 0 && idt < 1 ? idt : DEFAULTS.derivationTol,
+    reqLedger: /^(on|true|1)$/i.test((env.CORTEX_JUDGE_REQ_LEDGER ?? '').trim()),
+    reqLedgerMax: (() => { const n = parseInt((env.CORTEX_JUDGE_REQ_LEDGER_MAX ?? '').trim(), 10); return Number.isInteger(n) && n >= 1 ? Math.min(12, n) : DEFAULTS.reqLedgerMax; })(),
+    reqLedgerHoldMax: (() => { const n = parseInt((env.CORTEX_JUDGE_REQ_LEDGER_HOLD_MAX ?? '').trim(), 10); return Number.isInteger(n) && n >= 0 ? Math.min(3, n) : DEFAULTS.reqLedgerHoldMax; })(),
+    reqLedgerJev: !/^(off|false|0|no)$/i.test((env.CORTEX_JUDGE_REQ_LEDGER_JEV ?? '').trim()),
+    reqLedgerJevMin: (() => { const f = parseFloat((env.CORTEX_JUDGE_REQ_LEDGER_JEV_MIN ?? '').trim()); return Number.isFinite(f) && f > 0 && f <= 1 ? f : DEFAULTS.reqLedgerJevMin; })(),
   };
 }
 

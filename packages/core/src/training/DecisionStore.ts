@@ -105,7 +105,7 @@ export type SteeringEventKind =
   | 'endturn_gap_accepted'
   | 'independent_derivation' // R176: second-method recomputation before a standing finish — {valueShaped, methodAgent, methodIndependent, checks, derived, agreement, held}
   | 'frame_turn' // R179: one Terminus-frame turn — candidates, the chooser's pick + probabilities, executed keys, rc, wait
-  | 'spec_tests' // R174: the blind spec-derived checks authored for this turn (checks + generation latency)
+  | 'spec_tests' | 'requirement_ledger' | 'requirement_ledger_delivered' // R174: the blind spec-derived checks authored for this turn (checks + generation latency)
   | 'finish_confirm'; // R165: the judge still saw a gap but the finish was accepted (cap, no-progress after escalation, or low confidence) — detail {action, rejects, confidence, plan, checks}: the provider rejected an image block; user-side image blocks were stubbed and the request retried — detail {stripped, label, reason}
 
 export interface SteeringEventInput {

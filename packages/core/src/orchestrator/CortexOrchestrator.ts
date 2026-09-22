@@ -32,6 +32,7 @@ import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects
 import { jevAvailable, jevNoul, buildGapHoldState, GAP_HOLD_QUESTIONS } from '../training/jevGate.js'; // R173b
 import { resolveFrameConfig, FRAME_CONTRACT, FRAME_TOOL_NAME } from '../frames/frameConfig.js'; // R179
 import { FrameRunner } from '../frames/frameRunner.js'; // R179
+import { parseRequirementLedger, initLedger, updateLedger, ledgerCounts, ledgerHoldable, formatLedgerForWriter, formatLedgerForJudge, formatLedgerHoldMessage, buildLedgerJevState, buildLedgerJevQuestions, applyLedgerJevAnswers, type LedgerEntry } from '../training/requirementLedger.js'; // R187
 import { isValueShapedTask, parseDerivationReply, methodsDiffer, parseValueLines, extractNumbers, reconcile, buildDerivationHoldMessage, isDerivationCommandAllowed, checkRunPassed, checkRunBody } from '../training/independentDerivation.js'; // R176
 import { resolveDeadlineExitConfig, deadlineExitCallBudget, parseDeadlineExitVerdict } from '../training/deadlineExitMentor.js';
 import { isTaskShaped } from './requirementsVerification.js';
@@ -665,6 +666,10 @@ export class CortexOrchestrator {
   private specChecks: string[] | null = null; // R174: blind spec-derived checks authored for this turn (null = not yet)
   private specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; // R174
   private specChecksPromise: Promise<string[]> | null = null; // R174b: authored at lift in the background (CORTEX_JUDGE_SPEC_TESTS_AT=lift)
+  private reqLedger: LedgerEntry[] | null = null; // R187: the stated-requirement ledger for this turn (null = not yet authored)
+  private reqLedgerPromise: Promise<LedgerEntry[]> | null = null; // R187: authored at lift in the background
+  private reqLedgerHolds = 0; // R187: ledger holds used this turn
+  private reqLedgerMeta = { genLatencyMs: 0, raw: 0, refused: 0 }; // R187
   private specFailHistory = new Map<string, { streak: number; sig: string }>(); // R174b: consecutive identical spec failures
   private lastHoldMs = 0; // R173c: wall clock of the last hold/veto this turn
   private derivationHolds = 0; // R176: independent-derivation holds this turn (max 1)
@@ -924,6 +929,7 @@ export class CortexOrchestrator {
         if (store) void store.recordEvent({
           sessionId, kind: 'lift_plan', detail: { fired: true, planChars: 0, empty: true, ...r171, mentor: this.mentorWire('lift-plan', resolveLiftPlanConfig().effort, resolveLiftPlanConfig().outputBudgetTokens) },
         }).catch(() => {});
+        await this.deliverRequirementLedgerToWriter(lastMsg); // R187: the ledger rides even when the plan is empty
         return; // fail-open: proceed without a plan
       }
       const retire = /\bRETIRE\b/i.test(plan);
@@ -946,12 +952,30 @@ export class CortexOrchestrator {
       if (this.config.debug) {
         console.log(`[LiftPlan] plan delivered at lift (${plan.length} chars, retire=${retire}, criteria=${criteriaStated})`);
       }
+      await this.deliverRequirementLedgerToWriter(lastMsg); // R187
     } catch (e: any) {
       if (store) void store.recordEvent({
         sessionId, kind: 'lift_plan', detail: { fired: true, error: String(e?.message ?? e).slice(0, 120), mentor: this.mentorWire('lift-plan') },
       }).catch(() => {});
       if (this.config.debug) console.warn(`[LiftPlan] delivery failed (continuing without): ${e?.message ?? e}`);
     }
+  }
+
+  /** R187: append the requirement ledger to the lift observation the writer is about to see (waits for the lift-time authoring,
+   *  bounded by the resolver timeout; fail-open to nothing). One-shot per turn. */
+  private reqLedgerDelivered = false;
+  private async deliverRequirementLedgerToWriter(lastMsg: any): Promise<void> {
+    const cfg = resolveEndTurnResolverConfig();
+    if (!cfg.reqLedger || this.reqLedgerDelivered) return;
+    this.reqLedgerDelivered = true;
+    try {
+      const entries = this.reqLedger ?? (this.reqLedgerPromise ? await withTimeout(this.reqLedgerPromise, mentorSurfaceTimeoutMs('endturn-resolver', parseInt(process.env.CORTEX_ENDTURN_RESOLVER_TIMEOUT_MS ?? '90000', 10))) : null);
+      const text = formatLedgerForWriter(entries ?? []);
+      if (!text) return;
+      lastMsg?.message?.content?.push?.({ type: 'text', text: `<system-reminder>\n${text}\n</system-reminder>` });
+      const store = this.getDecisionStore();
+      if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'requirement_ledger_delivered', toolName: 'EndTurn', detail: { lines: (entries ?? []).length, chars: text.length } }).catch(() => {});
+    } catch { /* fail-open */ }
   }
 
   /** Bounded read-only environment recon (ENV_RECON_COMMAND), gathered ONCE and cached — shared by the
@@ -1114,6 +1138,36 @@ export class CortexOrchestrator {
     console.warn(`[EndTurnResolver] R174 SPEC-TESTS — ${this.specChecks.length} blind check(s) authored at ${cfg.specTestsAt} in ${this.specChecksMeta.genLatencyMs} ms (${this.specChecksMeta.refused} refused)`);
     return this.specChecks;
   }
+  /** R187: author the requirement ledger (task text + env report ONLY). Sets reqLedger/reqLedgerMeta; never throws. */
+  private async authorRequirementLedger(task: string): Promise<LedgerEntry[]> {
+    const cfg = resolveEndTurnResolverConfig();
+    const store = this.getDecisionStore();
+    const sessionId = this.currentSessionId ?? 'unknown';
+    const g0 = Date.now();
+    if (!this.helperMiddleware?.deriveRequirementLedger) { this.reqLedger = []; return []; }
+    const tmo = mentorSurfaceTimeoutMs('endturn-resolver', parseInt(process.env.CORTEX_ENDTURN_RESOLVER_TIMEOUT_MS ?? '90000', 10));
+    try {
+      const raw = await withTimeout(this.helperMiddleware.deriveRequirementLedger({ task, envReport: this.gatherEnvReport({ fresh: false }), max: cfg.reqLedgerMax, helperModelId: this.config.reactiveMentorship?.helperModelId }), tmo);
+      const lines = parseRequirementLedger(raw ?? '', cfg.reqLedgerMax);
+      // a check that is not read-only is dropped (the line stays, unverifiable) — same denylist as every other harness-run check
+      let refused = 0;
+      const safe = lines.map((l) => (l.check && !isInvestigateCommandAllowed(l.check) ? (refused += 1, { ...l, check: null }) : l));
+      this.reqLedger = initLedger(safe); this.reqLedgerMeta = { genLatencyMs: Date.now() - g0, raw: (raw ?? '').length, refused };
+    } catch { this.reqLedger = []; this.reqLedgerMeta = { genLatencyMs: Date.now() - g0, raw: 0, refused: 0 }; }
+    if (store) void store.recordEvent({ sessionId, kind: 'requirement_ledger', toolName: 'EndTurn', detail: { lines: this.reqLedger.map((e) => ({ id: e.id, kind: e.kind, text: e.text, check: e.check })), ...this.reqLedgerMeta, mentor: this.mentorWire('endturn-resolver', cfg.effort, 2000) } }).catch(() => {});
+    console.warn(`[EndTurnResolver] R187 REQUIREMENT LEDGER — ${this.reqLedger.length} line(s) (${this.reqLedger.filter((e) => e.check).length} with checks, ${this.reqLedgerMeta.refused} refused) in ${this.reqLedgerMeta.genLatencyMs} ms`);
+    return this.reqLedger;
+  }
+  /** R187: at lift, start authoring the ledger in the background (delivered to the writer by deliverLiftPlanAtLift when ready). */
+  private maybeAuthorRequirementLedgerAtLift(): void {
+    const cfg = resolveEndTurnResolverConfig();
+    if (!cfg.reqLedger || this.reqLedger !== null || this.reqLedgerPromise) return;
+    if (!resolveEndTurnResolver(process.env)) return;
+    const task = this.lastRealUserText();
+    if (!task.trim()) return;
+    this.reqLedgerPromise = this.authorRequirementLedger(task).catch(() => []);
+  }
+
   /** R174b: at lift, start authoring the spec checks in the background so a late first finish still has them. */
   private maybeAuthorSpecChecksAtLift(): void {
     const cfg = resolveEndTurnResolverConfig();
@@ -1194,8 +1248,27 @@ export class CortexOrchestrator {
           specResults += (specResults ? '\n\n' : '') + x.r + (ev === 'suspect' ? '\n(this check has failed identically at consecutive finishes while everything else passed — treat it as SUSPECT, not as proof of a gap)' : '');
         }
       }
+      // R187 HB-REQUIREMENT-LEDGER: run each stated requirement's check; a FAILED line is R166 evidence; an OPEN line (never exercised) can hold once.
+      let reqResults = ''; let reqCounts = { lines: 0, open: 0, exercised: 0, failed: 0, unverifiable: 0 }; let reqJev: { asked: number; closed: string[]; latencyMs: number; error?: boolean } | null = null;
+      if (cfg.reqLedger) {
+        if (this.reqLedger === null) this.reqLedger = await (this.reqLedgerPromise ?? this.authorRequirementLedger(task));
+        const runs = this.reqLedger.filter((e) => e.check).map((e) => { const r = runCheck(judgeCwd, e.check!, jcfg); return { id: e.id, result: r, cls: classifyCheckRun(r) }; });
+        this.reqLedger = updateLedger(this.reqLedger, runs);
+        // R187b: Jev decides the lines the shell could not — typed per-line questions on the writer's attestation + harness evidence.
+        if (cfg.reqLedgerJev && jevAvailable() && this.reqLedger.some((e) => e.status === 'open' || e.status === 'unverifiable')) {
+          const j0 = Date.now();
+          try {
+            const jr = await jevNoul(buildLedgerJevState({ task, entries: this.reqLedger, attestation, workProduct }), buildLedgerJevQuestions(this.reqLedger));
+            const applied = applyLedgerJevAnswers(this.reqLedger, jr ? jr.probabilities : null, cfg.reqLedgerJevMin);
+            this.reqLedger = applied.entries; reqJev = { asked: applied.asked, closed: applied.closed, latencyMs: Date.now() - j0 };
+          } catch { reqJev = { asked: 0, closed: [], latencyMs: Date.now() - j0, error: true }; }
+        }
+        reqCounts = ledgerCounts(this.reqLedger);
+        reqResults = formatLedgerForJudge(this.reqLedger);
+      }
       const combinedCheck = [checkResult, namedResults ? `JUDGE-NAMED CHECKS (from your previous fix plan; executed by the harness just now):\n${namedResults}` : '',
-        specResults ? `SPEC CHECKS (derived from the TASK text before any work was seen; executed by the harness just now — a FAILED one is a requirement not yet met):\n${specResults}` : ''] // R174
+        specResults ? `SPEC CHECKS (derived from the TASK text before any work was seen; executed by the harness just now — a FAILED one is a requirement not yet met):\n${specResults}` : '', // R174
+        reqResults] // R187
         .filter(Boolean).join('\n\n');
       const callsSince = this.turnToolCallTotal - this.toolCallsAtLastVeto;
       const progressed = this.endTurnResolverRejects === 0 || callsSince >= cfg.progressMinCalls || namedPassed > this.judgePriorNamedPassed; // R166a: newly-passing checks, not any passing check
@@ -1275,7 +1348,7 @@ export class CortexOrchestrator {
         if (jr) { jevFixable = jr.probabilities.fixable_with_more_turns ?? null; jevLatencyMs = jr.latencyMs; }
       }
       const holdable = gapHoldable({ gapHold: cfg.gapHold, remainingFrac: resolverRemainingFrac, minRemaining: resolveBudgetContinueMinRemaining(), planChars: verdict.plan.length, jevMode: cfg.gapHoldJev, jevFixable, jevMin: cfg.gapHoldJevMin });
-      const checksFailed = namedFailed > 0 || specFailed > 0; // R166 + R174
+      const checksFailed = namedFailed > 0 || specFailed > 0 || reqCounts.failed > 0; // R166 + R174 + R187
       // R173c: a re-hold needs real work since the last hold (elapsed time or a changed open-items list), not just tool calls.
       const msSinceLastHold = this.lastHoldMs > 0 ? Date.now() - this.lastHoldMs : null;
       const holdProg = holdProgressed({ rejects: this.endTurnResolverRejects, msSinceLastHold, priorPlan: this.judgePriorPlan, plan: verdict.plan, minIntervalMs: cfg.gapHoldMinIntervalMs, maxSimilarity: cfg.gapHoldPlanMaxSimilarity });
@@ -1298,11 +1371,18 @@ export class CortexOrchestrator {
       // R173c: the budget floor — below CORTEX_JUDGE_VETO_MIN_REMAINING nothing holds the finish (the gap is recorded).
       const belowFloor = cfg.vetoMinRemaining > 0 && resolverRemainingFrac !== null && resolverRemainingFrac < cfg.vetoMinRemaining && (action as VetoAction) === 'veto';
       action = applyVetoFloor(action, resolverRemainingFrac, cfg.vetoMinRemaining);
+      // R187: a finish that would otherwise stand while a STATED requirement is still OPEN (its check never passed nor failed — never
+      // exercised) is held once with the open lines named. Never below the budget floor; a FAILED line already went the R166 evidence way.
+      let reqHold: { message: string } | null = null;
+      if (cfg.reqLedger && this.reqLedger && action !== 'veto' && action !== 'escalate' && !belowFloor &&
+          ledgerHoldable({ open: reqCounts.open, holdsUsed: this.reqLedgerHolds, maxHolds: cfg.reqLedgerHoldMax, remainingFrac: resolverRemainingFrac, minRemaining: cfg.vetoMinRemaining })) {
+        reqHold = { message: formatLedgerHoldMessage({ entries: this.reqLedger, holdIndex: this.reqLedgerHolds + 1, maxHolds: cfg.reqLedgerHoldMax, remainingFrac: resolverRemainingFrac }) };
+      }
       // R176 HB-INDEPENDENT-DERIVATION: on a value-shaped task, before a finish that would otherwise STAND, recompute the result by a
       // different method and hold ONCE on disagreement. Never below the budget floor; never more than once per turn.
       let derivationHold: { message: string } | null = null;
       let derivationInfo: Record<string, unknown> | null = null;
-      if (cfg.derivation === 'on' && action !== 'veto' && action !== 'escalate' && this.derivationHolds < 1 && !belowFloor &&
+      if (cfg.derivation === 'on' && !reqHold && action !== 'veto' && action !== 'escalate' && this.derivationHolds < 1 && !belowFloor &&
           !(cfg.vetoMinRemaining > 0 && resolverRemainingFrac !== null && resolverRemainingFrac < cfg.vetoMinRemaining) && this.helperMiddleware.deriveIndependentCheck) {
         const shape = isValueShapedTask(task);
         derivationInfo = { valueShaped: shape.valueShaped, reason: shape.reason, artifacts: shape.artifacts };
@@ -1356,6 +1436,7 @@ export class CortexOrchestrator {
           specTests: cfg.specTests, specChecks: this.specChecks?.length ?? 0, specRan, specPassed, specFailed, specInconclusive, specSuspect, specGenLatencyMs: this.specChecksMeta.genLatencyMs, specTestsAt: cfg.specTestsAt, // R174 / R174b
           vetoMinRemaining: cfg.vetoMinRemaining, belowFloor, holdProgressed: holdProg, holdGapMs: msSinceLastHold, planSim: Number(planSimilarity(this.judgePriorPlan, verdict.plan).toFixed(3)), msSinceLastHold, // R173c
           derivation: cfg.derivation, derivationAgreement: derivationInfo?.agreement ?? null, derivationHeld: !!derivationHold, // R176
+          reqLedger: cfg.reqLedger, reqLines: reqCounts.lines, reqOpen: reqCounts.open, reqExercised: reqCounts.exercised, reqFailed: reqCounts.failed, reqUnverifiable: reqCounts.unverifiable, reqHeld: !!reqHold, reqHolds: this.reqLedgerHolds, reqGenLatencyMs: this.reqLedgerMeta.genLatencyMs, reqJev: cfg.reqLedgerJev, reqJevAsked: reqJev?.asked ?? 0, reqJevClosed: reqJev?.closed ?? [], reqJevLatencyMs: reqJev?.latencyMs ?? 0, // R187/R187b
           latencyMs, rawLen: (text ?? '').length,
           deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,
           liftPlanChars: this.liftPlanText.length,
@@ -1386,9 +1467,18 @@ export class CortexOrchestrator {
           `${verdict.plan}\n\nDo this, verify against the task's own criteria (not your own tests), then call EndTurn again.` +
           (namedResultsNow ? `\n\nHARNESS-RUN CHECKS (named by the reviewer, executed just now — the failing ones are the gap):\n${namedResultsNow.slice(0, 3000)}` : '') + // R166
           (specFailed > 0 ? `\n\nSPEC CHECKS (derived from the TASK text before your work was seen, executed just now — a FAILED one is a stated requirement not yet met):\n${specResults.slice(0, 3000)}` : '') + // R174
+          (reqCounts.failed > 0 ? `\n\nREQUIREMENT LEDGER (stated requirements, checked just now — a FAILED line is a stated requirement not yet met):\n${reqResults.slice(0, 3000)}` : '') + // R187
           (holdable && !checksFailed ? `\n\nNo harness-run check failed, but the reviewer named open items and budget remains — this hold returns them to you (hold ${this.endTurnResolverRejects}/${resolverCap}).` : '') + // R173
           budgetedVetoEscalation(this.endTurnResolverRejects, resolverCap, resolverRemainingMs ?? 0, this.turnDeadlineMsActive); // R160
         console.warn(`[EndTurnResolver] GAP — vetoed finish (${verdict.plan.length}-char plan, reject ${this.endTurnResolverRejects}/${resolverCap}${resolverRemainingFrac === null ? '' : `, budget remaining ${Math.round(resolverRemainingFrac * 100)}%`})`);
+      } else if (reqHold) {
+        // R187: the finish would stand, but a stated requirement was never exercised — hold once with the open lines named.
+        this.reqLedgerHolds += 1;
+        this.lastHoldMs = Date.now();
+        ev.endTurnCalled = false;
+        et.is_error = true;
+        et.content = reqHold.message;
+        console.warn(`[EndTurnResolver] R187 LEDGER-HOLD — finish held (${reqCounts.open} open of ${reqCounts.lines} stated requirements; hold ${this.reqLedgerHolds}/${cfg.reqLedgerHoldMax})`);
       } else if (derivationHold) {
         // R176: the finish would stand, but an independent recomputation disagrees — hold once with both values shown.
         this.derivationHolds += 1;
@@ -2483,7 +2573,7 @@ export class CortexOrchestrator {
     // R153: the stop reason of the LATEST response (continuation/retry/gate/synth refresh it) — the empty-response
     // classifier used to read the turn's FIRST response, so a `length` cutoff on a continuation was never seen.
     let lastStopReason: string | undefined = convertedResponse.stopReason;
-    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; this.specChecks = null; this.specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; this.specChecksPromise = null; this.specFailHistory.clear(); this.lastHoldMs = 0; this.derivationHolds = 0; // R165 per-turn / R174 / R173c / R176
+    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; this.specChecks = null; this.specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; this.specChecksPromise = null; this.specFailHistory.clear(); this.reqLedger = null; this.reqLedgerPromise = null; this.reqLedgerHolds = 0; this.reqLedgerMeta = { genLatencyMs: 0, raw: 0, refused: 0 }; this.reqLedgerDelivered = false; this.lastHoldMs = 0; this.derivationHolds = 0; // R165 per-turn / R174 / R173c / R176
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     let toolCallIteration = 0;
     // R137 HB-POLL-REPEAT-BREAKER: the exact-repeat breaker used to force-exit by overwriting
@@ -3805,6 +3895,7 @@ export class CortexOrchestrator {
         await this.deliverDeferredCorpusAtLift(effectiveModel);
         this.deliverLiftNudge(allTools, effectiveModel); // A′ proposal-1: SearchTools/AskForAdvice signpost at lift
         await this.deliverLiftPlanAtLift(effectiveModel); // LIFT_MENTOR_PLANNER: bounded mentor-planner at lift (dark unless CORTEX_LIFT_PLAN)
+        this.maybeAuthorRequirementLedgerAtLift(); // R187: the stated-requirement ledger, authored in the background at lift
         this.maybeAuthorSpecChecksAtLift(); // R174b: blind spec checks authored in the background at lift (CORTEX_JUDGE_SPEC_TESTS_AT=lift)
         if (this.config.debug) console.log('[Anchor] lifted at first tool_result boundary — session profile applies');
       }
@@ -4916,7 +5007,7 @@ export class CortexOrchestrator {
 
     let currentAssistantCanonicalMessage = convertedResponse.messages[0]!;
     let lastStopReason: string | undefined = convertedResponse.stopReason; // R153 (see non-streaming loop)
-    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; this.specChecks = null; this.specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; this.specChecksPromise = null; this.specFailHistory.clear(); this.lastHoldMs = 0; this.derivationHolds = 0; // R165 per-turn / R174 / R173c / R176
+    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; this.specChecks = null; this.specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; this.specChecksPromise = null; this.specFailHistory.clear(); this.reqLedger = null; this.reqLedgerPromise = null; this.reqLedgerHolds = 0; this.reqLedgerMeta = { genLatencyMs: 0, raw: 0, refused: 0 }; this.reqLedgerDelivered = false; this.lastHoldMs = 0; this.derivationHolds = 0; // R165 per-turn / R174 / R173c / R176
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     const assistantMessageId = currentAssistantCanonicalMessage.uuid;
 
@@ -5800,6 +5891,7 @@ export class CortexOrchestrator {
           await this.deliverDeferredCorpusAtLift(effectiveModel);
           this.deliverLiftNudge(allTools, effectiveModel); // A′ proposal-1: SearchTools/AskForAdvice signpost at lift
         await this.deliverLiftPlanAtLift(effectiveModel); // LIFT_MENTOR_PLANNER: bounded mentor-planner at lift (dark unless CORTEX_LIFT_PLAN)
+        this.maybeAuthorRequirementLedgerAtLift(); // R187: the stated-requirement ledger, authored in the background at lift
         this.maybeAuthorSpecChecksAtLift(); // R174b: blind spec checks authored in the background at lift (CORTEX_JUDGE_SPEC_TESTS_AT=lift)
           if (this.config.debug) console.log('[Anchor] lifted at first tool_result boundary — session profile applies');
         }

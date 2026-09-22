@@ -102,6 +102,11 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   CORTEX_JUDGE_GAP_HOLD_PLAN_MAX_SIMILARITY: { tier: 'env' },
   CORTEX_JUDGE_SPEC_REPEAT_MAX: { tier: 'env' },
   CORTEX_JUDGE_SPEC_TESTS_AT: { tier: 'env' },
+  CORTEX_JUDGE_REQ_LEDGER: { tier: 'env' },
+  CORTEX_JUDGE_REQ_LEDGER_MAX: { tier: 'env' },
+  CORTEX_JUDGE_REQ_LEDGER_HOLD_MAX: { tier: 'env' },
+  CORTEX_JUDGE_REQ_LEDGER_JEV: { tier: 'env' },
+  CORTEX_JUDGE_REQ_LEDGER_JEV_MIN: { tier: 'env' },
   CORTEX_JUDGE_INDEPENDENT_DERIVATION: { tier: 'env' },
   CORTEX_JUDGE_INDEPENDENT_DERIVATION_TOL: { tier: 'env' },
   CORTEX_FRAME: { tier: 'env' }, // R179

@@ -17,6 +17,7 @@
  * - Supports Messages API, Chat Completions API, Google GenAI API
  */
 
+import { REQ_LEDGER_SYSTEM, buildRequirementLedgerPrompt } from '../training/requirementLedger.js';
 import { parseAuthoredCandidates } from '../frames/terminusFrame.js';
 import { frameHelperPrompt, type HelperFrameSpec } from './helpers/helperFrame.js';
 import { resolveMentorRoleConfig, mentorWireHint } from '../training/mentorRole.js';
@@ -1650,6 +1651,28 @@ Give concise, actionable guidance in plain text with these labeled parts:
         effort: cfg.effort,
       },
       buildSpecTestsPrompt(context.task, context.envReport, context.max),
+      context.helperModelId,
+    );
+  }
+
+  /**
+   * deriveRequirementLedger (R187 HB-REQUIREMENT-LEDGER) — the stated-requirements extractor. Same mentor wire as the judge; sees the
+   * task text + environment report ONLY (never the work product) and answers typed `REQ n | kind | text | CHECK: cmd|NONE` lines
+   * (parseRequirementLedger). Sibling of deriveSpecChecks.
+   */
+  async deriveRequirementLedger(context: { task: string; envReport?: string; max: number; helperModelId?: string }): Promise<string> {
+    const cfg = resolveEndTurnResolverConfig();
+    const budget = 2000;
+    return this.generateGuidance(
+      {
+        surface: 'endturn-resolver',
+        mentor: resolveMentorRoleConfig('endturn-resolver', process.env, { modelId: context.helperModelId, effort: cfg.effort, outputBudgetTokens: budget }),
+        persona: REQ_LEDGER_SYSTEM,
+        task: `List at most ${context.max} stated requirements as REQ lines, each with a read-only CHECK that exits non-zero when it is not met, or NONE. Output only REQ lines.`,
+        outputBudgetTokens: budget,
+        effort: cfg.effort,
+      },
+      buildRequirementLedgerPrompt(context.task, context.envReport, context.max),
       context.helperModelId,
     );
   }

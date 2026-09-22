@@ -154,6 +154,11 @@ export interface EnvironmentVariables {
   CORTEX_JUDGE_GAP_HOLD_PLAN_MAX_SIMILARITY?: string; // Token-Jaccard threshold below which the judge plan counts as changed for a re-hold (R173c) (default 0.6)
   CORTEX_JUDGE_SPEC_REPEAT_MAX?: string; // Consecutive identical spec-check failures before the check is suspect, not veto evidence (R174b) (default 2)
   CORTEX_JUDGE_SPEC_TESTS_AT?: string; // When the blind spec checks are authored: finish (first adjudication) | lift (background at task lift) (R174b) (default finish)
+  CORTEX_JUDGE_REQ_LEDGER?: string; // on: stated-requirement ledger at lift + finish-time checks + one hold on an open line (R187)
+  CORTEX_JUDGE_REQ_LEDGER_MAX?: string; // max ledger lines (default 8) (R187)
+  CORTEX_JUDGE_REQ_LEDGER_HOLD_MAX?: string; // max ledger holds per turn (default 1) (R187)
+  CORTEX_JUDGE_REQ_LEDGER_JEV?: string; // on|off — Jev closes lines the shell could not decide (default on) (R187b)
+  CORTEX_JUDGE_REQ_LEDGER_JEV_MIN?: string; // threshold (default 0.7) (R187b)
   CORTEX_JUDGE_INDEPENDENT_DERIVATION?: string; // On a value-shaped task, recompute the result by a different method before a standing finish; disagreement holds once (R176 HB-INDEPENDENT-DERIVATION): off | on (default off)
   CORTEX_JUDGE_INDEPENDENT_DERIVATION_TOL?: string; // Relative tolerance for numeric agreement in the independent derivation (R176) (default 0.001)
   CORTEX_FRAME?: string; // tools (default) | terminus: one tmux pane as the only action surface (FrameAction + EndTurn), screen + state card + menu each turn (R179)
@@ -533,6 +538,11 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_JUDGE_GAP_HOLD_PLAN_MAX_SIMILARITY: '',
   CORTEX_JUDGE_SPEC_REPEAT_MAX: '',
   CORTEX_JUDGE_SPEC_TESTS_AT: '',
+  CORTEX_JUDGE_REQ_LEDGER: '',
+  CORTEX_JUDGE_REQ_LEDGER_MAX: '',
+  CORTEX_JUDGE_REQ_LEDGER_HOLD_MAX: '',
+  CORTEX_JUDGE_REQ_LEDGER_JEV: '',
+  CORTEX_JUDGE_REQ_LEDGER_JEV_MIN: '',
   CORTEX_JUDGE_INDEPENDENT_DERIVATION: '',
   CORTEX_JUDGE_INDEPENDENT_DERIVATION_TOL: '',
   CORTEX_FRAME: '',
@@ -1220,6 +1230,14 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_JUDGE_SPEC_TESTS_AT',
     displayName: 'Blind spec tests authored at',
     description: "finish (default): at the first finish adjudication. lift: in the background at task lift, so a session whose first finish comes late still has its checks. (R174b)",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_JUDGE_REQ_LEDGER',
+    displayName: 'Finish judge requirement ledger',
+    description: "on: at task lift a mentor call that sees ONLY the task text and the environment report extracts each requirement the task STATES as a typed line (threshold / contract / exactness / constraint / latency / artifact / command) with a read-only CHECK; the writer sees the ledger with its plan; at every finish the harness runs the checks — a FAILED line is veto evidence, and a finish that would otherwise stand with a line still OPEN (never exercised) is held once with the open lines named. (R187)",
     type: 'string',
     category: 'training',
     default: ''
