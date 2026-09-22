@@ -4,7 +4,7 @@
  * (screen + state card + templates) as the FrameAction tool_result. Holds the frame's durable state for the session (history, running
  * command, tmux session id). Everything decision-shaped is in the pure modules; this file is plumbing + waiting.
  */
-import { buildStateCard, buildMenu, buildFrameSuffix, clipScreen, parsePromptRc, promptIsBack, waitPolicy, extractTaskTestCommand, parseFrameAction, stripAnsi, normalizeKeys, paneIsDead, paneWedged, applyNamedTemplates, applyKeyGuard, whyJustifies, FRAME_DEFAULTS, type GuardRecord, type HistoryEntry } from './terminusFrame.js';
+import { buildStateCard, buildMenu, buildFrameSuffix, clipScreen, parsePromptRc, promptIsBack, waitPolicy, extractTaskTestCommand, parseFrameAction, stripAnsi, normalizeKeys, paneIsDead, paneWedged, applyNamedTemplates, applyKeyGuard, whyJustifies, distinctCandidateCount, FRAME_DEFAULTS, type GuardRecord, type HistoryEntry } from './terminusFrame.js';
 import { buildChooserState, buildChooserQuestions, decideChooser, buildChooserRow, type ChooserDecision } from './chooser.js';
 import type { FrameConfig } from './frameConfig.js';
 
@@ -42,6 +42,10 @@ export class FrameRunner {
   private lastTemplateKey = '';
   private paneDead = false;
   private paneResets = 0;
+  /** R184: re-asks for alternatives — one per turn, at most DIVERSITY_MAX_REASKS per session (then fail-open: the menu is what the writer gave) */
+  private diversityReasks = 0;
+  private diversityReaskPending = false;
+  private static readonly DIVERSITY_MAX_REASKS = 5;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
   constructor(private readonly cfg: FrameConfig, private readonly deps: FrameDeps) {
@@ -117,6 +121,15 @@ export class FrameRunner {
     if (!action.parsed) {
       return { content: `FrameAction not understood (${action.error}). Send {analysis, plan, candidates:[{label, keystrokes, duration_s}]} — keystrokes end with \\n to run a command; an empty keystrokes string with a duration waits.`, isError: true, meta: { frame: 'terminus', parsed: false } };
     }
+    // R184 MENU DIVERSITY: with the chooser on, one candidate is no menu. Ask ONCE (per turn) for 2–3 genuinely different actions; bounded per
+    // session so a writer that never adapts costs at most DIVERSITY_MAX_REASKS extra calls. No keystrokes run on a re-ask turn.
+    const distinct = distinctCandidateCount(action.candidates);
+    if (this.cfg.minCandidates >= 2 && distinct < this.cfg.minCandidates && !action.taskComplete && !this.diversityReaskPending && this.diversityReasks < FrameRunner.DIVERSITY_MAX_REASKS) {
+      this.diversityReasks += 1; this.diversityReaskPending = true;
+      this.deps.recordEvent('frame_turn', { session_id: input.sessionId, turn_number: this.turn + 1, predictor_model: input.predictorModel, diversityReask: this.diversityReasks, distinctCandidates: distinct, analysis: action.analysis.slice(0, 600), plan: action.plan.slice(0, 600), chooser: this.cfg.chooser, stepMs: this.now() - t0 });
+      return { content: `MENU NEEDS ALTERNATIVES: you gave ${distinct} action${distinct === 1 ? '' : 's'}; the harness chooses among ${this.cfg.minCandidates}–${this.cfg.candidates} GENUINELY DIFFERENT actions each turn (a different command, a different approach, or a different diagnostic — not a variant of the same command). Resend the same analysis and plan with ${this.cfg.minCandidates}–${this.cfg.candidates} candidates, best first. Nothing was executed.${this.diversityReasks >= FrameRunner.DIVERSITY_MAX_REASKS ? ' (Last reminder: from now on single candidates run as given.)' : ''}`, isError: false, meta: { frame: 'terminus', turn: this.turn, diversityReask: this.diversityReasks, distinctCandidates: distinct } };
+    }
+    this.diversityReaskPending = false;
     await this.ensureSession(input.cwd, input.sessionId, input.signal);
     this.turn += 1;
     const preConsequences: string[] = [];
@@ -183,7 +196,7 @@ export class FrameRunner {
     const templatesChanged = tplKey !== this.lastTemplateKey; this.lastTemplateKey = tplKey;
     const content = buildFrameSuffix({ screen: clipped.text, stateCard, menu: nextMenu, consequences, templatesChanged: templatesChanged || this.turn === 1 }) + (extra ? `\n\n${extra}` : '');
     const row = buildChooserRow({ sessionId: input.sessionId, turn: this.turn, predictorModel: input.predictorModel + (this.cfg.chooser === 'jev' ? '+jev-chooser' : ''), menu, decision, executedKeys, nowMs: this.now() });
-    this.deps.recordEvent('frame_turn', { ...row, analysis: action.analysis.slice(0, 600), plan: action.plan.slice(0, 600), rc, waitedS: Math.round(waitedS), running, screenChars: screen.length, chooser: this.cfg.chooser, chooserLatencyMs, paneResets: this.paneResets, guard: guardRecords.length ? guardRecords.map((g) => ({ ...g, ...(g.outcome === 'soft' ? { outcome: decision.reasons.some((r) => r.startsWith(`${g.id} destructive but authorized`)) ? 'allowed_by_jev' : 'held' } : {}) })) : null, answers: answers ? Object.fromEntries(Object.entries(answers).map(([k, v]) => [k, Number(v.toFixed(3))])) : null, stepMs: this.now() - t0 });
-    return { content, isError: false, meta: { frame: 'terminus', turn: this.turn, pick: pick?.id ?? null, action: decision.action, rc, running, executedKeys: executedKeys ? normalizeKeys(executedKeys).slice(0, 120) : executedKeys } };
+    this.deps.recordEvent('frame_turn', { ...row, analysis: action.analysis.slice(0, 600), plan: action.plan.slice(0, 600), rc, waitedS: Math.round(waitedS), running, screenChars: screen.length, chooser: this.cfg.chooser, chooserLatencyMs, paneResets: this.paneResets, distinctCandidates: distinct, diversityReasks: this.diversityReasks, guard: guardRecords.length ? guardRecords.map((g) => ({ ...g, ...(g.outcome === 'soft' ? { outcome: decision.reasons.some((r) => r.startsWith(`${g.id} destructive but authorized`)) ? 'allowed_by_jev' : 'held' } : {}) })) : null, answers: answers ? Object.fromEntries(Object.entries(answers).map(([k, v]) => [k, Number(v.toFixed(3))])) : null, stepMs: this.now() - t0 });
+    return { content, isError: false, meta: { frame: 'terminus', turn: this.turn, pick: pick?.id ?? null, action: decision.action, rc, running, distinctCandidates: distinct, executedKeys: executedKeys ? normalizeKeys(executedKeys).slice(0, 120) : executedKeys } };
   }
 }

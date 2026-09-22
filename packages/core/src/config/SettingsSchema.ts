@@ -162,6 +162,7 @@ export interface EnvironmentVariables {
   CORTEX_FRAME_WAIT_CAP_S?: string; // cap on waiting for one action's command, seconds (default 300) (R179)
   CORTEX_FRAME_SCREEN_LINES?: string; // pane lines captured per observation (default 45) (R179)
   CORTEX_FRAME_KEY_GUARD?: string; // on|off — refuse pane-killing/destructive keystrokes in the terminal frame (default on) (R182)
+  CORTEX_FRAME_MIN_CANDIDATES?: string; // 1..3 distinct writer candidates the menu step needs (unset = 2 with the chooser on) (R184)
   CORTEX_FRAME_CONTRACT_EXTRA?: string; // text appended to the turn-0 frame contract (cell-specific guidance without a release) (R179)
   CORTEX_MEETS_CONFIRM_MIN_REMAINING?: string; // fraction of the wall budget that must remain to hold an unverified MEETS (default 0.5) — R168
   CORTEX_JUDGE_EVIDENCE_MAX_VETOES?: string; // max evidence-backed vetoes per session (default 1) — R166
@@ -538,6 +539,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_FRAME_WAIT_CAP_S: '',
   CORTEX_FRAME_SCREEN_LINES: '',
   CORTEX_FRAME_KEY_GUARD: '',
+  CORTEX_FRAME_MIN_CANDIDATES: '',
   CORTEX_FRAME_CONTRACT_EXTRA: '',
   CORTEX_TURN_CONTRACT_ENFORCE: '',
   CORTEX_TURN_CONTRACT_ENFORCE_MAX: '',

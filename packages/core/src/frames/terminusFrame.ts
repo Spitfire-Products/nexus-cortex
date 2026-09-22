@@ -232,6 +232,14 @@ export function applyNamedTemplates(menu: MenuItem[]): MenuItem[] {
   });
 }
 
+/* ---------- R184 menu diversity ---------- */
+/** How many genuinely different actions the writer offered (same normalized keystrokes = one action; empty-wait candidates count once). Pure. */
+export function distinctCandidateCount(candidates: FrameCandidate[]): number {
+  const seen = new Set<string>();
+  for (const c of candidates) seen.add(normalizeKeys(c.keystrokes).replace(/\s+/g, ' ').trim() || '<wait>');
+  return seen.size;
+}
+
 /* ---------- R182 keystroke guard (operator 2026-09-22: "block harmful keystroke patterns, not just a contract instruction") ---------- */
 
 /** R183: `block` = hard (no legitimate use in a bench pane); `soft` = destructive but possibly what the task asks for — Jev (chooser on) or a

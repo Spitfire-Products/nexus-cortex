@@ -103,3 +103,32 @@ describe('R183 soft-destructive arbitration with the chooser off', () => {
     expect(ran.meta.pick).toBe('c1'); expect(log.some((l) => l.includes('rm -rf'))).toBe(true);
   });
 });
+
+describe('R184 menu diversity with the chooser on', () => {
+  const PROMPT = 'root@x:/app$ \n__RC=0\nroot@x:/app$ ';
+  const cfg = { ...FRAME_CONFIG_DEFAULTS, frame: 'terminus' as const, chooser: 'jev' as const, candidates: 3, minCandidates: 2 };
+  const one = { analysis: 'a', plan: 'p', candidates: [{ label: 'ls', keystrokes: 'ls\n', duration_s: 2 }] };
+  const two = { analysis: 'a', plan: 'p', candidates: [{ label: 'ls', keystrokes: 'ls\n', duration_s: 2 }, { label: 'find', keystrokes: 'find . -name "*.py" | head\n', duration_s: 2 }] };
+  const go = (r: FrameRunner, action: unknown) => r.step({ action, task: 't', elapsedMs: 0, deadlineMs: 0, cwd: '/app', sessionId: 's', predictorModel: 'gen' });
+  it('asks once for alternatives without executing, then runs the resend', async () => {
+    const log: string[] = []; const r = new FrameRunner(cfg, fakeDeps([PROMPT], log));
+    const ask = await go(r, one);
+    expect(ask.content).toContain('MENU NEEDS ALTERNATIVES'); expect(ask.meta.diversityReask).toBe(1); expect(log.some((l) => l.startsWith('TmuxSession:send:ls'))).toBe(false);
+    const ran = await go(r, two);
+    expect(ran.meta.pick).toBe('c1'); expect(ran.meta.distinctCandidates).toBe(2); expect(log.some((l) => l.startsWith('TmuxSession:send:ls'))).toBe(true);
+  });
+  it('does not re-ask twice in a row (a stubborn single candidate runs) and stops asking after five re-asks', async () => {
+    const log: string[] = []; const r = new FrameRunner(cfg, fakeDeps([PROMPT], log));
+    const a1 = await go(r, one); expect(a1.meta.diversityReask).toBe(1);
+    const a2 = await go(r, one); expect(a2.meta.pick).toBe('c1'); // ran as given
+    for (let i = 0; i < 4; i++) { const ask = await go(r, one); expect(ask.meta.diversityReask).toBe(i + 2); await go(r, one); }
+    const after = await go(r, one); expect(after.meta.pick).toBe('c1'); expect(after.meta.diversityReask).toBeUndefined();
+  });
+  it('two variants of the same command are one action; the chooser-off arm never asks', async () => {
+    const log: string[] = []; const r = new FrameRunner(cfg, fakeDeps([PROMPT], log));
+    const same = await go(r, { analysis: 'a', plan: 'p', candidates: [{ label: 'ls', keystrokes: 'ls\n', duration_s: 2 }, { label: 'ls again', keystrokes: 'ls \n', duration_s: 3 }] });
+    expect(same.content).toContain('MENU NEEDS ALTERNATIVES');
+    const off = new FrameRunner({ ...FRAME_CONFIG_DEFAULTS, frame: 'terminus' }, fakeDeps([PROMPT], []));
+    expect((await go(off, one)).meta.pick).toBe('c1');
+  });
+});
