@@ -91,3 +91,15 @@ describe('R182 keystroke guard in the runner', () => {
     expect(log2.some((l) => l.startsWith('TmuxSession:send:exit'))).toBe(true);
   });
 });
+
+describe('R183 soft-destructive arbitration with the chooser off', () => {
+  const PROMPT = 'root@x:/app$ \n__RC=0\nroot@x:/app$ ';
+  it('holds rm -rf of the task tree without a why, runs it with a justifying why', async () => {
+    const log: string[] = [];
+    const r = new FrameRunner({ ...FRAME_CONFIG_DEFAULTS, frame: 'terminus' }, fakeDeps([PROMPT], log));
+    const held = await r.step({ action: { analysis: 'a', plan: 'p', candidates: [{ label: 'clean', keystrokes: 'rm -rf /app/*\n', duration_s: 2 }] }, task: 't', elapsedMs: 0, deadlineMs: 0, cwd: '/app', sessionId: 's', predictorModel: 'gen' });
+    expect(held.content).toMatch(/carried no justification/); expect(log.some((l) => l.includes('rm -rf'))).toBe(false);
+    const ran = await r.step({ action: { analysis: 'a', plan: 'p', candidates: [{ label: 'clean', keystrokes: 'rm -rf /app/*\n', duration_s: 2, why: 'the task says to rebuild the output tree from scratch' }] }, task: 't', elapsedMs: 0, deadlineMs: 0, cwd: '/app', sessionId: 's', predictorModel: 'gen' });
+    expect(ran.meta.pick).toBe('c1'); expect(log.some((l) => l.includes('rm -rf'))).toBe(true);
+  });
+});

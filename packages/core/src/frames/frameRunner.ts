@@ -4,7 +4,7 @@
  * (screen + state card + templates) as the FrameAction tool_result. Holds the frame's durable state for the session (history, running
  * command, tmux session id). Everything decision-shaped is in the pure modules; this file is plumbing + waiting.
  */
-import { buildStateCard, buildMenu, buildFrameSuffix, clipScreen, parsePromptRc, promptIsBack, waitPolicy, extractTaskTestCommand, parseFrameAction, stripAnsi, normalizeKeys, paneIsDead, paneWedged, applyNamedTemplates, applyKeyGuard, FRAME_DEFAULTS, type HistoryEntry } from './terminusFrame.js';
+import { buildStateCard, buildMenu, buildFrameSuffix, clipScreen, parsePromptRc, promptIsBack, waitPolicy, extractTaskTestCommand, parseFrameAction, stripAnsi, normalizeKeys, paneIsDead, paneWedged, applyNamedTemplates, applyKeyGuard, whyJustifies, FRAME_DEFAULTS, type GuardRecord, type HistoryEntry } from './terminusFrame.js';
 import { buildChooserState, buildChooserQuestions, decideChooser, buildChooserRow, type ChooserDecision } from './chooser.js';
 import type { FrameConfig } from './frameConfig.js';
 
@@ -127,10 +127,22 @@ export class FrameRunner {
     const wedged = paneWedged(this.history);
     const menu0 = applyNamedTemplates(buildMenu({ candidates: action.candidates, taskTestCommand: extractTaskTestCommand(input.task), commandStillRunning: this.running, screenClipped: this.lastClipped, history: this.history, paneWedged: wedged }));
     // R182: the keystroke guard runs BEFORE the menu step — a pane-killing or destructive candidate never reaches the chooser or the pane.
-    const guarded = this.cfg.keyGuard ? applyKeyGuard(menu0, { running: this.running }) : { menu: menu0, blocked: [] };
-    const menu = guarded.menu;
+    const guarded = this.cfg.keyGuard ? applyKeyGuard(menu0, { running: this.running }) : { menu: menu0, blocked: [] as GuardRecord[], soft: [] as GuardRecord[] };
+    let menu = guarded.menu;
     for (const b of guarded.blocked) preConsequences.push(`Candidate "${b.label}" (${b.keystrokes}) was BLOCKED by the keystroke guard: ${b.reason}. It was not sent.`);
-    const allBlocked = guarded.blocked.length > 0 && !menu.some((m) => m.source === 'generator');
+    // R183 chooser OFF: a soft-destructive candidate runs only if the writer's `why` actually justifies it; with Jev on, Jev's intended_<id> decides (chooser.ts)
+    const guardRecords: GuardRecord[] = [...guarded.blocked];
+    if (this.cfg.chooser !== 'jev' || !this.deps.jev) {
+      menu = menu.filter((m) => {
+        if (!m.guard) return true;
+        const rec = guarded.soft.find((x) => x.id === m.id)!;
+        if (whyJustifies(m.why)) { guardRecords.push({ ...rec, outcome: 'allowed_by_why' }); return true; }
+        guardRecords.push({ ...rec, outcome: 'held' });
+        preConsequences.push(`Candidate "${m.label}" (${rec.keystrokes}) is destructive — ${rec.reason} — and carried no justification, so it was not run. If the task requires it, resend it with a note ("why") that cites the task requirement.`);
+        return false;
+      });
+    } else for (const rec of guarded.soft) guardRecords.push(rec);
+    const allBlocked = guardRecords.length > 0 && !menu.some((m) => m.source === 'generator');
     // the menu step
     let decision: ChooserDecision;
     let answers: Record<string, number> | null = null; let chooserLatencyMs = 0;
@@ -171,7 +183,7 @@ export class FrameRunner {
     const templatesChanged = tplKey !== this.lastTemplateKey; this.lastTemplateKey = tplKey;
     const content = buildFrameSuffix({ screen: clipped.text, stateCard, menu: nextMenu, consequences, templatesChanged: templatesChanged || this.turn === 1 }) + (extra ? `\n\n${extra}` : '');
     const row = buildChooserRow({ sessionId: input.sessionId, turn: this.turn, predictorModel: input.predictorModel + (this.cfg.chooser === 'jev' ? '+jev-chooser' : ''), menu, decision, executedKeys, nowMs: this.now() });
-    this.deps.recordEvent('frame_turn', { ...row, analysis: action.analysis.slice(0, 600), plan: action.plan.slice(0, 600), rc, waitedS: Math.round(waitedS), running, screenChars: screen.length, chooser: this.cfg.chooser, chooserLatencyMs, paneResets: this.paneResets, guard: guarded.blocked.length ? guarded.blocked : null, answers: answers ? Object.fromEntries(Object.entries(answers).map(([k, v]) => [k, Number(v.toFixed(3))])) : null, stepMs: this.now() - t0 });
+    this.deps.recordEvent('frame_turn', { ...row, analysis: action.analysis.slice(0, 600), plan: action.plan.slice(0, 600), rc, waitedS: Math.round(waitedS), running, screenChars: screen.length, chooser: this.cfg.chooser, chooserLatencyMs, paneResets: this.paneResets, guard: guardRecords.length ? guardRecords.map((g) => ({ ...g, ...(g.outcome === 'soft' ? { outcome: decision.reasons.some((r) => r.startsWith(`${g.id} destructive but authorized`)) ? 'allowed_by_jev' : 'held' } : {}) })) : null, answers: answers ? Object.fromEntries(Object.entries(answers).map(([k, v]) => [k, Number(v.toFixed(3))])) : null, stepMs: this.now() - t0 });
     return { content, isError: false, meta: { frame: 'terminus', turn: this.turn, pick: pick?.id ?? null, action: decision.action, rc, running, executedKeys: executedKeys ? normalizeKeys(executedKeys).slice(0, 120) : executedKeys } };
   }
 }

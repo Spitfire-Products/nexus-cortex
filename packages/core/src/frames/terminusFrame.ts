@@ -37,6 +37,8 @@ export interface MenuItem extends FrameCandidate {
   source: MenuSource;
   /** a harness operation for templates that are not keystrokes (show_more / reread_task / finish) */
   op?: TemplateOp;
+  /** R183: tagged by the keystroke guard as destructive-but-possibly-intended; the menu step arbitrates */
+  guard?: { class: KeyGuardClass; reason: string };
 }
 
 export const FRAME_DEFAULTS = { maxCandidates: 3, defaultDurationS: 3, maxDurationS: 60, graceS: 5, waitExtendS: 30, stateCardMaxChars: 1500, screenMaxChars: 6000, digestLen: 12, wedgeTurns: 4 } as const;
@@ -232,7 +234,10 @@ export function applyNamedTemplates(menu: MenuItem[]): MenuItem[] {
 
 /* ---------- R182 keystroke guard (operator 2026-09-22: "block harmful keystroke patterns, not just a contract instruction") ---------- */
 
-export interface KeyGuardVerdict { verdict: 'allow' | 'block'; reason?: string; class?: 'pane_killer' | 'destructive' }
+/** R183: `block` = hard (no legitimate use in a bench pane); `soft` = destructive but possibly what the task asks for — Jev (chooser on) or a
+ *  stated `why` (chooser off) decides. */
+export type KeyGuardClass = 'pane_killer' | 'destructive' | 'destructive_soft';
+export interface KeyGuardVerdict { verdict: 'allow' | 'block' | 'soft'; reason?: string; class?: KeyGuardClass }
 
 const PANE_KILLERS: Array<[RegExp, string]> = [
   [/^(exit|logout)(\s.*)?$/i, 'exits the pane shell'],
@@ -242,16 +247,25 @@ const PANE_KILLERS: Array<[RegExp, string]> = [
   [/\bpkill\s+(-9\s+)?(-f\s+)?(tmux|bash|sh)\b/i, 'kills the shell or tmux'],
   [/\bkillall\s+(-9\s+)?(tmux|bash|sh)\b/i, 'kills the shell or tmux'],
 ];
+const DEV = '\\/dev\\/(sd|nvme|vd|hd|xvd|mmcblk|disk|loop\\d+)';
+/** HARD: never legitimate inside a task container. */
 const DESTRUCTIVE: Array<[RegExp, string]> = [
-  [/\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*|--recursive)\s+(--no-preserve-root\s+)?(\/|~|\$HOME|\/app|\/root|\/etc|\/usr|\/var|\/bin|\/lib|\*|\.)(\s|\/?$|\/\*)/i, 'recursively deletes a root, home or the task directory'],
+  [/\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*|--recursive)\s+(--no-preserve-root\s+)?(\/|~|\$HOME|\/root|\/etc|\/usr|\/var|\/bin|\/lib|\/opt|\/home)(\s|\/?$|\/\*)/i, 'recursively deletes a system root or home'],
   [/\brm\s+-[a-zA-Z]*r[a-zA-Z]*\s+(\/|~)\s*$/i, 'recursively deletes a root'],
-  [/\bmkfs(\.\w+)?\b/i, 'formats a filesystem'],
-  [/\bdd\s+.*\bof=\/dev\/(sd|nvme|vd|hd|xvd|mmcblk|disk)/i, 'writes a block device'],
-  [/>\s*\/dev\/(sd|nvme|vd|hd|xvd|mmcblk)/i, 'writes a block device'],
-  [/:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/, 'fork bomb'],
+  [new RegExp('\\bmkfs(\\.\\w+)?\\b.*' + DEV, 'i'), 'formats a real block device'],
+  [new RegExp('\\bdd\\s+.*\\bof=' + DEV, 'i'), 'writes a block device'],
+  [new RegExp('>\\s*' + DEV, 'i'), 'writes a block device'],
   [/\b(shutdown|reboot|halt|poweroff|init\s+[06])\b/i, 'shuts the container down'],
   [/\b(chmod|chown)\s+(-[a-zA-Z]*R[a-zA-Z]*\s+|--recursive\s+)\S+\s+\/\s*$/i, 'recursively changes ownership or mode of /'],
-  [/\bmv\s+(\/|\/app|~)\s+/i, 'moves a root or the task directory'],
+  [/\bmv\s+(\/|~)\s+/i, 'moves a root'],
+];
+/** SOFT: destructive, but a task can legitimately ask for it (clean the workspace, build a disk image, reset an output tree). */
+const DESTRUCTIVE_SOFT: Array<[RegExp, string]> = [
+  [/\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*|--recursive)\s+(\/app|\.|\*)(\s|\/?$|\/\*)/i, 'recursively deletes the task directory or everything in the current one'],
+  [/\bmkfs(\.\w+)?\b/i, 'formats a filesystem (on a file or loop image this may be the task)'],
+  [/\bmv\s+\/app(\/\*)?\s+/i, 'moves the task directory'],
+  [/\bgit\s+(reset\s+--hard|clean\s+-[a-zA-Z]*f|checkout\s+--\s+\.|push\s+.*--force)/i, 'discards uncommitted work or rewrites history'],
+  [/\b(truncate|shred)\s+.*\/app\b/i, 'destroys task files'],
 ];
 
 /** Classify one candidate's keystrokes. `running`: a command is still in the foreground (C-d is then a legitimate EOF, not a shell exit). Pure. */
@@ -266,21 +280,29 @@ export function guardKeystrokes(keystrokes: string, ctx: { running: boolean }): 
     for (const [re, why] of PANE_KILLERS) if (re.test(c)) return { verdict: 'block', class: 'pane_killer', reason: `"${c.slice(0, 60)}" ${why}` };
     for (const [re, why] of DESTRUCTIVE) if (re.test(c)) return { verdict: 'block', class: 'destructive', reason: `"${c.slice(0, 60)}" ${why}` };
   }
+  for (const c of cmds) for (const [re, why] of DESTRUCTIVE_SOFT) if (re.test(c)) return { verdict: 'soft', class: 'destructive_soft', reason: `"${c.slice(0, 60)}" ${why}` };
   return { verdict: 'allow' };
 }
 
-/** Apply the guard to a menu: blocked generator candidates are removed; templates are never blocked. Pure. */
-export function applyKeyGuard(menu: MenuItem[], ctx: { running: boolean }): { menu: MenuItem[]; blocked: Array<{ id: string; label: string; keystrokes: string; reason: string; class: string }> } {
-  const blocked: Array<{ id: string; label: string; keystrokes: string; reason: string; class: string }> = [];
-  const kept = menu.filter((m) => {
-    if (m.source !== 'generator') return true;
+export interface GuardRecord { id: string; label: string; keystrokes: string; reason: string; class: string; outcome: 'blocked' | 'soft' | 'allowed_by_why' | 'allowed_by_jev' | 'held' }
+/** Apply the guard to a menu: HARD-blocked generator candidates are removed; SOFT ones stay, tagged `guard` for the menu step to arbitrate
+ *  (chooser on: Jev's `intended_<id>` answer; chooser off: a stated `why` of substance). Templates are never touched. Pure. */
+export function applyKeyGuard(menu: MenuItem[], ctx: { running: boolean }): { menu: MenuItem[]; blocked: GuardRecord[]; soft: GuardRecord[] } {
+  const blocked: GuardRecord[] = []; const soft: GuardRecord[] = [];
+  const kept: MenuItem[] = [];
+  for (const m of menu) {
+    if (m.source !== 'generator') { kept.push(m); continue; }
     const v = guardKeystrokes(m.keystrokes, ctx);
-    if (v.verdict === 'allow') return true;
-    blocked.push({ id: m.id, label: m.label, keystrokes: normalizeKeys(m.keystrokes).slice(0, 80), reason: v.reason ?? '', class: v.class ?? '' });
-    return false;
-  });
-  return { menu: kept, blocked };
+    const rec = { id: m.id, label: m.label, keystrokes: normalizeKeys(m.keystrokes).slice(0, 80), reason: v.reason ?? '', class: v.class ?? '' };
+    if (v.verdict === 'block') { blocked.push({ ...rec, outcome: 'blocked' }); continue; }
+    if (v.verdict === 'soft') { soft.push({ ...rec, outcome: 'soft' }); kept.push({ ...m, guard: { class: v.class!, reason: v.reason ?? '' } }); continue; }
+    kept.push(m);
+  }
+  return { menu: kept, blocked, soft };
 }
+
+/** Chooser-off arbitration of a SOFT candidate: the writer's `why` must actually justify it (≥ 20 chars). Pure. */
+export function whyJustifies(why: string | undefined): boolean { return String(why ?? '').trim().length >= 20; }
 
 /** The per-turn suffix text the writer sees (the prefix is fixed; only this changes). Pure. */
 export function buildFrameSuffix(input: { screen: string; stateCard: string; menu: MenuItem[]; consequences?: string[]; showTemplates?: boolean; templatesChanged?: boolean }): string {
