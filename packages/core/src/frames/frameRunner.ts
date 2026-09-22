@@ -4,7 +4,7 @@
  * (screen + state card + templates) as the FrameAction tool_result. Holds the frame's durable state for the session (history, running
  * command, tmux session id). Everything decision-shaped is in the pure modules; this file is plumbing + waiting.
  */
-import { buildStateCard, buildMenu, buildFrameSuffix, clipScreen, parsePromptRc, promptIsBack, waitPolicy, extractTaskTestCommand, parseFrameAction, stripAnsi, normalizeKeys, paneIsDead, paneWedged, applyNamedTemplates, applyKeyGuard, whyJustifies, distinctCandidateCount, FRAME_DEFAULTS, type GuardRecord, type HistoryEntry } from './terminusFrame.js';
+import { buildStateCard, buildMenu, buildFrameSuffix, clipScreen, parsePromptRc, promptIsBack, waitPolicy, extractTaskTestCommand, parseFrameAction, stripAnsi, normalizeKeys, paneIsDead, paneWedged, applyNamedTemplates, applyKeyGuard, whyJustifies, distinctCandidateCount, mergeAuthoredCandidates, FRAME_DEFAULTS, type GuardRecord, type MenuSource, type HistoryEntry } from './terminusFrame.js';
 import { buildChooserState, buildChooserQuestions, decideChooser, buildChooserRow, type ChooserDecision } from './chooser.js';
 import type { FrameConfig } from './frameConfig.js';
 
@@ -12,6 +12,8 @@ export interface FrameDeps {
   execute: (name: string, input: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>;
   recordEvent: (kind: string, detail: Record<string, unknown>) => void;
   jev?: (state: Record<string, unknown>, questions: Record<string, { type: 'noul'; instructions: string }>) => Promise<Record<string, number> | null>;
+  /** R185: the candidate author (helper model) — proposes `count` alternatives to the writer's candidates; null/[] = none */
+  author?: (ctx: { task: string; screen: string; stateCard: string; writerAnalysis: string; writerPlan: string; writerCandidates: Array<{ label: string; keystrokes: string }>; count: number }) => Promise<Array<{ label: string; keystrokes: string; durationS: number; why: string }> | null>;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
 }
@@ -124,7 +126,8 @@ export class FrameRunner {
     // R184 MENU DIVERSITY: with the chooser on, one candidate is no menu. Ask ONCE (per turn) for 2–3 genuinely different actions; bounded per
     // session so a writer that never adapts costs at most DIVERSITY_MAX_REASKS extra calls. No keystrokes run on a re-ask turn.
     const distinct = distinctCandidateCount(action.candidates);
-    if (this.cfg.minCandidates >= 2 && distinct < this.cfg.minCandidates && !action.taskComplete && !this.diversityReaskPending && this.diversityReasks < FrameRunner.DIVERSITY_MAX_REASKS) {
+    const hasAuthor = this.cfg.author === 'helper' && !!this.deps.author;
+    if (!hasAuthor && this.cfg.minCandidates >= 2 && distinct < this.cfg.minCandidates && !action.taskComplete && !this.diversityReaskPending && this.diversityReasks < FrameRunner.DIVERSITY_MAX_REASKS) {
       this.diversityReasks += 1; this.diversityReaskPending = true;
       this.deps.recordEvent('frame_turn', { session_id: input.sessionId, turn_number: this.turn + 1, predictor_model: input.predictorModel, diversityReask: this.diversityReasks, distinctCandidates: distinct, analysis: action.analysis.slice(0, 600), plan: action.plan.slice(0, 600), chooser: this.cfg.chooser, stepMs: this.now() - t0 });
       return { content: `MENU NEEDS ALTERNATIVES: you gave ${distinct} action${distinct === 1 ? '' : 's'}; the harness chooses among ${this.cfg.minCandidates}–${this.cfg.candidates} GENUINELY DIFFERENT actions each turn (a different command, a different approach, or a different diagnostic — not a variant of the same command). Resend the same analysis and plan with ${this.cfg.minCandidates}–${this.cfg.candidates} candidates, best first. Nothing was executed.${this.diversityReasks >= FrameRunner.DIVERSITY_MAX_REASKS ? ' (Last reminder: from now on single candidates run as given.)' : ''}`, isError: false, meta: { frame: 'terminus', turn: this.turn, diversityReask: this.diversityReasks, distinctCandidates: distinct } };
@@ -138,7 +141,17 @@ export class FrameRunner {
     const screenBefore = this.lastScreen || await this.capture(this.cfg.screenLines, input.signal);
     const stateBefore = buildStateCard({ cwd: input.cwd, turn: this.turn, budgetUsedFrac: input.deadlineMs > 0 ? Math.min(1, input.elapsedMs / input.deadlineMs) : null, budgetLeftS: input.deadlineMs > 0 ? Math.max(0, (input.deadlineMs - input.elapsedMs) / 1000) : null, history: this.history, commandStillRunning: this.running });
     const wedged = paneWedged(this.history);
-    const menu0 = applyNamedTemplates(buildMenu({ candidates: action.candidates, taskTestCommand: extractTaskTestCommand(input.task), commandStillRunning: this.running, screenClipped: this.lastClipped, history: this.history, paneWedged: wedged }));
+    // R185: fill the menu from the author when the writer offered fewer distinct actions than the cap (one helper call, thinking off)
+    let candidates = action.candidates; let sources: MenuSource[] = action.candidates.map(() => 'generator' as MenuSource); let authored = 0; let authorMs = 0;
+    if (hasAuthor && distinct < this.cfg.candidates && !action.taskComplete) {
+      const a0 = this.now();
+      try {
+        const alts = await this.deps.author!({ task: input.task, screen: screenBefore, stateCard: stateBefore, writerAnalysis: action.analysis, writerPlan: action.plan, writerCandidates: action.candidates.map((c) => ({ label: c.label, keystrokes: c.keystrokes })), count: Math.max(1, this.cfg.candidates - distinct) });
+        if (alts?.length) { const merged = mergeAuthoredCandidates(action.candidates, alts, this.cfg.candidates); candidates = merged.candidates; sources = merged.sources; authored = merged.sources.filter((x) => x === 'predictor').length; }
+      } catch { /* author failure = the writer's menu, never worse than the frame */ }
+      authorMs = this.now() - a0;
+    }
+    const menu0 = applyNamedTemplates(buildMenu({ candidates, sources, taskTestCommand: extractTaskTestCommand(input.task), commandStillRunning: this.running, screenClipped: this.lastClipped, history: this.history, paneWedged: wedged }));
     // R182: the keystroke guard runs BEFORE the menu step — a pane-killing or destructive candidate never reaches the chooser or the pane.
     const guarded = this.cfg.keyGuard ? applyKeyGuard(menu0, { running: this.running }) : { menu: menu0, blocked: [] as GuardRecord[], soft: [] as GuardRecord[] };
     let menu = guarded.menu;
@@ -155,7 +168,7 @@ export class FrameRunner {
         return false;
       });
     } else for (const rec of guarded.soft) guardRecords.push(rec);
-    const allBlocked = guardRecords.length > 0 && !menu.some((m) => m.source === 'generator');
+    const allBlocked = guardRecords.length > 0 && !menu.some((m) => m.source !== 'template');
     // the menu step
     let decision: ChooserDecision;
     let answers: Record<string, number> | null = null; let chooserLatencyMs = 0;
@@ -196,7 +209,7 @@ export class FrameRunner {
     const templatesChanged = tplKey !== this.lastTemplateKey; this.lastTemplateKey = tplKey;
     const content = buildFrameSuffix({ screen: clipped.text, stateCard, menu: nextMenu, consequences, templatesChanged: templatesChanged || this.turn === 1 }) + (extra ? `\n\n${extra}` : '');
     const row = buildChooserRow({ sessionId: input.sessionId, turn: this.turn, predictorModel: input.predictorModel + (this.cfg.chooser === 'jev' ? '+jev-chooser' : ''), menu, decision, executedKeys, nowMs: this.now() });
-    this.deps.recordEvent('frame_turn', { ...row, analysis: action.analysis.slice(0, 600), plan: action.plan.slice(0, 600), rc, waitedS: Math.round(waitedS), running, screenChars: screen.length, chooser: this.cfg.chooser, chooserLatencyMs, paneResets: this.paneResets, distinctCandidates: distinct, diversityReasks: this.diversityReasks, guard: guardRecords.length ? guardRecords.map((g) => ({ ...g, ...(g.outcome === 'soft' ? { outcome: decision.reasons.some((r) => r.startsWith(`${g.id} destructive but authorized`)) ? 'allowed_by_jev' : 'held' } : {}) })) : null, answers: answers ? Object.fromEntries(Object.entries(answers).map(([k, v]) => [k, Number(v.toFixed(3))])) : null, stepMs: this.now() - t0 });
-    return { content, isError: false, meta: { frame: 'terminus', turn: this.turn, pick: pick?.id ?? null, action: decision.action, rc, running, distinctCandidates: distinct, executedKeys: executedKeys ? normalizeKeys(executedKeys).slice(0, 120) : executedKeys } };
+    this.deps.recordEvent('frame_turn', { ...row, analysis: action.analysis.slice(0, 600), plan: action.plan.slice(0, 600), rc, waitedS: Math.round(waitedS), running, screenChars: screen.length, chooser: this.cfg.chooser, chooserLatencyMs, paneResets: this.paneResets, distinctCandidates: distinct, diversityReasks: this.diversityReasks, authored, authorMs, author: this.cfg.author, guard: guardRecords.length ? guardRecords.map((g) => ({ ...g, ...(g.outcome === 'soft' ? { outcome: decision.reasons.some((r) => r.startsWith(`${g.id} destructive but authorized`)) ? 'allowed_by_jev' : 'held' } : {}) })) : null, answers: answers ? Object.fromEntries(Object.entries(answers).map(([k, v]) => [k, Number(v.toFixed(3))])) : null, stepMs: this.now() - t0 });
+    return { content, isError: false, meta: { frame: 'terminus', turn: this.turn, pick: pick?.id ?? null, pickSource: pick?.source ?? null, action: decision.action, rc, running, distinctCandidates: distinct, authored, executedKeys: executedKeys ? normalizeKeys(executedKeys).slice(0, 120) : executedKeys } };
   }
 }

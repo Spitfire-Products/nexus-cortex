@@ -30,7 +30,7 @@ export interface FrameAction {
   error?: string;
 }
 
-export type MenuSource = 'generator' | 'template';
+export type MenuSource = 'generator' | 'template' | 'predictor';
 export type TemplateOp = 'wait' | 'interrupt' | 'show_more' | 'run_test' | 'reread_task' | 'finish' | 'reset_pane';
 export interface MenuItem extends FrameCandidate {
   id: string;
@@ -169,6 +169,8 @@ export interface MenuInput {
   history?: HistoryEntry[];
   /** R180: the pane is wedged (no prompt for several turns despite interrupts) — offer RESET THE PANE. */
   paneWedged?: boolean;
+  /** R185: per-candidate source (writer = generator, author = predictor); default generator */
+  sources?: MenuSource[];
 }
 
 /* ---------- R180 pane liveness (E2 field read 2026-09-22: a writer sent C-d, the tmux session died, 70 turns went to a dead pane) ---------- */
@@ -194,7 +196,7 @@ export function paneWedged(history: HistoryEntry[], minTurns: number = FRAME_DEF
 
 /** The Oregon Trail menu: the generator's candidates first (candidate[0] is the escape), then the code templates that apply. Pure. */
 export function buildMenu(input: MenuInput): MenuItem[] {
-  const items: MenuItem[] = input.candidates.map((c, i) => ({ ...c, id: `c${i + 1}`, source: 'generator' as const }));
+  const items: MenuItem[] = input.candidates.map((c, i) => ({ ...c, id: `c${i + 1}`, source: (input.sources?.[i] ?? 'generator') as MenuSource }));
   const t = (id: string, label: string, keystrokes: string, durationS: number, op: TemplateOp): MenuItem => ({ id, label, keystrokes, durationS, source: 'template', op });
   if (input.commandStillRunning) {
     items.push(t('t_wait', `WAIT ${FRAME_DEFAULTS.waitExtendS}s more for the running command`, '', FRAME_DEFAULTS.waitExtendS, 'wait'));
@@ -206,7 +208,7 @@ export function buildMenu(input: MenuInput): MenuItem[] {
   items.push(t('t_reread', 'RE-READ THE TASK TEXT', '', 0, 'reread_task'));
   items.push(t('t_finish', 'FINISH (declare the task complete)', '', 0, 'finish'));
   // annotate repeats so the chooser and the writer both see them as data
-  if (input.history) for (const it of items) { const n = repeatCount(input.history, it.keystrokes); if (n > 0 && it.source === 'generator') it.why = `${it.why ? it.why + ' · ' : ''}already run ${n}×`; }
+  if (input.history) for (const it of items) { const n = repeatCount(input.history, it.keystrokes); if (n > 0 && it.source !== 'template') it.why = `${it.why ? it.why + ' · ' : ''}already run ${n}×`; }
   return items;
 }
 
@@ -221,7 +223,7 @@ const TEMPLATE_NAMES: Array<[RegExp, TemplateOp]> = [
 export function applyNamedTemplates(menu: MenuItem[]): MenuItem[] {
   const templates = menu.filter((m) => m.source === 'template');
   return menu.map((m) => {
-    if (m.source !== 'generator') return m;
+    if (m.source === 'template') return m;
     const named = TEMPLATE_NAMES.find(([re]) => re.test(m.label))?.[1];
     if (!named) return m;
     const t = templates.find((x) => x.op === named);
@@ -230,6 +232,33 @@ export function applyNamedTemplates(menu: MenuItem[]): MenuItem[] {
     if (ownKeys && ownKeys !== t.keystrokes.trim()) return m; // the writer typed real keystrokes — those win over the name
     return { ...t, id: m.id, label: m.label, why: m.why, durationS: named === 'wait' && m.durationS > 0 ? m.durationS : t.durationS };
   });
+}
+
+/* ---------- R185 candidate author (pure parse) ---------- */
+/** Parse `LABEL: … | KEYS: …⏎ | WAIT: n | WHY: …` lines from the author; ⏎ → newline; drops empties, dedups by normalized keys. Pure. */
+export function parseAuthoredCandidates(text: string, max: number = 3): Array<{ label: string; keystrokes: string; durationS: number; why: string }> {
+  const out: Array<{ label: string; keystrokes: string; durationS: number; why: string }> = []; const seen = new Set<string>();
+  for (const raw of String(text ?? '').split('\n')) {
+    const m = raw.match(/LABEL:\s*(.*?)\s*\|\s*KEYS:\s*(.*?)\s*\|\s*WAIT:\s*(\d+)?\s*(?:\|\s*WHY:\s*(.*))?$/i);
+    if (!m) continue;
+    let keys = m[2]!.replace(/⏎/g, '\n').replace(/`/g, '').trim();
+    if (!keys) continue;
+    if (!/\n$/.test(keys) && !/^(C-[a-z]|Enter|Escape|Tab)$/i.test(keys)) keys += '\n';
+    const norm = normalizeKeys(keys).replace(/\s+/g, ' ').trim();
+    if (seen.has(norm)) continue; seen.add(norm);
+    out.push({ label: (m[1] || 'alternative').slice(0, 60), keystrokes: keys, durationS: Math.min(30, Math.max(2, Number(m[3] ?? 3) || 3)), why: (m[4] || '').slice(0, 160) });
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/** Merge author candidates after the writer's: new ids continue the c-numbering, source 'predictor'; duplicates of writer keys are dropped. Pure. */
+export function mergeAuthoredCandidates(writer: FrameCandidate[], authored: Array<{ label: string; keystrokes: string; durationS: number; why: string }>, cap: number): { candidates: FrameCandidate[]; sources: MenuSource[] } {
+  const norm = (k: string) => normalizeKeys(k).replace(/\s+/g, ' ').trim();
+  const have = new Set(writer.map((c) => norm(c.keystrokes)));
+  const candidates: FrameCandidate[] = [...writer]; const sources: MenuSource[] = writer.map(() => 'generator' as MenuSource);
+  for (const a of authored) { if (candidates.length >= cap) break; if (have.has(norm(a.keystrokes))) continue; have.add(norm(a.keystrokes)); candidates.push({ label: a.label, keystrokes: a.keystrokes, durationS: a.durationS, why: a.why }); sources.push('predictor'); }
+  return { candidates, sources };
 }
 
 /* ---------- R184 menu diversity ---------- */
@@ -299,7 +328,7 @@ export function applyKeyGuard(menu: MenuItem[], ctx: { running: boolean }): { me
   const blocked: GuardRecord[] = []; const soft: GuardRecord[] = [];
   const kept: MenuItem[] = [];
   for (const m of menu) {
-    if (m.source !== 'generator') { kept.push(m); continue; }
+    if (m.source === 'template') { kept.push(m); continue; }
     const v = guardKeystrokes(m.keystrokes, ctx);
     const rec = { id: m.id, label: m.label, keystrokes: normalizeKeys(m.keystrokes).slice(0, 80), reason: v.reason ?? '', class: v.class ?? '' };
     if (v.verdict === 'block') { blocked.push({ ...rec, outcome: 'blocked' }); continue; }

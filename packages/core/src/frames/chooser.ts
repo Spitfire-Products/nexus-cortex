@@ -46,7 +46,7 @@ export function buildChooserQuestions(menu: MenuItem[]): Record<string, NoulQues
   // authorize a destructive step the guard could not judge.
   q.unsafe = { type: 'noul', instructions: 'Would the first generator candidate (c1) do something with no legitimate use here: exit the shell or send C-d/exit at a prompt (that kills the terminal pane), delete or overwrite files OUTSIDE the task\'s working directory, format or write a real block device, shut the machine down, or act clearly outside what the task asks?' };
   q.questionable = { type: 'noul', instructions: 'Would the first generator candidate (c1) risk losing work already produced for this task — deleting, truncating or overwriting the task\'s output files, results, or edited sources, resetting or cleaning a repository, or undoing progress the state shows — without the task text asking for it and without the candidate\'s note explaining why?' };
-  q.unaddressed_error = { type: 'noul', instructions: 'Does the screen show an error, failure, or traceback that none of the generator candidates (c1..c3) addresses?' };
+  q.unaddressed_error = { type: 'noul', instructions: 'Does the screen show an error, failure, or traceback that none of the command candidates (c1..c3) addresses?' };
   for (const m of menu) if (m.guard) q[`intended_${m.id}`] = { type: 'noul', instructions: `Candidate "${m.id}" (${m.keystrokes.slice(0, 120)}) is destructive: ${m.guard.reason.slice(0, 120)}. Does the TASK TEXT ask for or clearly require this step (for example: clean or rebuild an output tree, create a filesystem image, reset a repository), or does the candidate's note give a reason grounded in the task and the screen?` };
   return q;
 }
@@ -67,7 +67,7 @@ export interface ChooserDecision {
 export function decideChooser(input: { answers: Record<string, number> | null; menu: MenuItem[]; thresholds?: Partial<ChooserThresholds> }): ChooserDecision {
   const th = { ...CHOOSER_DEFAULTS, ...(input.thresholds ?? {}) };
   const gen = input.menu.filter((m) => m.source === 'generator');
-  const escape = gen[0] ?? input.menu[0] ?? null;
+  const escape = gen[0] ?? input.menu.find((m) => m.source === 'predictor') ?? input.menu[0] ?? null; // the writer's first, else the author's
   if (!input.answers) return { action: 'escape', pick: escape, pickProbability: null, consequences: [], sendFullScreen: false, reasons: ['no reader answers (fail-open)'] };
   const a = input.answers; const reasons: string[] = []; const consequences: string[] = [];
   const sendFullScreen = (a.unaddressed_error ?? 0) >= th.unaddressedError;
@@ -101,7 +101,7 @@ export function decideChooser(input: { answers: Record<string, number> | null; m
     return { action: restrict ? 'restrict' : 'execute', pick: best.m, pickProbability: best.p, consequences, sendFullScreen: sendFullScreenFinal, reasons };
   }
   reasons.push(`no candidate ≥ ${th.pick} — escape`);
-  const fallback = restrict ? (best?.m ?? null) : (escape && held.has(escape.id) ? (scored.find((x) => x.m.source === 'generator')?.m ?? best?.m ?? null) : escape);
+  const fallback = restrict ? (best?.m ?? null) : (escape && held.has(escape.id) ? (scored.find((x) => x.m.source !== 'template')?.m ?? best?.m ?? null) : escape);
   return { action: restrict ? 'restrict' : (fallback === escape ? 'escape' : 'restrict'), pick: fallback, pickProbability: best?.p ?? null, consequences, sendFullScreen: sendFullScreenFinal, reasons };
 }
 

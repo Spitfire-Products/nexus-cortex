@@ -6561,6 +6561,7 @@ export class CortexOrchestrator {
         execute: (name, input, signal) => this.executorRegistry.execute(name, input as any, signal as any) as Promise<unknown>,
         recordEvent: (kind, detail) => { const st = this.getDecisionStore(); if (st) void st.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: kind as any, toolName: FRAME_TOOL_NAME, detail }).catch(() => {}); },
         jev: cfg.chooser === 'jev' && jevAvailable() ? async (state, questions) => { const r = await jevNoul(state, questions); return r ? r.probabilities : null; } : undefined,
+        author: cfg.author === 'helper' && this.helperMiddleware ? async (ctx) => this.helperMiddleware!.generateFrameCandidates(ctx) : undefined, // R185
       });
     }
     return this.frameRunner;

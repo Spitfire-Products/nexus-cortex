@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stripAnsi, parsePromptRc, promptIsBack, clipScreen, buildStateCard, repeatCount, parseFrameAction, buildMenu, buildFrameSuffix, waitPolicy, extractTaskTestCommand, applyNamedTemplates, paneIsDead, paneWedged, guardKeystrokes, applyKeyGuard, FRAME_DEFAULTS } from '../terminusFrame.js';
+import { stripAnsi, parsePromptRc, promptIsBack, clipScreen, buildStateCard, repeatCount, parseFrameAction, buildMenu, buildFrameSuffix, waitPolicy, extractTaskTestCommand, applyNamedTemplates, paneIsDead, paneWedged, guardKeystrokes, applyKeyGuard, parseAuthoredCandidates, mergeAuthoredCandidates, FRAME_DEFAULTS } from '../terminusFrame.js';
 
 const SCREEN = '\x1b[?2004hroot@16e9a8fba9d5:/app# python3 run.py\r\n\x1b[?2004l\rroute: NAN -> SUV\r\nsummary: {"total": 568.7}\r\n__RC=0\r\n\x1b[?2004hroot@16e9a8fba9d5:/app# ';
 
@@ -139,5 +139,22 @@ describe('R182 keystroke guard', () => {
     expect(g.soft.map((b) => b.id)).toEqual(['c2']);
     expect(g.menu.map((m) => m.id)).toEqual(['c2', 'c3', 't_wait', 't_interrupt', 't_reread', 't_finish']);
     expect(g.menu[0]!.guard?.class).toBe('destructive_soft'); expect(g.menu[1]!.guard).toBeUndefined();
+  });
+});
+
+describe('R185 candidate author — parse + merge', () => {
+  it('parses LABEL | KEYS | WAIT | WHY lines, restores newlines, dedups, caps', () => {
+    const txt = 'LABEL: check logs | KEYS: tail -n 20 /tmp/out.txt⏎ | WAIT: 3 | WHY: the build wrote there\nLABEL: dup | KEYS: tail -n 20 /tmp/out.txt⏎ | WAIT: 2 | WHY: same\nLABEL: grep errors | KEYS: grep -n -m 5 -i error /tmp/out.txt | WAIT: 99\nnoise line';
+    const c = parseAuthoredCandidates(txt, 3);
+    expect(c.map((x) => x.keystrokes)).toEqual(['tail -n 20 /tmp/out.txt\n', 'grep -n -m 5 -i error /tmp/out.txt\n']);
+    expect(c[0]!.durationS).toBe(3); expect(c[1]!.durationS).toBe(30); expect(c[0]!.why).toMatch(/build wrote/);
+    expect(parseAuthoredCandidates('garbage', 3)).toEqual([]);
+  });
+  it('merges after the writer, skips duplicates of writer keys, respects the cap, tags predictor', () => {
+    const w = [{ label: 'ls', keystrokes: 'ls\n', durationS: 2 }];
+    const m = mergeAuthoredCandidates(w, [{ label: 'same', keystrokes: 'ls \n', durationS: 2, why: '' }, { label: 'find', keystrokes: 'find . -name "*.py" | head\n', durationS: 3, why: 'x' }, { label: 'three', keystrokes: 'cat README.md | head -n 20\n', durationS: 3, why: 'y' }], 3);
+    expect(m.candidates.map((c) => c.label)).toEqual(['ls', 'find', 'three']); expect(m.sources).toEqual(['generator', 'predictor', 'predictor']);
+    const menu = buildMenu({ candidates: m.candidates, sources: m.sources });
+    expect(menu.slice(0, 3).map((x) => [x.id, x.source])).toEqual([['c1', 'generator'], ['c2', 'predictor'], ['c3', 'predictor']]);
   });
 });

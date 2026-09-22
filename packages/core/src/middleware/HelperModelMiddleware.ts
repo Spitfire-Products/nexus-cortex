@@ -17,6 +17,7 @@
  * - Supports Messages API, Chat Completions API, Google GenAI API
  */
 
+import { parseAuthoredCandidates } from '../frames/terminusFrame.js';
 import { frameHelperPrompt, type HelperFrameSpec } from './helpers/helperFrame.js';
 import { resolveMentorRoleConfig, mentorWireHint } from '../training/mentorRole.js';
 import { resolveVisionHelperModel } from '../tools/ToolProfile.js';
@@ -1821,6 +1822,43 @@ PREDICTION: <prediction>`;
       summary: (summaryMatch?.[1] || '').trim(),
       prediction: (predictionMatch?.[1] || '').trim(),
     };
+  }
+
+  /**
+   * R185 FRAME CANDIDATE AUTHOR — the turn-prediction slot with the roles flipped (R178 §1: "predict the agent, not the human"). Given the task,
+   * the pane, the state and the writer's own candidates, the helper (thinking off) proposes `count` GENUINELY DIFFERENT next actions for the
+   * Terminus-frame menu; the typed chooser picks among writer + author candidates. One short helper call per turn (~2–4 s, sub-cent).
+   * Returns parsed candidates; an unparseable answer returns [] (the menu falls back to the writer's candidates — never worse than the frame).
+   */
+  async generateFrameCandidates(context: {
+    task: string; screen: string; stateCard: string; writerAnalysis: string; writerPlan: string;
+    writerCandidates: Array<{ label: string; keystrokes: string }>; count: number; helperModelId?: string;
+  }): Promise<Array<{ label: string; keystrokes: string; durationS: number; why: string }>> {
+    const n = Math.max(1, Math.min(3, context.count));
+    const writer = context.writerCandidates.map((c, i) => `  W${i + 1}. ${c.label.slice(0, 60)} :: ${c.keystrokes.replace(/\n/g, '⏎').slice(0, 160)}`).join('\n') || '  (none)';
+    const prompt = `You are the ALTERNATIVES author for an agent working in one terminal pane on the task below. The agent (writer) has proposed the action(s) listed under WRITER. Propose ${n} GENUINELY DIFFERENT next action${n > 1 ? 's' : ''} — a different command, a different approach, or a different diagnostic — never a variant of a writer action, never something already run. Each must be a concrete shell command the agent can type now (end with ⏎ to run it), narrow and specific (the pane shows 45 lines), inside the task directory, never exit/C-d/rm -rf of roots.
+
+TASK (excerpt):
+${context.task.slice(0, 2500)}
+
+STATE:
+${context.stateCard.slice(0, 900)}
+
+SCREEN (tail):
+${context.screen.slice(-2500)}
+
+WRITER ANALYSIS: ${context.writerAnalysis.slice(0, 500)}
+WRITER PLAN: ${context.writerPlan.slice(0, 300)}
+WRITER:
+${writer}
+
+Respond with exactly ${n} line${n > 1 ? 's' : ''}, no other text, each in this format:
+LABEL: <3-6 words> | KEYS: <the exact command>⏎ | WAIT: <seconds 2-30> | WHY: <one short clause>`;
+    const modelId = context.helperModelId || process.env.HELPER_MODEL_ID || 'deepseek-flash';
+    const helperConfig = this.getHelperModelConfig(modelId);
+    const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
+    const text = await adapter.generate([{ role: 'user', content: prompt }], helperConfig, 400);
+    return parseAuthoredCandidates(text, n);
   }
 
   /**
