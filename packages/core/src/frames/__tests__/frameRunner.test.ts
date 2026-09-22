@@ -136,12 +136,12 @@ describe('R184 menu diversity with the chooser on', () => {
 describe('R185 candidate author in the runner', () => {
   const PROMPT = 'root@x:/app$ \n__RC=0\nroot@x:/app$ ';
   const cfg = { ...FRAME_CONFIG_DEFAULTS, frame: 'terminus' as const, chooser: 'jev' as const, candidates: 3, minCandidates: 2, author: 'helper' as const };
-  const one = { analysis: 'a', plan: 'p', candidates: [{ label: 'ls', keystrokes: 'ls\n', duration_s: 2 }] };
-  it('fills the menu from the author (no re-ask), Jev can pick an authored candidate, and the event banks the author', async () => {
+  const one = { analysis: 'a', plan: 'p', candidates: [{ label: 'ls', keystrokes: 'ls\n', duration_s: 2 }], single_reason: 'the directory is unknown, listing it is the only sensible first step' };
+  it('a justified single option is accepted, the author widens it, Jev can pick an authored candidate, and the event banks the author + reason', async () => {
     const log: string[] = []; const events: any[] = []; let asked: any = null;
     const deps = { ...fakeDeps([PROMPT], log), recordEvent: (_k: string, d: any) => events.push(d),
       author: async (ctx: any) => { asked = ctx; return [{ label: 'find py', keystrokes: 'find . -name "*.py" | head\n', durationS: 3, why: 'locate sources' }, { label: 'readme', keystrokes: 'head -n 20 README.md\n', durationS: 2, why: 'orient' }]; },
-      jev: async (_s: any, q: any) => { const a: Record<string, number> = { repeat: 0.1, unsafe: 0.05, questionable: 0.1, unaddressed_error: 0.1 }; for (const k of Object.keys(q)) if (k.startsWith('pick_')) a[k] = k === 'pick_c2' ? 0.9 : 0.2; return a; } };
+      jev: async (_s: any, q: any) => { const a: Record<string, number> = {}; for (const k of Object.keys(q)) if (k.startsWith('pick_')) a[k] = k === 'pick_c2' ? 0.9 : 0.2; return a; } };
     const r = new FrameRunner(cfg, deps);
     const res = await r.step({ action: one, task: 'find the python sources', elapsedMs: 0, deadlineMs: 0, cwd: '/app', sessionId: 's', predictorModel: 'gen' });
     expect(res.content).not.toContain('MENU NEEDS ALTERNATIVES');
@@ -150,6 +150,13 @@ describe('R185 candidate author in the runner', () => {
     expect(log.some((l) => l.startsWith('TmuxSession:send:find . -name'))).toBe(true);
     expect(res.content).toContain('The harness chose');
     const ev = events.find((e) => e.authored !== undefined); expect(ev.authored).toBe(2); expect(ev.candidates.map((c: any) => c.source)).toEqual(['generator', 'predictor', 'predictor', 'template', 'template']);
+    expect(ev.singleReason).toMatch(/only sensible/);
+  });
+  it('R186: with the author on, an UNJUSTIFIED single option is still handed back — the writer owes the menu', async () => {
+    const log: string[] = [];
+    const r = new FrameRunner(cfg, { ...fakeDeps([PROMPT], log), author: async () => [{ label: 'x', keystrokes: 'pwd\n', durationS: 2, why: '' }] });
+    const res = await r.step({ action: { analysis: 'a', plan: 'p', candidates: [{ label: 'ls', keystrokes: 'ls\n', duration_s: 2 }] }, task: 't', elapsedMs: 0, deadlineMs: 0, cwd: '/app', sessionId: 's', predictorModel: 'gen' });
+    expect(res.content).toContain('MENU NEEDS ALTERNATIVES'); expect(res.content).toContain('single_reason'); expect(log.some((l) => l.startsWith('TmuxSession:send'))).toBe(false);
   });
   it('an author failure or empty answer leaves the writer menu (never worse than the frame)', async () => {
     const log: string[] = [];

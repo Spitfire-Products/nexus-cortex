@@ -1080,7 +1080,8 @@ Use plan mode for tasks with genuine ambiguity — multiple reasonable architect
             },
             required: ['keystrokes']
           }
-        }
+        },
+        single_reason: { type: 'string', description: 'When the harness asks for two or more genuinely different options and only one action makes sense here: one sentence saying why (then a single candidate is accepted).' }
       },
       required: ['analysis', 'plan', 'candidates']
     },

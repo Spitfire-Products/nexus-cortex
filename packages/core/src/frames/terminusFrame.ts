@@ -25,6 +25,8 @@ export interface FrameAction {
   analysis: string;
   plan: string;
   candidates: FrameCandidate[];
+  /** R186: the writer's stated reason for offering a single option when the menu asks for two or more ('' = none given) */
+  singleReason: string;
   taskComplete: boolean;
   parsed: boolean;
   error?: string;
@@ -148,14 +150,15 @@ function toCandidate(x: unknown, i: number, maxDurationS: number): FrameCandidat
 export function parseFrameAction(text: string, opts: { maxCandidates?: number; maxDurationS?: number } = {}): FrameAction {
   const maxC = opts.maxCandidates ?? FRAME_DEFAULTS.maxCandidates; const maxD = opts.maxDurationS ?? FRAME_DEFAULTS.maxDurationS;
   const j = extractJson(text) as Record<string, unknown> | null;
-  if (!j) return { analysis: '', plan: '', candidates: [], taskComplete: false, parsed: false, error: 'no JSON object found' };
+  if (!j) return { analysis: '', plan: '', candidates: [], singleReason: '', taskComplete: false, parsed: false, error: 'no JSON object found' };
   const rawList = Array.isArray(j.candidates) ? j.candidates : Array.isArray(j.commands) ? j.commands : [];
   const candidates = rawList.map((c, i) => toCandidate(c, i, maxD)).filter((c): c is FrameCandidate => c !== null).slice(0, maxC);
   const taskComplete = j.task_complete === true || j.taskComplete === true;
   const analysis = typeof j.analysis === 'string' ? j.analysis.slice(0, 2000) : '';
   const plan = typeof j.plan === 'string' ? j.plan.slice(0, 2000) : '';
-  if (!candidates.length && !taskComplete) return { analysis, plan, candidates, taskComplete, parsed: false, error: 'no candidates and no task_complete' };
-  return { analysis, plan, candidates, taskComplete, parsed: true };
+  const singleReason = typeof j.single_reason === 'string' ? j.single_reason.trim().slice(0, 300) : typeof j.singleReason === 'string' ? j.singleReason.trim().slice(0, 300) : '';
+  if (!candidates.length && !taskComplete) return { analysis, plan, candidates, singleReason, taskComplete, parsed: false, error: 'no candidates and no task_complete' };
+  return { analysis, plan, candidates, singleReason, taskComplete, parsed: true };
 }
 
 /* ---------- menu ---------- */
@@ -332,7 +335,7 @@ export function applyKeyGuard(menu: MenuItem[], ctx: { running: boolean }): { me
     const v = guardKeystrokes(m.keystrokes, ctx);
     const rec = { id: m.id, label: m.label, keystrokes: normalizeKeys(m.keystrokes).slice(0, 80), reason: v.reason ?? '', class: v.class ?? '' };
     if (v.verdict === 'block') { blocked.push({ ...rec, outcome: 'blocked' }); continue; }
-    if (v.verdict === 'soft') { soft.push({ ...rec, outcome: 'soft' }); kept.push({ ...m, guard: { class: v.class!, reason: v.reason ?? '' } }); continue; }
+    if (v.verdict === 'soft') { soft.push({ ...rec, outcome: 'soft' }); kept.push({ ...m, guard: { class: v.class!, reason: v.reason ?? '' } }); continue; } // the flag rides in `guard` (chooser question + state), never in the writer's own `why`
     kept.push(m);
   }
   return { menu: kept, blocked, soft };

@@ -127,10 +127,12 @@ export class FrameRunner {
     // session so a writer that never adapts costs at most DIVERSITY_MAX_REASKS extra calls. No keystrokes run on a re-ask turn.
     const distinct = distinctCandidateCount(action.candidates);
     const hasAuthor = this.cfg.author === 'helper' && !!this.deps.author;
-    if (!hasAuthor && this.cfg.minCandidates >= 2 && distinct < this.cfg.minCandidates && !action.taskComplete && !this.diversityReaskPending && this.diversityReasks < FrameRunner.DIVERSITY_MAX_REASKS) {
+    // R186 (operator): the WRITER owes the menu — fewer than the minimum distinct options is handed back unexecuted unless the writer states why
+    // only one option makes sense (`single_reason`). The author still widens the menu afterwards; the re-ask is bounded per session as before.
+    if (this.cfg.minCandidates >= 2 && distinct < this.cfg.minCandidates && !action.singleReason && !action.taskComplete && !this.diversityReaskPending && this.diversityReasks < FrameRunner.DIVERSITY_MAX_REASKS) {
       this.diversityReasks += 1; this.diversityReaskPending = true;
       this.deps.recordEvent('frame_turn', { session_id: input.sessionId, turn_number: this.turn + 1, predictor_model: input.predictorModel, diversityReask: this.diversityReasks, distinctCandidates: distinct, analysis: action.analysis.slice(0, 600), plan: action.plan.slice(0, 600), chooser: this.cfg.chooser, stepMs: this.now() - t0 });
-      return { content: `MENU NEEDS ALTERNATIVES: you gave ${distinct} action${distinct === 1 ? '' : 's'}; the harness chooses among ${this.cfg.minCandidates}–${this.cfg.candidates} GENUINELY DIFFERENT actions each turn (a different command, a different approach, or a different diagnostic — not a variant of the same command). Resend the same analysis and plan with ${this.cfg.minCandidates}–${this.cfg.candidates} candidates, best first. Nothing was executed.${this.diversityReasks >= FrameRunner.DIVERSITY_MAX_REASKS ? ' (Last reminder: from now on single candidates run as given.)' : ''}`, isError: false, meta: { frame: 'terminus', turn: this.turn, diversityReask: this.diversityReasks, distinctCandidates: distinct } };
+      return { content: `MENU NEEDS ALTERNATIVES: you gave ${distinct} action${distinct === 1 ? '' : 's'}; the harness chooses among ${this.cfg.minCandidates}–${this.cfg.candidates} GENUINELY DIFFERENT actions each turn (a different command, a different approach, or a different diagnostic — not a variant of the same command). Resend the same analysis and plan with ${this.cfg.minCandidates}–${this.cfg.candidates} candidates, best first — or, if only one action makes sense here, resend it with "single_reason": one sentence saying why. Nothing was executed.${this.diversityReasks >= FrameRunner.DIVERSITY_MAX_REASKS ? ' (Last reminder: from now on single candidates run as given.)' : ''}`, isError: false, meta: { frame: 'terminus', turn: this.turn, diversityReask: this.diversityReasks, distinctCandidates: distinct } };
     }
     this.diversityReaskPending = false;
     await this.ensureSession(input.cwd, input.sessionId, input.signal);
@@ -158,7 +160,7 @@ export class FrameRunner {
     for (const b of guarded.blocked) preConsequences.push(`Candidate "${b.label}" (${b.keystrokes}) was BLOCKED by the keystroke guard: ${b.reason}. It was not sent.`);
     // R183 chooser OFF: a soft-destructive candidate runs only if the writer's `why` actually justifies it; with Jev on, Jev's intended_<id> decides (chooser.ts)
     const guardRecords: GuardRecord[] = [...guarded.blocked];
-    if (this.cfg.chooser !== 'jev' || !this.deps.jev) {
+    {
       menu = menu.filter((m) => {
         if (!m.guard) return true;
         const rec = guarded.soft.find((x) => x.id === m.id)!;
@@ -167,7 +169,7 @@ export class FrameRunner {
         preConsequences.push(`Candidate "${m.label}" (${rec.keystrokes}) is destructive — ${rec.reason} — and carried no justification, so it was not run. If the task requires it, resend it with a note ("why") that cites the task requirement.`);
         return false;
       });
-    } else for (const rec of guarded.soft) guardRecords.push(rec);
+    }
     const allBlocked = guardRecords.length > 0 && !menu.some((m) => m.source !== 'template');
     // the menu step
     let decision: ChooserDecision;
@@ -209,7 +211,7 @@ export class FrameRunner {
     const templatesChanged = tplKey !== this.lastTemplateKey; this.lastTemplateKey = tplKey;
     const content = buildFrameSuffix({ screen: clipped.text, stateCard, menu: nextMenu, consequences, templatesChanged: templatesChanged || this.turn === 1 }) + (extra ? `\n\n${extra}` : '');
     const row = buildChooserRow({ sessionId: input.sessionId, turn: this.turn, predictorModel: input.predictorModel + (this.cfg.chooser === 'jev' ? '+jev-chooser' : ''), menu, decision, executedKeys, nowMs: this.now() });
-    this.deps.recordEvent('frame_turn', { ...row, analysis: action.analysis.slice(0, 600), plan: action.plan.slice(0, 600), rc, waitedS: Math.round(waitedS), running, screenChars: screen.length, chooser: this.cfg.chooser, chooserLatencyMs, paneResets: this.paneResets, distinctCandidates: distinct, diversityReasks: this.diversityReasks, authored, authorMs, author: this.cfg.author, guard: guardRecords.length ? guardRecords.map((g) => ({ ...g, ...(g.outcome === 'soft' ? { outcome: decision.reasons.some((r) => r.startsWith(`${g.id} destructive but authorized`)) ? 'allowed_by_jev' : 'held' } : {}) })) : null, answers: answers ? Object.fromEntries(Object.entries(answers).map(([k, v]) => [k, Number(v.toFixed(3))])) : null, stepMs: this.now() - t0 });
+    this.deps.recordEvent('frame_turn', { ...row, analysis: action.analysis.slice(0, 600), plan: action.plan.slice(0, 600), rc, waitedS: Math.round(waitedS), running, screenChars: screen.length, chooser: this.cfg.chooser, chooserLatencyMs, paneResets: this.paneResets, distinctCandidates: distinct, diversityReasks: this.diversityReasks, authored, authorMs, author: this.cfg.author, guard: guardRecords.length ? guardRecords : null, singleReason: action.singleReason || null, answers: answers ? Object.fromEntries(Object.entries(answers).map(([k, v]) => [k, Number(v.toFixed(3))])) : null, stepMs: this.now() - t0 });
     return { content, isError: false, meta: { frame: 'terminus', turn: this.turn, pick: pick?.id ?? null, pickSource: pick?.source ?? null, action: decision.action, rc, running, distinctCandidates: distinct, authored, executedKeys: executedKeys ? normalizeKeys(executedKeys).slice(0, 120) : executedKeys } };
   }
 }

@@ -2154,6 +2154,8 @@ export class CortexOrchestrator {
     if (toolsToUse && toolsToUse.length > 0) {
       toolsToUse = this.applyAnchorIfArmed(toolsToUse);
     }
+    // R179 engagement evidence: in the terminal frame the offered surface must be FrameAction (+EndTurn) — log it so a silent narrowing is visible.
+    if (frameCfg.frame === 'terminus') console.log(`[Frame] tools offered (${toolsToUse?.length ?? 0}): ${(toolsToUse ?? []).map((t) => t.name).join(', ')}`);
 
     // StructuredOutput (grok-build port): when the caller requested
     // schema-constrained output, inject the request-scoped synthetic tool.
@@ -4717,6 +4719,8 @@ export class CortexOrchestrator {
     if (toolsToUse && toolsToUse.length > 0) {
       toolsToUse = this.applyAnchorIfArmed(toolsToUse);
     }
+    // R179 engagement evidence: in the terminal frame the offered surface must be FrameAction (+EndTurn) — log it so a silent narrowing is visible.
+    if (resolveFrameConfig(process.env).frame === 'terminus') console.log(`[Frame] tools offered (${toolsToUse?.length ?? 0}): ${(toolsToUse ?? []).map((t) => t.name).join(', ')}`);
 
     // StructuredOutput (grok-build port) — streaming mirror of the sendMessage
     // injection: appended AFTER server-side detection and the deferred filter;
@@ -6561,7 +6565,7 @@ export class CortexOrchestrator {
         execute: (name, input, signal) => this.executorRegistry.execute(name, input as any, signal as any) as Promise<unknown>,
         recordEvent: (kind, detail) => { const st = this.getDecisionStore(); if (st) void st.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: kind as any, toolName: FRAME_TOOL_NAME, detail }).catch(() => {}); },
         jev: cfg.chooser === 'jev' && jevAvailable() ? async (state, questions) => { const r = await jevNoul(state, questions); return r ? r.probabilities : null; } : undefined,
-        author: cfg.author === 'helper' && this.helperMiddleware ? async (ctx) => this.helperMiddleware!.generateFrameCandidates(ctx) : undefined, // R185
+        author: cfg.author === 'helper' && this.helperMiddleware ? async (ctx) => this.helperMiddleware!.generateFrameCandidates({ ...ctx, ...(cfg.authorModel ? { helperModelId: cfg.authorModel } : {}) }) : undefined, // R185 (+R186 author model)
       });
     }
     return this.frameRunner;

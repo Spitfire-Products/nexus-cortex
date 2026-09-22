@@ -11,9 +11,11 @@ describe('R178 chooser — state and questions', () => {
     expect((st.candidates as any[]).map((c) => c.id)).toEqual(['c1', 'c2', 't_test', 't_reread', 't_finish']);
     expect(JSON.stringify(st)).not.toMatch(/meets|verdict|judge/i);
   });
-  it('one pick question per menu item plus the four gates, all nouls', () => {
+  it('R186: exactly one pick question per option and nothing else, all nouls; code facts ride in the question text', () => {
     const q = buildChooserQuestions(menu);
-    expect(Object.keys(q)).toEqual(['pick_c1', 'pick_c2', 'pick_t_test', 'pick_t_reread', 'pick_t_finish', 'repeat', 'unsafe', 'questionable', 'unaddressed_error']);
+    expect(Object.keys(q)).toEqual(['pick_c1', 'pick_c2', 'pick_t_test', 'pick_t_reread', 'pick_t_finish']);
+    const flagged = buildChooserQuestions(applyKeyGuard(buildMenu({ candidates: [{ label: 'clean', keystrokes: 'rm -rf /app/*\n', durationS: 2 }] }), { running: false }).menu);
+    expect(flagged.pick_c1!.instructions).toMatch(/DESTRUCTIVE/);
     expect(Object.values(q).every((x) => x.type === 'noul')).toBe(true);
     expect(q.pick_c2!.instructions).toContain('inspect cfg');
   });
@@ -33,19 +35,11 @@ describe('R178 chooser — decisions', () => {
   });
   it('below the threshold everywhere → escape to c1 (the arm never does worse than the plain frame)', () => {
     const d = decideChooser({ answers: { pick_c1: 0.1, pick_c2: 0.2, pick_t_test: 0.25, repeat: 0, unsafe: 0, unaddressed_error: 0 }, menu });
-    expect(d.action).toBe('escape'); expect(d.pick!.id).toBe('c1'); expect(d.reasons.join()).toContain(`no candidate ≥ ${CHOOSER_DEFAULTS.pick}`);
+    expect(d.action).toBe('escape'); expect(d.pick!.id).toBe('c1'); expect(d.reasons.join()).toContain(`no option ≥ ${CHOOSER_DEFAULTS.pick}`);
   });
-  it('unsafe c1 → refuse with a consequence; nothing executes', () => {
-    const d = decideChooser({ answers: { pick_c1: 0.9, unsafe: 0.85, repeat: 0, unaddressed_error: 0 }, menu });
-    expect(d.action).toBe('refuse'); expect(d.pick).toBeNull(); expect(d.consequences[0]).toMatch(/refused/);
-  });
-  it('repeat c1 → restricted to templates; the best template runs, or none', () => {
-    const d = decideChooser({ answers: { pick_c1: 0.9, pick_c2: 0.5, pick_t_test: 0.6, pick_t_reread: 0.2, repeat: 0.8, unsafe: 0, unaddressed_error: 0 }, menu });
-    expect(d.action).toBe('restrict'); expect(d.pick!.id).toBe('t_test'); expect(d.consequences.join()).toMatch(/repeats a command/);
-  });
-  it('unaddressed error → sendFullScreen + consequence, independent of the pick', () => {
-    const d = decideChooser({ answers: { pick_c1: 0.7, unaddressed_error: 0.9, repeat: 0, unsafe: 0 }, menu });
-    expect(d.sendFullScreen).toBe(true); expect(d.action).toBe('execute'); expect(d.consequences[0]).toMatch(/re-plan from it/);
+  it('R186: gate answers in the payload are ignored — the pick decides (replay: gates changed 1.5% of E2 actions)', () => {
+    const d = decideChooser({ answers: { pick_c1: 0.9, pick_c2: 0.5, unsafe: 0.95, repeat: 0.95, questionable: 0.95, unaddressed_error: 0.95 }, menu });
+    expect(d.action).toBe('execute'); expect(d.pick!.id).toBe('c1'); expect(d.sendFullScreen).toBe(false); expect(d.consequences).toEqual([]);
   });
   it('thresholds are overridable', () => {
     const d = decideChooser({ answers: { pick_c1: 0.35, pick_c2: 0.1, repeat: 0, unsafe: 0, unaddressed_error: 0 }, menu, thresholds: { pick: 0.5 } });
@@ -54,39 +48,14 @@ describe('R178 chooser — decisions', () => {
 });
 
 describe('R178 chooser — banking row (turn_predictions shape + additive fields)', () => {
-  it('inserted when the reader\'s pick ran, shown when the escape ran c1, none when refused', () => {
+  it('inserted when the reader\'s pick ran, shown when the escape ran c1, none when nothing ran', () => {
     const ex = decideChooser({ answers: { pick_c1: 0.2, pick_c2: 0.8, repeat: 0, unsafe: 0, unaddressed_error: 0 }, menu });
     const row = buildChooserRow({ sessionId: 's1', turn: 4, predictorModel: 'deepseek-flash+jev-chooser', menu, decision: ex, executedKeys: 'cat cfg.json\n', nowMs: 1000 });
     expect(row).toMatchObject({ record_id: 's1:4', predicted_next: 'pytest -q\n', actual_next: 'cat cfg.json\n', prefill_provenance: 'inserted', pick_id: 'c2', pick_probability: 0.8, chooser_action: 'execute' });
     expect(row.candidates.length).toBe(5);
     const esc = buildChooserRow({ sessionId: 's1', turn: 5, predictorModel: 'x', menu, decision: decideChooser({ answers: null, menu }), executedKeys: 'pytest -q\n', nowMs: 1 });
     expect(esc.prefill_provenance).toBe('shown');
-    const ref = buildChooserRow({ sessionId: 's1', turn: 6, predictorModel: 'x', menu, decision: decideChooser({ answers: { pick_c1: 0.9, unsafe: 0.9, repeat: 0, unaddressed_error: 0 }, menu }), executedKeys: null, nowMs: 1 });
-    expect(ref.prefill_provenance).toBe('none'); expect(ref.chooser_action).toBe('refuse');
-  });
-});
-
-describe('R183 chooser — questionable + intended', () => {
-  const base = { pick_c1: 0.9, pick_c2: 0.4, pick_t_test: 0.1, pick_t_reread: 0.1, pick_t_finish: 0.05, repeat: 0.1, unsafe: 0.1, unaddressed_error: 0.1 };
-  it('the questions name the concrete unsafe cases, add questionable, and add intended_<id> only for guard-flagged candidates', () => {
-    const q = buildChooserQuestions(menu);
-    expect(q.unsafe!.instructions).toMatch(/C-d|exit the shell/); expect(q.questionable).toBeDefined(); expect(Object.keys(q).some((k) => k.startsWith('intended_'))).toBe(false);
-    const soft = applyKeyGuard(buildMenu({ candidates: [{ label: 'clean', keystrokes: 'rm -rf /app/*\n', durationS: 2 }] }), { running: false }).menu;
-    expect(buildChooserQuestions(soft).intended_c1!.instructions).toMatch(/TASK TEXT/);
-  });
-  it('questionable c1 without a why → restrict to templates + full screen; with a why → runs', () => {
-    const d = decideChooser({ answers: { ...base, questionable: 0.8 }, menu });
-    expect(d.action).toBe('restrict'); expect(d.pick?.source).toBe('template'); expect(d.sendFullScreen).toBe(true); expect(d.consequences.join(' ')).toMatch(/lose work/);
-    const justified = buildMenu({ candidates: [{ label: 'run tests', keystrokes: 'pytest -q\n', durationS: 30, why: 'the task requires the suite to be re-run after the fix' }] });
-    const d2 = decideChooser({ answers: { pick_c1: 0.9, pick_t_reread: 0.1, pick_t_finish: 0.05, repeat: 0.1, unsafe: 0.1, unaddressed_error: 0.1, questionable: 0.8 }, menu: justified });
-    expect(d2.action).toBe('execute'); expect(d2.pick?.id).toBe('c1');
-  });
-  it('a guard-flagged candidate runs only when the task authorizes it (intended ≥ 0.6)', () => {
-    const soft = applyKeyGuard(buildMenu({ candidates: [{ label: 'clean', keystrokes: 'rm -rf /app/*\n', durationS: 2 }, { label: 'ls', keystrokes: 'ls\n', durationS: 2 }] }), { running: false }).menu;
-    const a = { pick_c1: 0.9, pick_c2: 0.5, pick_t_reread: 0.1, pick_t_finish: 0.05, repeat: 0.1, unsafe: 0.2, unaddressed_error: 0.1, questionable: 0.3 };
-    const held = decideChooser({ answers: { ...a, intended_c1: 0.2 }, menu: soft });
-    expect(held.pick?.id).toBe('c2'); expect(held.consequences.join(' ')).toMatch(/not clearly call for it/);
-    const ok = decideChooser({ answers: { ...a, intended_c1: 0.85 }, menu: soft });
-    expect(ok.pick?.id).toBe('c1'); expect(ok.action).toBe('execute');
+    const none = buildChooserRow({ sessionId: 's1', turn: 6, predictorModel: 'x', menu, decision: { action: 'refuse', pick: null, pickProbability: null, consequences: [], sendFullScreen: false, reasons: ['all blocked'] }, executedKeys: null, nowMs: 1 });
+    expect(none.prefill_provenance).toBe('none'); expect(none.chooser_action).toBe('refuse');
   });
 });

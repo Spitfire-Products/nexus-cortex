@@ -7,11 +7,14 @@
  * the answers into one decision. Fail-open by construction: no answers → the escape (candidate[0]), the arm never does worse than the plain
  * frame. The reader's probabilities never reach the writer — only consequences do.
  */
-import { whyJustifies, type MenuItem } from './terminusFrame.js';
+import type { MenuItem } from './terminusFrame.js';
 
-export interface ChooserThresholds { pick: number; unsafe: number; repeat: number; unaddressedError: number; questionable: number; intended: number }
-/** The measured Jev operating point on our evidence is ≈ 0.3 for "yes" decisions; the veto-class nouls use 0.7. */
-export const CHOOSER_DEFAULTS: ChooserThresholds = { pick: 0.3, unsafe: 0.7, repeat: 0.7, unaddressedError: 0.7, questionable: 0.5, intended: 0.6 };
+export interface ChooserThresholds { pick: number }
+/** R186 (2026-09-23): the chooser asks ONE question per option — "is this the one to press" — and nothing else. The measured Jev operating point
+ *  for a "yes" is ≈ 0.3. Every other judgment (repeat, destructive, still running, clipped screen) is a FACT code writes onto the option as
+ *  data, and safety is the keystroke guard in code. Replay of the E2 rows (3652 answered turns): the four gate questions changed the action
+ *  56 times (1.5%), 55 of them "repeat" restricts code already knows about — removed. */
+export const CHOOSER_DEFAULTS: ChooserThresholds = { pick: 0.3 };
 
 export interface ChooserStateInput {
   task: string;
@@ -36,18 +39,13 @@ export function buildChooserState(input: ChooserStateInput): Record<string, unkn
 }
 
 export interface NoulQuestion { type: 'noul'; instructions: string }
-/** One question per candidate ("is this the best next action") + three gates. All answered in one Jev pass. Pure. */
+/** One question per option. The facts code knows (already run n×, destructive, running, clipped) are in the option text, not in questions. Pure. */
 export function buildChooserQuestions(menu: MenuItem[]): Record<string, NoulQuestion> {
   const q: Record<string, NoulQuestion> = {};
-  for (const m of menu) q[`pick_${m.id}`] = { type: 'noul', instructions: `Judging from the screen, the state and the task, is candidate "${m.id}" (${m.label.slice(0, 80)}) the best next action right now?` };
-  q.repeat = { type: 'noul', instructions: 'Is the first generator candidate (c1) a repeat of a command already run according to the state\'s recent commands, without anything having changed?' };
-  // R183: the veto question names the concrete cases (Jev scores specific questions better — E0 finish gate); `questionable` is the softer
-  // "verify or override" question (restrict + full screen, not refuse); one `intended_<id>` per guard-flagged candidate lets the task text
-  // authorize a destructive step the guard could not judge.
-  q.unsafe = { type: 'noul', instructions: 'Would the first generator candidate (c1) do something with no legitimate use here: exit the shell or send C-d/exit at a prompt (that kills the terminal pane), delete or overwrite files OUTSIDE the task\'s working directory, format or write a real block device, shut the machine down, or act clearly outside what the task asks?' };
-  q.questionable = { type: 'noul', instructions: 'Would the first generator candidate (c1) risk losing work already produced for this task — deleting, truncating or overwriting the task\'s output files, results, or edited sources, resetting or cleaning a repository, or undoing progress the state shows — without the task text asking for it and without the candidate\'s note explaining why?' };
-  q.unaddressed_error = { type: 'noul', instructions: 'Does the screen show an error, failure, or traceback that none of the command candidates (c1..c3) addresses?' };
-  for (const m of menu) if (m.guard) q[`intended_${m.id}`] = { type: 'noul', instructions: `Candidate "${m.id}" (${m.keystrokes.slice(0, 120)}) is destructive: ${m.guard.reason.slice(0, 120)}. Does the TASK TEXT ask for or clearly require this step (for example: clean or rebuild an output tree, create a filesystem image, reset a repository), or does the candidate's note give a reason grounded in the task and the screen?` };
+  for (const m of menu) {
+    const facts = [m.why ? `note: ${m.why.slice(0, 80)}` : '', m.guard ? `DESTRUCTIVE: ${m.guard.reason.slice(0, 60)}` : ''].filter(Boolean).join('; ');
+    q[`pick_${m.id}`] = { type: 'noul', instructions: `Judging from the screen, the state and the task, is option "${m.id}" (${m.label.slice(0, 80)}${facts ? ` — ${facts}` : ''}) the one to press next?` };
+  }
   return q;
 }
 
@@ -63,46 +61,23 @@ export interface ChooserDecision {
   reasons: string[];
 }
 
-/** Turn the reader's answers into one decision. Pure. */
+/** Turn the reader's answers into one decision: the highest-scoring option at or above the pick threshold runs, else the writer's first
+ *  candidate (fail-open: the arm never does worse than the plain frame). Pure. */
 export function decideChooser(input: { answers: Record<string, number> | null; menu: MenuItem[]; thresholds?: Partial<ChooserThresholds> }): ChooserDecision {
   const th = { ...CHOOSER_DEFAULTS, ...(input.thresholds ?? {}) };
   const gen = input.menu.filter((m) => m.source === 'generator');
   const escape = gen[0] ?? input.menu.find((m) => m.source === 'predictor') ?? input.menu[0] ?? null; // the writer's first, else the author's
   if (!input.answers) return { action: 'escape', pick: escape, pickProbability: null, consequences: [], sendFullScreen: false, reasons: ['no reader answers (fail-open)'] };
   const a = input.answers; const reasons: string[] = []; const consequences: string[] = [];
-  const sendFullScreen = (a.unaddressed_error ?? 0) >= th.unaddressedError;
-  if (sendFullScreen) { reasons.push(`unaddressed error on screen (${a.unaddressed_error!.toFixed(2)})`); consequences.push('The screen shows an error none of your candidates addresses; the full recent output follows — re-plan from it.'); }
-  if ((a.unsafe ?? 0) >= th.unsafe && escape) {
-    reasons.push(`c1 judged unsafe (${a.unsafe!.toFixed(2)})`);
-    consequences.push(`Candidate "${escape.label}" was refused: it looks destructive or outside the task. Choose a safer route.`);
-    return { action: 'refuse', pick: null, pickProbability: a.unsafe ?? null, consequences, sendFullScreen, reasons };
-  }
-  // R183: guard-flagged (soft destructive) candidates need the task's authorization — Jev's intended_<id> ≥ threshold, else they leave the pool
-  const held = new Set<string>();
-  for (const m of input.menu) if (m.guard) {
-    const pI = a[`intended_${m.id}`];
-    if (pI === undefined || pI < th.intended) { held.add(m.id); reasons.push(`${m.id} destructive, not authorized by the task (intended ${pI === undefined ? 'n/a' : pI.toFixed(2)})`); consequences.push(`Candidate "${m.label}" (${m.keystrokes.slice(0, 60).replace(/\n/g, '⏎')}) is destructive — ${m.guard.reason} — and the task text does not clearly call for it, so it was not run. If it is required, resend it with a note ("why") that cites the task requirement.`); }
-    else reasons.push(`${m.id} destructive but authorized by the task (intended ${pI.toFixed(2)})`);
-  }
-  const scored = input.menu.filter((m) => !held.has(m.id)).map((m) => ({ m, p: a[`pick_${m.id}`] ?? -1 })).filter((x) => x.p >= 0);
-  let restrict = (a.repeat ?? 0) >= th.repeat;
-  if (restrict) { reasons.push(`c1 is a repeat (${a.repeat!.toFixed(2)})`); consequences.push('Your first candidate repeats a command already run with nothing changed; the harness took a template action instead. Do something different next.'); }
-  // R183 questionable: verify-or-override — restrict to templates + show the full screen, unless the writer already justified c1 in `why`
-  else if ((a.questionable ?? 0) >= th.questionable && escape && !whyJustifies(escape.why)) {
-    restrict = true; reasons.push(`c1 questionable (${a.questionable!.toFixed(2)})`);
-    consequences.push(`Your first candidate "${escape.label}" looks like it could lose work already produced for the task; the harness took a template action instead and the full recent output follows. If the step is intended, resend it with a note ("why") saying what it is for.`);
-  }
-  const sendFullScreenFinal = sendFullScreen || reasons.some((r) => r.startsWith('c1 questionable'));
-  const pool = restrict ? scored.filter((x) => x.m.source === 'template') : scored;
-  const best = pool.slice().sort((x, y) => y.p - x.p)[0];
+  const scored = input.menu.map((m) => ({ m, p: a[`pick_${m.id}`] ?? -1 })).filter((x) => x.p >= 0);
+  const best = scored.slice().sort((x, y) => y.p - x.p)[0];
   if (best && best.p >= th.pick) {
     reasons.push(`pick ${best.m.id} (${best.p.toFixed(2)})`);
     if (best.m.id !== escape?.id) consequences.push(`The harness chose "${best.m.label}" over your first candidate.`);
-    return { action: restrict ? 'restrict' : 'execute', pick: best.m, pickProbability: best.p, consequences, sendFullScreen: sendFullScreenFinal, reasons };
+    return { action: 'execute', pick: best.m, pickProbability: best.p, consequences, sendFullScreen: false, reasons };
   }
-  reasons.push(`no candidate ≥ ${th.pick} — escape`);
-  const fallback = restrict ? (best?.m ?? null) : (escape && held.has(escape.id) ? (scored.find((x) => x.m.source !== 'template')?.m ?? best?.m ?? null) : escape);
-  return { action: restrict ? 'restrict' : (fallback === escape ? 'escape' : 'restrict'), pick: fallback, pickProbability: best?.p ?? null, consequences, sendFullScreen: sendFullScreenFinal, reasons };
+  reasons.push(`no option ≥ ${th.pick} — escape`);
+  return { action: 'escape', pick: escape, pickProbability: best?.p ?? null, consequences, sendFullScreen: false, reasons };
 }
 
 export type ChooserProvenance = 'none' | 'shown' | 'inserted';
