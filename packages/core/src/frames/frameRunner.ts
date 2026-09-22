@@ -28,7 +28,7 @@ function resultText(r: unknown): string {
 }
 /** The capture handler wraps the pane between two `=====` rules. */
 function unwrapCapture(text: string): string {
-  const parts = text.split(/\n={20,}\n?/);
+  const parts = text.split(/\n?={20,}\n?/); // the rule may touch the pane text on either side
   return parts.length >= 3 ? parts[1]! : text;
 }
 
@@ -74,9 +74,16 @@ export class FrameRunner {
   private async waitAndObserve(durationS: number, signal?: AbortSignal): Promise<{ screen: string; running: boolean; waitedS: number }> {
     const t0 = this.now();
     const dur = Math.min(Math.max(0, durationS), this.cfg.waitCapS); // the cell's cap on one action's requested wait
-    let waited = 0;
-    while (waited < dur && !signal?.aborted) { await this.sleep(Math.min(2000, Math.max(200, (dur - waited) * 1000))); waited = (this.now() - t0) / 1000; }
-    let screen = await this.capture(this.cfg.screenLines, signal); let prev = screen;
+    let waited = 0; let screen = ''; let prev = '';
+    // EARLY RETURN (4.124.5): the requested duration is an upper bound — poll the pane every ~2 s and return as soon as the prompt is back.
+    // Field read (E1/E2 on 4.124.4): the writer often requests the 60-s cap for commands that finish in 2 s; median waits were 20–30 s.
+    while (!signal?.aborted) {
+      const slice = Math.min(2000, Math.max(200, (dur - waited) * 1000));
+      if (waited >= dur) break;
+      await this.sleep(slice); waited = (this.now() - t0) / 1000;
+      if (waited >= Math.min(dur, 2)) { prev = screen; screen = await this.capture(this.cfg.screenLines, signal); if (promptIsBack(screen)) return { screen, running: false, waitedS: waited }; }
+    }
+    if (!screen) screen = await this.capture(this.cfg.screenLines, signal); prev = prev || screen;
     for (let i = 0; i < 4; i++) {
       const d = waitPolicy({ promptBack: promptIsBack(screen), screenChanged: i === 0 ? true : screen !== prev, waitedS: waited, durationS: dur, graceS: FRAME_DEFAULTS.graceS });
       if (d === 'done') return { screen, running: false, waitedS: waited };
