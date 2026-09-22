@@ -24,20 +24,36 @@ const KINDS: ReqKind[] = ['threshold', 'contract', 'exactness', 'constraint', 'l
 
 export const REQ_LEDGER_SYSTEM =
   'You extract the REQUIREMENT LEDGER of a task in a real terminal container BEFORE any solution exists. You are given only the TASK text ' +
-  'and an ENVIRONMENT REPORT. List every requirement the task STATES that a hidden grader could check — numeric thresholds (recall ≥ 0.96), ' +
-  'contract branches (a duplicate submission must not rewrite the ledger), exactness rules (positions must be exact), constraints (the DOM ' +
-  'must not change), latency bounds (within 5 s after a respawn), required artifacts (a file at a path in a format), commands that must ' +
-  'work. One line per requirement, most discriminating first, quoting or closely paraphrasing the task. For each, give a read-only shell ' +
-  'CHECK that EXITS NON-ZERO with a printed reason when that requirement is NOT met (prefer the task\'s own artifacts, paths, commands and ' +
-  'numbers; a check may run a program twice, diff against a baseline, or time a command; never create, modify or delete anything; no ' +
-  'installs; under 20 seconds), or the word NONE when no shell check can decide it. Output ONLY lines of the form ' +
+  'and an ENVIRONMENT REPORT. List every requirement the task STATES that a hidden grader could check: numeric thresholds, contract ' +
+  'branches (what must or must not happen on a second call, a bad input, a duplicate), exactness rules, do-not-change constraints on ' +
+  'named files or state, latency bounds, required artifacts (a file at a path in a format), commands that must work. One line per ' +
+  'requirement, most discriminating first, quoting or closely paraphrasing THIS task. Every line must come from the TASK text: never ' +
+  'invent a requirement, never copy the example (it is from an unrelated task). SKIP instructions about the agent\'s own conduct — time ' +
+  'limits, "do not cheat", "no online solutions or hints", honesty rules — a grader cannot check them and they waste lines. For each ' +
+  'requirement give a read-only shell CHECK that EXITS NON-ZERO with a printed reason when it is NOT met (prefer the task\'s own artifacts, ' +
+  'paths, commands and numbers; a check may run a program twice, diff against a baseline, or time a command; never create, modify or delete ' +
+  'anything; no installs; under 20 seconds), or the word NONE when no shell check can decide it. When the task or the environment names a ' +
+  'checker, test or verification script, invoke it EXACTLY as the task text or the environment report shows it invoked; never guess ' +
+  'arguments it does not document — a wrongly-invoked checker is a false failure that misleads the writer. Output ONLY lines of the form ' +
   '`REQ <n> | <kind> | <requirement> | CHECK: <command or NONE>` where <kind> is one of threshold, contract, exactness, constraint, latency, ' +
   'artifact, command, other. Nothing else.';
+
+/** R191: lines about the agent's conduct (time budget, no cheating, no online hints, honesty) are instructions, not gradable requirements. Pure. */
+export const REQ_BOILERPLATE_RE = /\b(within|in under|complete(?:d)?\s+(?:the\s+)?(?:task\s+)?within)\s+\d[\d,]*\s*(?:seconds?|secs?|minutes?|mins?|hours?|hrs?)\b|\b(?:do not|don't|must not|never)\s+cheat\b|\bonline solutions?\b|\bhints? specific to (?:this|the) task\b|\bbe honest\b|\bhonest(?:ly)? report\b/i;
+export function isBoilerplateRequirement(text: string): boolean { return REQ_BOILERPLATE_RE.test(String(text ?? '')); }
+
+/** R191: a check whose failure is the CHECK's own defect (usage error, missing script/tool, syntax error in the one-liner), not the work's. Pure. */
+const BROKEN_CHECK_RE = /^usage:|\busage: |unrecognized arguments|the following arguments are required|invalid choice:|error: argument |command not found|: not found\b|can't open file|No module named|\bSyntaxError\b|\bNameError\b|\bIndentationError\b|unexpected EOF while looking for matching|Syntax error: /im;
+export function looksLikeBrokenCheck(result: string): boolean {
+  const r = String(result ?? ''); const head = r.split('\n', 1)[0] ?? '';
+  if (/→ PASSED/.test(head)) return false;
+  return BROKEN_CHECK_RE.test(r.slice(head.length));
+}
 
 export function buildRequirementLedgerPrompt(task: string, envReport: string | undefined, max: number): string {
   const parts = [`TASK:\n${(task || '').trim().slice(0, TASK_TEXT_CAP)}`];
   if (envReport && envReport.trim()) parts.push(`ENVIRONMENT REPORT (at task start):\n${envReport.trim().slice(0, 2500)}`);
-  parts.push(`Write at most ${max} REQ lines. Example:\nREQ 1 | contract | a second identical submission must not rewrite crm_leads.json | CHECK: cp /app/data/crm_leads.json /tmp/a.json && npm run -s submit >/dev/null 2>&1; cmp -s /app/data/crm_leads.json /tmp/a.json || { echo "ledger rewritten by a duplicate submit"; exit 1; }`);
+  parts.push(`Write at most ${max} REQ lines. Format example (from an UNRELATED task — never copy it):\nREQ 1 | contract | a second identical submission must not rewrite crm_leads.json | CHECK: cp /app/data/crm_leads.json /tmp/a.json && npm run -s submit >/dev/null 2>&1; cmp -s /app/data/crm_leads.json /tmp/a.json || { echo "ledger rewritten by a duplicate submit"; exit 1; }`);
   return parts.join('\n\n');
 }
 
@@ -54,6 +70,7 @@ export function parseRequirementLedger(text: string, max = 8): RequirementLine[]
     if (check && check.length > 400) check = check.slice(0, 400);
     const key = reqText.toLowerCase();
     if (!reqText || seen.has(key)) continue;
+    if (isBoilerplateRequirement(reqText)) continue; // R191
     seen.add(key);
     out.push({ id: `R${out.length + 1}`, kind, text: reqText, check });
     if (out.length >= max) break;
@@ -65,12 +82,16 @@ export function initLedger(lines: RequirementLine[]): LedgerEntry[] {
   return lines.map((l) => ({ ...l, status: l.check ? 'open' : 'unverifiable', runs: 0 }));
 }
 
-/** Apply one round of check results. passed → exercised; failed → failed; inconclusive (timeout, refused, no exit) leaves the status. Pure. */
-export function updateLedger(entries: LedgerEntry[], results: Array<{ id: string; result: string; cls: 'passed' | 'failed' | 'inconclusive' }>): LedgerEntry[] {
+/** Apply one round of check results. passed → exercised; failed → failed; inconclusive (timeout, refused, no exit) leaves the status;
+ *  broken (R191: the CHECK itself is defective — usage error, missing script, syntax error) → the line becomes UNVERIFIABLE with its check
+ *  dropped, so it is never re-run, never counted as a failure, and falls to Jev like any other line without a shell check. Pure. */
+export type CheckOutcome = 'passed' | 'failed' | 'inconclusive' | 'broken';
+export function updateLedger(entries: LedgerEntry[], results: Array<{ id: string; result: string; cls: CheckOutcome }>): LedgerEntry[] {
   const by = new Map(results.map((r) => [r.id, r]));
   return entries.map((e) => {
     const r = by.get(e.id);
     if (!r || !e.check) return e;
+    if (r.cls === 'broken') return { ...e, status: 'unverifiable' as ReqStatus, check: null, runs: e.runs + 1, lastResult: `harness check was malformed and has been dropped (${(r.result.split('\n')[1] ?? '').trim().slice(0, 160)})` };
     const status: ReqStatus = r.cls === 'passed' ? 'exercised' : r.cls === 'failed' ? 'failed' : e.status;
     return { ...e, status, runs: e.runs + 1, lastResult: r.result.slice(0, 1200) };
   });

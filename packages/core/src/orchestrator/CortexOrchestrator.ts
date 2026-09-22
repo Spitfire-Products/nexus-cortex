@@ -33,7 +33,7 @@ import { jevAvailable, jevNoul, buildGapHoldState, GAP_HOLD_QUESTIONS } from '..
 import { resolveFrameConfig, FRAME_CONTRACT, FRAME_TOOL_NAME } from '../frames/frameConfig.js'; // R179
 import { FrameRunner } from '../frames/frameRunner.js'; // R179
 import { emptySessionUsage, addMainUsage, type SessionUsage } from '../training/usageAccounting.js'; // R190
-import { parseRequirementLedger, initLedger, updateLedger, ledgerCounts, ledgerHoldable, formatLedgerForWriter, formatLedgerForJudge, formatLedgerHoldMessage, buildLedgerJevState, buildLedgerJevQuestions, applyLedgerJevAnswers, type LedgerEntry } from '../training/requirementLedger.js'; // R187
+import { parseRequirementLedger, initLedger, updateLedger, ledgerCounts, ledgerHoldable, formatLedgerForWriter, formatLedgerForJudge, formatLedgerHoldMessage, buildLedgerJevState, buildLedgerJevQuestions, applyLedgerJevAnswers, looksLikeBrokenCheck, type LedgerEntry, type CheckOutcome } from '../training/requirementLedger.js'; // R187 / R191
 import { isValueShapedTask, parseDerivationReply, methodsDiffer, parseValueLines, extractNumbers, reconcile, buildDerivationHoldMessage, isDerivationCommandAllowed, checkRunPassed, checkRunBody } from '../training/independentDerivation.js'; // R176
 import { resolveDeadlineExitConfig, deadlineExitCallBudget, parseDeadlineExitVerdict } from '../training/deadlineExitMentor.js';
 import { isTaskShaped } from './requirementsVerification.js';
@@ -675,6 +675,7 @@ export class CortexOrchestrator {
   private reqLedgerHolds = 0; // R187: ledger holds used this turn
   private reqLedgerRetried = false; // R187c: one re-author at the first finish after an empty lift-time result
   private reqLedgerMeta = { genLatencyMs: 0, raw: 0, refused: 0 }; // R187
+  private reqLedgerBroken = new Set<string>(); // R191: ids whose check was dropped as malformed
   private specFailHistory = new Map<string, { streak: number; sig: string }>(); // R174b: consecutive identical spec failures
   private lastHoldMs = 0; // R173c: wall clock of the last hold/veto this turn
   private derivationHolds = 0; // R176: independent-derivation holds this turn (max 1)
@@ -1271,7 +1272,10 @@ export class CortexOrchestrator {
         if (this.reqLedger === null) this.reqLedger = await (this.reqLedgerPromise ?? this.authorRequirementLedger(task));
         // R187c: an empty ledger from a timed-out lift-time call is retried ONCE here (the judge would otherwise run with no lines all session)
         if (this.reqLedger.length === 0 && !this.reqLedgerRetried) { this.reqLedgerRetried = true; this.reqLedger = await this.authorRequirementLedger(task); }
-        const runs = this.reqLedger.filter((e) => e.check).map((e) => { const r = runCheck(judgeCwd, e.check!, jcfg); return { id: e.id, result: r, cls: classifyCheckRun(r) }; });
+        // R191: a check whose failure is its own defect (usage error, missing script, syntax error) is BROKEN, not FAILED — L7 09-23: photonic's
+        // extractor guessed a checker's CLI, two lines failed at every finish on a passing solution, and the writer spent turns on the "harness quirk".
+        const runs = this.reqLedger.filter((e) => e.check).map((e) => { const r = runCheck(judgeCwd, e.check!, jcfg); const k = classifyCheckRun(r); const cls: CheckOutcome = k !== 'passed' && looksLikeBrokenCheck(r) ? 'broken' : k; return { id: e.id, result: r, cls }; });
+        for (const x of runs) if (x.cls === 'broken') this.reqLedgerBroken.add(x.id);
         this.reqLedger = updateLedger(this.reqLedger, runs);
         // R187b: Jev decides the lines the shell could not — typed per-line questions on the writer's attestation + harness evidence.
         if (cfg.reqLedgerJev && jevAvailable() && this.reqLedger.some((e) => e.status === 'open' || e.status === 'unverifiable')) {
@@ -1456,6 +1460,7 @@ export class CortexOrchestrator {
           vetoMinRemaining: cfg.vetoMinRemaining, belowFloor, holdProgressed: holdProg, holdGapMs: msSinceLastHold, planSim: Number(planSimilarity(this.judgePriorPlan, verdict.plan).toFixed(3)), msSinceLastHold, // R173c
           derivation: cfg.derivation, derivationAgreement: derivationInfo?.agreement ?? null, derivationHeld: !!derivationHold, // R176
           reqLedger: cfg.reqLedger, reqLines: reqCounts.lines, reqOpen: reqCounts.open, reqExercised: reqCounts.exercised, reqFailed: reqCounts.failed, reqUnverifiable: reqCounts.unverifiable, reqHeld: !!reqHold, reqHolds: this.reqLedgerHolds, reqGenLatencyMs: this.reqLedgerMeta.genLatencyMs, reqJev: cfg.reqLedgerJev, reqJevAsked: reqJev?.asked ?? 0, reqJevClosed: reqJev?.closed ?? [], reqJevLatencyMs: reqJev?.latencyMs ?? 0, // R187/R187b
+          reqBroken: [...this.reqLedgerBroken], reqLinesDetail: (this.reqLedger ?? []).map((e) => ({ id: e.id, kind: e.kind, status: e.status, check: !!e.check, runs: e.runs, last: (e.lastResult ?? '').split('\n').slice(0, 2).join(' / ').slice(0, 200) })), // R191: per-line outcomes so a false-failure read is possible from the decisions file
           latencyMs, rawLen: (text ?? '').length,
           deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,
           liftPlanChars: this.liftPlanText.length,
