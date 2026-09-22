@@ -32,6 +32,7 @@ import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects
 import { jevAvailable, jevNoul, buildGapHoldState, GAP_HOLD_QUESTIONS } from '../training/jevGate.js'; // R173b
 import { resolveFrameConfig, FRAME_CONTRACT, FRAME_TOOL_NAME } from '../frames/frameConfig.js'; // R179
 import { FrameRunner } from '../frames/frameRunner.js'; // R179
+import { emptySessionUsage, addMainUsage, type SessionUsage } from '../training/usageAccounting.js'; // R190
 import { parseRequirementLedger, initLedger, updateLedger, ledgerCounts, ledgerHoldable, formatLedgerForWriter, formatLedgerForJudge, formatLedgerHoldMessage, buildLedgerJevState, buildLedgerJevQuestions, applyLedgerJevAnswers, type LedgerEntry } from '../training/requirementLedger.js'; // R187
 import { isValueShapedTask, parseDerivationReply, methodsDiffer, parseValueLines, extractNumbers, reconcile, buildDerivationHoldMessage, isDerivationCommandAllowed, checkRunPassed, checkRunBody } from '../training/independentDerivation.js'; // R176
 import { resolveDeadlineExitConfig, deadlineExitCallBudget, parseDeadlineExitVerdict } from '../training/deadlineExitMentor.js';
@@ -444,6 +445,8 @@ export interface OrchestratorResponse {
     costUsd?: number;
     /** Server-side tool invocations xAI billed for this request. */
     serverSideToolsUsed?: number;
+    /** R190: the whole session's cumulative usage (every main request exact + helper calls estimated) */
+    session?: SessionUsage;
   };
 
   /** Model used */
@@ -668,7 +671,9 @@ export class CortexOrchestrator {
   private specChecksPromise: Promise<string[]> | null = null; // R174b: authored at lift in the background (CORTEX_JUDGE_SPEC_TESTS_AT=lift)
   private reqLedger: LedgerEntry[] | null = null; // R187: the stated-requirement ledger for this turn (null = not yet authored)
   private reqLedgerPromise: Promise<LedgerEntry[]> | null = null; // R187: authored at lift in the background
+  private sessionUsage: SessionUsage = emptySessionUsage(); // R190: every main-model request this session (exact) + helper calls (estimated)
   private reqLedgerHolds = 0; // R187: ledger holds used this turn
+  private reqLedgerRetried = false; // R187c: one re-author at the first finish after an empty lift-time result
   private reqLedgerMeta = { genLatencyMs: 0, raw: 0, refused: 0 }; // R187
   private specFailHistory = new Map<string, { streak: number; sig: string }>(); // R174b: consecutive identical spec failures
   private lastHoldMs = 0; // R173c: wall clock of the last hold/veto this turn
@@ -979,6 +984,15 @@ export class CortexOrchestrator {
     } catch { /* fail-open */ }
   }
 
+  /** R190: the session usage with the helper middleware's estimated calls merged in, plus a decision-store row so trajectories carry it. */
+  private snapshotSessionUsage(): SessionUsage {
+    const h = this.helperMiddleware?.getHelperUsageEstimate?.();
+    const snap: SessionUsage = { ...this.sessionUsage, helper: h ? { ...h } : { ...this.sessionUsage.helper } };
+    const store = this.getDecisionStore();
+    if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'session_usage', detail: { ...snap } }).catch(() => {});
+    return snap;
+  }
+
   /** Bounded read-only environment recon (ENV_RECON_COMMAND), gathered ONCE and cached — shared by the
    *  lift planner and the EndTurn resolver. Fail-open: partial stdout on timeout/non-zero, else empty. */
   private gatherEnvReport(opts: { fresh?: boolean } = {}): string {
@@ -1146,7 +1160,9 @@ export class CortexOrchestrator {
     const sessionId = this.currentSessionId ?? 'unknown';
     const g0 = Date.now();
     if (!this.helperMiddleware?.deriveRequirementLedger) { this.reqLedger = []; return []; }
-    const tmo = mentorSurfaceTimeoutMs('endturn-resolver', parseInt(process.env.CORTEX_ENDTURN_RESOLVER_TIMEOUT_MS ?? '90000', 10));
+    // R187c: the extractor runs in the background at lift beside the planner (which itself takes 80–190 s on pro), so it gets the planner's
+    // timeout, not the judge's 90 s — the 09-23 L7 smoke lost the whole ledger to a 98-s pro call (deliveredBy none).
+    const tmo = mentorSurfaceTimeoutMs('lift-plan', parseInt(process.env.CORTEX_JUDGE_REQ_LEDGER_TIMEOUT_MS ?? process.env.CORTEX_LIFT_PLAN_TIMEOUT_MS ?? '180000', 10));
     try {
       const raw = await withTimeout(this.helperMiddleware.deriveRequirementLedger({ task, envReport: this.gatherEnvReport({ fresh: false }), max: cfg.reqLedgerMax, helperModelId: this.config.reactiveMentorship?.helperModelId }), tmo);
       const lines = parseRequirementLedger(raw ?? '', cfg.reqLedgerMax);
@@ -1253,6 +1269,8 @@ export class CortexOrchestrator {
       let reqResults = ''; let reqCounts = { lines: 0, open: 0, exercised: 0, failed: 0, unverifiable: 0 }; let reqJev: { asked: number; closed: string[]; latencyMs: number; error?: boolean } | null = null;
       if (cfg.reqLedger) {
         if (this.reqLedger === null) this.reqLedger = await (this.reqLedgerPromise ?? this.authorRequirementLedger(task));
+        // R187c: an empty ledger from a timed-out lift-time call is retried ONCE here (the judge would otherwise run with no lines all session)
+        if (this.reqLedger.length === 0 && !this.reqLedgerRetried) { this.reqLedgerRetried = true; this.reqLedger = await this.authorRequirementLedger(task); }
         const runs = this.reqLedger.filter((e) => e.check).map((e) => { const r = runCheck(judgeCwd, e.check!, jcfg); return { id: e.id, result: r, cls: classifyCheckRun(r) }; });
         this.reqLedger = updateLedger(this.reqLedger, runs);
         // R187b: Jev decides the lines the shell could not — typed per-line questions on the writer's attestation + harness evidence.
@@ -2574,7 +2592,7 @@ export class CortexOrchestrator {
     // R153: the stop reason of the LATEST response (continuation/retry/gate/synth refresh it) — the empty-response
     // classifier used to read the turn's FIRST response, so a `length` cutoff on a continuation was never seen.
     let lastStopReason: string | undefined = convertedResponse.stopReason;
-    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; this.specChecks = null; this.specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; this.specChecksPromise = null; this.specFailHistory.clear(); this.reqLedger = null; this.reqLedgerPromise = null; this.reqLedgerHolds = 0; this.reqLedgerMeta = { genLatencyMs: 0, raw: 0, refused: 0 }; this.reqLedgerDelivered = false; this.lastHoldMs = 0; this.derivationHolds = 0; // R165 per-turn / R174 / R173c / R176
+    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; this.specChecks = null; this.specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; this.specChecksPromise = null; this.specFailHistory.clear(); this.reqLedger = null; this.reqLedgerPromise = null; this.reqLedgerHolds = 0; this.reqLedgerMeta = { genLatencyMs: 0, raw: 0, refused: 0 }; this.reqLedgerDelivered = false; this.reqLedgerRetried = false; this.lastHoldMs = 0; this.derivationHolds = 0; // R165 per-turn / R174 / R173c / R176
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     let toolCallIteration = 0;
     // R137 HB-POLL-REPEAT-BREAKER: the exact-repeat breaker used to force-exit by overwriting
@@ -4434,10 +4452,10 @@ export class CortexOrchestrator {
       messageId: currentAssistantMessage.uuid,
       content: currentAssistantCanonicalMessage.content,
       toolUses: allExecutedToolUses,
-      usage: convertedResponse.usage || {
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0
+      usage: {
+        ...(convertedResponse.usage || { inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
+        // R190: the whole session's tokens — every main request (exact) + helper/mentor calls (estimated) — not the last request's
+        session: this.snapshotSessionUsage(),
       },
       model: {
         id: model.id,
@@ -4445,6 +4463,7 @@ export class CortexOrchestrator {
       },
       metadata: {
         conversationId: this.currentConversationId,
+        sessionUsage: this.snapshotSessionUsage(), // R190
         usedHelperModel,
         compactionTriggered: usedHelperModel,
         serverSideTools: serverSideMetadata || undefined,
@@ -5008,7 +5027,7 @@ export class CortexOrchestrator {
 
     let currentAssistantCanonicalMessage = convertedResponse.messages[0]!;
     let lastStopReason: string | undefined = convertedResponse.stopReason; // R153 (see non-streaming loop)
-    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; this.specChecks = null; this.specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; this.specChecksPromise = null; this.specFailHistory.clear(); this.reqLedger = null; this.reqLedgerPromise = null; this.reqLedgerHolds = 0; this.reqLedgerMeta = { genLatencyMs: 0, raw: 0, refused: 0 }; this.reqLedgerDelivered = false; this.lastHoldMs = 0; this.derivationHolds = 0; // R165 per-turn / R174 / R173c / R176
+    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; this.specChecks = null; this.specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; this.specChecksPromise = null; this.specFailHistory.clear(); this.reqLedger = null; this.reqLedgerPromise = null; this.reqLedgerHolds = 0; this.reqLedgerMeta = { genLatencyMs: 0, raw: 0, refused: 0 }; this.reqLedgerDelivered = false; this.reqLedgerRetried = false; this.lastHoldMs = 0; this.derivationHolds = 0; // R165 per-turn / R174 / R173c / R176
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     const assistantMessageId = currentAssistantCanonicalMessage.uuid;
 
@@ -6465,6 +6484,7 @@ export class CortexOrchestrator {
         usage: {
           inputTokens: finalUsage.inputTokens || 0,
           outputTokens: finalUsage.outputTokens || 0,
+          session: this.snapshotSessionUsage(), // R190
         },
         durationMs: Date.now() - turnStartMs,
         toolCallIterations: toolCallIteration,
@@ -7462,6 +7482,7 @@ export class CortexOrchestrator {
    * absorbed by the delta logic in anchoredRequestEstimate.
    */
   private noteRequestUsage(usage?: TokenUsageMetrics): void {
+    this.sessionUsage = addMainUsage(this.sessionUsage, usage); // R190: cumulative first — the anchor logic below skips zero usage
     const promptTokens = Number(usage?.inputTokens ?? 0);
     if (!(promptTokens > 0)) return;
     try {

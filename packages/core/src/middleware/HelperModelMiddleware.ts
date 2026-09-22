@@ -1139,6 +1139,20 @@ export class HelperModelMiddleware {
     return ErrorDetector.isContextLimitError(error, provider);
   }
 
+  // R190: every helper/mentor call is counted by size (the adapters return text, not provider usage) so the session ledger can carry an estimate.
+  private helperUsageEst = { calls: 0, inputTokensEst: 0, outputTokensEst: 0, bySurface: {} as Record<string, number> };
+  private currentSurface = 'helper';
+  private async generateTracked(adapter: { generate: (m: HelperCanonicalMessage[], c: ModelConfig, n: number) => Promise<string> }, messages: HelperCanonicalMessage[], cfg: ModelConfig, maxTokens: number): Promise<string> {
+    const promptChars = messages.reduce((n, m) => n + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content ?? '').length), 0);
+    const out = await adapter.generate(messages, cfg, maxTokens);
+    const i = Math.ceil(promptChars / 4); const o = Math.ceil(String(out ?? '').length / 4);
+    this.helperUsageEst.calls += 1; this.helperUsageEst.inputTokensEst += i; this.helperUsageEst.outputTokensEst += o;
+    this.helperUsageEst.bySurface[this.currentSurface] = (this.helperUsageEst.bySurface[this.currentSurface] ?? 0) + i + o;
+    return out;
+  }
+  /** R190: the session's helper/mentor call estimate (chars/4) for the response's usage.session. */
+  getHelperUsageEstimate(): { calls: number; inputTokensEst: number; outputTokensEst: number; bySurface: Record<string, number> } { return { ...this.helperUsageEst, bySurface: { ...this.helperUsageEst.bySurface } }; }
+
   /**
    * Track helper model usage for cost analysis
    */
@@ -1300,7 +1314,7 @@ Produce the FULL updated CORTEX.md. Rules, in priority order:
     );
     const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
     const messages: HelperCanonicalMessage[] = [{ role: 'user', content: prompt }];
-    const out = await adapter.generate(messages, helperConfig, budget);
+    const out = await this.generateTracked(adapter, messages, helperConfig, budget);
     // strip accidental fences
     return out.replace(/^```[a-z]*\n/, '').replace(/\n```\s*$/, '').trim();
   }
@@ -1334,7 +1348,8 @@ Produce the FULL updated CORTEX.md. Rules, in priority order:
     const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
     const prompt = frameHelperPrompt(spec, body);
     const messages: HelperCanonicalMessage[] = [{ role: 'user', content: prompt }];
-    const out = await adapter.generate(messages, helperConfig, spec.outputBudgetTokens);
+    this.currentSurface = spec.surface || 'helper';
+    const out = await this.generateTracked(adapter, messages, helperConfig, spec.outputBudgetTokens);
     // HB-MENTOR-BUDGET observability: what the mentor call actually carried/returned, banked on the mentor event.
     if (spec.mentor) this.lastMentorCallMeta = (adapter as unknown as { lastCallMeta?: Record<string, unknown> }).lastCallMeta;
     return (out || '').replace(/^```[a-z]*\n/, '').replace(/\n```\s*$/, '').trim();
@@ -1415,7 +1430,7 @@ If the image is a BOARD, GRID, TABLE or DIAGRAM: work cell by cell in row-major 
         { type: 'image', image: { mediaType: context.mediaType, data: context.base64 } },
       ],
     }];
-    const out = await adapter.generate(messages, helperConfig, 900);
+    const out = await this.generateTracked(adapter, messages, helperConfig, 900);
     return (out || '').replace(/^```[a-z]*\n/, '').replace(/\n```\s*$/, '').trim();
   }
 
@@ -1799,7 +1814,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
     const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
 
     const messages: HelperCanonicalMessage[] = [{ role: 'user', content: prompt }];
-    const text = await adapter.generate(messages, helperConfig, 100);
+    const text = await this.generateTracked(adapter, messages, helperConfig, 100);
 
     return (text || '').split('\n')[0]!.trim().replace(/^["']|["']$/g, '');
   }
@@ -1836,7 +1851,7 @@ PREDICTION: <prediction>`;
     const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
 
     const messages: HelperCanonicalMessage[] = [{ role: 'user', content: prompt }];
-    const text = await adapter.generate(messages, helperConfig, 150);
+    const text = await this.generateTracked(adapter, messages, helperConfig, 150);
 
     const summaryMatch = text.match(/SUMMARY:\s*(.+)/i);
     const predictionMatch = text.match(/PREDICTION:\s*(.+)/i);
@@ -1864,7 +1879,7 @@ PREDICTION: <prediction>`;
     const modelId = context.helperModelId || process.env.HELPER_MODEL_ID || 'deepseek-flash';
     const helperConfig = this.getHelperModelConfig(modelId);
     const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
-    const text = await adapter.generate([{ role: 'user', content: prompt }], helperConfig, 500);
+    const text = await this.generateTracked(adapter, [{ role: 'user', content: prompt }], helperConfig, 500);
     return parseAuthoredCandidates(text, n);
   }
 
