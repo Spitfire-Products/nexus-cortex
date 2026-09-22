@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stripAnsi, parsePromptRc, promptIsBack, clipScreen, buildStateCard, repeatCount, parseFrameAction, buildMenu, buildFrameSuffix, waitPolicy, extractTaskTestCommand, applyNamedTemplates, paneIsDead, paneWedged, guardKeystrokes, applyKeyGuard, parseAuthoredCandidates, mergeAuthoredCandidates, FRAME_DEFAULTS } from '../terminusFrame.js';
+import { stripAnsi, parsePromptRc, promptIsBack, clipScreen, buildStateCard, repeatCount, parseFrameAction, buildMenu, buildFrameSuffix, waitPolicy, extractTaskTestCommand, applyNamedTemplates, paneIsDead, paneWedged, guardKeystrokes, applyKeyGuard, parseAuthoredCandidates, mergeAuthoredCandidates, authorDiagnosis, buildAuthorPrompt, FRAME_DEFAULTS } from '../terminusFrame.js';
 
 const SCREEN = '\x1b[?2004hroot@16e9a8fba9d5:/app# python3 run.py\r\n\x1b[?2004l\rroute: NAN -> SUV\r\nsummary: {"total": 568.7}\r\n__RC=0\r\n\x1b[?2004hroot@16e9a8fba9d5:/app# ';
 
@@ -149,6 +149,9 @@ describe('R185 candidate author — parse + merge', () => {
     expect(c.map((x) => x.keystrokes)).toEqual(['tail -n 20 /tmp/out.txt\n', 'grep -n -m 5 -i error /tmp/out.txt\n']);
     expect(c[0]!.durationS).toBe(3); expect(c[1]!.durationS).toBe(30); expect(c[0]!.why).toMatch(/build wrote/);
     expect(parseAuthoredCandidates('garbage', 3)).toEqual([]);
+    // R188: a dropped LABEL: prefix and a bullet are still one candidate
+    const loose = parseAuthoredCandidates('READ INTERFACE SOURCES | KEYS: cat /app/src/*.scala⏎ | WAIT: 5 | WHY: need the trait\n- coqtop probe | KEYS: printf x | coqtop⏎ | WAIT: 20', 3);
+    expect(loose.map((c) => c.label)).toEqual(['READ INTERFACE SOURCES', 'coqtop probe']); expect(loose[1]!.keystrokes).toBe('printf x | coqtop\n');
   });
   it('merges after the writer, skips duplicates of writer keys, respects the cap, tags predictor', () => {
     const w = [{ label: 'ls', keystrokes: 'ls\n', durationS: 2 }];
@@ -156,5 +159,23 @@ describe('R185 candidate author — parse + merge', () => {
     expect(m.candidates.map((c) => c.label)).toEqual(['ls', 'find', 'three']); expect(m.sources).toEqual(['generator', 'predictor', 'predictor']);
     const menu = buildMenu({ candidates: m.candidates, sources: m.sources });
     expect(menu.slice(0, 3).map((x) => [x.id, x.source])).toEqual([['c1', 'generator'], ['c2', 'predictor'], ['c3', 'predictor']]);
+  });
+});
+
+describe('R188 author inputs', () => {
+  const h = (k: string, rc: number | null, outcome = '') => ({ keystrokes: k, rc, outcome, elapsedS: 2 });
+  it('diagnoses repeats and failing streaks from the history', () => {
+    expect(authorDiagnosis([h('ls\n', 0), h('make\n', 2), h('make\n', 2), h('make\n', 2)])).toMatchObject({ stuck: true, repeats: 2 });
+    expect(authorDiagnosis([h('a\n', 1, 'err'), h('b\n', 1), h('c\n', 1)]).reason).toMatch(/all failed/);
+    expect(authorDiagnosis([h('a\n', 0), h('b\n', 0)]).stuck).toBe(false);
+  });
+  it('the prompt carries the full task, the diagnosis and digest first, the open requirements, the plan and the writer reasons; asks the stuck question when stuck', () => {
+    const task = 'T'.repeat(5000);
+    const p = buildAuthorPrompt({ task, stateCard: 'card', screen: 'screen', writerAnalysis: 'a', writerPlan: 'p', writerCandidates: [{ label: 'x', keystrokes: 'make\n', why: 'because' }], count: 2, history: [h('make\n', 2, 'error: foo'), h('make\n', 2, 'error: foo'), h('make\n', 2, 'error: foo')], liftPlan: 'PLAN 1. do y', ledgerOpen: ['R1 [contract] second submit must not rewrite'] });
+    expect(p).toContain('T'.repeat(5000)); expect(p).toContain('DIAGNOSIS: STUCK'); expect(p.indexOf('DIAGNOSIS: STUCK')).toBeLessThan(p.indexOf('SCREEN'));
+    expect(p).toMatch(/COMMANDS RUN[\s\S]*make → rc 2/); expect(p).toContain('OPEN REQUIREMENTS'); expect(p).toContain('PLAN OF ATTACK'); expect(p).toContain('why: because');
+    expect(p).toMatch(/THE WRITER IS STUCK/);
+    const q = buildAuthorPrompt({ task: 't', stateCard: 'c', screen: 's', writerAnalysis: 'a', writerPlan: 'p', writerCandidates: [], count: 1, history: [h('ls\n', 0)] });
+    expect(q).toMatch(/The writer is progressing/);
   });
 });

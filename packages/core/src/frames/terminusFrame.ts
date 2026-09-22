@@ -242,7 +242,8 @@ export function applyNamedTemplates(menu: MenuItem[]): MenuItem[] {
 export function parseAuthoredCandidates(text: string, max: number = 3): Array<{ label: string; keystrokes: string; durationS: number; why: string }> {
   const out: Array<{ label: string; keystrokes: string; durationS: number; why: string }> = []; const seen = new Set<string>();
   for (const raw of String(text ?? '').split('\n')) {
-    const m = raw.match(/LABEL:\s*(.*?)\s*\|\s*KEYS:\s*(.*?)\s*\|\s*WAIT:\s*(\d+)?\s*(?:\|\s*WHY:\s*(.*))?$/i);
+    // R188: flash often drops the literal `LABEL:` prefix on longer prompts (replay: 56 of 97 answers) — the label is whatever precedes `| KEYS:`
+    const m = raw.match(/^\s*(?:[-*]|\d+[.)])?\s*(?:LABEL:\s*)?(.*?)\s*\|\s*KEYS:\s*(.*?)\s*\|\s*WAIT:\s*(\d+)?\s*(?:\|\s*WHY:\s*(.*))?\s*$/i);
     if (!m) continue;
     let keys = m[2]!.replace(/⏎/g, '\n').replace(/`/g, '').trim();
     if (!keys) continue;
@@ -262,6 +263,60 @@ export function mergeAuthoredCandidates(writer: FrameCandidate[], authored: Arra
   const candidates: FrameCandidate[] = [...writer]; const sources: MenuSource[] = writer.map(() => 'generator' as MenuSource);
   for (const a of authored) { if (candidates.length >= cap) break; if (have.has(norm(a.keystrokes))) continue; have.add(norm(a.keystrokes)); candidates.push({ label: a.label, keystrokes: a.keystrokes, durationS: a.durationS, why: a.why }); sources.push('predictor'); }
   return { candidates, sources };
+}
+
+/* ---------- R188 author inputs (adversarial read docs/R185_AUTHOR_ADVERSARIAL_2026-09-23.md): the author must see what shows a writer is stuck ---------- */
+export const AUTHOR_TASK_CAP = 8000;
+export interface AuthorDiagnosis { stuck: boolean; reason: string; repeats: number; recentErrors: string[] }
+/** Code-computed diagnosis from the frame history: repeats in the last window and recent non-zero exits. Pure. */
+export function authorDiagnosis(history: HistoryEntry[], window = 8): AuthorDiagnosis {
+  const recent = history.slice(-window);
+  const norm = (k: string) => normalizeKeys(k).replace(/\s+/g, ' ').trim();
+  let repeats = 0; const seen = new Set<string>();
+  for (const h of recent) { const k = norm(h.keystrokes); if (!k) continue; if (seen.has(k)) repeats += 1; seen.add(k); }
+  const recentErrors = recent.filter((h) => h.rc !== null && h.rc !== 0).map((h) => `${norm(h.keystrokes).slice(0, 70)} → rc ${h.rc}${h.outcome ? ` (${h.outcome.slice(0, 60)})` : ''}`).slice(-4);
+  const last3 = history.slice(-3);
+  const allFail = last3.length === 3 && last3.every((h) => h.rc !== null && h.rc !== 0);
+  const noPrompt = last3.length === 3 && last3.every((h) => h.rc === null);
+  const stuck = repeats >= 2 || allFail || noPrompt;
+  const reason = repeats >= 2 ? `${repeats} repeated command(s) in the last ${recent.length}` : allFail ? 'the last 3 commands all failed' : noPrompt ? 'no prompt back for 3 turns' : '';
+  return { stuck, reason, repeats, recentErrors };
+}
+export interface AuthorPromptInput {
+  task: string; stateCard: string; screen: string; writerAnalysis: string; writerPlan: string;
+  writerCandidates: Array<{ label: string; keystrokes: string; why?: string }>; count: number;
+  history: HistoryEntry[]; liftPlan?: string; ledgerOpen?: string[];
+}
+/** The author's prompt: FULL task, the stuck diagnosis and the command digest FIRST, then the ledger's open lines and the plan, then the
+ *  screen tail and the writer's own candidates with their reasons. Two questions: around the obstacle when stuck, the unexercised
+ *  requirement when not. Pure (the replay imports it). */
+export function buildAuthorPrompt(input: AuthorPromptInput): string {
+  const n = Math.max(1, Math.min(3, input.count));
+  const diag = authorDiagnosis(input.history);
+  const writer = input.writerCandidates.map((c, i) => `  W${i + 1}. ${c.label.slice(0, 60)} :: ${c.keystrokes.replace(/\n/g, '⏎').slice(0, 200)}${c.why ? `  — why: ${c.why.slice(0, 120)}` : ''}`).join('\n') || '  (none)';
+  const digest = input.history.slice(-12).map((h, i) => `  ${i + 1}. ${normalizeKeys(h.keystrokes).slice(0, 90) || '(wait)'} → rc ${h.rc === null ? '?' : h.rc}${h.outcome ? `  | ${h.outcome.slice(0, 70)}` : ''}`).join('\n') || '  (nothing run yet)';
+  const ask = diag.stuck
+    ? `THE WRITER IS STUCK: ${diag.reason}. Propose ${n} action${n > 1 ? 's' : ''} that get AROUND the obstacle — a different tool, a different route to the same requirement, or the diagnostic that reveals why the current route fails. Never a variant of what was already run.`
+    : `The writer is progressing. Propose ${n} GENUINELY DIFFERENT next action${n > 1 ? 's' : ''}: prefer the STATED REQUIREMENT the writer has not exercised yet (see OPEN REQUIREMENTS), a step the PLAN names that has not happened, or the check that would expose a wrong assumption in the writer's plan. Never a variant of a writer action, never something already run.`;
+  const parts = [
+    `You are the ALTERNATIVES author for an agent working in one terminal pane on the task below.`,
+    `TASK:\n${input.task.slice(0, AUTHOR_TASK_CAP)}`,
+    `DIAGNOSIS: ${diag.stuck ? `STUCK — ${diag.reason}` : 'progressing'}; repeats ${diag.repeats}${diag.recentErrors.length ? `; recent failures:\n  ${diag.recentErrors.join('\n  ')}` : ''}`,
+    `COMMANDS RUN (most recent last):\n${digest}`,
+    `STATE:\n${input.stateCard.slice(0, 1500)}`,
+  ];
+  if (input.ledgerOpen?.length) parts.push(`OPEN REQUIREMENTS (stated by the task, not yet exercised):\n${input.ledgerOpen.map((l) => `  - ${l.slice(0, 200)}`).join('\n')}`);
+  if (input.liftPlan) parts.push(`PLAN OF ATTACK (from the planner):\n${input.liftPlan.slice(0, 2500)}`);
+  parts.push(`SCREEN (tail):\n${input.screen.slice(-4000)}`);
+  parts.push(`WRITER ANALYSIS: ${input.writerAnalysis.slice(0, 600)}\nWRITER PLAN: ${input.writerPlan.slice(0, 400)}\nWRITER CANDIDATES:\n${writer}`);
+  parts.push(`${ask} Each must be a concrete shell command the agent can type now (end with ⏎ to run it), narrow and specific (the pane shows 45 lines), inside the task directory, never exit/C-d/rm -rf of roots.\n\nRespond with exactly ${n} line${n > 1 ? 's' : ''}, no other text, each in this format:\nLABEL: <3-6 words> | KEYS: <the exact command>⏎ | WAIT: <seconds 2-30> | WHY: <one short clause>`);
+  return parts.join('\n\n');
+}
+/** The 4.124.13 prompt, kept ONLY for the paired replay (task 2500, card 900, no history/plan/ledger/why, one generic question). Pure. */
+export function buildAuthorPromptLegacy(input: AuthorPromptInput): string {
+  const n = Math.max(1, Math.min(3, input.count));
+  const writer = input.writerCandidates.map((c, i) => `  W${i + 1}. ${c.label.slice(0, 60)} :: ${c.keystrokes.replace(/\n/g, '⏎').slice(0, 160)}`).join('\n') || '  (none)';
+  return `You are the ALTERNATIVES author for an agent working in one terminal pane on the task below. The agent (writer) has proposed the action(s) listed under WRITER. Propose ${n} GENUINELY DIFFERENT next action${n > 1 ? 's' : ''} — a different command, a different approach, or a different diagnostic — never a variant of a writer action, never something already run. Each must be a concrete shell command the agent can type now (end with ⏎ to run it), narrow and specific (the pane shows 45 lines), inside the task directory, never exit/C-d/rm -rf of roots.\n\nTASK (excerpt):\n${input.task.slice(0, 2500)}\n\nSTATE:\n${input.stateCard.slice(0, 900)}\n\nSCREEN (tail):\n${input.screen.slice(-2500)}\n\nWRITER ANALYSIS: ${input.writerAnalysis.slice(0, 500)}\nWRITER PLAN: ${input.writerPlan.slice(0, 300)}\nWRITER:\n${writer}\n\nRespond with exactly ${n} line${n > 1 ? 's' : ''}, no other text, each in this format:\nLABEL: <3-6 words> | KEYS: <the exact command>⏎ | WAIT: <seconds 2-30> | WHY: <one short clause>`;
 }
 
 /* ---------- R184 menu diversity ---------- */

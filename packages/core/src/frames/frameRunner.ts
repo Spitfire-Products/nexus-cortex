@@ -4,7 +4,7 @@
  * (screen + state card + templates) as the FrameAction tool_result. Holds the frame's durable state for the session (history, running
  * command, tmux session id). Everything decision-shaped is in the pure modules; this file is plumbing + waiting.
  */
-import { buildStateCard, buildMenu, buildFrameSuffix, clipScreen, parsePromptRc, promptIsBack, waitPolicy, extractTaskTestCommand, parseFrameAction, stripAnsi, normalizeKeys, paneIsDead, paneWedged, applyNamedTemplates, applyKeyGuard, whyJustifies, distinctCandidateCount, mergeAuthoredCandidates, FRAME_DEFAULTS, type GuardRecord, type MenuSource, type HistoryEntry } from './terminusFrame.js';
+import { buildStateCard, buildMenu, buildFrameSuffix, clipScreen, parsePromptRc, promptIsBack, waitPolicy, extractTaskTestCommand, parseFrameAction, stripAnsi, normalizeKeys, paneIsDead, paneWedged, applyNamedTemplates, applyKeyGuard, whyJustifies, distinctCandidateCount, mergeAuthoredCandidates, buildAuthorPrompt, authorDiagnosis, FRAME_DEFAULTS, type GuardRecord, type MenuSource, type HistoryEntry } from './terminusFrame.js';
 import { buildChooserState, buildChooserQuestions, decideChooser, buildChooserRow, type ChooserDecision } from './chooser.js';
 import type { FrameConfig } from './frameConfig.js';
 
@@ -13,7 +13,9 @@ export interface FrameDeps {
   recordEvent: (kind: string, detail: Record<string, unknown>) => void;
   jev?: (state: Record<string, unknown>, questions: Record<string, { type: 'noul'; instructions: string }>) => Promise<Record<string, number> | null>;
   /** R185: the candidate author (helper model) — proposes `count` alternatives to the writer's candidates; null/[] = none */
-  author?: (ctx: { task: string; screen: string; stateCard: string; writerAnalysis: string; writerPlan: string; writerCandidates: Array<{ label: string; keystrokes: string }>; count: number }) => Promise<Array<{ label: string; keystrokes: string; durationS: number; why: string }> | null>;
+  author?: (ctx: { task: string; screen: string; stateCard: string; writerAnalysis: string; writerPlan: string; writerCandidates: Array<{ label: string; keystrokes: string; why?: string }>; count: number; prompt: string }) => Promise<Array<{ label: string; keystrokes: string; durationS: number; why: string }> | null>;
+  /** R188: what only the orchestrator knows — the lift plan and the requirement ledger's open lines — for the author's prompt. */
+  authorContext?: () => { liftPlan?: string; ledgerOpen?: string[] };
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
 }
@@ -145,10 +147,17 @@ export class FrameRunner {
     const wedged = paneWedged(this.history);
     // R185: fill the menu from the author when the writer offered fewer distinct actions than the cap (one helper call, thinking off)
     let candidates = action.candidates; let sources: MenuSource[] = action.candidates.map(() => 'generator' as MenuSource); let authored = 0; let authorMs = 0;
-    if (hasAuthor && distinct < this.cfg.candidates && !action.taskComplete) {
+    // R188 cost gate (operator: non-cached tokens at every turn): by default the author is called only when the code diagnosis says the
+    // writer is stuck (repeats / failing streak / no prompt) — the turns where a different route can pay; 'always' is the E3-style menu filler.
+    const authorWanted = this.cfg.authorWhen === 'always' || authorDiagnosis(this.history).stuck;
+    if (hasAuthor && authorWanted && distinct < this.cfg.candidates && !action.taskComplete) {
       const a0 = this.now();
       try {
-        const alts = await this.deps.author!({ task: input.task, screen: screenBefore, stateCard: stateBefore, writerAnalysis: action.analysis, writerPlan: action.plan, writerCandidates: action.candidates.map((c) => ({ label: c.label, keystrokes: c.keystrokes })), count: Math.max(1, this.cfg.candidates - distinct) });
+        const extra = this.deps.authorContext?.() ?? {};
+        const wc = action.candidates.map((c) => ({ label: c.label, keystrokes: c.keystrokes, why: c.why }));
+        const count = Math.max(1, this.cfg.candidates - distinct);
+        const prompt = buildAuthorPrompt({ task: input.task, stateCard: stateBefore, screen: screenBefore, writerAnalysis: action.analysis, writerPlan: action.plan, writerCandidates: wc, count, history: this.history, liftPlan: extra.liftPlan, ledgerOpen: extra.ledgerOpen });
+        const alts = await this.deps.author!({ task: input.task, screen: screenBefore, stateCard: stateBefore, writerAnalysis: action.analysis, writerPlan: action.plan, writerCandidates: wc, count, prompt });
         if (alts?.length) { const merged = mergeAuthoredCandidates(action.candidates, alts, this.cfg.candidates); candidates = merged.candidates; sources = merged.sources; authored = merged.sources.filter((x) => x === 'predictor').length; }
       } catch { /* author failure = the writer's menu, never worse than the frame */ }
       authorMs = this.now() - a0;
@@ -211,7 +220,7 @@ export class FrameRunner {
     const templatesChanged = tplKey !== this.lastTemplateKey; this.lastTemplateKey = tplKey;
     const content = buildFrameSuffix({ screen: clipped.text, stateCard, menu: nextMenu, consequences, templatesChanged: templatesChanged || this.turn === 1 }) + (extra ? `\n\n${extra}` : '');
     const row = buildChooserRow({ sessionId: input.sessionId, turn: this.turn, predictorModel: input.predictorModel + (this.cfg.chooser === 'jev' ? '+jev-chooser' : ''), menu, decision, executedKeys, nowMs: this.now() });
-    this.deps.recordEvent('frame_turn', { ...row, analysis: action.analysis.slice(0, 600), plan: action.plan.slice(0, 600), rc, waitedS: Math.round(waitedS), running, screenChars: screen.length, chooser: this.cfg.chooser, chooserLatencyMs, paneResets: this.paneResets, distinctCandidates: distinct, diversityReasks: this.diversityReasks, authored, authorMs, author: this.cfg.author, guard: guardRecords.length ? guardRecords : null, singleReason: action.singleReason || null, answers: answers ? Object.fromEntries(Object.entries(answers).map(([k, v]) => [k, Number(v.toFixed(3))])) : null, stepMs: this.now() - t0 });
+    this.deps.recordEvent('frame_turn', { ...row, analysis: action.analysis.slice(0, 600), plan: action.plan.slice(0, 600), rc, waitedS: Math.round(waitedS), running, screenChars: screen.length, chooser: this.cfg.chooser, chooserLatencyMs, paneResets: this.paneResets, distinctCandidates: distinct, diversityReasks: this.diversityReasks, authored, authorMs, author: this.cfg.author, authorWhen: this.cfg.authorWhen, stuck: authorDiagnosis(this.history).stuck, guard: guardRecords.length ? guardRecords : null, singleReason: action.singleReason || null, answers: answers ? Object.fromEntries(Object.entries(answers).map(([k, v]) => [k, Number(v.toFixed(3))])) : null, stepMs: this.now() - t0 });
     return { content, isError: false, meta: { frame: 'terminus', turn: this.turn, pick: pick?.id ?? null, pickSource: pick?.source ?? null, action: decision.action, rc, running, distinctCandidates: distinct, authored, executedKeys: executedKeys ? normalizeKeys(executedKeys).slice(0, 120) : executedKeys } };
   }
 }

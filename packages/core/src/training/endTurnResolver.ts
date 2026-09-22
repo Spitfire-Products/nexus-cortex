@@ -12,6 +12,9 @@
  * puzzle. Same delivery as the lift planner: orchestrator-invoke → system-reminder. Pure + testable.
  */
 
+/** R188 (2026-09-23): the task text is the spec — 25 of 64 TB4.0 tasks exceed 2000 chars and 14 exceed 2500; every steerer sees the whole text up to this cap. */
+export const TASK_TEXT_CAP = 8000;
+
 export interface EndTurnResolverConfig {
   outputBudgetTokens: number;
   effort: string;
@@ -304,7 +307,7 @@ export function resolverClosingInstruction(abstain: boolean, meetsConfirm = fals
 /** Build the user prompt for the judge. Bounded slices keep the call cheap and cache-stable. */
 export function buildResolverUserPrompt(ctx: EndTurnResolverContext, abstain = false, meetsConfirm = false, investigate?: 'offer' | 'withdraw'): string {
   const parts: string[] = [];
-  parts.push(`TASK:\n${(ctx.task || '').trim().slice(0, 2500)}`);
+  parts.push(`TASK:\n${(ctx.task || '').trim().slice(0, TASK_TEXT_CAP)}`);
   const lift = (ctx.liftPlan || '').trim();
   if (lift) parts.push(`PLAN OF ATTACK (stated at lift by the planner — ADVISORY: judge against the TASK's real criteria; where the plan and the TASK disagree, the TASK wins — say so in one line):\n${lift.slice(0, 3500)}`);
   const env = (ctx.envReport || '').trim();
@@ -491,7 +494,7 @@ export const SPEC_TESTS_SYSTEM =
   '`CHECK: <command>` (a single shell line each, `||` with an echo + exit 1 for the reason), nothing else.';
 
 export function buildSpecTestsPrompt(task: string, envReport: string | undefined, max: number): string {
-  const parts = [`TASK:\n${(task || '').trim().slice(0, 6000)}`];
+  const parts = [`TASK:\n${(task || '').trim().slice(0, TASK_TEXT_CAP)}`];
   if (envReport && envReport.trim()) parts.push(`ENVIRONMENT REPORT (at task start):\n${envReport.trim().slice(0, 2500)}`);
   parts.push(`Write at most ${max} CHECK lines, the most discriminating requirements first. Example form:\nCHECK: test -f /app/out.csv || { echo "MISSING /app/out.csv"; exit 1; }`);
   return parts.join('\n\n');

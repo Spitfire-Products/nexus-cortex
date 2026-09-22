@@ -16,6 +16,9 @@
  * the output budget, not a token/turn cap — see spec §2.4). Sibling of mentorConsult.ts.
  */
 
+/** R188 (2026-09-23): the task text is the spec — 25 of 64 TB4.0 tasks exceed 2000 chars and 14 exceed 2500; every steerer sees the whole text up to this cap. */
+export const TASK_TEXT_CAP = 8000;
+
 export interface LiftPlanConfig {
   /**
    * Output token budget for the planner call. 🔴 At MAX reasoning the pro model spends the whole
@@ -201,7 +204,7 @@ export interface LiftPlanContext {
  */
 export function buildPlannerUserPrompt(ctx: LiftPlanContext, investigate?: 'offer' | 'withdraw'): string {
   const parts: string[] = [];
-  parts.push(`TASK:\n${(ctx.task || '').trim().slice(0, 2000)}`);
+  parts.push(`TASK:\n${(ctx.task || '').trim().slice(0, TASK_TEXT_CAP)}`);
   const env = (ctx.envReport || '').trim();
   if (env) {
     parts.push(`ENVIRONMENT REPORT (what is actually on this box — tooling, installed packages, resources, tests):\n${env.slice(0, 3000)}`);

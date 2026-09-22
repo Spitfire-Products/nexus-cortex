@@ -118,6 +118,7 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   CORTEX_FRAME_MIN_CANDIDATES: { tier: 'env' },
   CORTEX_FRAME_AUTHOR: { tier: 'env' },
   CORTEX_FRAME_AUTHOR_MODEL: { tier: 'env' },
+  CORTEX_FRAME_AUTHOR_WHEN: { tier: 'env' },
   CORTEX_FRAME_CONTRACT_EXTRA: { tier: 'env' },
   CORTEX_TURN_CONTRACT_ENFORCE: { tier: 'env' },
   CORTEX_TURN_CONTRACT_ENFORCE_MAX: { tier: 'env' },

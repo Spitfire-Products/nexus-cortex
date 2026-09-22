@@ -13,6 +13,8 @@
  * Everything decision-shaped is pure here; the orchestrator does the wiring.
  */
 
+import { TASK_TEXT_CAP } from './endTurnResolver.js';
+
 export type ReqKind = 'threshold' | 'contract' | 'exactness' | 'constraint' | 'latency' | 'artifact' | 'command' | 'other';
 export interface RequirementLine { id: string; kind: ReqKind; text: string; check: string | null }
 export type ReqStatus = 'open' | 'exercised' | 'failed' | 'unverifiable';
@@ -33,7 +35,7 @@ export const REQ_LEDGER_SYSTEM =
   'artifact, command, other. Nothing else.';
 
 export function buildRequirementLedgerPrompt(task: string, envReport: string | undefined, max: number): string {
-  const parts = [`TASK:\n${(task || '').trim().slice(0, 6000)}`];
+  const parts = [`TASK:\n${(task || '').trim().slice(0, TASK_TEXT_CAP)}`];
   if (envReport && envReport.trim()) parts.push(`ENVIRONMENT REPORT (at task start):\n${envReport.trim().slice(0, 2500)}`);
   parts.push(`Write at most ${max} REQ lines. Example:\nREQ 1 | contract | a second identical submission must not rewrite crm_leads.json | CHECK: cp /app/data/crm_leads.json /tmp/a.json && npm run -s submit >/dev/null 2>&1; cmp -s /app/data/crm_leads.json /tmp/a.json || { echo "ledger rewritten by a duplicate submit"; exit 1; }`);
   return parts.join('\n\n');
@@ -125,7 +127,7 @@ export interface LedgerJevInput { task: string; entries: LedgerEntry[]; attestat
 export function buildLedgerJevState(input: LedgerJevInput): Record<string, unknown> {
   const pending = input.entries.filter((e) => e.status === 'open' || e.status === 'unverifiable');
   return {
-    task_instruction: String(input.task ?? '').slice(0, 6000),
+    task_instruction: String(input.task ?? '').slice(0, TASK_TEXT_CAP),
     requirements_to_decide: pending.map((e) => ({ id: e.id, kind: e.kind, requirement: e.text, harness_check: e.check ?? 'none (no shell check possible)', harness_result: e.lastResult ? e.lastResult.slice(0, 600) : 'not run / inconclusive' })),
     writer_attestation: String(input.attestation ?? '').slice(0, 4000),
     work_product_tail: String(input.workProduct ?? '').slice(-3000),

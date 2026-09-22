@@ -170,6 +170,7 @@ export interface EnvironmentVariables {
   CORTEX_FRAME_MIN_CANDIDATES?: string; // 1..3 distinct writer candidates the menu step needs (unset = 2 with the chooser on) (R184)
   CORTEX_FRAME_AUTHOR?: string; // off|helper — helper model authors alternatives for the chooser menu (unset = helper with the chooser on) (R185)
   CORTEX_FRAME_AUTHOR_MODEL?: string; // model card for the author (unset = HELPER_MODEL_ID) (R186)
+  CORTEX_FRAME_AUTHOR_WHEN?: string; // stuck|always — when the author is called (default stuck) (R188)
   CORTEX_FRAME_CONTRACT_EXTRA?: string; // text appended to the turn-0 frame contract (cell-specific guidance without a release) (R179)
   CORTEX_MEETS_CONFIRM_MIN_REMAINING?: string; // fraction of the wall budget that must remain to hold an unverified MEETS (default 0.5) — R168
   CORTEX_JUDGE_EVIDENCE_MAX_VETOES?: string; // max evidence-backed vetoes per session (default 1) — R166
@@ -554,6 +555,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_FRAME_MIN_CANDIDATES: '',
   CORTEX_FRAME_AUTHOR: '',
   CORTEX_FRAME_AUTHOR_MODEL: '',
+  CORTEX_FRAME_AUTHOR_WHEN: '',
   CORTEX_FRAME_CONTRACT_EXTRA: '',
   CORTEX_TURN_CONTRACT_ENFORCE: '',
   CORTEX_TURN_CONTRACT_ENFORCE_MAX: '',

@@ -103,12 +103,12 @@ describe('liftPlanner — buildPlannerUserPrompt', () => {
     const noEnv = buildPlannerUserPrompt({ task: 'X', observations: 'y' });
     expect(noEnv).not.toContain('what is actually on this box'); // block omitted (closing line still mentions the report)
   });
-  it('bounds long inputs (task ≤2000, observations ≤2000 chars in their slices)', () => {
-    const bigTask = 'T'.repeat(5000);
+  it('bounds long inputs (task ≤8000 — R188: 25 of 64 TB4.0 tasks exceed the old 2000 — observations ≤2000 chars in their slices)', () => {
+    const bigTask = 'T'.repeat(9000);
     const bigObs = 'O'.repeat(5000);
     const out = buildPlannerUserPrompt({ task: bigTask, observations: bigObs });
-    expect(out).toContain('T'.repeat(2000));
-    expect(out).not.toContain('T'.repeat(2001));
+    expect(out).toContain('T'.repeat(8000));
+    expect(out).not.toContain('T'.repeat(8001));
     expect(out).toContain('O'.repeat(2000));
     expect(out).not.toContain('O'.repeat(2001));
   });

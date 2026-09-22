@@ -135,7 +135,7 @@ describe('R184 menu diversity with the chooser on', () => {
 
 describe('R185 candidate author in the runner', () => {
   const PROMPT = 'root@x:/app$ \n__RC=0\nroot@x:/app$ ';
-  const cfg = { ...FRAME_CONFIG_DEFAULTS, frame: 'terminus' as const, chooser: 'jev' as const, candidates: 3, minCandidates: 2, author: 'helper' as const };
+  const cfg = { ...FRAME_CONFIG_DEFAULTS, frame: 'terminus' as const, chooser: 'jev' as const, candidates: 3, minCandidates: 2, author: 'helper' as const, authorWhen: 'always' as const };
   const one = { analysis: 'a', plan: 'p', candidates: [{ label: 'ls', keystrokes: 'ls\n', duration_s: 2 }], single_reason: 'the directory is unknown, listing it is the only sensible first step' };
   it('a justified single option is accepted, the author widens it, Jev can pick an authored candidate, and the event banks the author + reason', async () => {
     const log: string[] = []; const events: any[] = []; let asked: any = null;

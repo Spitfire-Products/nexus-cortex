@@ -2,8 +2,8 @@
 export const FRAME_TOOL_NAME = 'FrameAction';
 export type FrameMode = 'tools' | 'terminus';
 export type ChooserMode = 'off' | 'jev';
-export interface FrameConfig { frame: FrameMode; chooser: ChooserMode; candidates: number; waitCapS: number; screenLines: number; keyGuard: boolean; /** R184: distinct writer candidates the menu step needs before it runs (1 = off; auto 2 when the chooser is on) */ minCandidates: number; /** R185: who fills the menu when the writer offers fewer than the cap — 'helper' (the helper model, thinking off) or 'off' */ author: 'off' | 'helper'; /** R186: the author's model card ('' = HELPER_MODEL_ID) */ authorModel: string }
-export const FRAME_CONFIG_DEFAULTS: FrameConfig = { frame: 'tools', chooser: 'off', candidates: 1, waitCapS: 60, screenLines: 45, keyGuard: true, minCandidates: 1, author: 'off', authorModel: '' };
+export interface FrameConfig { frame: FrameMode; chooser: ChooserMode; candidates: number; waitCapS: number; screenLines: number; keyGuard: boolean; /** R184: distinct writer candidates the menu step needs before it runs (1 = off; auto 2 when the chooser is on) */ minCandidates: number; /** R185: who fills the menu when the writer offers fewer than the cap — 'helper' (the helper model, thinking off) or 'off' */ author: 'off' | 'helper'; /** R186: the author's model card ('' = HELPER_MODEL_ID) */ authorModel: string; /** R188: when the author is called — 'stuck' (code diagnosis: repeats / failing streak / no prompt; default) or 'always' */ authorWhen: 'stuck' | 'always' }
+export const FRAME_CONFIG_DEFAULTS: FrameConfig = { frame: 'tools', chooser: 'off', candidates: 1, waitCapS: 60, screenLines: 45, keyGuard: true, minCandidates: 1, author: 'off', authorModel: '', authorWhen: 'stuck' };
 
 /** R184 (E2 field: the writer gave ONE candidate on 89% of 3371 turns — the chooser had nothing to choose): `CORTEX_FRAME_MIN_CANDIDATES` 1..3;
  *  unset → 2 when the chooser is on and the cap allows it, else 1. Never above the candidate cap. */
@@ -35,6 +35,7 @@ export function resolveFrameConfig(env: NodeJS.ProcessEnv = process.env): FrameC
     minCandidates: resolveMinCandidates(env.CORTEX_FRAME_MIN_CANDIDATES, chooser, Number.isInteger(c) && c >= 1 ? Math.min(3, c) : FRAME_CONFIG_DEFAULTS.candidates),
     author: resolveAuthor(env.CORTEX_FRAME_AUTHOR, chooser),
     authorModel: (env.CORTEX_FRAME_AUTHOR_MODEL || '').trim(),
+    authorWhen: (env.CORTEX_FRAME_AUTHOR_WHEN || '').trim().toLowerCase() === 'always' ? 'always' : 'stuck',
   };
 }
 

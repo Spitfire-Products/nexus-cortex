@@ -6659,6 +6659,7 @@ export class CortexOrchestrator {
         recordEvent: (kind, detail) => { const st = this.getDecisionStore(); if (st) void st.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: kind as any, toolName: FRAME_TOOL_NAME, detail }).catch(() => {}); },
         jev: cfg.chooser === 'jev' && jevAvailable() ? async (state, questions) => { const r = await jevNoul(state, questions); return r ? r.probabilities : null; } : undefined,
         author: cfg.author === 'helper' && this.helperMiddleware ? async (ctx) => this.helperMiddleware!.generateFrameCandidates({ ...ctx, ...(cfg.authorModel ? { helperModelId: cfg.authorModel } : {}) }) : undefined, // R185 (+R186 author model)
+        authorContext: () => ({ liftPlan: this.liftPlanText || undefined, ledgerOpen: (this.reqLedger ?? []).filter((e) => e.status === 'open' || e.status === 'unverifiable').map((e) => `${e.id} [${e.kind}] ${e.text}`) }), // R188
       });
     }
     return this.frameRunner;
