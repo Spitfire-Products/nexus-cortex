@@ -31,7 +31,7 @@ export interface FrameAction {
 }
 
 export type MenuSource = 'generator' | 'template';
-export type TemplateOp = 'wait' | 'interrupt' | 'show_more' | 'run_test' | 'reread_task' | 'finish';
+export type TemplateOp = 'wait' | 'interrupt' | 'show_more' | 'run_test' | 'reread_task' | 'finish' | 'reset_pane';
 export interface MenuItem extends FrameCandidate {
   id: string;
   source: MenuSource;
@@ -39,7 +39,7 @@ export interface MenuItem extends FrameCandidate {
   op?: TemplateOp;
 }
 
-export const FRAME_DEFAULTS = { maxCandidates: 3, defaultDurationS: 3, maxDurationS: 60, graceS: 5, waitExtendS: 30, stateCardMaxChars: 1500, screenMaxChars: 6000, digestLen: 12 } as const;
+export const FRAME_DEFAULTS = { maxCandidates: 3, defaultDurationS: 3, maxDurationS: 60, graceS: 5, waitExtendS: 30, stateCardMaxChars: 1500, screenMaxChars: 6000, digestLen: 12, wedgeTurns: 4 } as const;
 
 /* ---------- screen ---------- */
 
@@ -165,6 +165,29 @@ export interface MenuInput {
   commandStillRunning?: boolean;
   screenClipped?: boolean;
   history?: HistoryEntry[];
+  /** R180: the pane is wedged (no prompt for several turns despite interrupts) — offer RESET THE PANE. */
+  paneWedged?: boolean;
+}
+
+/* ---------- R180 pane liveness (E2 field read 2026-09-22: a writer sent C-d, the tmux session died, 70 turns went to a dead pane) ---------- */
+
+/** Does a capture say the tmux session is gone (the executor's error text, or tmux's own)? Pure. */
+export function paneIsDead(screen: string): boolean {
+  return /session '[^']*' does not exist|no server running|can't find session|no such session|no sessions?\b/i.test(String(screen ?? ''));
+}
+
+/** How many trailing history entries ended without a prompt (rc null)? Pure. */
+export function trailingNoPrompt(history: HistoryEntry[]): number {
+  let n = 0;
+  for (let i = history.length - 1; i >= 0; i--) { if (history[i]!.rc === null) n++; else break; }
+  return n;
+}
+
+/** A wedged pane: ≥ `minTurns` trailing turns with no prompt back AND at least one interrupt among them (the writer already tried C-c). Pure. */
+export function paneWedged(history: HistoryEntry[], minTurns: number = FRAME_DEFAULTS.wedgeTurns): boolean {
+  const n = trailingNoPrompt(history);
+  if (n < minTurns) return false;
+  return history.slice(-n).some((h) => /^(C-c|C-d|C-z|C-\\)$/.test(h.keystrokes.trim()));
 }
 
 /** The Oregon Trail menu: the generator's candidates first (candidate[0] is the escape), then the code templates that apply. Pure. */
@@ -175,6 +198,7 @@ export function buildMenu(input: MenuInput): MenuItem[] {
     items.push(t('t_wait', `WAIT ${FRAME_DEFAULTS.waitExtendS}s more for the running command`, '', FRAME_DEFAULTS.waitExtendS, 'wait'));
     items.push(t('t_interrupt', 'INTERRUPT the running command (C-c)', 'C-c', 2, 'interrupt'));
   }
+  if (input.paneWedged) items.push(t('t_reset', 'RESET THE PANE (kill the wedged shell, start a fresh one in the task directory)', '', 0, 'reset_pane'));
   if (input.screenClipped) items.push(t('t_more', 'SHOW MORE OUTPUT (earlier screen lines)', '', 0, 'show_more'));
   if (input.taskTestCommand) items.push(t('t_test', `RUN THE TASK'S OWN TEST: ${input.taskTestCommand.slice(0, 60)}`, `${input.taskTestCommand}\n`, 30, 'run_test'));
   items.push(t('t_reread', 'RE-READ THE TASK TEXT', '', 0, 'reread_task'));
@@ -182,6 +206,28 @@ export function buildMenu(input: MenuInput): MenuItem[] {
   // annotate repeats so the chooser and the writer both see them as data
   if (input.history) for (const it of items) { const n = repeatCount(input.history, it.keystrokes); if (n > 0 && it.source === 'generator') it.why = `${it.why ? it.why + ' · ' : ''}already run ${n}×`; }
   return items;
+}
+
+/** R181: the contract says "name a template in a candidate's label to use it" — make that true. A generator candidate whose label names a
+ *  template (WAIT / INTERRUPT / SHOW MORE / RUN THE TASK'S OWN TEST / RE-READ / FINISH / RESET THE PANE) and carries no keystrokes of its own
+ *  becomes that template (same id/position, so the chooser-off arm executes it as c1). Field read 2026-09-22: E1 writers named SHOW MORE and
+ *  RE-READ in labels and got an empty wait instead. Pure. */
+const TEMPLATE_NAMES: Array<[RegExp, TemplateOp]> = [
+  [/RESET THE PANE|RESET PANE/i, 'reset_pane'], [/SHOW MORE/i, 'show_more'], [/RE-?READ/i, 'reread_task'], [/RUN THE TASK'?S? (OWN )?TEST/i, 'run_test'],
+  [/\bINTERRUPT\b/i, 'interrupt'], [/^\s*WAIT\b|\bWAIT (\d+ ?S|MORE|LONGER)/i, 'wait'], [/^\s*FINISH\b|\(declare the task complete\)/i, 'finish'],
+];
+export function applyNamedTemplates(menu: MenuItem[]): MenuItem[] {
+  const templates = menu.filter((m) => m.source === 'template');
+  return menu.map((m) => {
+    if (m.source !== 'generator') return m;
+    const named = TEMPLATE_NAMES.find(([re]) => re.test(m.label))?.[1];
+    if (!named) return m;
+    const t = templates.find((x) => x.op === named);
+    if (!t) return m;
+    const ownKeys = m.keystrokes.trim();
+    if (ownKeys && ownKeys !== t.keystrokes.trim()) return m; // the writer typed real keystrokes — those win over the name
+    return { ...t, id: m.id, label: m.label, why: m.why, durationS: named === 'wait' && m.durationS > 0 ? m.durationS : t.durationS };
+  });
 }
 
 /** The per-turn suffix text the writer sees (the prefix is fixed; only this changes). Pure. */
@@ -192,7 +238,7 @@ export function buildFrameSuffix(input: { screen: string; stateCard: string; men
   // TOKEN DIET (2026-09-21): the standing templates are in the frame contract (turn 0); the per-turn list is sent only when it changes
   // (a running command adds WAIT/INTERRUPT; a clipped screen adds SHOW MORE) or when the caller asks for it.
   if (input.showTemplates !== false && (input.templatesChanged ?? true)) parts.push(`MENU (name one in a candidate's label to use it):\n${templates.map((m) => `- ${m.label}`).join('\n')}`);
-  else if (templates.some((m) => m.op === 'wait' || m.op === 'interrupt' || m.op === 'show_more')) parts.push(`MENU: ${templates.filter((m) => ['wait', 'interrupt', 'show_more'].includes(m.op ?? '')).map((m) => m.label.split(' (')[0]).join(' · ')}`);
+  else if (templates.some((m) => m.op === 'wait' || m.op === 'interrupt' || m.op === 'show_more' || m.op === 'reset_pane')) parts.push(`MENU: ${templates.filter((m) => ['wait', 'interrupt', 'show_more', 'reset_pane'].includes(m.op ?? '')).map((m) => m.label.split(' (')[0]).join(' · ')}`);
   return parts.join('\n\n');
 }
 

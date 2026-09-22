@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stripAnsi, parsePromptRc, promptIsBack, clipScreen, buildStateCard, repeatCount, parseFrameAction, buildMenu, buildFrameSuffix, waitPolicy, extractTaskTestCommand, FRAME_DEFAULTS } from '../terminusFrame.js';
+import { stripAnsi, parsePromptRc, promptIsBack, clipScreen, buildStateCard, repeatCount, parseFrameAction, buildMenu, buildFrameSuffix, waitPolicy, extractTaskTestCommand, applyNamedTemplates, paneIsDead, paneWedged, FRAME_DEFAULTS } from '../terminusFrame.js';
 
 const SCREEN = '\x1b[?2004hroot@16e9a8fba9d5:/app# python3 run.py\r\n\x1b[?2004l\rroute: NAN -> SUV\r\nsummary: {"total": 568.7}\r\n__RC=0\r\n\x1b[?2004hroot@16e9a8fba9d5:/app# ';
 
@@ -92,5 +92,25 @@ describe('R179 terminusFrame — menu, suffix, waiting, test command', () => {
     expect(extractTaskTestCommand('The build command `coqc -Q . Top Main.v` must exit 0. Run `make test` from /app.')).toBe('make test');
     expect(extractTaskTestCommand('Verify with `python3 -m pytest tests/ -q` before finishing')).toBe('python3 -m pytest tests/ -q');
     expect(extractTaskTestCommand('Write the answer to /app/results.txt')).toBe('');
+  });
+});
+
+describe('R180/R181 pane liveness + named templates', () => {
+  it('detects a dead session from the executor text', () => {
+    expect(paneIsDead("Session 'frame-ab-12' does not exist")).toBe(true);
+    expect(paneIsDead('root@x:/app$ ')).toBe(false);
+  });
+  it('calls a pane wedged only after wedgeTurns promptless turns that include an interrupt', () => {
+    const h = (k: string) => ({ keystrokes: k, rc: null, outcome: '', elapsedS: 2 });
+    expect(paneWedged([h('a\n'), h('C-c'), h('b\n')])).toBe(false);
+    expect(paneWedged([h('a\n'), h('C-c'), h('b\n'), h('c\n')])).toBe(true);
+    expect(paneWedged([h('a\n'), h('b\n'), h('c\n'), h('d\n')])).toBe(false);
+    expect(paneWedged([{ keystrokes: 'a\n', rc: 0, outcome: '', elapsedS: 1 }, h('C-c'), h('b\n'), h('c\n')])).toBe(false);
+  });
+  it('turns a generator candidate that names a template into that template, unless it typed its own keystrokes', () => {
+    const menu = buildMenu({ candidates: [{ label: 'SHOW MORE OUTPUT', keystrokes: '', durationS: 0 }, { label: 'RE-READ THE TASK', keystrokes: 'cat TASK.md\n', durationS: 3 }], screenClipped: true });
+    const out = applyNamedTemplates(menu);
+    expect(out[0]!.id).toBe('c1'); expect(out[0]!.op).toBe('show_more'); expect(out[0]!.source).toBe('template');
+    expect(out[1]!.op).toBeUndefined(); expect(out[1]!.keystrokes).toBe('cat TASK.md\n');
   });
 });

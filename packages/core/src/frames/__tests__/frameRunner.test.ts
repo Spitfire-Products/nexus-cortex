@@ -38,3 +38,34 @@ describe('R179 frameRunner — time efficiency', () => {
     expect(res.content).toContain('STILL RUNNING'); expect(res.content).toContain('WAIT'); expect(res.content).toContain('INTERRUPT');
   });
 });
+
+describe('R180 pane recovery', () => {
+  const DEAD = "Session 'frame-s-abcd' does not exist";
+  const PROMPT = 'root@x:/app$ \n__RC=0\nroot@x:/app$ ';
+  it('respawns the pane when the session died during a step and tells the writer', async () => {
+    const log: string[] = [];
+    const screens = [PROMPT, PROMPT, DEAD, PROMPT, PROMPT]; // before, after ls, after C-d (dead), after the reset, …
+    const r = new FrameRunner({ ...FRAME_CONFIG_DEFAULTS, frame: 'terminus' }, fakeDeps(screens, log));
+    await r.step({ action: { analysis: 'a', plan: 'p', candidates: [{ label: 'list', keystrokes: 'ls\n', duration_s: 3 }] }, task: 't', elapsedMs: 0, deadlineMs: 0, cwd: '/app', sessionId: 's', predictorModel: 'gen' });
+    const res = await r.step({ action: { analysis: 'a', plan: 'p', candidates: [{ label: 'eof', keystrokes: 'C-d', duration_s: 3 }] }, task: 't', elapsedMs: 0, deadlineMs: 0, cwd: '/app', sessionId: 's', predictorModel: 'gen' });
+    expect(res.content).toContain('PANE RESET (1)');
+    expect(res.content).not.toContain('does not exist');
+    expect(res.meta.running).toBe(false);
+    expect(log.filter((l) => l.startsWith('TmuxSession:create')).length).toBe(2);
+    expect(log.some((l) => l.startsWith('TmuxSession:kill'))).toBe(true);
+  });
+  it('offers RESET THE PANE after four promptless turns with an interrupt, and the named template resets', async () => {
+    const log: string[] = [];
+    const screens = ['building...'];
+    const r = new FrameRunner({ ...FRAME_CONFIG_DEFAULTS, frame: 'terminus' }, fakeDeps(screens, log));
+    const go = (label: string, keys: string) => r.step({ action: { analysis: 'a', plan: 'p', candidates: [{ label, keystrokes: keys, duration_s: 2 }] }, task: 't', elapsedMs: 0, deadlineMs: 0, cwd: '/app', sessionId: 's', predictorModel: 'gen' });
+    await go('run', 'python3 x.py\n'); await go('stop', 'C-c'); await go('stop again', 'C-c');
+    const r4 = await go('probe', 'echo hi\n');
+    expect(r4.content).toContain('RESET THE PANE');
+    const before = log.filter((l) => l.startsWith('TmuxSession:create')).length;
+    const r5 = await go('RESET THE PANE', '');
+    expect(r5.content).toContain('PANE RESET (1)');
+    expect(log.filter((l) => l.startsWith('TmuxSession:create')).length).toBe(before + 1);
+    expect(r5.meta.pick).toBe('c1');
+  });
+});
