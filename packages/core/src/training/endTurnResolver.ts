@@ -123,9 +123,16 @@ export interface EndTurnResolverConfig {
   /** R187b: Jev closes OPEN/UNVERIFIABLE lines from the writer's attestation + harness evidence (one call per finish); off | on; threshold. */
   reqLedgerJev: boolean;
   reqLedgerJevMin: number;
+  /** R192: a would-be accept-with-gap with a ledger line FAILED at this finish is returned to the writer (max per session, own budget floor);
+   *  Jev arbitrates each failed line first: off | shadow (bank only) | on (a confident check-defect verdict downgrades the line). */
+  reqLedgerFailVeto: boolean;
+  reqLedgerFailVetoMax: number;
+  reqLedgerFailVetoMinRemaining: number;
+  reqLedgerFailJev: 'off' | 'shadow' | 'on';
+  reqLedgerFailJevMin: number;
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7 };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7, reqLedgerFailVeto: false, reqLedgerFailVetoMax: 2, reqLedgerFailVetoMinRemaining: 0.25, reqLedgerFailJev: 'shadow', reqLedgerFailJevMin: 0.7 };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
@@ -193,6 +200,11 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
     reqLedgerHoldMax: (() => { const n = parseInt((env.CORTEX_JUDGE_REQ_LEDGER_HOLD_MAX ?? '').trim(), 10); return Number.isInteger(n) && n >= 0 ? Math.min(3, n) : DEFAULTS.reqLedgerHoldMax; })(),
     reqLedgerJev: !/^(off|false|0|no)$/i.test((env.CORTEX_JUDGE_REQ_LEDGER_JEV ?? '').trim()),
     reqLedgerJevMin: (() => { const f = parseFloat((env.CORTEX_JUDGE_REQ_LEDGER_JEV_MIN ?? '').trim()); return Number.isFinite(f) && f > 0 && f <= 1 ? f : DEFAULTS.reqLedgerJevMin; })(),
+    reqLedgerFailVeto: /^(on|true|1)$/i.test((env.CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO ?? '').trim()), // R192
+    reqLedgerFailVetoMax: (() => { const n = parseInt((env.CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO_MAX ?? '').trim(), 10); return Number.isInteger(n) && n >= 0 ? Math.min(4, n) : DEFAULTS.reqLedgerFailVetoMax; })(),
+    reqLedgerFailVetoMinRemaining: (() => { const f = parseFloat((env.CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO_MIN_REMAINING ?? '').trim()); return Number.isFinite(f) && f >= 0 && f < 1 ? f : DEFAULTS.reqLedgerFailVetoMinRemaining; })(),
+    reqLedgerFailJev: (() => { const v = (env.CORTEX_JUDGE_REQ_LEDGER_FAIL_JEV ?? '').trim().toLowerCase(); return v === 'on' ? 'on' : v === 'off' || v === 'false' || v === '0' ? 'off' : v === 'shadow' ? 'shadow' : DEFAULTS.reqLedgerFailJev; })(),
+    reqLedgerFailJevMin: (() => { const f = parseFloat((env.CORTEX_JUDGE_REQ_LEDGER_FAIL_JEV_MIN ?? '').trim()); return Number.isFinite(f) && f > 0 && f <= 1 ? f : DEFAULTS.reqLedgerFailJevMin; })(),
   };
 }
 

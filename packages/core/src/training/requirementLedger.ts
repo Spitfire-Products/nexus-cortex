@@ -178,3 +178,58 @@ export function applyLedgerJevAnswers(entries: LedgerEntry[], answers: Record<st
   });
   return { entries: out, closed, asked };
 }
+
+/* ---------- R192 HB-LEDGER-FAILED-VETO (operator 2026-09-23: "build the ledger-failed veto with jev arbitration in shadow"). L7 read: every
+ *  failing consistency session ended "accept-with-gap" with 45–92% of the budget left while a ledger line whose check the harness had JUST run
+ *  was FAILED on the real defect (photonic's separation rule, telecom's R8) — the evidence was produced and the acceptance policy accepted over
+ *  it (one shared evidence veto per session). This rung: a would-be accept-with-gap with a FAILED line checked THIS finish is returned to the
+ *  writer with the failing check and its output, at most reqLedgerFailVetoMax times per session, never below its own budget floor. Jev
+ *  arbitrates each failed line first (is the failure the CHECK's defect rather than the work's?): shadow = ask + bank, never act; on = a
+ *  confident defect verdict downgrades the line to UNVERIFIABLE before the veto decision. Pure here; the orchestrator wires. ---------- */
+
+export function ledgerFailVetoable(input: { action: string; failedNow: string[]; vetoesUsed: number; max: number; remainingFrac: number | null; minRemaining: number }): boolean {
+  if (input.action !== 'accept-with-gap') return false;
+  if (!input.failedNow.length) return false;
+  if (input.vetoesUsed >= input.max) return false;
+  if (input.minRemaining > 0 && input.remainingFrac !== null && input.remainingFrac < input.minRemaining) return false;
+  return true;
+}
+
+/** The state Jev reads to arbitrate FAILED lines: requirement, check, the harness output, the writer's attestation. Pure. */
+export function buildLedgerFailJevState(input: { task: string; entries: LedgerEntry[]; failedNow: string[]; attestation: string }): Record<string, unknown> {
+  const failed = input.entries.filter((e) => input.failedNow.includes(e.id) && e.status === 'failed');
+  return {
+    task_instruction: String(input.task ?? '').slice(0, TASK_TEXT_CAP),
+    failed_checks: failed.map((e) => ({ id: e.id, kind: e.kind, requirement: e.text, harness_check: e.check ?? '', harness_output: (e.lastResult ?? '').slice(0, 800) })),
+    writer_attestation: String(input.attestation ?? '').slice(0, 3000),
+  };
+}
+
+/** One noul per failed line: is this failure the CHECK's own defect (not the work's)? Pure. */
+export function buildLedgerFailJevQuestions(entries: LedgerEntry[], failedNow: string[]): Record<string, { type: 'noul'; instructions: string }> {
+  const q: Record<string, { type: 'noul'; instructions: string }> = {};
+  for (const e of entries) {
+    if (!failedNow.includes(e.id) || e.status !== 'failed') continue;
+    q[`defect_${e.id}`] = { type: 'noul', instructions: `Requirement ${e.id} (${e.kind}): "${e.text.slice(0, 200)}". The harness ran the check shown and it FAILED with the output shown. Judging ONLY from the check command, its output and the writer's attestation: is the failure caused by a DEFECT OF THE CHECK ITSELF (wrong arguments or path, wrong logic, a tool or file the check assumes but the task does not, a comparison against something the task does not require) rather than by the work not meeting the requirement? Answer no when the output shows the requirement genuinely unmet or when you cannot tell.` };
+  }
+  return q;
+}
+
+/** Apply Jev's arbitration. shadow: bank only. on: a line at or above the threshold is downgraded to UNVERIFIABLE (check dropped) and leaves failedNow. Pure. */
+export function applyLedgerFailJevAnswers(entries: LedgerEntry[], failedNow: string[], answers: Record<string, number> | null, threshold: number, act: boolean): { entries: LedgerEntry[]; failedNow: string[]; asked: number; defects: string[]; probs: Record<string, number> } {
+  if (!answers) return { entries, failedNow, asked: 0, defects: [], probs: {} };
+  const defects: string[] = []; const probs: Record<string, number> = {}; let asked = 0;
+  for (const id of failedNow) { const p = answers[`defect_${id}`]; if (typeof p === 'number') { asked += 1; probs[id] = Number(p.toFixed(3)); if (p >= threshold) defects.push(id); } }
+  if (!act || !defects.length) return { entries, failedNow, asked, defects, probs };
+  const out = entries.map((e) => defects.includes(e.id) ? { ...e, status: 'unverifiable' as ReqStatus, check: null, lastResult: `${e.lastResult ? e.lastResult + '\n' : ''}jev: the check itself is defective (${(probs[e.id] ?? 0).toFixed(2)}) — line no longer counted failed` } : e);
+  return { entries: out, failedNow: failedNow.filter((id) => !defects.includes(id)), asked, defects, probs };
+}
+
+/** The message a ledger-failed veto returns to the writer: each failed line with its check and output. Pure. */
+export function formatLedgerFailVetoMessage(input: { entries: LedgerEntry[]; failedNow: string[]; vetoIndex: number; max: number; remainingFrac: number | null }): string {
+  const failed = input.entries.filter((e) => input.failedNow.includes(e.id) && e.status === 'failed');
+  const pct = input.remainingFrac === null ? '' : ` (${Math.round(input.remainingFrac * 100)}% of the budget remains)`;
+  const body = failed.map((e) => `- ${e.id} [${e.kind}] ${e.text}\n  harness check: ${e.check ?? ''}\n  result just now: ${(e.lastResult ?? '').split('\n').slice(0, 6).join(' / ').slice(0, 600)}`).join('\n');
+  return `EndTurn HELD (stated requirement not met, hold ${input.vetoIndex}/${input.max})${pct} — the harness ran the checks for the task's STATED requirements at your finish and these FAILED. ` +
+    `Fix the work so each check passes (run the same command yourself and read its output), then call EndTurn again with the command and its output in your attestation. If you believe a check is itself wrong, say exactly why in the attestation.\n\n${body}`;
+}

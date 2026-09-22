@@ -159,6 +159,11 @@ export interface EnvironmentVariables {
   CORTEX_JUDGE_REQ_LEDGER_HOLD_MAX?: string; // max ledger holds per turn (default 1) (R187)
   CORTEX_JUDGE_REQ_LEDGER_JEV?: string; // on|off — Jev closes lines the shell could not decide (default on) (R187b)
   CORTEX_JUDGE_REQ_LEDGER_JEV_MIN?: string; // threshold (default 0.7) (R187b)
+  CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO?: string; // off | on (R192)
+  CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO_MAX?: string; // default 2 (R192)
+  CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO_MIN_REMAINING?: string; // default 0.25 (R192)
+  CORTEX_JUDGE_REQ_LEDGER_FAIL_JEV?: string; // off | shadow | on (default shadow) (R192)
+  CORTEX_JUDGE_REQ_LEDGER_FAIL_JEV_MIN?: string; // default 0.7 (R192)
   CORTEX_JUDGE_INDEPENDENT_DERIVATION?: string; // On a value-shaped task, recompute the result by a different method before a standing finish; disagreement holds once (R176 HB-INDEPENDENT-DERIVATION): off | on (default off)
   CORTEX_JUDGE_INDEPENDENT_DERIVATION_TOL?: string; // Relative tolerance for numeric agreement in the independent derivation (R176) (default 0.001)
   CORTEX_FRAME?: string; // tools (default) | terminus: one tmux pane as the only action surface (FrameAction + EndTurn), screen + state card + menu each turn (R179)
@@ -544,6 +549,11 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_JUDGE_REQ_LEDGER_HOLD_MAX: '',
   CORTEX_JUDGE_REQ_LEDGER_JEV: '',
   CORTEX_JUDGE_REQ_LEDGER_JEV_MIN: '',
+  CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO: '',
+  CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO_MAX: '',
+  CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO_MIN_REMAINING: '',
+  CORTEX_JUDGE_REQ_LEDGER_FAIL_JEV: '',
+  CORTEX_JUDGE_REQ_LEDGER_FAIL_JEV_MIN: '',
   CORTEX_JUDGE_INDEPENDENT_DERIVATION: '',
   CORTEX_JUDGE_INDEPENDENT_DERIVATION_TOL: '',
   CORTEX_FRAME: '',

@@ -107,6 +107,11 @@ const CONFIG_ENTRIES: Record<string, RuntimeConfigEntry> = {
   CORTEX_JUDGE_REQ_LEDGER_HOLD_MAX: { tier: 'env' },
   CORTEX_JUDGE_REQ_LEDGER_JEV: { tier: 'env' },
   CORTEX_JUDGE_REQ_LEDGER_JEV_MIN: { tier: 'env' },
+  CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO: { tier: 'env' },
+  CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO_MAX: { tier: 'env' },
+  CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO_MIN_REMAINING: { tier: 'env' },
+  CORTEX_JUDGE_REQ_LEDGER_FAIL_JEV: { tier: 'env' },
+  CORTEX_JUDGE_REQ_LEDGER_FAIL_JEV_MIN: { tier: 'env' },
   CORTEX_JUDGE_INDEPENDENT_DERIVATION: { tier: 'env' },
   CORTEX_JUDGE_INDEPENDENT_DERIVATION_TOL: { tier: 'env' },
   CORTEX_FRAME: { tier: 'env' }, // R179

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseRequirementLedger, initLedger, updateLedger, ledgerCounts, ledgerHoldable, formatLedgerForWriter, formatLedgerHoldMessage, formatLedgerForJudge, buildRequirementLedgerPrompt, buildLedgerJevState, buildLedgerJevQuestions, applyLedgerJevAnswers, isBoilerplateRequirement, looksLikeBrokenCheck, REQ_LEDGER_SYSTEM } from '../requirementLedger.js';
+import { parseRequirementLedger, initLedger, updateLedger, ledgerCounts, ledgerHoldable, formatLedgerForWriter, formatLedgerHoldMessage, formatLedgerForJudge, buildRequirementLedgerPrompt, buildLedgerJevState, buildLedgerJevQuestions, applyLedgerJevAnswers, isBoilerplateRequirement, looksLikeBrokenCheck, REQ_LEDGER_SYSTEM, ledgerFailVetoable, buildLedgerFailJevState, buildLedgerFailJevQuestions, applyLedgerFailJevAnswers, formatLedgerFailVetoMessage } from '../requirementLedger.js';
 
 const RAW = `REQ 1 | contract | a second identical submission must not rewrite crm_leads.json | CHECK: cmp -s a b || { echo "rewritten"; exit 1; }
 - REQ 2 | threshold | global recall >= 0.96 | CHECK: \`python3 /tests/score.py --min-recall 0.96\`
@@ -104,5 +104,42 @@ describe('R191 extractor hygiene (L7 09-23: persona example copied into a ledger
     expect(ledgerCounts(u)).toEqual({ lines: 1, open: 0, exercised: 0, failed: 0, unverifiable: 1 });
     expect(Object.keys(buildLedgerJevQuestions(u))).toEqual(['met_R1']);
     expect(formatLedgerForJudge(u)).toMatch(/R1 \[command\] UNVERIFIABLE/);
+  });
+});
+
+describe('R192 ledger-failed veto + Jev arbitration in shadow', () => {
+  const base = initLedger(parseRequirementLedger('REQ 1 | constraint | min separation 10 um | CHECK: python3 /app/check.py\nREQ 2 | artifact | /app/out.json exists | CHECK: test -f /app/out.json\nREQ 3 | contract | duplicate submit is a no-op | CHECK: NONE', 8));
+  const failed = updateLedger(base, [{ id: 'R1', result: 'CHECK RUN: `python3 /app/check.py` → FAILED (exit 1) in 40 ms\nnet_03 separation 7.2 um < 10 um', cls: 'failed' }, { id: 'R2', result: 'CHECK RUN: `test -f /app/out.json` → PASSED in 1 ms', cls: 'passed' }]);
+  it('fires only on accept-with-gap with a line failed at THIS finish, under the cap and above its own floor', () => {
+    const ok = { action: 'accept-with-gap', failedNow: ['R1'], vetoesUsed: 0, max: 2, remainingFrac: 0.6, minRemaining: 0.25 };
+    expect(ledgerFailVetoable(ok)).toBe(true);
+    expect(ledgerFailVetoable({ ...ok, action: 'accept' })).toBe(false);
+    expect(ledgerFailVetoable({ ...ok, action: 'veto' })).toBe(false);
+    expect(ledgerFailVetoable({ ...ok, failedNow: [] })).toBe(false);
+    expect(ledgerFailVetoable({ ...ok, vetoesUsed: 2 })).toBe(false);
+    expect(ledgerFailVetoable({ ...ok, remainingFrac: 0.2 })).toBe(false);
+    expect(ledgerFailVetoable({ ...ok, remainingFrac: null })).toBe(true);
+    expect(ledgerFailVetoable({ ...ok, minRemaining: 0, remainingFrac: 0.01 })).toBe(true);
+  });
+  it('asks Jev one defect question per failed line with the check, its output and the attestation in the state', () => {
+    const q = buildLedgerFailJevQuestions(failed, ['R1']);
+    expect(Object.keys(q)).toEqual(['defect_R1']); expect(q.defect_R1!.instructions).toMatch(/DEFECT OF THE CHECK ITSELF/); expect(q.defect_R1!.instructions).not.toMatch(/accept|verdict/i);
+    const st = buildLedgerFailJevState({ task: 'route nets', entries: failed, failedNow: ['R1'], attestation: 'I ran the checker: all good' }) as any;
+    expect(st.failed_checks).toHaveLength(1); expect(st.failed_checks[0]).toMatchObject({ id: 'R1', harness_check: 'python3 /app/check.py' }); expect(st.failed_checks[0].harness_output).toMatch(/7.2 um/); expect(st.writer_attestation).toMatch(/all good/);
+    expect(Object.keys(buildLedgerFailJevQuestions(failed, ['R2']))).toEqual([]); // passed lines are never asked
+  });
+  it('shadow banks the probabilities and changes nothing; on downgrades a confident defect to unverifiable and drops it from failedNow', () => {
+    const sh = applyLedgerFailJevAnswers(failed, ['R1'], { defect_R1: 0.91 }, 0.7, false);
+    expect(sh).toMatchObject({ asked: 1, defects: ['R1'], probs: { R1: 0.91 }, failedNow: ['R1'] }); expect(sh.entries[0]!.status).toBe('failed'); expect(sh.entries[0]!.check).toBe('python3 /app/check.py');
+    const on = applyLedgerFailJevAnswers(failed, ['R1'], { defect_R1: 0.91 }, 0.7, true);
+    expect(on.failedNow).toEqual([]); expect(on.entries[0]).toMatchObject({ status: 'unverifiable', check: null }); expect(on.entries[0]!.lastResult).toMatch(/check itself is defective \(0.91\)/);
+    const low = applyLedgerFailJevAnswers(failed, ['R1'], { defect_R1: 0.3 }, 0.7, true);
+    expect(low.failedNow).toEqual(['R1']); expect(low.defects).toEqual([]); expect(low.entries[0]!.status).toBe('failed');
+    expect(applyLedgerFailJevAnswers(failed, ['R1'], null, 0.7, true)).toMatchObject({ asked: 0, defects: [], failedNow: ['R1'] });
+  });
+  it('the veto message names only the lines failed at this finish, with check and output, and the budget left', () => {
+    const m = formatLedgerFailVetoMessage({ entries: failed, failedNow: ['R1'], vetoIndex: 1, max: 2, remainingFrac: 0.53 });
+    expect(m).toMatch(/hold 1\/2/); expect(m).toMatch(/53%/); expect(m).toMatch(/R1 \[constraint\] min separation/); expect(m).toMatch(/harness check: python3 \/app\/check.py/); expect(m).toMatch(/7.2 um < 10 um/);
+    expect(m).not.toMatch(/R2 \[artifact\]/); expect(m).not.toMatch(/R3 \[contract\]/); expect(m).toMatch(/If you believe a check is itself wrong/);
   });
 });

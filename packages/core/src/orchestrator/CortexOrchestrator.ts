@@ -33,7 +33,7 @@ import { jevAvailable, jevNoul, buildGapHoldState, GAP_HOLD_QUESTIONS } from '..
 import { resolveFrameConfig, FRAME_CONTRACT, FRAME_TOOL_NAME } from '../frames/frameConfig.js'; // R179
 import { FrameRunner } from '../frames/frameRunner.js'; // R179
 import { emptySessionUsage, addMainUsage, type SessionUsage } from '../training/usageAccounting.js'; // R190
-import { parseRequirementLedger, initLedger, updateLedger, ledgerCounts, ledgerHoldable, formatLedgerForWriter, formatLedgerForJudge, formatLedgerHoldMessage, buildLedgerJevState, buildLedgerJevQuestions, applyLedgerJevAnswers, looksLikeBrokenCheck, type LedgerEntry, type CheckOutcome } from '../training/requirementLedger.js'; // R187 / R191
+import { parseRequirementLedger, initLedger, updateLedger, ledgerCounts, ledgerHoldable, formatLedgerForWriter, formatLedgerForJudge, formatLedgerHoldMessage, buildLedgerJevState, buildLedgerJevQuestions, applyLedgerJevAnswers, looksLikeBrokenCheck, ledgerFailVetoable, buildLedgerFailJevState, buildLedgerFailJevQuestions, applyLedgerFailJevAnswers, formatLedgerFailVetoMessage, type LedgerEntry, type CheckOutcome } from '../training/requirementLedger.js'; // R187 / R191 / R192
 import { isValueShapedTask, parseDerivationReply, methodsDiffer, parseValueLines, extractNumbers, reconcile, buildDerivationHoldMessage, isDerivationCommandAllowed, checkRunPassed, checkRunBody } from '../training/independentDerivation.js'; // R176
 import { resolveDeadlineExitConfig, deadlineExitCallBudget, parseDeadlineExitVerdict } from '../training/deadlineExitMentor.js';
 import { isTaskShaped } from './requirementsVerification.js';
@@ -676,6 +676,7 @@ export class CortexOrchestrator {
   private reqLedgerRetried = false; // R187c: one re-author at the first finish after an empty lift-time result
   private reqLedgerMeta = { genLatencyMs: 0, raw: 0, refused: 0 }; // R187
   private reqLedgerBroken = new Set<string>(); // R191: ids whose check was dropped as malformed
+  private reqLedgerFailVetoes = 0; // R192: ledger-failed vetoes used this turn
   private specFailHistory = new Map<string, { streak: number; sig: string }>(); // R174b: consecutive identical spec failures
   private lastHoldMs = 0; // R173c: wall clock of the last hold/veto this turn
   private derivationHolds = 0; // R176: independent-derivation holds this turn (max 1)
@@ -1268,6 +1269,7 @@ export class CortexOrchestrator {
       }
       // R187 HB-REQUIREMENT-LEDGER: run each stated requirement's check; a FAILED line is R166 evidence; an OPEN line (never exercised) can hold once.
       let reqResults = ''; let reqCounts = { lines: 0, open: 0, exercised: 0, failed: 0, unverifiable: 0 }; let reqJev: { asked: number; closed: string[]; latencyMs: number; error?: boolean } | null = null;
+      let reqFailedNow: string[] = []; let reqFailJev: { mode: string; asked: number; defects: string[]; probs: Record<string, number>; latencyMs: number; error?: boolean } | null = null; // R192
       if (cfg.reqLedger) {
         if (this.reqLedger === null) this.reqLedger = await (this.reqLedgerPromise ?? this.authorRequirementLedger(task));
         // R187c: an empty ledger from a timed-out lift-time call is retried ONCE here (the judge would otherwise run with no lines all session)
@@ -1285,6 +1287,17 @@ export class CortexOrchestrator {
             const applied = applyLedgerJevAnswers(this.reqLedger, jr ? jr.probabilities : null, cfg.reqLedgerJevMin);
             this.reqLedger = applied.entries; reqJev = { asked: applied.asked, closed: applied.closed, latencyMs: Date.now() - j0 };
           } catch { reqJev = { asked: 0, closed: [], latencyMs: Date.now() - j0, error: true }; }
+        }
+        // R192: Jev arbitrates each line that FAILED at THIS finish (is the failure the check's own defect?). shadow banks; on downgrades.
+        reqFailedNow = runs.filter((x) => x.cls === 'failed').map((x) => x.id);
+        if (cfg.reqLedgerFailVeto && cfg.reqLedgerFailJev !== 'off' && reqFailedNow.length && jevAvailable()) {
+          const j0 = Date.now();
+          try {
+            const jr = await jevNoul(buildLedgerFailJevState({ task, entries: this.reqLedger, failedNow: reqFailedNow, attestation }), buildLedgerFailJevQuestions(this.reqLedger, reqFailedNow));
+            const applied = applyLedgerFailJevAnswers(this.reqLedger, reqFailedNow, jr ? jr.probabilities : null, cfg.reqLedgerFailJevMin, cfg.reqLedgerFailJev === 'on');
+            this.reqLedger = applied.entries; reqFailedNow = applied.failedNow;
+            reqFailJev = { mode: cfg.reqLedgerFailJev, asked: applied.asked, defects: applied.defects, probs: applied.probs, latencyMs: Date.now() - j0 };
+          } catch { reqFailJev = { mode: cfg.reqLedgerFailJev, asked: 0, defects: [], probs: {}, latencyMs: Date.now() - j0, error: true }; }
         }
         reqCounts = ledgerCounts(this.reqLedger);
         reqResults = formatLedgerForJudge(this.reqLedger);
@@ -1396,8 +1409,15 @@ export class CortexOrchestrator {
       action = applyVetoFloor(action, resolverRemainingFrac, cfg.vetoMinRemaining);
       // R187: a finish that would otherwise stand while a STATED requirement is still OPEN (its check never passed nor failed — never
       // exercised) is held once with the open lines named. Never below the budget floor; a FAILED line already went the R166 evidence way.
+      // R192: a would-be accept-with-gap while a stated requirement's check FAILED at this very finish is returned to the writer with the
+      // failing check (own cap + own budget floor; Jev arbitration above may already have downgraded a defective check).
+      let reqFailVeto: { message: string } | null = null;
+      if (cfg.reqLedger && cfg.reqLedgerFailVeto && this.reqLedger && !belowFloor &&
+          ledgerFailVetoable({ action, failedNow: reqFailedNow, vetoesUsed: this.reqLedgerFailVetoes, max: cfg.reqLedgerFailVetoMax, remainingFrac: resolverRemainingFrac, minRemaining: cfg.reqLedgerFailVetoMinRemaining })) {
+        reqFailVeto = { message: formatLedgerFailVetoMessage({ entries: this.reqLedger, failedNow: reqFailedNow, vetoIndex: this.reqLedgerFailVetoes + 1, max: cfg.reqLedgerFailVetoMax, remainingFrac: resolverRemainingFrac }) };
+      }
       let reqHold: { message: string } | null = null;
-      if (cfg.reqLedger && this.reqLedger && action !== 'veto' && action !== 'escalate' && !belowFloor &&
+      if (cfg.reqLedger && this.reqLedger && !reqFailVeto && action !== 'veto' && action !== 'escalate' && !belowFloor &&
           ledgerHoldable({ open: reqCounts.open, holdsUsed: this.reqLedgerHolds, maxHolds: cfg.reqLedgerHoldMax, remainingFrac: resolverRemainingFrac, minRemaining: cfg.vetoMinRemaining })) {
         reqHold = { message: formatLedgerHoldMessage({ entries: this.reqLedger, holdIndex: this.reqLedgerHolds + 1, maxHolds: cfg.reqLedgerHoldMax, remainingFrac: resolverRemainingFrac }) };
       }
@@ -1405,7 +1425,7 @@ export class CortexOrchestrator {
       // different method and hold ONCE on disagreement. Never below the budget floor; never more than once per turn.
       let derivationHold: { message: string } | null = null;
       let derivationInfo: Record<string, unknown> | null = null;
-      if (cfg.derivation === 'on' && !reqHold && action !== 'veto' && action !== 'escalate' && this.derivationHolds < 1 && !belowFloor &&
+      if (cfg.derivation === 'on' && !reqHold && !reqFailVeto && action !== 'veto' && action !== 'escalate' && this.derivationHolds < 1 && !belowFloor &&
           !(cfg.vetoMinRemaining > 0 && resolverRemainingFrac !== null && resolverRemainingFrac < cfg.vetoMinRemaining) && this.helperMiddleware.deriveIndependentCheck) {
         const shape = isValueShapedTask(task);
         derivationInfo = { valueShaped: shape.valueShaped, reason: shape.reason, artifacts: shape.artifacts };
@@ -1460,6 +1480,7 @@ export class CortexOrchestrator {
           vetoMinRemaining: cfg.vetoMinRemaining, belowFloor, holdProgressed: holdProg, holdGapMs: msSinceLastHold, planSim: Number(planSimilarity(this.judgePriorPlan, verdict.plan).toFixed(3)), msSinceLastHold, // R173c
           derivation: cfg.derivation, derivationAgreement: derivationInfo?.agreement ?? null, derivationHeld: !!derivationHold, // R176
           reqLedger: cfg.reqLedger, reqLines: reqCounts.lines, reqOpen: reqCounts.open, reqExercised: reqCounts.exercised, reqFailed: reqCounts.failed, reqUnverifiable: reqCounts.unverifiable, reqHeld: !!reqHold, reqHolds: this.reqLedgerHolds, reqGenLatencyMs: this.reqLedgerMeta.genLatencyMs, reqJev: cfg.reqLedgerJev, reqJevAsked: reqJev?.asked ?? 0, reqJevClosed: reqJev?.closed ?? [], reqJevLatencyMs: reqJev?.latencyMs ?? 0, // R187/R187b
+          reqFailVeto: !!reqFailVeto, reqFailVetoes: this.reqLedgerFailVetoes, reqFailedNow, reqFailJev, // R192
           reqBroken: [...this.reqLedgerBroken], reqLinesDetail: (this.reqLedger ?? []).map((e) => ({ id: e.id, kind: e.kind, status: e.status, check: !!e.check, runs: e.runs, last: (e.lastResult ?? '').split('\n').slice(0, 2).join(' / ').slice(0, 200) })), // R191: per-line outcomes so a false-failure read is possible from the decisions file
           latencyMs, rawLen: (text ?? '').length,
           deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,
@@ -1495,6 +1516,15 @@ export class CortexOrchestrator {
           (holdable && !checksFailed ? `\n\nNo harness-run check failed, but the reviewer named open items and budget remains — this hold returns them to you (hold ${this.endTurnResolverRejects}/${resolverCap}).` : '') + // R173
           budgetedVetoEscalation(this.endTurnResolverRejects, resolverCap, resolverRemainingMs ?? 0, this.turnDeadlineMsActive); // R160
         console.warn(`[EndTurnResolver] GAP — vetoed finish (${verdict.plan.length}-char plan, reject ${this.endTurnResolverRejects}/${resolverCap}${resolverRemainingFrac === null ? '' : `, budget remaining ${Math.round(resolverRemainingFrac * 100)}%`})`);
+      } else if (reqFailVeto) {
+        // R192: the judge would accept with gap, but a stated requirement's check FAILED just now — return the failing check to the writer.
+        this.reqLedgerFailVetoes += 1;
+        this.lastHoldMs = Date.now();
+        ev.endTurnCalled = false;
+        et.is_error = true;
+        et.content = reqFailVeto.message;
+        if (cfg.semantic) { this.judgePriorPlan = verdict.plan.slice(0, 2500); this.toolCallsAtLastVeto = this.turnToolCallTotal; }
+        console.warn(`[EndTurnResolver] R192 LEDGER-FAILED VETO — finish returned (${reqFailedNow.join(',')} failed at this finish; veto ${this.reqLedgerFailVetoes}/${cfg.reqLedgerFailVetoMax}${reqFailJev ? `; jev ${reqFailJev.mode} asked ${reqFailJev.asked} defects ${reqFailJev.defects.join(',') || 'none'}` : ''})`);
       } else if (reqHold) {
         // R187: the finish would stand, but a stated requirement was never exercised — hold once with the open lines named.
         this.reqLedgerHolds += 1;
