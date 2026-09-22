@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stripAnsi, parsePromptRc, promptIsBack, clipScreen, buildStateCard, repeatCount, parseFrameAction, buildMenu, buildFrameSuffix, waitPolicy, extractTaskTestCommand, applyNamedTemplates, paneIsDead, paneWedged, FRAME_DEFAULTS } from '../terminusFrame.js';
+import { stripAnsi, parsePromptRc, promptIsBack, clipScreen, buildStateCard, repeatCount, parseFrameAction, buildMenu, buildFrameSuffix, waitPolicy, extractTaskTestCommand, applyNamedTemplates, paneIsDead, paneWedged, guardKeystrokes, applyKeyGuard, FRAME_DEFAULTS } from '../terminusFrame.js';
 
 const SCREEN = '\x1b[?2004hroot@16e9a8fba9d5:/app# python3 run.py\r\n\x1b[?2004l\rroute: NAN -> SUV\r\nsummary: {"total": 568.7}\r\n__RC=0\r\n\x1b[?2004hroot@16e9a8fba9d5:/app# ';
 
@@ -112,5 +112,28 @@ describe('R180/R181 pane liveness + named templates', () => {
     const out = applyNamedTemplates(menu);
     expect(out[0]!.id).toBe('c1'); expect(out[0]!.op).toBe('show_more'); expect(out[0]!.source).toBe('template');
     expect(out[1]!.op).toBeUndefined(); expect(out[1]!.keystrokes).toBe('cat TASK.md\n');
+  });
+});
+
+describe('R182 keystroke guard', () => {
+  const idle = { running: false }; const busy = { running: true };
+  it('blocks pane killers at an idle prompt and allows C-d to a running program', () => {
+    expect(guardKeystrokes('C-d', idle).verdict).toBe('block');
+    expect(guardKeystrokes('C-d', busy).verdict).toBe('allow');
+    expect(guardKeystrokes('exit\n', idle).class).toBe('pane_killer');
+    expect(guardKeystrokes('cd /app && exit\n', idle).verdict).toBe('block');
+    expect(guardKeystrokes('tmux kill-server\n', idle).verdict).toBe('block');
+    expect(guardKeystrokes('kill -9 -1\n', idle).verdict).toBe('block');
+    expect(guardKeystrokes('exec python3 app.py\n', idle).verdict).toBe('block');
+  });
+  it('blocks destructive commands and leaves ordinary work alone', () => {
+    for (const k of ['rm -rf /\n', 'rm -rf /app\n', 'rm -rf ~\n', 'sudo rm -rf --no-preserve-root /\n', 'rm -fr .\n', 'mkfs.ext4 /dev/sda1\n', 'dd if=/dev/zero of=/dev/sda bs=1M\n', ':(){ :|:& };:\n', 'reboot\n', 'chmod -R 777 /\n', 'mv /app /tmp/x\n']) expect(guardKeystrokes(k, idle).verdict, k).toBe('block');
+    for (const k of ['rm -rf /tmp/build\n', 'rm -rf node_modules dist\n', 'rm -f /app/out.txt\n', 'ls -la /app\n', 'python3 run.py > /tmp/out.txt 2>&1\n', 'git status\n', 'kill %1\n', 'pkill -f my_server\n', 'C-c', 'exit_code=$?; echo $exit_code\n', 'echo "exit now"\n', 'cat > x.py <<EOF\nimport os\nEOF\n']) expect(guardKeystrokes(k, idle).verdict, k).toBe('allow');
+  });
+  it('removes blocked generator candidates from the menu and never blocks templates', () => {
+    const menu = buildMenu({ candidates: [{ label: 'nuke', keystrokes: 'rm -rf /app\n', durationS: 2 }, { label: 'ls', keystrokes: 'ls\n', durationS: 2 }], commandStillRunning: true });
+    const g = applyKeyGuard(menu, { running: true });
+    expect(g.blocked.map((b) => b.id)).toEqual(['c1']);
+    expect(g.menu.map((m) => m.id)).toEqual(['c2', 't_wait', 't_interrupt', 't_reread', 't_finish']);
   });
 });

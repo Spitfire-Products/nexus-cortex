@@ -230,6 +230,58 @@ export function applyNamedTemplates(menu: MenuItem[]): MenuItem[] {
   });
 }
 
+/* ---------- R182 keystroke guard (operator 2026-09-22: "block harmful keystroke patterns, not just a contract instruction") ---------- */
+
+export interface KeyGuardVerdict { verdict: 'allow' | 'block'; reason?: string; class?: 'pane_killer' | 'destructive' }
+
+const PANE_KILLERS: Array<[RegExp, string]> = [
+  [/^(exit|logout)(\s.*)?$/i, 'exits the pane shell'],
+  [/^exec\s+/i, 'replaces the pane shell'],
+  [/\btmux\s+(kill-server|kill-session|kill-window|kill-pane|detach)\b/i, 'kills the harness tmux session'],
+  [/\bkill\s+(-9\s+|-KILL\s+|-s\s+KILL\s+)?-1\b/i, 'kills every process including the shell'],
+  [/\bpkill\s+(-9\s+)?(-f\s+)?(tmux|bash|sh)\b/i, 'kills the shell or tmux'],
+  [/\bkillall\s+(-9\s+)?(tmux|bash|sh)\b/i, 'kills the shell or tmux'],
+];
+const DESTRUCTIVE: Array<[RegExp, string]> = [
+  [/\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*|--recursive)\s+(--no-preserve-root\s+)?(\/|~|\$HOME|\/app|\/root|\/etc|\/usr|\/var|\/bin|\/lib|\*|\.)(\s|\/?$|\/\*)/i, 'recursively deletes a root, home or the task directory'],
+  [/\brm\s+-[a-zA-Z]*r[a-zA-Z]*\s+(\/|~)\s*$/i, 'recursively deletes a root'],
+  [/\bmkfs(\.\w+)?\b/i, 'formats a filesystem'],
+  [/\bdd\s+.*\bof=\/dev\/(sd|nvme|vd|hd|xvd|mmcblk|disk)/i, 'writes a block device'],
+  [/>\s*\/dev\/(sd|nvme|vd|hd|xvd|mmcblk)/i, 'writes a block device'],
+  [/:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/, 'fork bomb'],
+  [/\b(shutdown|reboot|halt|poweroff|init\s+[06])\b/i, 'shuts the container down'],
+  [/\b(chmod|chown)\s+(-[a-zA-Z]*R[a-zA-Z]*\s+|--recursive\s+)\S+\s+\/\s*$/i, 'recursively changes ownership or mode of /'],
+  [/\bmv\s+(\/|\/app|~)\s+/i, 'moves a root or the task directory'],
+];
+
+/** Classify one candidate's keystrokes. `running`: a command is still in the foreground (C-d is then a legitimate EOF, not a shell exit). Pure. */
+export function guardKeystrokes(keystrokes: string, ctx: { running: boolean }): KeyGuardVerdict {
+  const k = String(keystrokes ?? '');
+  const raw = k.trim();
+  if (/^C-d$/i.test(raw) || raw === '\u0004') return ctx.running ? { verdict: 'allow' } : { verdict: 'block', class: 'pane_killer', reason: 'C-d at an idle prompt exits the pane shell (send it only to a running program)' };
+  if (/:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/.test(k)) return { verdict: 'block', class: 'destructive', reason: 'fork bomb' }; // whole-string: the splitter below would cut it apart
+  // command lines: split on newlines / ; / && / || / | and judge each simple command
+  const cmds = k.split(/\n|;|&&|\|\||\|/).map((c) => c.trim()).filter(Boolean);
+  for (const c of cmds) {
+    for (const [re, why] of PANE_KILLERS) if (re.test(c)) return { verdict: 'block', class: 'pane_killer', reason: `"${c.slice(0, 60)}" ${why}` };
+    for (const [re, why] of DESTRUCTIVE) if (re.test(c)) return { verdict: 'block', class: 'destructive', reason: `"${c.slice(0, 60)}" ${why}` };
+  }
+  return { verdict: 'allow' };
+}
+
+/** Apply the guard to a menu: blocked generator candidates are removed; templates are never blocked. Pure. */
+export function applyKeyGuard(menu: MenuItem[], ctx: { running: boolean }): { menu: MenuItem[]; blocked: Array<{ id: string; label: string; keystrokes: string; reason: string; class: string }> } {
+  const blocked: Array<{ id: string; label: string; keystrokes: string; reason: string; class: string }> = [];
+  const kept = menu.filter((m) => {
+    if (m.source !== 'generator') return true;
+    const v = guardKeystrokes(m.keystrokes, ctx);
+    if (v.verdict === 'allow') return true;
+    blocked.push({ id: m.id, label: m.label, keystrokes: normalizeKeys(m.keystrokes).slice(0, 80), reason: v.reason ?? '', class: v.class ?? '' });
+    return false;
+  });
+  return { menu: kept, blocked };
+}
+
 /** The per-turn suffix text the writer sees (the prefix is fixed; only this changes). Pure. */
 export function buildFrameSuffix(input: { screen: string; stateCard: string; menu: MenuItem[]; consequences?: string[]; showTemplates?: boolean; templatesChanged?: boolean }): string {
   const parts = [`STATE:\n${input.stateCard}`, `SCREEN (tmux pane, most recent at the bottom):\n${input.screen}`];

@@ -45,7 +45,7 @@ describe('R180 pane recovery', () => {
   it('respawns the pane when the session died during a step and tells the writer', async () => {
     const log: string[] = [];
     const screens = [PROMPT, PROMPT, DEAD, PROMPT, PROMPT]; // before, after ls, after C-d (dead), after the reset, …
-    const r = new FrameRunner({ ...FRAME_CONFIG_DEFAULTS, frame: 'terminus' }, fakeDeps(screens, log));
+    const r = new FrameRunner({ ...FRAME_CONFIG_DEFAULTS, frame: 'terminus', keyGuard: false }, fakeDeps(screens, log)); // guard off: this test is about recovery
     await r.step({ action: { analysis: 'a', plan: 'p', candidates: [{ label: 'list', keystrokes: 'ls\n', duration_s: 3 }] }, task: 't', elapsedMs: 0, deadlineMs: 0, cwd: '/app', sessionId: 's', predictorModel: 'gen' });
     const res = await r.step({ action: { analysis: 'a', plan: 'p', candidates: [{ label: 'eof', keystrokes: 'C-d', duration_s: 3 }] }, task: 't', elapsedMs: 0, deadlineMs: 0, cwd: '/app', sessionId: 's', predictorModel: 'gen' });
     expect(res.content).toContain('PANE RESET (1)');
@@ -67,5 +67,27 @@ describe('R180 pane recovery', () => {
     expect(r5.content).toContain('PANE RESET (1)');
     expect(log.filter((l) => l.startsWith('TmuxSession:create')).length).toBe(before + 1);
     expect(r5.meta.pick).toBe('c1');
+  });
+});
+
+describe('R182 keystroke guard in the runner', () => {
+  const PROMPT = 'root@x:/app$ \n__RC=0\nroot@x:/app$ ';
+  it('does not send a blocked C-d at an idle prompt and tells the writer; nothing else is sent either', async () => {
+    const log: string[] = [];
+    const r = new FrameRunner({ ...FRAME_CONFIG_DEFAULTS, frame: 'terminus' }, fakeDeps([PROMPT], log));
+    const res = await r.step({ action: { analysis: 'a', plan: 'p', candidates: [{ label: 'eof', keystrokes: 'C-d', duration_s: 2 }] }, task: 't', elapsedMs: 0, deadlineMs: 0, cwd: '/app', sessionId: 's', predictorModel: 'gen' });
+    expect(res.content).toContain('BLOCKED by the keystroke guard');
+    expect(res.meta.action).toBe('refuse'); expect(res.meta.pick).toBe(null);
+    expect(log.some((l) => l.startsWith('TmuxSession:send:C-d'))).toBe(false);
+  });
+  it('falls to the second candidate when the first is destructive, and off means off', async () => {
+    const log: string[] = [];
+    const r = new FrameRunner({ ...FRAME_CONFIG_DEFAULTS, frame: 'terminus', candidates: 3 }, fakeDeps([PROMPT], log));
+    const res = await r.step({ action: { analysis: 'a', plan: 'p', candidates: [{ label: 'nuke', keystrokes: 'rm -rf /\n', duration_s: 2 }, { label: 'ls', keystrokes: 'ls\n', duration_s: 2 }] }, task: 't', elapsedMs: 0, deadlineMs: 0, cwd: '/app', sessionId: 's', predictorModel: 'gen' });
+    expect(res.meta.pick).toBe('c2'); expect(log.some((l) => l.startsWith('TmuxSession:send:ls'))).toBe(true); expect(log.some((l) => l.includes('rm -rf'))).toBe(false);
+    const log2: string[] = [];
+    const r2 = new FrameRunner({ ...FRAME_CONFIG_DEFAULTS, frame: 'terminus', keyGuard: false }, fakeDeps([PROMPT], log2));
+    await r2.step({ action: { analysis: 'a', plan: 'p', candidates: [{ label: 'x', keystrokes: 'exit\n', duration_s: 2 }] }, task: 't', elapsedMs: 0, deadlineMs: 0, cwd: '/app', sessionId: 's', predictorModel: 'gen' });
+    expect(log2.some((l) => l.startsWith('TmuxSession:send:exit'))).toBe(true);
   });
 });

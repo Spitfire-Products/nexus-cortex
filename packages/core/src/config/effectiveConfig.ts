@@ -141,6 +141,7 @@ const GROUPS: Array<{ group: string; levers: LeverSpec[] }> = [
       { key: 'CORTEX_FRAME_CANDIDATES', what: 'Max candidate actions per FrameAction, 1..3 (R179)', codeDefault: '1', kind: 'value' },
       { key: 'CORTEX_FRAME_WAIT_CAP_S', what: 'Cap on waiting for one action, seconds (R179)', codeDefault: '300', kind: 'value' },
       { key: 'CORTEX_FRAME_SCREEN_LINES', what: 'Pane lines captured per observation (R179)', codeDefault: '45', kind: 'value' },
+      { key: 'CORTEX_FRAME_KEY_GUARD', what: 'Keystroke guard in the terminal frame: pane-killing (C-d at an idle prompt, exit, tmux kill) and destructive (rm -rf /, mkfs, dd to a device, fork bomb, shutdown) candidates are refused before the menu step, never sent (R182)', codeDefault: 'on', kind: 'flag-not-false' },
       { key: 'CORTEX_FRAME_CONTRACT_EXTRA', what: 'Text appended to the turn-0 frame contract (cell guidance without a release) (R179)', codeDefault: '', kind: 'value' },
       { key: 'CORTEX_TURN_CONTRACT_ENFORCE', what: 'Tool-calling responses lacking ANALYSIS + PLAN are rejected unexecuted with a re-prompt (bounded per turn); the structural half of CORTEX_TURN_CONTRACT=channel (HB-TURN-CONTRACT-ENFORCE)', codeDefault: 'false', kind: 'flag-true' },
       { key: 'CORTEX_TURN_CONTRACT_ENFORCE_MAX', what: 'Format rejections per turn before the batch executes as-is (HB-TURN-CONTRACT-ENFORCE; 4.119.0 clamp 0..10000)', codeDefault: '2', kind: 'value' },

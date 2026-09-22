@@ -4,7 +4,7 @@
  * (screen + state card + templates) as the FrameAction tool_result. Holds the frame's durable state for the session (history, running
  * command, tmux session id). Everything decision-shaped is in the pure modules; this file is plumbing + waiting.
  */
-import { buildStateCard, buildMenu, buildFrameSuffix, clipScreen, parsePromptRc, promptIsBack, waitPolicy, extractTaskTestCommand, parseFrameAction, stripAnsi, normalizeKeys, paneIsDead, paneWedged, applyNamedTemplates, FRAME_DEFAULTS, type HistoryEntry } from './terminusFrame.js';
+import { buildStateCard, buildMenu, buildFrameSuffix, clipScreen, parsePromptRc, promptIsBack, waitPolicy, extractTaskTestCommand, parseFrameAction, stripAnsi, normalizeKeys, paneIsDead, paneWedged, applyNamedTemplates, applyKeyGuard, FRAME_DEFAULTS, type HistoryEntry } from './terminusFrame.js';
 import { buildChooserState, buildChooserQuestions, decideChooser, buildChooserRow, type ChooserDecision } from './chooser.js';
 import type { FrameConfig } from './frameConfig.js';
 
@@ -125,7 +125,12 @@ export class FrameRunner {
     const screenBefore = this.lastScreen || await this.capture(this.cfg.screenLines, input.signal);
     const stateBefore = buildStateCard({ cwd: input.cwd, turn: this.turn, budgetUsedFrac: input.deadlineMs > 0 ? Math.min(1, input.elapsedMs / input.deadlineMs) : null, budgetLeftS: input.deadlineMs > 0 ? Math.max(0, (input.deadlineMs - input.elapsedMs) / 1000) : null, history: this.history, commandStillRunning: this.running });
     const wedged = paneWedged(this.history);
-    const menu = applyNamedTemplates(buildMenu({ candidates: action.candidates, taskTestCommand: extractTaskTestCommand(input.task), commandStillRunning: this.running, screenClipped: this.lastClipped, history: this.history, paneWedged: wedged }));
+    const menu0 = applyNamedTemplates(buildMenu({ candidates: action.candidates, taskTestCommand: extractTaskTestCommand(input.task), commandStillRunning: this.running, screenClipped: this.lastClipped, history: this.history, paneWedged: wedged }));
+    // R182: the keystroke guard runs BEFORE the menu step — a pane-killing or destructive candidate never reaches the chooser or the pane.
+    const guarded = this.cfg.keyGuard ? applyKeyGuard(menu0, { running: this.running }) : { menu: menu0, blocked: [] };
+    const menu = guarded.menu;
+    for (const b of guarded.blocked) preConsequences.push(`Candidate "${b.label}" (${b.keystrokes}) was BLOCKED by the keystroke guard: ${b.reason}. It was not sent.`);
+    const allBlocked = guarded.blocked.length > 0 && !menu.some((m) => m.source === 'generator');
     // the menu step
     let decision: ChooserDecision;
     let answers: Record<string, number> | null = null; let chooserLatencyMs = 0;
@@ -134,7 +139,9 @@ export class FrameRunner {
       try { answers = await this.deps.jev(buildChooserState({ task: input.task, screen: screenBefore, stateCard: stateBefore, menu, writerAnalysis: action.analysis }), buildChooserQuestions(menu)); } catch { answers = null; }
       chooserLatencyMs = this.now() - c0;
     }
-    decision = decideChooser({ answers, menu });
+    decision = allBlocked
+      ? { action: 'refuse', pick: null, pickProbability: null, consequences: ['Every candidate was blocked; nothing was sent. Propose safe candidates that stay inside the task directory.'], sendFullScreen: false, reasons: ['all generator candidates blocked by the keystroke guard'] }
+      : decideChooser({ answers, menu });
     const pick = decision.pick;
     const consequences = [...preConsequences, ...decision.consequences];
     let executedKeys: string | null = null; let screen = screenBefore; let running = this.running; let waitedS = 0; let extra = '';
@@ -164,7 +171,7 @@ export class FrameRunner {
     const templatesChanged = tplKey !== this.lastTemplateKey; this.lastTemplateKey = tplKey;
     const content = buildFrameSuffix({ screen: clipped.text, stateCard, menu: nextMenu, consequences, templatesChanged: templatesChanged || this.turn === 1 }) + (extra ? `\n\n${extra}` : '');
     const row = buildChooserRow({ sessionId: input.sessionId, turn: this.turn, predictorModel: input.predictorModel + (this.cfg.chooser === 'jev' ? '+jev-chooser' : ''), menu, decision, executedKeys, nowMs: this.now() });
-    this.deps.recordEvent('frame_turn', { ...row, analysis: action.analysis.slice(0, 600), plan: action.plan.slice(0, 600), rc, waitedS: Math.round(waitedS), running, screenChars: screen.length, chooser: this.cfg.chooser, chooserLatencyMs, paneResets: this.paneResets, answers: answers ? Object.fromEntries(Object.entries(answers).map(([k, v]) => [k, Number(v.toFixed(3))])) : null, stepMs: this.now() - t0 });
+    this.deps.recordEvent('frame_turn', { ...row, analysis: action.analysis.slice(0, 600), plan: action.plan.slice(0, 600), rc, waitedS: Math.round(waitedS), running, screenChars: screen.length, chooser: this.cfg.chooser, chooserLatencyMs, paneResets: this.paneResets, guard: guarded.blocked.length ? guarded.blocked : null, answers: answers ? Object.fromEntries(Object.entries(answers).map(([k, v]) => [k, Number(v.toFixed(3))])) : null, stepMs: this.now() - t0 });
     return { content, isError: false, meta: { frame: 'terminus', turn: this.turn, pick: pick?.id ?? null, action: decision.action, rc, running, executedKeys: executedKeys ? normalizeKeys(executedKeys).slice(0, 120) : executedKeys } };
   }
 }
