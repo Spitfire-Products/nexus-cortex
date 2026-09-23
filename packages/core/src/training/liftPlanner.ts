@@ -81,6 +81,12 @@ export const ENV_RECON_COMMAND =
   'echo "== TEST FILES / BUILD =="; ' +
   'find . -maxdepth 4 \\( -iname "*test*" -o -name "Makefile" -o -name "*.proto" -o -name "conftest.py" \\) ' +
   '2>/dev/null | grep -v node_modules | head -25; ' +
+  // 2026-09-23 (L7/L8: the ledger extractor guessed a checker's CLI in 6/6 photonic sessions and every run of that check was a false
+  // failure): show the USAGE of any checker/verifier/validator/grader script the task ships, so nothing downstream has to guess it.
+  'echo "== CHECKER / VERIFIER SCRIPTS (usage lines) =="; ' +
+  'for f in $(find . -maxdepth 3 \\( -iname "*check*" -o -iname "*verif*" -o -iname "*validat*" -o -iname "*grade*" \\) ' +
+  '\\( -name "*.py" -o -name "*.sh" \\) 2>/dev/null | grep -v node_modules | head -6); do echo "-- $f"; ' +
+  '{ grep -n -m4 -iE "usage|^ *Run:|add_argument|sys\\.argv|getopts" "$f" 2>/dev/null; sed -n "1,30p" "$f" 2>/dev/null | grep -iE -m3 "(python3?|bash|sh) +[^ ]*(check|verif|validat|grade)"; } | head -6 | cut -c1-160; done; ' +
   'echo "== WORKSPACE =="; ls -1A 2>/dev/null | head -30';
 
 /**

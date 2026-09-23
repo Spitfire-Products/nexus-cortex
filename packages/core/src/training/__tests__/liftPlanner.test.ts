@@ -166,3 +166,19 @@ describe('liftPlanner — R171 bounded investigation loop (HB-LIFT-PLAN-TOOL-LOO
     expect(wd).toContain('No further investigation is available.'); expect(wd).not.toContain('`INVESTIGATE`');
   });
 });
+
+describe('ENV_RECON_COMMAND — checker usage leg (2026-09-23)', () => {
+  it('prints the usage lines of checker/verifier scripts the task ships, bounded and fail-soft', async () => {
+    const { mkdtempSync, writeFileSync } = await import('fs'); const { tmpdir } = await import('os'); const { join } = await import('path'); const { execSync } = await import('child_process');
+    const d = mkdtempSync(join(tmpdir(), 'recon-'));
+    writeFileSync(join(d, 'check_routing.py'), '#!/usr/bin/env python3\n"""Routing checker.\n\nRun:  python3 /app/check_routing.py\n      python3 /app/check_routing.py --layout 1\n"""\nimport argparse\np = argparse.ArgumentParser(); p.add_argument("--layout", type=int)\n');
+    writeFileSync(join(d, 'notes.txt'), 'nothing');
+    const out = String(execSync(ENV_RECON_COMMAND, { cwd: d, encoding: 'utf8', shell: '/bin/sh', stdio: ['ignore', 'pipe', 'ignore'] }));
+    expect(out).toMatch(/== CHECKER \/ VERIFIER SCRIPTS \(usage lines\) ==/);
+    expect(out).toMatch(/-- \.\/check_routing\.py/);
+    expect(out).toMatch(/python3 \/app\/check_routing\.py --layout 1/);
+    expect(out).toMatch(/add_argument\("--layout"/);
+    expect(out).not.toMatch(/notes\.txt.*usage/);
+    expect(ENV_RECON_COMMAND.indexOf('== CHECKER')).toBeLessThan(ENV_RECON_COMMAND.indexOf('== WORKSPACE'));
+  });
+});
