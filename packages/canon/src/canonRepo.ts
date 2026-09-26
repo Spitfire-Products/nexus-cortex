@@ -159,6 +159,65 @@ export function guardedPush(git: (args: string[]) => string, label: string, maxA
 }
 
 /**
+ * ARCHIVE EXCLUSION (2026-09-26) — the local-footprint half of the hot/archive split (canonArchive.ts).
+ * The remote keeps everything; a LOCAL store must never materialize `archive/` (1.6 GB+ and growing on the
+ * ~5 GB /tmp per-user quota). Implemented as a NON-cone sparse checkout (`/*` + `!archive/`), which is how
+ * it is told apart from a SCOPED sync-only clone (cone mode) — see isScopedStore.
+ * Found 09-26: every re-clone (atomicClone full checkout) re-downloaded archive/ because nothing re-applied
+ * the exclusion, and full-surface verbs would have refused the store once it was applied.
+ */
+export const ARCHIVE_EXCLUSION_PATTERNS = ['/*', '!archive/'];
+
+/** True when HEAD's tree has a top-level `archive/` directory. */
+export function headHasArchive(storePath: string): boolean {
+  try {
+    return execFileSync('git', ['-C', storePath, 'ls-tree', '-d', '--name-only', 'HEAD', 'archive'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim() === 'archive';
+  } catch { return false; }
+}
+
+/** True when the archive exclusion is already in effect (non-cone sparse with `!archive/`). */
+export function hasArchiveExclusion(storePath: string): boolean {
+  const cfg = (k: string) => {
+    try {
+      return execFileSync('git', ['-C', storePath, 'config', '--get', k], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    } catch { return ''; }
+  };
+  if (cfg('core.sparseCheckout') !== 'true' || cfg('core.sparseCheckoutCone') === 'true') return false;
+  try {
+    const list = execFileSync('git', ['-C', storePath, 'sparse-checkout', 'list'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return list.split('\n').map((l) => l.trim()).includes('!archive/');
+  } catch { return false; }
+}
+
+/**
+ * Apply the archive exclusion to a FULL-SURFACE store when HEAD has `archive/` (idempotent; no-op on scoped
+ * cone stores, which already materialize only their legs). `sparse-checkout set` removes the now-excluded
+ * tracked files from the worktree itself (they are up to date from a real checkout). Returns true when it
+ * changed the store.
+ */
+export function ensureArchiveExclusion(storePath: string, label: string): boolean {
+  if (isScopedStore(storePath) || !headHasArchive(storePath)) return false;
+  if (hasArchiveExclusion(storePath)) {
+    // Flagged but not applied (a half-failed run left archive/ on disk): re-stat + reapply drops it.
+    if (!fs.existsSync(`${storePath}/archive`)) return false;
+    const g = (args: string[]) => execFileSync('git', ['-C', storePath, ...args], {
+      encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    try { g(['update-index', '-q', '--refresh', '--ignore-missing']); } catch { /* some entries differ — harmless */ }
+    g(['sparse-checkout', 'reapply']);
+    console.log(`[${label}] archive/ exclusion reapplied — removed the archived files still on disk`);
+    return true;
+  }
+  execFileSync('git', ['-C', storePath, 'sparse-checkout', 'set', '--no-cone', ...ARCHIVE_EXCLUSION_PATTERNS], {
+    encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  console.log(`[${label}] archive/ excluded from the local worktree (remote keeps it; pull fetches on demand)`);
+  return true;
+}
+
+/**
  * Atomic clone: clone into a sibling temp dir, then rename into place. The
  * store path NEVER contains a `.git` over a partially-checked-out tree, so a
  * concurrent canon verb either sees no store (and clones/waits itself) or a
@@ -189,7 +248,9 @@ export function atomicClone(repoUrl: string, storePath: string, label: string, s
   // (translate/graph/artifacts) REFUSE scoped stores — see requireFullSurfaceStore.
   const filterArgs = process.env.CANON_FULL_CLONE === 'true' ? [] : ['--filter=blob:none'];
   const scoped = scope !== undefined;
-  const cloneArgs = scoped ? [...filterArgs, '--no-checkout'] : filterArgs;
+  // Always --no-checkout: scoped clones set their cone first; full-surface clones apply the archive exclusion
+  // first (when the remote has archive/) — so NO clone ever downloads/materializes archive/ (09-26 fix).
+  const cloneArgs = [...filterArgs, '--no-checkout'];
   try {
     execFileSync('git', [...gitAuthArgs(), 'clone', '-q', ...cloneArgs, repoUrl, tmp], {
       encoding: 'utf8',
@@ -203,6 +264,12 @@ export function atomicClone(repoUrl: string, storePath: string, label: string, s
       });
       g(['sparse-checkout', 'init', '--cone']);
       if (scope.length > 0) g(['sparse-checkout', 'set', ...scope]);
+      g(['checkout', '-q']);
+    } else {
+      const g = (args: string[]) => execFileSync('git', ['-C', tmp, ...args], {
+        encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      if (headHasArchive(tmp)) g(['sparse-checkout', 'set', '--no-cone', ...ARCHIVE_EXCLUSION_PATTERNS]);
       g(['checkout', '-q']);
     }
     // A racing process may have completed its own clone while ours ran — keep
@@ -220,14 +287,17 @@ export function atomicClone(repoUrl: string, storePath: string, label: string, s
   }
 }
 
-/** True when the store is a cone-scoped (sparse) clone — a SYNC-ONLY store. */
+/** True when the store is a CONE-scoped (sparse) clone — a SYNC-ONLY store. The non-cone archive exclusion is not scoped. */
 export function isScopedStore(storePath: string): boolean {
-  try {
-    const v = execFileSync('git', ['-C', storePath, 'config', '--get', 'core.sparseCheckout'], {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
-    return v === 'true';
-  } catch { return false; }
+  // Scoped sync-only clones are CONE-mode sparse (atomicClone scope path). The archive exclusion is NON-cone
+  // sparse and keeps the full surface minus archive/ — it must NOT read as scoped, or translate/graph/artifacts
+  // refuse the store (09-26: reproduced — after an archive run isScopedStore returned true).
+  const cfg = (k: string) => {
+    try {
+      return execFileSync('git', ['-C', storePath, 'config', '--get', k], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    } catch { return ''; }
+  };
+  return cfg('core.sparseCheckout') === 'true' && cfg('core.sparseCheckoutCone') === 'true';
 }
 
 /** Widen a scoped store's cone (idempotent no-op for already-included dirs). */

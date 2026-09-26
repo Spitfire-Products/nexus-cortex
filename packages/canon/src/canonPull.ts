@@ -14,7 +14,7 @@
  *
  * @module canon/canonPull
  */
-import { requireCanonRepo, redactRepoUrl, canonGit } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, atomicClone } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { renderCapsule, renderCompat, sessionToolCalls, sessionToolNames, toolCompatibility, type HarnessName } from './canonTools.js';
@@ -68,7 +68,7 @@ function ensureFreshStore(store: string, repoUrl?: string, label = 'canon-pull')
   if (!fs.existsSync(path.join(store, '.git'))) {
     const repo = requireCanonRepo(repoUrl, store, label);
     console.log(`[${label}] no store at ${store} — cloning ${redactRepoUrl(repo)}`);
-    canonGit(null, label)(['clone', '-q', repo, store]);
+    atomicClone(repo, store, label); // 09-26: shared clone — partial + archive/ excluded (was a raw full clone)
   } else {
     canonGit(store, label)(['pull', '-q', 'origin', 'main']);
   }

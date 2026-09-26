@@ -19,6 +19,9 @@
  * (HARNESSES.json, agents/, .github/, docs) is never archived.
  */
 import { execFileSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import { ARCHIVE_EXCLUSION_PATTERNS, ensureArchiveExclusion } from './canonRepo.js';
 
 const SESSION_ROOTS = ['native/', 'canon/', 'projections/'];
 
@@ -34,6 +37,7 @@ function git(store: string, args: string[], input?: string): string {
     encoding: 'utf-8',
     input,
     maxBuffer: 256 * 1024 * 1024,
+    stdio: ['pipe', 'pipe', 'pipe'], // keep expected probe failures (ls-files --error-unmatch) out of the cron log
   });
 }
 
@@ -82,6 +86,8 @@ export async function canonArchive(opts: CanonArchiveOptions): Promise<number> {
 
   if (moves.length === 0) {
     console.log(`[canon-archive] nothing older than ${days}d to archive (${entries.length} tracked files)`);
+    // Still enforce the local footprint: a fresh (re-)clone or an older build may have materialized archive/.
+    if (!opts.dryRun) ensureArchiveExclusion(store, 'canon-archive');
     return 0;
   }
   console.log(`[canon-archive] archiving ${moves.length} of ${entries.length} files (last commit > ${days}d ago)`);
@@ -99,6 +105,10 @@ export async function canonArchive(opts: CanonArchiveOptions): Promise<number> {
     .join('\n') + '\n';
   git(store, ['read-tree', '--empty']);
   git(store, ['update-index', '--index-info'], indexInfo);
+  // 09-26 FIX: --index-info entries carry NO stat data, so git treats every file already on disk as "not uptodate" and
+  // refuses to drop it when the exclusion applies (live: a store that had materialized archive/ kept all 1.6 GB).
+  // Re-stat what is really on disk (identical content → uptodate); missing paths (the new archive/ entries) are fine.
+  try { git(store, ['update-index', '-q', '--refresh', '--ignore-missing']); } catch { /* exit 1 = some entries differ; harmless */ }
   const tree = git(store, ['write-tree']).trim();
   const parent = git(store, ['rev-parse', 'HEAD']).trim();
   const commit = git(store, [
@@ -110,8 +120,39 @@ export async function canonArchive(opts: CanonArchiveOptions): Promise<number> {
 
   // Sparse-exclude archive/ so the local worktree DROPS the moved files (this
   // is where the flat-forever footprint comes from), then sync the worktree.
-  git(store, ['sparse-checkout', 'set', '--no-cone', '/*', '!archive/']);
+  git(store, ['sparse-checkout', 'set', '--no-cone', ...ARCHIVE_EXCLUSION_PATTERNS]);
   git(store, ['read-tree', '-mu', 'HEAD']);
+  git(store, ['sparse-checkout', 'reapply']);
+
+  // 09-26 FIX (reproduced): the index rewrite above carries no stat data, so git leaves the moved files ON DISK
+  // at their old paths as UNTRACKED files — nothing is freed, the next archive run aborts on the dirty tree,
+  // and the next sync's `git add -A` would re-add every archived session at its old path. Remove each leftover
+  // only when its bytes hash to the archived blob (so a file a writer touched meanwhile is never lost).
+  const shaByFrom = new Map(entries.map((e) => [e.path, e.sha]));
+  let removed = 0, kept = 0, freed = 0;
+  const dirs = new Set<string>();
+  for (const m of moves) {
+    const abs = path.join(store, m.from);
+    if (!fs.existsSync(abs)) continue;
+    let tracked = true;
+    try { git(store, ['ls-files', '--error-unmatch', '--', m.from]); } catch { tracked = false; }
+    const sha = tracked ? '' : git(store, ['hash-object', '--', m.from]).trim();
+    if (tracked || sha !== shaByFrom.get(m.from)) { kept++; continue; }
+    freed += fs.statSync(abs).size;
+    fs.unlinkSync(abs);
+    removed++;
+    dirs.add(path.dirname(abs));
+  }
+  // Prune directories the removals emptied (deepest first), never the store root.
+  for (const d of [...dirs].sort((a, b) => b.length - a.length)) {
+    let cur = d;
+    while (cur.startsWith(store + path.sep) && cur !== store) {
+      try { if (fs.readdirSync(cur).length > 0) break; fs.rmdirSync(cur); } catch { break; }
+      cur = path.dirname(cur);
+    }
+  }
+  console.log(`[canon-archive] local worktree: removed ${removed} archived file(s) (${(freed / 1048576).toFixed(1)} MB freed)` +
+    (kept ? `, kept ${kept} that changed since the move (review)` : ''));
 
   if (opts.push !== false) {
     try {
