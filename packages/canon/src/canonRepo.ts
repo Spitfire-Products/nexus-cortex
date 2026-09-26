@@ -325,3 +325,54 @@ export function requireFullSurfaceStore(storePath: string, label: string): void 
     );
   }
 }
+
+/**
+ * ONE WRITER PER STORE (2026-09-26). The cron's legs (sync/translate/graph/archive, one process each, flock'd only against
+ * other crons) and the canon watcher's pipeline both commit to the same working clone. Interleaved, they fight over the
+ * index (`index.lock` failures in the watcher log) and one's staging leaks into the other's commit — the browser fold-in
+ * re-added 19 archived sessions past the sync guard that way. Every writer takes this lock first. The lock is a sibling
+ * file (`<store>.writer.lock`) so it works before the first clone; a dead pid or a 2-hour-old lock is stale and taken over;
+ * a writer that cannot get it within `waitMs` (default 10 min, env CANON_LOCK_WAIT_MS) returns `onBusy()` — the next cycle
+ * retries. Sequential calls in one process (the pipeline) each take and release it.
+ */
+export async function withStoreLock<T>(
+  store: string,
+  label: string,
+  fn: () => Promise<T>,
+  onBusy: () => T,
+  waitMs = Number(process.env.CANON_LOCK_WAIT_MS ?? 600_000),
+): Promise<T> {
+  const lockPath = `${store.replace(/\/+$/, '')}.writer.lock`;
+  const deadline = Date.now() + waitMs;
+  let announced = false;
+  for (;;) {
+    try {
+      const fd = fs.openSync(lockPath, 'wx');
+      fs.writeSync(fd, JSON.stringify({ pid: process.pid, label, ts: Date.now() }));
+      fs.closeSync(fd);
+      break;
+    } catch (e: any) {
+      if (e?.code !== 'EEXIST') throw e;
+      let holder: { pid?: number; label?: string; ts?: number } = {};
+      try { holder = JSON.parse(fs.readFileSync(lockPath, 'utf8')); } catch { /* torn write — treat as stale below */ }
+      let alive = false;
+      if (holder.pid) { try { process.kill(holder.pid, 0); alive = true; } catch (k: any) { alive = k?.code === 'EPERM'; } }
+      const stale = !alive || !holder.ts || Date.now() - holder.ts > 2 * 3600_000;
+      if (stale) { try { fs.unlinkSync(lockPath); } catch { /* raced */ } continue; }
+      if (Date.now() >= deadline) {
+        console.log(`[${label}] another canon writer (${holder.label ?? '?'} pid ${holder.pid}) holds ${store} — skipping this cycle`);
+        return onBusy();
+      }
+      if (!announced) { console.log(`[${label}] waiting for ${holder.label ?? 'another writer'} (pid ${holder.pid}) to release ${store}`); announced = true; }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    try {
+      const cur = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+      if (cur.pid === process.pid) fs.unlinkSync(lockPath);
+    } catch { /* already gone */ }
+  }
+}

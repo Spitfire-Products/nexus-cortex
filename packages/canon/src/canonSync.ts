@@ -15,7 +15,7 @@
  *
  * @module canon/canonSync
  */
-import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush, isScopedStore, sparseAdd } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush, isScopedStore, sparseAdd, withStoreLock } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { dropArchivedDuplicates, dropEchoedSessions } from './canonArchive.js';
@@ -58,13 +58,39 @@ export interface CanonSyncResult {
  */
 export interface HarnessSource { exts: string[]; roots: (string | { label: string; path: string })[] }
 
+const BINARY_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf', '.zip', '.gz', '.tgz', '.bin', '.sqlite', '.db', '.wasm', '.ico'];
+/** Binary = a known binary extension, or a NUL byte in the first 8 KB (extensionless file-history backups of binaries). */
+export function isBinaryFile(file: string): boolean {
+  const lower = file.toLowerCase();
+  if (BINARY_EXTS.some((x) => lower.endsWith(x))) return true;
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(8192);
+      const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      return buf.subarray(0, n).includes(0);
+    } finally { fs.closeSync(fd); }
+  } catch { return false; }
+}
+
 function defaultHarnessSources(H: string): Record<string, HarnessSource> {
   return {
     // .md rides too: the per-project auto-memory (memory/MEMORY.md + topic
     // files) is the continuity layer a handoff needs — sessions without the
     // memories that interpret them are half a handoff. Secret-scrubbed like
     // everything else; canonTranslate ignores non-.jsonl natives.
-    'claude-code': { exts: ['.jsonl', '.md'], roots: [path.join(H, '.claude', 'projects')] },
+    // 2026-09-26 coverage audit: the projects tree also holds what the transcripts POINT TO — tool-results/ (large
+    // outputs, screenshots, PDFs) and workflows/ (wf_*.json run definitions + the scripts that spawned multi-agent
+    // runs, per-agent .meta.json). Without them an image-bearing session replays incomplete and a workflow run keeps
+    // its agents but loses the plan. Binary files are copied byte-exact (no scrub — see syncFile).
+    'claude-code': {
+      exts: ['.jsonl', '.md', '.json', '.js', '.txt', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf'],
+      roots: [path.join(H, '.claude', 'projects')],
+    },
+    // Claude Code's per-edit file backups (~/.claude/file-history/<session>/<hash>@vN): the ground truth of what each
+    // edit changed, keyed by session — the step-level signal credit assignment needs. Extensionless → '*'. Text is
+    // secret-scrubbed like everything else (backups of .env-style files are exactly where secrets would sit).
+    'claude-code-file-history': { exts: ['*'], roots: [path.join(H, '.claude', 'file-history')] },
     'nexus-cortex': {
       exts: ['.jsonl', '.json'],
       roots: [
@@ -74,6 +100,9 @@ function defaultHarnessSources(H: string): Record<string, HarnessSource> {
         { label: 'omniclaude-v4', path: path.join(H, 'omniclaude-v4', '.cortex', 'sessions') },
         { label: 'server', path: path.join(H, 'omniclaude-v4', 'packages', 'server', '.cortex', 'sessions') },
         { label: 'nexus-terminal', path: path.join(H, 'nexus-terminal', '.cortex', 'sessions') },
+        // CLI/TUI runs launched from their package dirs (2026-09-26 coverage audit: 9 sessions sat uncaptured).
+        { label: 'cli', path: path.join(H, 'omniclaude-v4', 'packages', 'cli', '.cortex', 'sessions') },
+        { label: 'tui', path: path.join(H, 'omniclaude-v4', 'packages', 'tui', '.cortex', 'sessions') },
       ],
     },
     // Decision stores ride canon BY DEFAULT (data-lake rule, 2026-08-25):
@@ -90,6 +119,10 @@ function defaultHarnessSources(H: string): Record<string, HarnessSource> {
         { label: 'nexus-terminal', path: path.join(H, 'nexus-terminal', '.cortex', 'decisions.jsonl') },
       ],
     },
+    // Autoresearch campaign transcripts (2026-09-26): the nexus-autoresearch executor stages each finished job's agent
+    // sessions + decision stores under ~/.cortex/autoresearch-stage/<jobId>/ and syncs with --scope autoresearch, so a
+    // container clones only this small leg of the caller's canon store (never the multi-GB whole).
+    'autoresearch': { exts: ['.jsonl', '.json'], roots: [path.join(H, '.cortex', 'autoresearch-stage')] },
     'grok-build': { exts: ['.jsonl', '.json'], roots: [path.join(H, '.grok', 'sessions')] },
     'gemini-cli': { exts: ['.jsonl', '.json'], roots: [path.join(H, '.gemini', 'tmp')] },
   };
@@ -122,6 +155,13 @@ const SECRET_PATTERNS: [RegExp, string][] = [
   [/AIza[A-Za-z0-9_-]{20,}/g, '[redacted:aiza]'],
   [/xai-[A-Za-z0-9]{20,}/g, '[redacted:xai]'],
   [/nar_[A-Za-z0-9]{16,}/g, '[redacted:nar]'],
+  // Our own platform key/token prefixes (2026-09-26, autoresearch transcripts start riding canon): per-job proxy tokens,
+  // nexus-cortex user keys, the sandbox admin bearer, relay + browser keys.
+  [/narjob_[A-Fa-f0-9]{24,}/g, '[redacted:narjob]'],
+  [/ncx_[A-Za-z0-9]{16,}/g, '[redacted:ncx]'],
+  [/ncsb_[A-Za-z0-9]{16,}/g, '[redacted:ncsb]'],
+  [/nrl_[A-Za-z0-9]{16,}/g, '[redacted:nrl]'],
+  [/\bnb_[A-Za-z0-9]{16,}/g, '[redacted:nb]'],
   [/gsk_[A-Za-z0-9]{20,}/g, '[redacted:gsk]'],
   [/xox[bpars]-[A-Za-z0-9-]{10,}/g, '[redacted:slack]'],
   [/AKIA[A-Z0-9]{16}/g, '[redacted:akia]'],
@@ -152,7 +192,7 @@ export function scrubSecrets(s: string): string {
   return scrub(s);
 }
 
-export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResult> {
+async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncResult> {
   const HOME = o.home ?? process.env.HOME ?? '/home/runner/workspace';
   const DRY = o.dryRun ?? false;
   const STORE = o.store ?? '/tmp/canon-store';
@@ -282,6 +322,16 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
       return;
     }
     const dest = path.join(STORE, 'native', destRel);
+    if (!DRY && isBinaryFile(src)) {
+      // Images / PDFs / any file with NUL bytes: a UTF-8 read + text scrub would CORRUPT them. Copy byte-exact;
+      // the scrub is a text-pattern pass and cannot apply (the store is private, same as every other native).
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      try { fs.copyFileSync(src, dest); }
+      catch (e) { skipped.push(`${destRel} — copy failed: ${e}`); return; }
+      manifest[key] = { mtimeMs: st.mtimeMs, size: st.size };
+      copied++;
+      return;
+    }
     if (!DRY) {
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       let content: string;
@@ -337,13 +387,14 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
       let rootIsFile = false;
       try { rootIsFile = fs.statSync(rootPath).isFile(); } catch { /* absent */ }
       if (rootIsFile) {
-        if (src.exts.some((x) => rootPath.endsWith(x))) {
+        if (src.exts.includes('*') || src.exts.some((x) => rootPath.endsWith(x))) {
           syncFile(rootPath, path.join(label, sub, path.basename(rootPath)));
         }
         continue;
       }
+      const anyExt = src.exts.includes('*');
       for (const f of walk(rootPath)) {
-        if (!src.exts.some((x) => f.endsWith(x))) continue;
+        if (!anyExt && !src.exts.some((x) => f.endsWith(x))) continue;
         syncFile(f, path.join(label, sub, path.relative(rootPath, f)));
       }
     }
@@ -466,4 +517,10 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
     for (const s of skipped.slice(0, 10)) console.log('  skip:', s);
   }
   return { copied, unchanged, skipped, chunked, scrubbedHits, pushed };
+}
+
+/** Sync under the store's single-writer lock (withStoreLock). */
+export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResult> {
+  return withStoreLock(o.store ?? '/tmp/canon-store', 'canon-sync', () => canonSyncUnlocked(o),
+    () => ({ copied: 0, unchanged: 0, skipped: ['store busy — another canon writer held the lock'], chunked: 0, scrubbedHits: 0, pushed: false }));
 }

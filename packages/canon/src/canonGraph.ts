@@ -27,7 +27,7 @@
  *
  * @module canon/canonGraph
  */
-import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush, requireFullSurfaceStore } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush, requireFullSurfaceStore, withStoreLock } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { discoverCanonSessions, type CanonSession } from './canonPull.js';
@@ -194,7 +194,7 @@ export interface CanonGraphResult {
 }
 
 /** Generate /projects/<id>.json manifests + /projects/<id>/graph.json (node-link, 🔒 criteria). */
-export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphResult> {
+async function canonGraphUnlocked(o: CanonGraphOptions = {}): Promise<CanonGraphResult> {
   const STORE = o.store ?? '/tmp/canon-store';
   // Auto-clone like every other verb — /tmp stores are disposable by design.
   if (!fs.existsSync(path.join(STORE, '.git'))) {
@@ -498,4 +498,10 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
     } else console.log(`[canon-graph] no changes (${summary})`);
   } else console.log(`[canon-graph DRY] ${summary}`);
   return { projects: built, nodes: totalNodes, links: totalLinks, pushed };
+}
+
+/** Graph under the store's single-writer lock (withStoreLock). */
+export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphResult> {
+  return withStoreLock(o.store ?? '/tmp/canon-store', 'canon-graph', () => canonGraphUnlocked(o),
+    () => ({ projects: [], nodes: 0, links: 0, pushed: false }));
 }

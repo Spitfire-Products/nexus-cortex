@@ -17,7 +17,7 @@
  *
  * @module canon/canonTranslate
  */
-import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, guardedPush, atomicClone, requireFullSurfaceStore } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, guardedPush, atomicClone, requireFullSurfaceStore, withStoreLock } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
@@ -41,7 +41,7 @@ export interface CanonTranslateResult {
   pushed: boolean;
 }
 
-export async function canonTranslate(o: CanonTranslateOptions = {}): Promise<CanonTranslateResult> {
+async function canonTranslateUnlocked(o: CanonTranslateOptions = {}): Promise<CanonTranslateResult> {
   const HOME = o.home ?? process.env.HOME ?? '/home/runner/workspace';
   const DRY = o.dryRun ?? false;
   const STORE = o.store ?? '/tmp/canon-store';
@@ -901,4 +901,10 @@ Until then their absence is stated here rather than implied.
     for (const e of errors.slice(0, 10)) console.error('  error:', e);
   }
   return { translated, unchanged, errors, summary, pushed };
+}
+
+/** Translate under the store's single-writer lock (withStoreLock). */
+export async function canonTranslate(o: CanonTranslateOptions = {}): Promise<CanonTranslateResult> {
+  return withStoreLock(o.store ?? '/tmp/canon-store', 'canon-translate', () => canonTranslateUnlocked(o),
+    () => ({ translated: 0, unchanged: 0, errors: [], summary: 'skipped: store busy', pushed: false }));
 }

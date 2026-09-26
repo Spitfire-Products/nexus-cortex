@@ -23,7 +23,7 @@
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { ARCHIVE_EXCLUSION_PATTERNS, ensureArchiveExclusion } from './canonRepo.js';
+import { ARCHIVE_EXCLUSION_PATTERNS, ensureArchiveExclusion, withStoreLock } from './canonRepo.js';
 
 const SESSION_ROOTS = ['native/', 'canon/', 'projections/'];
 
@@ -81,7 +81,7 @@ function lastCommitEpochs(store: string): Map<string, number> {
   return map;
 }
 
-export async function canonArchive(opts: CanonArchiveOptions): Promise<number> {
+async function canonArchiveUnlocked(opts: CanonArchiveOptions): Promise<number> {
   const days = opts.days ?? parseInt(process.env.CANON_ARCHIVE_DAYS || '30', 10);
   const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
   const store = opts.store;
@@ -323,4 +323,9 @@ export function dropEchoedSessions(store: string, label: string): number {
   }
   if (sessions) console.log(`[${label}] skipped ${sessions} echoed session(s) (${removed} file(s)) — already in the store under another project dir`);
   return removed;
+}
+
+/** Archive under the store's single-writer lock (withStoreLock); busy = nothing done this cycle (0). */
+export async function canonArchive(opts: CanonArchiveOptions): Promise<number> {
+  return withStoreLock(opts.store, 'canon-archive', () => canonArchiveUnlocked(opts), () => 0);
 }
