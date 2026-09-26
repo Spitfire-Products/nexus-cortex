@@ -99,4 +99,17 @@ describe('archived canon sessions read from git objects', () => {
     const cache = JSON.parse(fs.readFileSync(path.join(home, '.canon', 'touched-cache.json'), 'utf8'));
     expect(cache[`claude-code/proj/${ID}.jsonl`].sig.startsWith('v6|blob|')).toBe(true);
   });
+
+  it('a rootless project never folds in a cwd-relative graphify-out/graph.json (graphs must not depend on the cwd)', async () => {
+    const fake = path.join(tmp, 'cwd');
+    fs.mkdirSync(path.join(fake, 'graphify-out'), { recursive: true });
+    fs.writeFileSync(path.join(fake, 'graphify-out', 'graph.json'), JSON.stringify({ nodes: [{ id: 'code:x' }], links: [] }));
+    // Run the graph IN that cwd (vitest workers cannot chdir) — the watcher/cron difference, reproduced.
+    const script = path.join(tmp, 'run-graph.mts');
+    fs.writeFileSync(script, `import { canonGraph } from ${JSON.stringify(path.resolve(__dirname, '..', 'canonGraph.ts'))};\n` +
+      `(async () => { await canonGraph({ store: ${JSON.stringify(work)} }); })();\n`);
+    execFileSync('npx', ['tsx', script], { cwd: fake, env: { ...process.env, HOME: home }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const graph = JSON.parse(fs.readFileSync(path.join(work, 'projects', 'proj', 'graph.json'), 'utf8'));
+    expect(graph.nodes.some((n: any) => n.id === 'code:x' || String(n.id).includes('code:x'))).toBe(false);
+  });
 });

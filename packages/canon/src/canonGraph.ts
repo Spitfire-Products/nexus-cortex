@@ -293,11 +293,15 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
     // standard graphify output at the project root (graphify-out/graph.json —
     // written by `graphify update <root>`), so keeping the code half fresh is
     // just re-running graphify; the next canon graph build folds it in.
+    // 09-26: a ROOTLESS project (root '') made this path relative (`graphify-out/graph.json`) → resolved against the
+    // CWD → run from omniclaude-v4, every rootless project (-root, tb2-bench, -work-hydra) folded omniclaude-v4's
+    // ~14.7k-node code graph in, and the graphs flipped between the cron (cwd omniclaude-v4) and the watcher. Only an
+    // ABSOLUTE project root auto-detects.
     const codeGraphPath = o.mergeGraph && (!o.project || o.project === pid)
       ? o.mergeGraph
-      : path.join(proj.root, 'graphify-out', 'graph.json');
+      : proj.root && path.isAbsolute(proj.root) ? path.join(proj.root, 'graphify-out', 'graph.json') : '';
     let codeHalf: { source: string; nodes: number; links: number } | undefined;
-    if (fs.existsSync(codeGraphPath)) {
+    if (codeGraphPath && fs.existsSync(codeGraphPath)) {
       try {
         const g = JSON.parse(fs.readFileSync(codeGraphPath, 'utf8'));
         const gn = g.nodes ?? [];

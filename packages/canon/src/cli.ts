@@ -22,7 +22,7 @@ Verbs:
   sync [--dry-run] [--store <dir>] [--scope auto|<labels>]  native harness sessions -> store (scrubbed); --scope = sparse sync-only clone of just those legs (auto = harnesses present on this machine)
   translate [--dry-run] [--store <dir>]  native -> canonical line + projections
   list [--all] [--project N/A] [--store <dir>]  list canon sessions
-  pull <uuid> [--native] [--to <dir>] [--project <cwd>] [--harness <h>] [--force] [--store <dir>]  materialize a session (--native = byte-exact original-harness files, e.g. into ~/.claude/projects for claude --resume)
+  pull <uuid> [--native] [--to <dir>] [--project <cwd>] [--harness <h>] [--rel <stored path>] [--force] [--store <dir>]  materialize a session (--native = byte-exact original-harness files, e.g. into ~/.claude/projects for claude --resume)
   artifacts [--dry-run] [--store <dir>]  capture capability artifacts
   archive [--days N] [--dry-run] [--no-push] [--store <dir>]  move sessions older than N days (default 30) to archive/ (remote keeps all; local goes sparse + FLAT)
   tools [--store <dir>] [--json]      observed tool inventory + cross-harness concept map
@@ -43,7 +43,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   const [verb, ...rest] = argv;
   const flag = (k: string) => rest.includes(k);
   const opt = (k: string) => (rest.includes(k) ? rest[rest.indexOf(k) + 1] : undefined);
-  const positional = rest.find((a) => !a.startsWith('--') && a !== opt('--to') && a !== opt('--store') && a !== opt('--remote') && a !== opt('--merge-graph') && a !== opt('--project'));
+  const positional = rest.find((a) => !a.startsWith('--') && a !== opt('--to') && a !== opt('--store') && a !== opt('--remote') && a !== opt('--merge-graph') && a !== opt('--project') && a !== opt('--rel'));
 
   switch (verb) {
     case 'init': {
@@ -77,12 +77,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         });
         return ra.failed.length ? 1 : 0;
       }
-      if (!positional) { console.error('usage: nexus-canon pull <sessionUuid> [--native [--all]] [--to <dir>] [--project <cwd>] [--harness <h>] [--max-mb <n>] [--force] [--strip-signatures]'); return 2; }
+      if (!positional) { console.error('usage: nexus-canon pull <sessionUuid> [--native [--all]] [--to <dir>] [--project <cwd>] [--harness <h>] [--max-mb <n>] [--rel <stored path>] [--force] [--strip-signatures]'); return 2; }
       if (flag('--native')) {
-        const rn = await canonPullNative({ session: positional, to: opt('--to'), project: opt('--project'), harness: opt('--harness'), force: flag('--force'), store: opt('--store') });
+        const rn = await canonPullNative({ session: positional, to: opt('--to'), project: opt('--project'), harness: opt('--harness'), force: flag('--force'), store: opt('--store'), rel: opt('--rel') });
         return rn.code;
       }
-      const r = await canonPull({ session: positional, to: opt('--to'), force: flag('--force'), store: opt('--store'), stripSignatures: flag('--strip-signatures') });
+      const r = await canonPull({ session: positional, to: opt('--to'), force: flag('--force'), store: opt('--store'), stripSignatures: flag('--strip-signatures'), rel: opt('--rel'), harness: opt('--harness') });
       return r.code;
     }
     case 'tools': {

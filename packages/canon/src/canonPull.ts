@@ -19,6 +19,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { renderCapsule, renderCompat, sessionToolCalls, sessionToolNames, toolCompatibility, type HarnessName } from './canonTools.js';
 
 export interface CanonStoreOptions {
@@ -57,6 +58,10 @@ export interface CanonPullOptions extends CanonStoreOptions {
    * The canonical line in the store is never modified — pull is a branch.
    */
   stripSignatures?: boolean;
+  /** Exact canon rel path (e.g. claude-code/<dir>/<uuid>.jsonl) — pins one copy when a uuid is stored under several dirs. */
+  rel?: string;
+  /** Only consider copies stored under this harness (claude-code, nexus-cortex, …). */
+  harness?: string;
   home?: string;
 }
 
@@ -343,9 +348,18 @@ async function pullNativeFrom(o: CanonPullNativeOptions, nativeRoot: string): Pr
     return { code: 1, noMatch: true };
   }
   if (mains.length > 1) {
-    console.error(`[canon-pull-native] ambiguous — ${mains.length} matches:`);
-    for (const m of mains) console.error(`  ${path.relative(nativeRoot, m)}`);
-    return { code: 1 };
+    const sameId = new Set(mains.map((m) => path.basename(m))).size === 1;
+    const harnesses = [...new Set(mains.map((m) => path.relative(nativeRoot, m).split(path.sep)[0]!))];
+    const r = sameId && harnesses.length === 1 ? resolveCopies(mains, (m) => (groups.get(m) ?? []).slice().sort()) : undefined;
+    if (!r) {
+      console.error(harnesses.length > 1
+        ? `[canon-pull-native] stored under ${harnesses.length} harnesses (${harnesses.join(', ')}) — a session continued in another harness; choose with --harness <name> (or --rel <path>):`
+        : `[canon-pull-native] ambiguous — ${mains.length} matches (pin one with --rel <path>):`);
+      for (const m of mains) console.error(`  ${path.relative(nativeRoot, m)}`);
+      return { code: 1 };
+    }
+    console.log(`[canon-pull-native] ${mains.length} stored copies are ${r.why === 'identical' ? 'identical' : 'one session continued in the longest'}; using ${path.relative(nativeRoot, r.pick)}`);
+    mains.splice(0, mains.length, r.pick);
   }
   const main = mains[0]!;
   const mainRel = path.relative(nativeRoot, main);
@@ -593,6 +607,49 @@ export async function canonPullNativeAll(o: CanonPullNativeAllOptions = {}): Pro
   return out;
 }
 
+/**
+ * One session id stored as several copies (a hosted box's hydrate→sync echo lands the same session under its own
+ * project dir): IDENTICAL copies are one session → the first; if every other copy is a byte-PREFIX of one copy (the
+ * session continued elsewhere) → the longest; otherwise undefined (genuinely divergent — the caller asks for --rel).
+ * `normalize` (canon copies only) neutralizes each copy's own provenance stamp before comparing.
+ */
+export function resolveCopies<T>(
+  cands: T[],
+  partsOf: (c: T) => string[],
+  normalize?: (c: T, text: string) => string,
+): { pick: T; why: 'identical' | 'prefix' } | undefined {
+  if (normalize) {
+    // Canonical copies differ by their own provenance stamp (`provenance.native` names the project dir) — compare
+    // the text with each copy's stamp neutralized.
+    const texts = cands.map((c) => ({ c, t: normalize(c, partsOf(c).map((p) => fs.readFileSync(p, 'utf8')).join('')) }))
+      .sort((a, b) => b.t.length - a.t.length);
+    const top = texts[0]!;
+    if (!texts.slice(1).every((o) => top.t.startsWith(o.t))) return undefined;
+    return { pick: top.c, why: texts.every((x) => x.t.length === top.t.length) ? 'identical' : 'prefix' };
+  }
+  const size = (c: T) => partsOf(c).reduce((n, p) => n + fs.statSync(p).size, 0);
+  const hashPrefix = (parts: string[], n: number): string => {
+    const h = createHash('sha256');
+    const buf = Buffer.alloc(1 << 20);
+    let left = n;
+    for (const p of parts) {
+      if (left <= 0) break;
+      const fd = fs.openSync(p, 'r');
+      try {
+        let r = 0;
+        while (left > 0 && (r = fs.readSync(fd, buf, 0, Math.min(buf.length, left), null)) > 0) { h.update(buf.subarray(0, r)); left -= r; }
+      } finally { fs.closeSync(fd); }
+    }
+    return h.digest('hex');
+  };
+  const sized = cands.map((c) => ({ c, n: size(c) })).sort((a, b) => b.n - a.n);
+  const top = sized[0]!;
+  for (const o of sized.slice(1)) {
+    if (hashPrefix(partsOf(o.c), o.n) !== hashPrefix(partsOf(top.c), o.n)) return undefined;
+  }
+  return { pick: top.c, why: sized.every((x) => x.n === top.n) ? 'identical' : 'prefix' };
+}
+
 /** Materialize one canon session into a native session directory. */
 export async function canonPull(o: CanonPullOptions): Promise<CanonPullResult> {
   const store = o.store ?? '/tmp/canon-store';
@@ -620,10 +677,26 @@ async function pullOne(o: CanonPullOptions, matches: CanonSession[], home: strin
     console.error(`[canon-pull] no canon session matches '${o.session}' (live or archived)`);
     return { code: 1 };
   }
-  if (matches.length > 1) {
-    console.error(`[canon-pull] ambiguous — ${matches.length} matches:`);
-    for (const m of matches) console.error(`  ${m.uuid}  (${m.rel})`);
+  if (o.rel) matches = matches.filter((m) => m.rel === o.rel);
+  if (o.harness) matches = matches.filter((m) => m.harness === o.harness);
+  if (matches.length === 0) {
+    console.error(`[canon-pull] no copy of '${o.session}'${o.rel ? ` at --rel ${o.rel}` : ''}${o.harness ? ` under --harness ${o.harness}` : ''}`);
     return { code: 1 };
+  }
+  if (matches.length > 1) {
+    const harnesses = [...new Set(matches.map((m) => m.harness))];
+    const r = new Set(matches.map((m) => m.uuid)).size === 1 && harnesses.length === 1
+      ? resolveCopies(matches, (m) => m.parts, (m, text) => text.split(`${path.posix.dirname(m.rel.split(path.sep).join('/'))}/`).join('<dir>/'))
+      : undefined;
+    if (!r) {
+      console.error(harnesses.length > 1
+        ? `[canon-pull] ${matches[0]!.uuid.slice(0, 8)} is stored under ${harnesses.length} harnesses (${harnesses.join(', ')}) — a session continued in another harness; choose with --harness <name> (or --rel <path>):`
+        : `[canon-pull] ambiguous — ${matches.length} matches (pin one with --rel <path>):`);
+      for (const m of matches) console.error(`  ${m.uuid}  (${m.rel})`);
+      return { code: 1 };
+    }
+    console.log(`[canon-pull] ${matches.length} stored copies of ${r.pick.uuid} are ${r.why === 'identical' ? 'identical' : 'one session continued in the longest'}; using ${r.pick.rel}`);
+    matches = [r.pick];
   }
   const s = matches[0]!;
   const destDir = o.to ?? path.join(home, 'omniclaude-v4', '.cortex', 'sessions');

@@ -258,3 +258,69 @@ export function dropArchivedDuplicates(store: string, label: string): number {
   if (removed) console.log(`[${label}] skipped ${removed} file(s) identical to their archived copy (not re-added)`);
   return removed;
 }
+
+/**
+ * Remove a NEWLY staged session that is an ECHO of a session the store already holds under a DIFFERENT project dir
+ * (same harness, same file names, identical bytes — live or archived). Mechanism (09-26, 21 archived ids): a hosted box
+ * hydrates sessions with `pull --native --project "$PWD"` into ~/.claude/projects/-root/, then its outbound sync captures
+ * them as new sessions under native/claude-code/-root/ → `canon pull <uuid>` became ambiguous. Unit-level (sessionUnit):
+ * the whole session must be new under this dir and every file must match the SAME other dir; a session continued on
+ * the box differs and is kept. Files tracked in HEAD are never touched.
+ */
+export function dropEchoedSessions(store: string, label: string): number {
+  let tree = '';
+  let untracked = '';
+  let staged = '';
+  try {
+    tree = git(store, ['ls-tree', '-r', 'HEAD', '--', 'native', 'archive']);
+    untracked = git(store, ['ls-files', '--others', '--exclude-standard', '-z', '--', 'native']);
+    staged = git(store, ['diff', '--cached', '--name-only', '--diff-filter=A', '-z', 'HEAD', '--', 'native']);
+  } catch { return 0; }
+  const split = (p: string) => p.match(/^native\/([^/]+)\/([^/]+)\/(.+)$/); // harness, project dir, rest
+  const known = new Map<string, Map<string, Set<string>>>(); // harness|rest → dir → shas
+  const liveUnits = new Set<string>();
+  for (const line of tree.split('\n')) {
+    const m = line.match(/^\d{6} blob ([0-9a-f]{40,64})\t(.+)$/);
+    if (!m) continue;
+    const live = !m[2]!.startsWith('archive/');
+    const p = live ? m[2]! : m[2]!.replace(/^archive\/\d{4}-\d{2}\//, '');
+    const s = split(p);
+    if (!s) continue;
+    if (live) liveUnits.add(sessionUnit(p));
+    const k = `${s[1]}|${s[3]}`;
+    const byDir = known.get(k) ?? known.set(k, new Map()).get(k)!;
+    (byDir.get(s[2]!) ?? byDir.set(s[2]!, new Set()).get(s[2]!)!).add(m[1]!);
+  }
+  const stagedSet = new Set(staged.split('\0').filter(Boolean));
+  const units = new Map<string, string[]>();
+  for (const rel of [...untracked.split('\0').filter(Boolean), ...stagedSet]) {
+    if (!split(rel) || !isArchivablePath(rel)) continue;
+    const u = sessionUnit(rel);
+    (units.get(u) ?? units.set(u, []).get(u)!).push(rel);
+  }
+  let removed = 0, sessions = 0;
+  for (const [unit, files] of units) {
+    if (liveUnits.has(unit)) continue; // this dir already holds the session — a change to it is a continuation
+    let common: string[] | undefined; // other project dirs holding every file of this unit byte-identical
+    for (const rel of files) {
+      const s = split(rel)!;
+      let sha = '';
+      try { sha = git(store, ['hash-object', '--', rel]).trim(); } catch { common = []; break; }
+      const dirs: string[] = [];
+      for (const [d, shas] of known.get(`${s[1]}|${s[3]}`) ?? new Map<string, Set<string>>()) if (d !== s[2] && shas.has(sha)) dirs.push(d);
+      common = common === undefined ? dirs : common.filter((d) => dirs.includes(d));
+      if (!common.length) break;
+    }
+    if (!common?.length) continue;
+    for (const rel of files) {
+      try {
+        if (stagedSet.has(rel)) git(store, ['rm', '-q', '-f', '--', rel]);
+        else fs.unlinkSync(path.join(store, rel));
+        removed++;
+      } catch { /* raced away */ }
+    }
+    sessions++;
+  }
+  if (sessions) console.log(`[${label}] skipped ${sessions} echoed session(s) (${removed} file(s)) — already in the store under another project dir`);
+  return removed;
+}
