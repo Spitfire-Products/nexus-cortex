@@ -32,6 +32,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { discoverCanonSessions, type CanonSession } from './canonPull.js';
 import { buildTouchedIndex } from './canonTouched.js';
+import { discoverArchivedCanonSessions } from './canonArchiveRead.js';
 import { extractCognition, readSessionCognitionRecords } from './canonCognition.js';
 import { scrubSecrets } from './canonSync.js';
 
@@ -89,7 +90,7 @@ function fsResolveEncoded(base: string, remainder: string): { root: string; veri
  * Fully environment-derived ($HOME + filesystem + the store's own dirs);
  * `projects/ROOTS.json` overrides win where present. No hardcoded roots.
  */
-export function deriveProjectSessionMap(store: string): Record<string, ProjectEntry> {
+export function deriveProjectSessionMap(store: string, archivedRels: string[] = []): Record<string, ProjectEntry> {
   const HOME = process.env.HOME ?? process.env.USERPROFILE ?? '';
   let cfg: RootsConfig = {};
   try { cfg = JSON.parse(fs.readFileSync(path.join(store, 'projects', 'ROOTS.json'), 'utf8')); } catch { /* optional */ }
@@ -108,6 +109,7 @@ export function deriveProjectSessionMap(store: string): Record<string, ProjectEn
   const ccRoot = path.join(store, 'canon', 'claude-code');
   let ccDirs: string[] = [];
   try { ccDirs = fs.readdirSync(ccRoot).filter((d) => fs.statSync(path.join(ccRoot, d)).isDirectory()); } catch { /* none */ }
+  ccDirs = [...new Set([...ccDirs, ...archivedDirs(archivedRels, 'claude-code')])];
   for (const dir of ccDirs.sort()) {
     const rel = path.join('claude-code', dir);
     const overrideId = cfg.claudeDirs?.[dir];
@@ -131,6 +133,7 @@ export function deriveProjectSessionMap(store: string): Record<string, ProjectEn
   const cxRoot = path.join(store, 'canon', 'nexus-cortex');
   let cxDirs: string[] = [];
   try { cxDirs = fs.readdirSync(cxRoot).filter((d) => fs.statSync(path.join(cxRoot, d)).isDirectory()); } catch { /* none */ }
+  cxDirs = [...new Set([...cxDirs, ...archivedDirs(archivedRels, 'nexus-cortex')])];
   for (const label of cxDirs.sort()) {
     const id = cfg.cortexLabels?.[label] ?? label;
     const existing = projects[id]?.root;
@@ -139,6 +142,16 @@ export function deriveProjectSessionMap(store: string): Record<string, ProjectEn
     add(id, existing ?? cfg.roots?.[id] ?? guess, 'nexus-cortex', path.join('nexus-cortex', label));
   }
   return projects;
+}
+
+/** Project directories named by archived session rels (`<harness>/<dir>/…`) — a project whose sessions are all archived still maps. */
+function archivedDirs(rels: string[], harness: string): string[] {
+  const out = new Set<string>();
+  for (const r of rels) {
+    const seg = r.split('/');
+    if (seg[0] === harness && seg.length > 2) out.add(seg[1]!);
+  }
+  return [...out];
 }
 
 /** Resolve which project a canon session belongs to (by path prefix). */
@@ -191,8 +204,13 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
   }
   // Graphs derive from the FULL surface — refuse scoped sync-only stores.
   requireFullSurfaceStore(STORE, 'canon-graph');
-  const projects = deriveProjectSessionMap(STORE);
-  const sessions = discoverCanonSessions(STORE);
+  // Live sessions plus the archived canonical line (read from git objects, never written to disk): the hot/archive
+  // split keeps archive/ out of the worktree, and graphs must keep covering sessions older than the cutoff.
+  const live = discoverCanonSessions(STORE);
+  const archivedSessions = discoverArchivedCanonSessions(STORE, live.map((s) => s.rel));
+  const sessions = [...live, ...archivedSessions];
+  const projects = deriveProjectSessionMap(STORE, archivedSessions.map((s) => s.rel));
+  if (archivedSessions.length) console.log(`[canon-graph] ${live.length} live + ${archivedSessions.length} archived session(s)`);
   for (const s of sessions) {
     const pid = sessionProject(projects, s);
     if (pid) projects[pid]!.sessionCounts[s.harness] = (projects[pid]!.sessionCounts[s.harness] ?? 0) + 1;
@@ -257,8 +275,9 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
     for (const s of sessions) {
       if (sessionProject(projects, s) !== pid) continue;
       const nid = `sess:${s.uuid}`;
-      nodes.push({ id: nid, label: s.title ?? s.uuid.slice(0, 8), file_type: 'document', source_file: path.join('canon', s.rel), source_location: '', harness: s.harness, bytes: s.bytes });
-      edge(projNodeId, nid, 'contains', 'EXTRACTED', path.join('canon', s.rel));
+      const src = s.archived?.path ?? path.join('canon', s.rel);
+      nodes.push({ id: nid, label: s.title ?? s.uuid.slice(0, 8), file_type: 'document', source_file: src, source_location: '', harness: s.harness, bytes: s.bytes });
+      edge(projNodeId, nid, 'contains', 'EXTRACTED', src);
     }
     for (const a of artifacts) {
       const nid = `art:${a.kind}:${a.id}`;
@@ -324,7 +343,7 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
         const home = sessionProject(projects, s);
         if (home === undefined) continue;
         const sessNodeId = `sess:${s.uuid}`;
-        const sessSource = path.join('canon', s.rel);
+        const sessSource = s.archived?.path ?? path.join('canon', s.rel);
         // Pass 1 = tier 1/2 structured evidence (EXTRACTED); pass 2 = tier 3
         // Bash-parsed paths (INFERRED). Structured evidence wins per edge.
         for (const [files, conf] of [
@@ -352,7 +371,7 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
             }
             if (!presentSessionNodes.has(sessNodeId)) {
               // Foreign session touching this project's files — first-class, marked.
-              nodes.push({ id: sessNodeId, label: s.title ?? s.uuid.slice(0, 8), file_type: 'document', source_file: path.join('canon', s.rel), source_location: '', harness: s.harness, foreign_home: home });
+              nodes.push({ id: sessNodeId, label: s.title ?? s.uuid.slice(0, 8), file_type: 'document', source_file: sessSource, source_location: '', harness: s.harness, foreign_home: home });
               presentSessionNodes.add(sessNodeId);
               touchedStats.foreignSessions++;
             }
@@ -409,6 +428,7 @@ export async function canonGraph(o: CanonGraphOptions = {}): Promise<CanonGraphR
       };
       for (const s of sessions) {
         if (sessionProject(projects, s) !== pid) continue;
+        if (s.archived) continue; // opt-in cognition covers live sessions; archived ones carry session + touched nodes only
         let recs: any[] = [];
         try { recs = await readSessionCognitionRecords(s.parts); } catch { continue; }
         if (!recs.length) continue;

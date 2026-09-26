@@ -14,9 +14,11 @@
  *
  * @module canon/canonPull
  */
-import { requireCanonRepo, redactRepoUrl, canonGit, atomicClone } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, atomicClone, gitAuthArgs } from './canonRepo.js';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { renderCapsule, renderCompat, sessionToolCalls, sessionToolNames, toolCompatibility, type HarnessName } from './canonTools.js';
 
 export interface CanonStoreOptions {
@@ -33,6 +35,8 @@ export interface CanonSession {
   bytes: number;
   harness: string;
   title?: string;
+  /** Set for a session read from the store's archive/ history (not on disk) — see canonArchiveRead.ts. */
+  archived?: import('./canonArchiveRead.js').ArchivedSessionRef;
 }
 
 export interface CanonPullOptions extends CanonStoreOptions {
@@ -72,6 +76,64 @@ function ensureFreshStore(store: string, repoUrl?: string, label = 'canon-pull')
   } else {
     canonGit(store, label)(['pull', '-q', 'origin', 'main']);
   }
+}
+
+/**
+ * ARCHIVED-SESSION PULL (2026-09-26). The local store excludes `archive/` (canonArchive + the clone exclusion), so an
+ * archived session is not on disk and the file-walking discovery below cannot see it. This finds the session in HEAD's
+ * `archive/YYYY-MM/<section>/…` tree, writes just its files into a temp root with the SAME layout (`<root>/<section>/…`)
+ * — git fetches the blobs on demand in a partial clone — and returns the root so the unchanged discovery/placement logic
+ * runs against it. Caller deletes the root. Returns null when nothing archived matches.
+ */
+export function hydrateArchived(store: string, section: 'canon' | 'native', session: string, label: string): string | null {
+  let listing = '';
+  try {
+    listing = execFileSync('git', ['-C', store, 'ls-tree', '-r', '--name-only', 'HEAD', '--', 'archive/'], {
+      encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch { return null; }
+  const re = /^archive\/\d{4}-\d{2}\/(canon|native)\/(.+)$/;
+  const hits: Array<{ src: string; rel: string }> = [];
+  for (const p of listing.split('\n')) {
+    const m = p.match(re);
+    if (!m || m[1] !== section) continue;
+    if (m[2]!.split('/').some((seg) => seg.startsWith(session))) hits.push({ src: p, rel: m[2]! });
+  }
+  if (hits.length === 0) return null;
+  if (hits.length > 200) {
+    console.error(`[${label}] '${session}' matches ${hits.length} archived files — give more of the uuid`);
+    return null;
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-archived-'));
+  for (const h of hits) {
+    const dest = path.join(root, section, h.rel);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    const buf = execFileSync('git', [...gitAuthArgs(), '-C', store, 'cat-file', 'blob', `HEAD:${h.src}`], {
+      maxBuffer: 1024 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    fs.writeFileSync(dest, buf);
+  }
+  console.log(`[${label}] '${session}' is archived — fetched ${hits.length} file(s) from the store history`);
+  return root;
+}
+
+/** Count archived sessions of a section (main .jsonl files) without fetching content. */
+export function countArchived(store: string, section: 'canon' | 'native'): number {
+  try {
+    const out = execFileSync('git', ['-C', store, 'ls-tree', '-r', '--name-only', 'HEAD', '--', 'archive/'], {
+      encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const live = new Set(execFileSync('git', ['-C', store, 'ls-tree', '-r', '--name-only', 'HEAD', '--', `${section}/`], {
+      encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
+    }).split('\n').map((l) => l.replace(new RegExp(`^${section}/`), '').replace(/\.part-\d{4}$/, '')));
+    const mains = new Set<string>();
+    for (const p of out.split('\n')) {
+      const m = p.match(/^archive\/\d{4}-\d{2}\/(canon|native)\/(.+?\.jsonl)(\.part-\d{4})?$/);
+      // Archived-only sessions: a copy also present in the live tree is already listed above.
+      if (m && m[1] === section && !m[2]!.endsWith('.events.jsonl') && !live.has(m[2]!)) mains.add(m[2]!);
+    }
+    return mains.size;
+  } catch { return 0; }
 }
 
 /** Discover canon sessions (part-aware; titles recovered from event sidecars). */
@@ -131,6 +193,8 @@ export async function canonList(o: CanonStoreOptions & { all?: boolean } = {}): 
     console.log(`${s.uuid}  ${kb}KB  ${s.harness.padEnd(12)}  ${s.title ?? ''}`);
   }
   console.log(`\n[canon-pull] ${rows.length} session(s)${o.all ? '' : ' >4KB (--all for every one)'} in ${store}/canon`);
+  const archived = countArchived(store, 'canon');
+  if (archived) console.log(`[canon-pull] + ${archived} archived session(s) not listed — \`canon pull <uuid>\` still materializes them from the store history`);
   return rows;
 }
 
@@ -224,9 +288,26 @@ export function claudeProjectSlug(cwd: string): string {
  */
 export async function canonPullNative(o: CanonPullNativeOptions): Promise<CanonPullNativeResult> {
   const store = o.store ?? '/tmp/canon-store';
-  const home = o.home ?? process.env.HOME ?? '/home/runner/workspace';
   ensureFreshStore(store, o.repoUrl, 'canon-pull-native');
-  const nativeRoot = path.join(store, 'native');
+  const live = await pullNativeFrom(o, path.join(store, 'native'));
+  if (!live.noMatch || o.rel) return live;
+  // Not in the live tree — the session may be archived (not on disk by design): hydrate it and retry.
+  const archiveRoot = hydrateArchived(store, 'native', o.session, 'canon-pull-native');
+  if (!archiveRoot) {
+    console.error(`[canon-pull-native] no native session matches '${o.session}'${o.harness ? ` in ${o.harness}` : ''} (live or archived)`);
+    return { code: 1 };
+  }
+  try {
+    const r = await pullNativeFrom(o, path.join(archiveRoot, 'native'));
+    if (r.noMatch) console.error(`[canon-pull-native] no native session matches '${o.session}' (live or archived)`);
+    return r;
+  } finally {
+    fs.rmSync(archiveRoot, { recursive: true, force: true });
+  }
+}
+
+async function pullNativeFrom(o: CanonPullNativeOptions, nativeRoot: string): Promise<CanonPullNativeResult & { noMatch?: boolean }> {
+  const home = o.home ?? process.env.HOME ?? '/home/runner/workspace';
 
   // Discover logical native files (part-aware) whose path references the uuid.
   const groups = new Map<string, string[]>();
@@ -259,8 +340,7 @@ export async function canonPullNative(o: CanonPullNativeOptions): Promise<CanonP
           && path.dirname(rel).split(path.sep).length <= 2);
   });
   if (mains.length === 0) {
-    console.error(`[canon-pull-native] no native session matches '${o.session}'${o.harness ? ` in ${o.harness}` : ''}`);
-    return { code: 1 };
+    return { code: 1, noMatch: true };
   }
   if (mains.length > 1) {
     console.error(`[canon-pull-native] ambiguous — ${mains.length} matches:`);
@@ -518,10 +598,26 @@ export async function canonPull(o: CanonPullOptions): Promise<CanonPullResult> {
   const store = o.store ?? '/tmp/canon-store';
   const home = o.home ?? process.env.HOME ?? '/home/runner/workspace';
   ensureFreshStore(store, o.repoUrl);
-  const sessions = discoverCanonSessions(store);
-  const matches = sessions.filter((s) => s.uuid === o.session || s.uuid.startsWith(o.session));
+  let sessions = discoverCanonSessions(store);
+  let matches = sessions.filter((s) => s.uuid === o.session || s.uuid.startsWith(o.session));
+  let archiveRoot: string | null = null;
   if (matches.length === 0) {
-    console.error(`[canon-pull] no canon session matches '${o.session}'`);
+    archiveRoot = hydrateArchived(store, 'canon', o.session, 'canon-pull');
+    if (archiveRoot) {
+      sessions = discoverCanonSessions(archiveRoot);
+      matches = sessions.filter((s) => s.uuid === o.session || s.uuid.startsWith(o.session));
+    }
+  }
+  try {
+    return await pullOne(o, matches, home);
+  } finally {
+    if (archiveRoot) fs.rmSync(archiveRoot, { recursive: true, force: true });
+  }
+}
+
+async function pullOne(o: CanonPullOptions, matches: CanonSession[], home: string): Promise<CanonPullResult> {
+  if (matches.length === 0) {
+    console.error(`[canon-pull] no canon session matches '${o.session}' (live or archived)`);
     return { code: 1 };
   }
   if (matches.length > 1) {

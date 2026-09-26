@@ -8,7 +8,8 @@
  * (Grep/Glob pass dirs). Counts per (session, absolute path).
  *
  * Incremental by construction: results cache at ~/.canon/touched-cache.json
- * keyed by the session's parts signature (size:mtime per part) — a session is
+ * keyed by the session's parts signature (size:mtime per part; an ARCHIVED session read from git signs by its blob
+ * ids, which never change — see canonArchiveRead.ts) — a session is
  * re-scanned only when its canon bytes change, so the first graph build pays
  * the full read and every later build is cheap. The cache is derived and
  * disposable (delete = full re-scan).
@@ -17,8 +18,8 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as readline from 'node:readline';
 import type { CanonSession } from './canonPull.js';
+import { sessionLines, sidecarLines } from './canonArchiveRead.js';
 
 export interface TouchedIndex {
   /** session REL (unique — uuids repeat across dual-lineage copies) → absolute file path → touch count */
@@ -178,13 +179,19 @@ export async function buildTouchedIndex(
   for (const s of sessions) {
     // Sidecar participates in the signature: tier 2b mines file-history-delta
     // events from <session>.events.jsonl, so sidecar changes must invalidate.
-    const logicalAbs = s.parts[0]!.replace(/\.part-\d{4}$/, '');
-    const sidecar = logicalAbs.replace(/\.jsonl$/, '.events.jsonl');
-    let sidecarSig = '0:0';
-    try { const st = fs.statSync(sidecar); sidecarSig = `${st.size}:${Math.round(st.mtimeMs)}`; } catch { /* none */ }
-    const sig = 'v6|' + s.parts
-      .map((p) => { const st = fs.statSync(p); return `${st.size}:${Math.round(st.mtimeMs)}`; })
-      .join('|') + '|' + sidecarSig;
+    // Archived sessions (read from git, canonArchiveRead.ts) sign by blob id — immutable, so scanned once per machine.
+    let sig: string;
+    if (s.archived) {
+      sig = 'v6|blob|' + s.archived.blobs.join('|') + '|' + (s.archived.sidecarBlob ?? '0');
+    } else {
+      const logicalAbs = s.parts[0]!.replace(/\.part-\d{4}$/, '');
+      const sidecar = logicalAbs.replace(/\.jsonl$/, '.events.jsonl');
+      let sidecarSig = '0:0';
+      try { const st = fs.statSync(sidecar); sidecarSig = `${st.size}:${Math.round(st.mtimeMs)}`; } catch { /* none */ }
+      sig = 'v6|' + s.parts
+        .map((p) => { const st = fs.statSync(p); return `${st.size}:${Math.round(st.mtimeMs)}`; })
+        .join('|') + '|' + sidecarSig;
+    }
     const hit = cache[s.rel];
     if (hit && hit.sig === sig) {
       byRel.set(s.rel, new Map(Object.entries(hit.files)));
@@ -196,27 +203,21 @@ export async function buildTouchedIndex(
     const files = new Map<string, number>();
     const inferred = new Map<string, number>();
     const ambiguous = new Map<string, number>();
-    for (const part of s.parts) {
-      const rl = readline.createInterface({ input: fs.createReadStream(part), crlfDelay: Infinity });
-      for await (const line of rl) {
-        if (!line.includes('tool_use') && !line.includes('trackedFileBackups')) continue; // cheap pre-filter
-        try { recordPaths(JSON.parse(line), files, inferred, ambiguous); } catch { /* verify's job */ }
-      }
+    for await (const line of sessionLines(s)) {
+      if (!line.includes('tool_use') && !line.includes('trackedFileBackups')) continue; // cheap pre-filter
+      try { recordPaths(JSON.parse(line), files, inferred, ambiguous); } catch { /* verify's job */ }
     }
     // Tier 2b — file-history-delta sidecar events: the harness's per-file
     // change tracker fires for ANY mutation of a tracked file, including
     // Bash/interpreter-body writes tier 3 cannot see. Harness-recorded fact
     // => EXTRACTED-grade; one count per delta event.
-    if (fs.existsSync(sidecar)) {
-      const rl2 = readline.createInterface({ input: fs.createReadStream(sidecar), crlfDelay: Infinity });
-      for await (const line of rl2) {
-        if (!line.includes('file-history-delta')) continue;
-        try {
-          const r = JSON.parse(line);
-          const p = r?.trackingPath;
-          if (typeof p === 'string' && p.startsWith('/')) files.set(p, (files.get(p) ?? 0) + 1);
-        } catch { /* verify's job */ }
-      }
+    for await (const line of sidecarLines(s)) {
+      if (!line.includes('file-history-delta')) continue;
+      try {
+        const r = JSON.parse(line);
+        const p = r?.trackingPath;
+        if (typeof p === 'string' && p.startsWith('/')) files.set(p, (files.get(p) ?? 0) + 1);
+      } catch { /* verify's job */ }
     }
     for (const k of files.keys()) inferred.delete(k); // structured evidence wins
     for (const k of files.keys()) ambiguous.delete(k);

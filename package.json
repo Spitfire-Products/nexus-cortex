@@ -1,6 +1,6 @@
 {
   "name": "nexus-cortex-monorepo",
-  "version": "4.124.21",
+  "version": "4.124.22",
   "private": true,
   "license": "Apache-2.0",
   "workspaces": [

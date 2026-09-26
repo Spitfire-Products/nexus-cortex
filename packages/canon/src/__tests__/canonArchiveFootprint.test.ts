@@ -13,7 +13,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { atomicClone, isScopedStore, requireFullSurfaceStore, hasArchiveExclusion } from '../canonRepo.js';
-import { canonArchive } from '../canonArchive.js';
+import { canonArchive, dropArchivedDuplicates } from '../canonArchive.js';
+import { canonPull, canonPullNative, countArchived } from '../canonPull.js';
 
 const g = (cwd: string, args: string[], env: NodeJS.ProcessEnv = {}) =>
   execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } });
@@ -145,5 +146,134 @@ describe('clones never materialize archive/', () => {
     atomicClone(bare, scoped, 'test', ['native/h']);
     expect(isScopedStore(scoped)).toBe(true);
     expect(hasArchiveExclusion(scoped)).toBe(false);
+  });
+});
+
+describe('pulling archived sessions', () => {
+  it('canon pull materializes an archived session byte-exact (not on disk, fetched from the store history)', async () => {
+    await canonArchive({ store: work, days: 30, push: true });
+    expect(fs.existsSync(path.join(work, 'canon/h/old1.jsonl'))).toBe(false);
+    expect(countArchived(work, 'canon')).toBe(1);
+    const out = path.join(tmp, 'pulled');
+    const r = await canonPull({ store: work, session: 'old1', to: out });
+    expect(r.code).toBe(0);
+    expect(fs.readFileSync(path.join(out, 'old1.jsonl'), 'utf8')).toBe(JSON.stringify({ p: 'canon/h/old1.jsonl' }) + '\n');
+  });
+
+  it('canon pull-native materializes an archived native session byte-exact', async () => {
+    await canonArchive({ store: work, days: 30, push: true });
+    const out = path.join(tmp, 'pulled-native');
+    const r = await canonPullNative({ store: work, session: 'old2', to: out });
+    expect(r.code).toBe(0);
+    expect(fs.readFileSync(path.join(out, 'old2.jsonl'), 'utf8')).toBe(JSON.stringify({ p: 'native/h/old2.jsonl' }) + '\n');
+  });
+
+  it('a live session still pulls from the live tree, and an unknown id still fails cleanly', async () => {
+    await canonArchive({ store: work, days: 30, push: true });
+    const out = path.join(tmp, 'pulled-live');
+    expect((await canonPullNative({ store: work, session: 'new', to: out })).code).toBe(0);
+    expect((await canonPull({ store: work, session: 'nope-not-here', to: out })).code).toBe(1);
+    expect((await canonPullNative({ store: work, session: 'nope-not-here', to: out })).code).toBe(1);
+  });
+});
+
+/**
+ * Live duplicates of archived sessions (mapped 09-26 on the real store): the pre-fix archive run d723f686f (09-20) left
+ * 16,357 moved files on disk and the canon-sync 55 s later re-committed them at their old paths — ~6.9k native + ~4.3k
+ * canon + ~4.2k projections sessions live AND archived, byte-identical (~1.45 GB of worktree). The archive run now drops
+ * a live session whose every file is identical to its archived copy, keeps a session that grew or changed, archives
+ * whole sessions only, and never archives non-session files (capability artifacts, captured memory, index docs).
+ */
+describe('live duplicates of archived sessions', () => {
+  const write = (store: string, entries: Record<string, string>, msg: string, env: NodeJS.ProcessEnv = {}) => {
+    for (const [p, body] of Object.entries(entries)) {
+      fs.mkdirSync(path.join(store, path.dirname(p)), { recursive: true });
+      fs.writeFileSync(path.join(store, p), body);
+    }
+    g(store, ['add', '-A']);
+    g(store, ['commit', '-qm', msg], env);
+  };
+  const headTree = (store: string) => g(store, ['ls-tree', '-r', '--name-only', 'HEAD']).split('\n').filter(Boolean);
+  const body = (p: string) => JSON.stringify({ p }) + '\n';
+
+  it('drops live copies re-added byte-identical after an archive run (the 09-20 re-add), with no third copy', async () => {
+    await canonArchive({ store: work, days: 30, push: true });
+    // What the 09-20 sync did: re-commit the leftovers at their old paths (recent commit date).
+    write(work, { 'native/h/old1.jsonl': body('native/h/old1.jsonl'), 'native/h/old2.jsonl': body('native/h/old2.jsonl'),
+      'canon/h/old1.jsonl': body('canon/h/old1.jsonl') }, 're-add');
+    expect(await canonArchive({ store: work, days: 30, push: true })).toBe(0);
+    expect(files(work)).toEqual(['HARNESSES.json', 'native/h/new.jsonl']);
+    expect(g(work, ['status', '--porcelain']).trim()).toBe('');
+    const tree = headTree(work);
+    expect(tree).not.toContain('native/h/old1.jsonl');
+    expect(tree).not.toContain('canon/h/old1.jsonl');
+    expect(tree.filter((p) => p.startsWith('archive/')).sort()).toEqual([
+      'archive/2026-07/canon/h/old1.jsonl', 'archive/2026-07/native/h/old1.jsonl', 'archive/2026-07/native/h/old2.jsonl']);
+    // Idempotent: a second run has nothing to do.
+    const head = g(work, ['rev-parse', 'HEAD']).trim();
+    expect(await canonArchive({ store: work, days: 30, push: false })).toBe(0);
+    expect(g(work, ['rev-parse', 'HEAD']).trim()).toBe(head);
+  });
+
+  it('keeps a live copy whose bytes differ from the archived one (the session continued)', async () => {
+    await canonArchive({ store: work, days: 30, push: true });
+    write(work, { 'native/h/old1.jsonl': body('native/h/old1.jsonl') + '{"more":1}\n' }, 'grew');
+    expect(await canonArchive({ store: work, days: 30, push: false })).toBe(0);
+    expect(fs.readFileSync(path.join(work, 'native/h/old1.jsonl'), 'utf8')).toContain('"more"');
+    expect(headTree(work)).toContain('native/h/old1.jsonl');
+  });
+
+  it('keeps a grown CHUNKED session whole — identical early part + a new part is not a duplicate', async () => {
+    write(work, { 'native/h/big.jsonl.part-0001': 'p1\n' }, 'big-old', OLD);
+    await canonArchive({ store: work, days: 30, push: true });
+    expect(headTree(work)).toContain('archive/2026-07/native/h/big.jsonl.part-0001');
+    write(work, { 'native/h/big.jsonl.part-0001': 'p1\n', 'native/h/big.jsonl.part-0002': 'p2\n' }, 'big-grew');
+    expect(await canonArchive({ store: work, days: 30, push: false })).toBe(0);
+    expect(files(work)).toEqual(expect.arrayContaining(['native/h/big.jsonl.part-0001', 'native/h/big.jsonl.part-0002']));
+  });
+
+  it('archives a session only when ALL its files are old (no split chunked session)', async () => {
+    write(work, { 'native/h/split.jsonl.part-0001': 'a\n' }, 'split-old', OLD);
+    write(work, { 'native/h/split.jsonl.part-0002': 'b\n' }, 'split-new');
+    expect(await canonArchive({ store: work, days: 30, push: false })).toBe(0);
+    const tree = headTree(work);
+    expect(tree).toContain('native/h/split.jsonl.part-0001');
+    expect(tree).toContain('native/h/split.jsonl.part-0002');
+    expect(tree.some((p) => p.includes('split.jsonl'))).toBe(true);
+    expect(tree.some((p) => p.startsWith('archive/') && p.includes('split.jsonl'))).toBe(false);
+  });
+
+  it('never archives non-session files: capability artifacts, captured memory, index docs', async () => {
+    write(work, { 'canon/artifacts/skill/x.json': '{}', 'native/claude-code/proj/memory/m.md': 'm\n',
+      'native/SKIPPED.md': '# skipped\n', 'canon/MAPPING.md': '# map\n' }, 'scaffold-old', OLD);
+    expect(await canonArchive({ store: work, days: 30, push: false })).toBe(0);
+    const tree = headTree(work);
+    for (const p of ['canon/artifacts/skill/x.json', 'native/claude-code/proj/memory/m.md', 'native/SKIPPED.md', 'canon/MAPPING.md']) {
+      expect(tree).toContain(p);
+      expect(tree).not.toContain(`archive/2026-07/${p}`);
+    }
+  });
+});
+
+describe('sync never re-adds archived sessions', () => {
+  it('dropArchivedDuplicates removes untracked byte-identical copies, keeps a grown one and every tracked file', async () => {
+    await canonArchive({ store: work, days: 30, push: true });
+    // What the browser fold-in / a re-staged copy does: the archived files reappear on disk, untracked.
+    fs.mkdirSync(path.join(work, 'native/h'), { recursive: true });
+    fs.mkdirSync(path.join(work, 'canon/h'), { recursive: true });
+    fs.writeFileSync(path.join(work, 'native/h/old1.jsonl'), JSON.stringify({ p: 'native/h/old1.jsonl' }) + '\n'); // identical
+    fs.writeFileSync(path.join(work, 'canon/h/old1.jsonl'), JSON.stringify({ p: 'canon/h/old1.jsonl' }) + '\n'); // identical
+    // The browser fold-in path STAGES what it restores (git checkout <tree> -- <path>).
+    fs.writeFileSync(path.join(work, 'native/h/old2.jsonl'), JSON.stringify({ p: 'native/h/old2.jsonl' }) + '\n');
+    g(work, ['add', '--', 'native/h/old2.jsonl']);
+    expect(dropArchivedDuplicates(work, 'test')).toBe(3);
+    expect(fs.existsSync(path.join(work, 'native/h/old2.jsonl'))).toBe(false);
+    expect(g(work, ['status', '--porcelain']).trim()).toBe('');
+    fs.writeFileSync(path.join(work, 'native/h/old2.jsonl'), 'GREW\n'); // differs → a live session again
+    expect(dropArchivedDuplicates(work, 'test')).toBe(0);
+    expect(fs.existsSync(path.join(work, 'native/h/old1.jsonl'))).toBe(false);
+    expect(fs.existsSync(path.join(work, 'canon/h/old1.jsonl'))).toBe(false);
+    expect(fs.readFileSync(path.join(work, 'native/h/old2.jsonl'), 'utf8')).toBe('GREW\n');
+    expect(fs.readFileSync(path.join(work, 'native/h/new.jsonl'), 'utf8')).toBe('{"new":1}\n'); // tracked, untouched
   });
 });

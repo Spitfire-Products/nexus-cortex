@@ -26,6 +26,7 @@ export { canonGraph, deriveProjectSessionMap, sessionProject } from './canonGrap
 export type { CanonGraphOptions, CanonGraphResult, ProjectEntry } from './canonGraph.js';
 export { CANON_VERIFY_MJS, GITATTRIBUTES, STORE_DIRS, STORE_README, VERIFY_YML } from './scaffoldAssets.js';
 export { buildTouchedIndex } from './canonTouched.js';
+export { discoverArchivedCanonSessions, sessionLines, sidecarLines, type ArchivedSessionRef } from './canonArchiveRead.js';
 export type { TouchedIndex } from './canonTouched.js';
 export { extractCognition, readSessionCognitionRecords } from './canonCognition.js';
 export type { CognitionOptions, CognitionNode, CognitionEdge, CognitionResult } from './canonCognition.js';

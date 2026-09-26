@@ -18,6 +18,7 @@
 import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush, isScopedStore, sparseAdd } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { dropArchivedDuplicates } from './canonArchive.js';
 
 export interface CanonSyncOptions {
   /** Canon store working clone (default /tmp/canon-store — off-quota; auto-cloned). */
@@ -447,6 +448,7 @@ export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResu
     // through the TRANSLATE commit path while only sync was guarded): shared
     // guardedAddAll refuses to commit a staged set with >10 deletions (partial
     // clone/checkout tree). ALL canon commit paths stage through it now.
+    dropArchivedDuplicates(STORE, 'canon-sync'); // archived sessions re-created by the browser fold-in / re-staged copies
     const stageOk = guardedAddAll(git, 'canon-sync');
     if (!stageOk && git(['status', '--porcelain']).trim()) {
       skipped.push('COMMIT ABORTED — mass-deletion guard (staged deletions reset)');
