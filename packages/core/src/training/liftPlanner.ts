@@ -160,10 +160,26 @@ export const PLANNER_INVESTIGATE_CLAUSE =
 export const PLANNER_DECIDE_NOW_CLAUSE =
   '\n\nNo further investigation is available — write the plan now on the evidence you have (INVESTIGATE is no longer accepted).';
 
+/**
+ * CORTEX_LIFT_PLAN_SCOPE=true (2026-09-27, dark): the edit-scope bullet. MiMo tb64 K=3 + validation cell: 31 sessions across 5 runs
+ * (~10-14% of tasks) were rejected by the grader's protected-file guard — the agent modified a file outside the task's declared repair
+ * set, almost always vendored library code. On 2329 the planner itself declared a third "mutable path" the task never named and the
+ * agent followed it. Reading is unrestricted; the bullet narrows what the plan MODIFIES (r-mimo64-val-2026-09-27.md §8).
+ */
+export const SCOPE_DOCTRINE =
+  '- EDIT SCOPE: in the plan, list the exact files the junior will MODIFY. When the task names the files or modules to repair or ' +
+  'change, those are the ONLY files to modify — never call another file mutable or plan edits to it, and fix the defect inside the ' +
+  'named files even when another file looks like a shortcut. When the task names none, modify the smallest set of files that contains ' +
+  'the defect; never modify vendored or library code the task did not point to, runner/entry scripts, tests, fixtures, or input data. ' +
+  'Reading any file is fine. Last step before finishing: list the files changed since the start (`sh .cortex/changed` when that ' +
+  'file exists, else `git status`) and revert every change the task did not require.\n';
+
 /** Select the planner persona by CORTEX_LIFT_PLAN_DOCTRINE ('v2' → bullets on; anything else → v1 baseline); R171 `investigate`
  *  = 'offer' while rounds remain, 'withdraw' on the last round of a multi-round plan, undefined for the single-shot default. */
 export function plannerSystem(env: NodeJS.ProcessEnv = process.env, investigate?: 'offer' | 'withdraw'): string {
-  const base = (env.CORTEX_LIFT_PLAN_DOCTRINE || '').trim().toLowerCase() === 'v2' ? PLANNER_SYSTEM : PLANNER_SYSTEM_V1;
+  const doctrine = (env.CORTEX_LIFT_PLAN_DOCTRINE || '').trim().toLowerCase() === 'v2' ? PLANNER_SYSTEM : PLANNER_SYSTEM_V1;
+  const scope = (env.CORTEX_LIFT_PLAN_SCOPE || '').trim().toLowerCase() === 'true';
+  const base = scope ? doctrine.replace('Output ONLY the plan', SCOPE_DOCTRINE + 'Output ONLY the plan') : doctrine;
   return investigate === 'offer' ? base + PLANNER_INVESTIGATE_CLAUSE : investigate === 'withdraw' ? base + PLANNER_DECIDE_NOW_CLAUSE : base;
 }
 

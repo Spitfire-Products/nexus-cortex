@@ -3,6 +3,7 @@ import {
   PLANNER_SYSTEM,
   PLANNER_SYSTEM_V1,
   DOCTRINE_V2,
+  SCOPE_DOCTRINE,
   plannerSystem,
   buildPlannerUserPrompt,
   resolveLiftPlanConfig,
@@ -126,6 +127,33 @@ describe('CORTEX_LIFT_PLAN_DOCTRINE (4.107.2 lever)', () => {
     expect(plannerSystem({ CORTEX_LIFT_PLAN_DOCTRINE: '' })).toBe(PLANNER_SYSTEM_V1);
     expect(plannerSystem({ CORTEX_LIFT_PLAN_DOCTRINE: 'v3' })).toBe(PLANNER_SYSTEM_V1);
     expect(plannerSystem({ CORTEX_LIFT_PLAN_DOCTRINE: ' V2 ' })).toBe(PLANNER_SYSTEM);
+  });
+});
+
+
+describe('CORTEX_LIFT_PLAN_SCOPE (edit-scope doctrine, 2026-09-27, r-mimo64-val §8)', () => {
+  it('off by default: the persona is unchanged', () => {
+    expect(plannerSystem({})).toBe(PLANNER_SYSTEM_V1);
+    expect(plannerSystem({ CORTEX_LIFT_PLAN_SCOPE: 'false' })).toBe(PLANNER_SYSTEM_V1);
+    expect(PLANNER_SYSTEM_V1).not.toContain(SCOPE_DOCTRINE);
+  });
+  it('on: the scope bullet is added before the output instruction, with either doctrine', () => {
+    const v1 = plannerSystem({ CORTEX_LIFT_PLAN_SCOPE: 'true' });
+    expect(v1).toContain(SCOPE_DOCTRINE);
+    expect(v1.indexOf(SCOPE_DOCTRINE)).toBeLessThan(v1.indexOf('Output ONLY the plan'));
+    expect(v1.replace(SCOPE_DOCTRINE, '')).toBe(PLANNER_SYSTEM_V1);
+    const v2 = plannerSystem({ CORTEX_LIFT_PLAN_SCOPE: ' TRUE ', CORTEX_LIFT_PLAN_DOCTRINE: 'v2' });
+    expect(v2).toContain(SCOPE_DOCTRINE); expect(v2).toContain(DOCTRINE_V2);
+  });
+  it('the bullet names the rule: only the files the task names are modified; the pre-finish changed-files check', () => {
+    expect(SCOPE_DOCTRINE).toMatch(/EDIT SCOPE/);
+    expect(SCOPE_DOCTRINE).toMatch(/names/);
+    expect(SCOPE_DOCTRINE).toMatch(/never/i);
+    expect(SCOPE_DOCTRINE).toMatch(/\.cortex\/changed/);
+  });
+  it('composes with the investigation clause', () => {
+    expect(plannerSystem({ CORTEX_LIFT_PLAN_SCOPE: 'true' }, 'offer')).toContain(SCOPE_DOCTRINE);
+    expect(plannerSystem({ CORTEX_LIFT_PLAN_SCOPE: 'true' }, 'offer').endsWith(PLANNER_INVESTIGATE_CLAUSE)).toBe(true);
   });
 });
 
