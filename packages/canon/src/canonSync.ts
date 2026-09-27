@@ -151,6 +151,8 @@ const SECRET_PATTERNS: [RegExp, string][] = [
   [/github_pat_[A-Za-z0-9_]{20,}/g, '[redacted:ghpat]'],
   [/ghu_[A-Za-z0-9]{20,}/g, '[redacted:ghu]'],
   [/ghs_[A-Za-z0-9]{20,}/g, '[redacted:ghs]'],
+  [/gho_[A-Za-z0-9]{20,}/g, '[redacted:gho]'], // OAuth token (`gh auth token`) — missing until 2026-09-26, one was printed into a transcript
+  [/ghr_[A-Za-z0-9]{20,}/g, '[redacted:ghr]'],
   [/hf_[A-Za-z0-9]{20,}/g, '[redacted:hf]'],
   [/AIza[A-Za-z0-9_-]{20,}/g, '[redacted:aiza]'],
   [/xai-[A-Za-z0-9]{20,}/g, '[redacted:xai]'],
@@ -358,6 +360,7 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
 
   // Generic capture over the declared sources.
   let HARNESS_SOURCES = loadHarnessSources(STORE, HOME);
+  let scopedLegs: string[] | undefined; // the active legs of a scoped sync (undefined = full-surface)
   if (SCOPE_AUTO || SCOPE_LABELS) {
     // Resolve the active scope: 'auto' = harnesses with >=1 root present on THIS
     // machine (a container only has its own); explicit = the listed labels.
@@ -369,6 +372,7 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
       ?? Object.entries(HARNESS_SOURCES)
         .filter(([, src]) => src.roots.some(rootExists))
         .map(([label]) => label);
+    scopedLegs = active;
     // Widen the cone to the active legs (idempotent — safe on every run, and it
     // heals a pre-existing scoped store whose local harness set grew).
     if (isScopedStore(STORE)) sparseAdd(STORE, active.map((l) => `native/${l}`), 'canon-sync');
@@ -417,7 +421,13 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
     // it can never fast-forward main — and force would clobber the store). Fold
     // each branch's /native/browser-cortex/ tree into main's working tree here,
     // where real git lives; the add/commit/push below carries it into main.
-    try {
+    // A SCOPED writer (autoresearch sandbox, hosted container) owns only its own legs: folding the browser branches into
+    // it staged every browser-cortex file OUTSIDE its sparse cone, where the archived-duplicate guard's `git rm` is
+    // refused — so each scoped sync re-committed the archived browser sessions (09-26: 75 files per autoresearch job,
+    // dropped again by the next archive run). The full-surface writer (the repl watcher/cron) integrates them.
+    if (scopedLegs && !scopedLegs.includes('browser-cortex')) {
+      // scoped store without the browser leg — nothing to integrate here
+    } else try {
       const heads = git(['ls-remote', '--heads', 'origin', 'browser-cortex-*']);
       for (const line of heads.split('\n')) {
         const m = line.match(/refs\/heads\/(browser-cortex-[A-Za-z0-9_-]+)$/);

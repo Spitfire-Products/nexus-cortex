@@ -4,7 +4,11 @@
  * The hot/archive split (canonArchive.ts) keeps `archive/` out of the local worktree, so anything that walks
  * `canon/` on disk (the project graphs) would lose every session older than the archive cutoff. This module lists
  * the archived canonical line from HEAD's tree and streams session bytes with `git cat-file` — nothing is written
- * to disk. In a partial clone a blob that is not local yet is fetched on demand by git (promisor remote).
+ * to disk. It NEVER fetches: every git call runs with GIT_NO_LAZY_FETCH=1. In the partial clone (blob:none, archive/
+ * excluded) the archived blobs are mostly not local; letting git fetch them on demand pulled the whole archive
+ * (~500 MB) into /tmp on every graph refresh and died at the /tmp quota, leaving tmp_pack garbage (2026-09-26,
+ * 3.2 GB in 70 min). A session whose blobs are not local is listed with `archived.local=false`: it keeps its graph
+ * node, and consumers serve it from their blob-keyed cache or skip it.
  *
  * Archived blobs never change, so consumers can key caches on the blob ids (canonTouched does): each archived
  * session is read once per machine, then served from cache.
@@ -24,6 +28,28 @@ export interface ArchivedSessionRef {
   path: string;
   blobs: string[];
   sidecarBlob?: string;
+  /** False when any of the session's blobs is not in the local object store (partial clone) — never fetched here. */
+  local: boolean;
+}
+
+/** Environment for every git read in this module: never let a promisor remote download missing objects. */
+const NO_FETCH_ENV = { ...process.env, GIT_NO_LAZY_FETCH: '1' };
+
+/** Sizes of the blobs present locally (missing ones absent from the map) — one batch call, no fetch. */
+export function localBlobSizes(store: string, shas: string[]): Map<string, number> {
+  const sizes = new Map<string, number>();
+  if (!shas.length) return sizes;
+  let out = '';
+  try {
+    out = execFileSync('git', ['-C', store, 'cat-file', '--batch-check=%(objectname) %(objectsize)'], {
+      input: shas.join('\n') + '\n', encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, env: NO_FETCH_ENV, stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  } catch (e) { out = String((e as { stdout?: string }).stdout ?? ''); }
+  for (const line of out.split('\n')) {
+    const m = line.match(/^([0-9a-f]{40,64}) (\d+)$/);
+    if (m) sizes.set(m[1]!, parseInt(m[2]!, 10));
+  }
+  return sizes;
 }
 
 /**
@@ -38,8 +64,9 @@ export function discoverArchivedCanonSessions(
 ): CanonSession[] {
   let out = '';
   try {
-    out = execFileSync('git', ['-C', store, 'ls-tree', '-r', '-l', 'HEAD', '--', 'archive'], {
-      encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
+    // No `-l`: sizes need the blobs, which a partial clone does not hold (the batch check below reads them locally).
+    out = execFileSync('git', ['-C', store, 'ls-tree', '-r', 'HEAD', '--', 'archive'], {
+      encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, env: NO_FETCH_ENV, stdio: ['ignore', 'pipe', 'pipe'],
     });
   } catch { return []; }
   const liveRels = new Set(live);
@@ -47,9 +74,9 @@ export function discoverArchivedCanonSessions(
   const groups = new Map<string, Group>(); // key = rel under canon/ (logical .jsonl)
   const sidecars = new Map<string, { bucket: string; sha: string }>();
   for (const line of out.split('\n')) {
-    const m = line.match(/^\d{6} blob ([0-9a-f]{40,64}) +(\d+|-)\t(.+)$/);
+    const m = line.match(/^\d{6} blob ([0-9a-f]{40,64})\t(.+)$/);
     if (!m) continue;
-    const pm = m[3]!.match(/^archive\/(\d{4}-\d{2})\/canon\/(.+)$/);
+    const pm = m[2]!.match(/^archive\/(\d{4}-\d{2})\/canon\/(.+)$/);
     if (!pm) continue;
     const [bucket, rest] = [pm[1]!, pm[2]!];
     if (rest.endsWith('.events.jsonl')) {
@@ -62,10 +89,16 @@ export function discoverArchivedCanonSessions(
     const logical = cm ? cm[1]! : rest;
     if (!logical.endsWith('.jsonl')) continue;
     const g = groups.get(logical);
-    const part = { name: rest, sha: m[1]!, size: m[2] === '-' ? 0 : parseInt(m[2]!, 10) };
+    const part = { name: rest, sha: m[1]!, size: -1 }; // filled from the local batch check below; -1 = not local
     if (!g || bucket > g.bucket) groups.set(logical, { bucket, parts: [part] });
     else if (bucket === g.bucket) g.parts.push(part);
   }
+
+  const sizes = localBlobSizes(store, [
+    ...[...groups.values()].flatMap((g) => g.parts.map((p) => p.sha)),
+    ...[...sidecars.values()].map((sc) => sc.sha),
+  ]);
+  for (const g of groups.values()) for (const p of g.parts) p.size = sizes.get(p.sha) ?? -1;
 
   const titles = loadTitleCache(opts.home);
   let titlesChanged = false;
@@ -73,8 +106,9 @@ export function discoverArchivedCanonSessions(
   for (const [rel, g] of groups) {
     if (liveRels.has(rel)) continue;
     g.parts.sort((a, b) => a.name.localeCompare(b.name));
-    const bytes = g.parts.reduce((n, p) => n + p.size, 0);
-    if (bytes === 0) continue;
+    const local = g.parts.every((p) => p.size >= 0);
+    const bytes = g.parts.reduce((n, p) => n + Math.max(0, p.size), 0);
+    if (local && bytes === 0) continue; // empty main (a non-local session's size is unknown, so it is kept)
     let uuid = path.basename(rel, '.jsonl');
     const parent = path.basename(path.dirname(rel));
     if (!/^[0-9a-f]{8}-/i.test(uuid) && /^[0-9a-f]{8}-[0-9a-f-]{10,}$/i.test(parent)) uuid = parent;
@@ -82,14 +116,14 @@ export function discoverArchivedCanonSessions(
     let title: string | undefined;
     if (side) {
       if (side.sha in titles.map) title = titles.map[side.sha] ?? undefined;
-      else {
+      else if (sizes.has(side.sha)) { // only a LOCAL sidecar is read; a missing one is tried again once it is local
         title = titleFromEvents(store, side.sha);
         titles.map[side.sha] = title ?? null;
         titlesChanged = true;
       }
     }
     const repoPath = `archive/${g.bucket}/canon/${rel}`;
-    const archived: ArchivedSessionRef = { store, path: repoPath, blobs: g.parts.map((p) => p.sha), sidecarBlob: side?.sha };
+    const archived: ArchivedSessionRef = { store, path: repoPath, blobs: g.parts.map((p) => p.sha), sidecarBlob: side?.sha, local };
     sessions.push({
       uuid, rel, bytes, title, harness: rel.split('/')[0] ?? '?',
       parts: g.parts.map((p) => `archive/${g.bucket}/canon/${p.name}`),
@@ -125,7 +159,7 @@ async function* linesOf(input: NodeJS.ReadableStream): AsyncGenerator<string> {
 }
 
 async function* blobLines(store: string, sha: string): AsyncGenerator<string> {
-  const child = spawn('git', ['-C', store, 'cat-file', 'blob', sha], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn('git', ['-C', store, 'cat-file', 'blob', sha], { env: NO_FETCH_ENV, stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = '';
   child.stderr.on('data', (d) => { stderr += String(d); });
   const exited = new Promise<number>((resolve) => child.on('close', (code) => resolve(code ?? 1)));
@@ -137,7 +171,7 @@ async function* blobLines(store: string, sha: string): AsyncGenerator<string> {
 function titleFromEvents(store: string, sha: string): string | undefined {
   let text = '';
   try {
-    text = execFileSync('git', ['-C', store, 'cat-file', 'blob', sha], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+    text = execFileSync('git', ['-C', store, 'cat-file', 'blob', sha], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, env: NO_FETCH_ENV, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch { return undefined; }
   let title: string | undefined;
   for (const line of text.split('\n')) {

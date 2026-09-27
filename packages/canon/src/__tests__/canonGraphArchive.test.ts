@@ -112,4 +112,38 @@ describe('archived canon sessions read from git objects', () => {
     const graph = JSON.parse(fs.readFileSync(path.join(work, 'projects', 'proj', 'graph.json'), 'utf8'));
     expect(graph.nodes.some((n: any) => n.id === 'code:x' || String(n.id).includes('code:x'))).toBe(false);
   });
+
+  // 2026-09-26 night: in the real store (partial clone, blob:none, archive/ sparse-excluded) `ls-tree -l` made git
+  // download every archived blob just to print sizes — ~500 MB into /tmp per graph refresh, dying at the /tmp quota and
+  // leaving tmp_pack garbage (3.2 GB in 70 min, EDQUOT for every tool). The archive read must NEVER fetch.
+  it('in a partial clone with an unreachable remote: lists archived sessions without fetching, graph keeps the node', async () => {
+    // the live fixture session shares MAIN's bytes (same blob) — give it its own so the archived blob is archive-only
+    fs.writeFileSync(path.join(work, DIR, 'bbbbbbbb-0000-4000-8000-000000000000.jsonl'), MAIN.replace('hi', 'live'));
+    g(work, ['add', '-A']);
+    g(work, ['commit', '-qm', 'live differs']);
+    await canonArchive({ store: work, days: 30, push: true });
+    execFileSync('git', ['-C', bare, 'config', 'uploadpack.allowFilter', 'true']);
+    const pc = path.join(tmp, 'partial');
+    execFileSync('git', ['clone', '-q', '--filter=blob:none', '--no-checkout', `file://${bare}`, pc], { stdio: ['ignore', 'pipe', 'pipe'] });
+    g(pc, ['sparse-checkout', 'set', '--no-cone', '/*', '!archive/']);
+    g(pc, ['checkout', '-q', 'main']);
+    g(pc, ['config', 'user.email', 't@t']);
+    g(pc, ['config', 'user.name', 't']);
+    g(pc, ['remote', 'set-url', 'origin', path.join(tmp, 'gone.git')]); // any lazy fetch now fails loudly
+    const packs = () => fs.readdirSync(path.join(pc, '.git', 'objects', 'pack')).sort();
+    const before = packs();
+
+    const live = discoverCanonSessions(pc).map((s) => s.rel);
+    const archived = discoverArchivedCanonSessions(pc, live);
+    expect(archived.map((s) => s.uuid)).toEqual([ID]);
+    expect(archived[0]!.archived?.local).toBe(false);
+    expect(packs()).toEqual(before); // nothing fetched, no tmp_pack left behind
+
+    fs.mkdirSync(path.join(pc, 'projects'), { recursive: true });
+    fs.writeFileSync(path.join(pc, 'projects', 'ROOTS.json'), JSON.stringify({ roots: { proj: '/work' } }));
+    await canonGraph({ store: pc, push: false } as any);
+    const graph = JSON.parse(fs.readFileSync(path.join(pc, 'projects', 'proj', 'graph.json'), 'utf8'));
+    expect(graph.nodes.some((n: any) => n.id === `sess:${ID}`)).toBe(true);
+    expect(packs().filter((f) => f.startsWith('tmp_'))).toEqual([]);
+  });
 });

@@ -31,6 +31,8 @@ export interface TouchedIndex {
   /** sessions actually re-scanned this run (rest served from cache) */
   scanned: number;
   cached: number;
+  /** archived sessions neither cached nor local (partial clone) — skipped, never fetched */
+  notLocal: number;
 }
 
 interface CacheEntry { sig: string; files: Record<string, number>; inferred?: Record<string, number>; ambiguous?: Record<string, number> }
@@ -174,7 +176,7 @@ export async function buildTouchedIndex(
   const byRel = new Map<string, Map<string, number>>();
   const inferredByRel = new Map<string, Map<string, number>>();
   const ambiguousByRel = new Map<string, Map<string, number>>();
-  let scanned = 0, cached = 0;
+  let scanned = 0, cached = 0, notLocal = 0;
 
   for (const s of sessions) {
     // Sidecar participates in the signature: tier 2b mines file-history-delta
@@ -200,6 +202,7 @@ export async function buildTouchedIndex(
       cached++;
       continue;
     }
+    if (s.archived && !s.archived.local) { notLocal++; continue; } // its blobs are not here; reading would fetch the archive
     const files = new Map<string, number>();
     const inferred = new Map<string, number>();
     const ambiguous = new Map<string, number>();
@@ -231,5 +234,5 @@ export async function buildTouchedIndex(
 
   fs.mkdirSync(path.dirname(cachePath), { recursive: true });
   fs.writeFileSync(cachePath, JSON.stringify(cache));
-  return { byRel, inferredByRel, ambiguousByRel, scanned, cached };
+  return { byRel, inferredByRel, ambiguousByRel, scanned, cached, notLocal };
 }

@@ -247,7 +247,7 @@ async function canonGraphUnlocked(o: CanonGraphOptions = {}): Promise<CanonGraph
   if (o.touched !== false) {
     const mapped = sessions.filter((s) => sessionProject(projects, s) !== undefined);
     touchedIdx = await buildTouchedIndex(mapped);
-    console.log(`[canon-graph] touched scan: ${touchedIdx.scanned} session(s) scanned, ${touchedIdx.cached} from cache`);
+    console.log(`[canon-graph] touched scan: ${touchedIdx.scanned} session(s) scanned, ${touchedIdx.cached} from cache${touchedIdx.notLocal ? `, ${touchedIdx.notLocal} archived not local (skipped, not fetched)` : ''}`);
   }
 
   // Touched paths are assigned to their MOST SPECIFIC project root (roots nest:

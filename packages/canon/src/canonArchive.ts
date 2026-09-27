@@ -220,6 +220,15 @@ async function canonArchiveUnlocked(opts: CanonArchiveOptions): Promise<number> 
 }
 
 /**
+ * `git rm` an index-added path. `--sparse` is required when the path lies outside a sparse-checkout cone (a SCOPED
+ * store): without it git refuses ("outside of your sparse-checkout definition", exit 1) and the duplicate is committed.
+ */
+function rmStaged(store: string, rel: string): void {
+  try { git(store, ['rm', '-q', '-f', '--sparse', '--', rel]); }
+  catch { git(store, ['rm', '-q', '-f', '--', rel]); } // git < 2.34 has no --sparse (and no sparse-index refusal either)
+}
+
+/**
  * Remove UNTRACKED files that are byte-identical to an archived copy at the same original path, before a commit
  * stages them. Two writers re-create archived sessions on disk: the browser-branch fold-in (`git checkout FETCH_HEAD
  * -- native/browser-cortex` restores every file the branch holds) and harness roots whose copies are re-staged
@@ -243,6 +252,7 @@ export function dropArchivedDuplicates(store: string, label: string): number {
     if (m && isArchivablePath(m[2]!)) (archived.get(m[2]!) ?? archived.set(m[2]!, new Set()).get(m[2]!)!).add(m[1]!);
   }
   let removed = 0;
+  const failed: string[] = [];
   for (const rel of [...untracked.split('\0'), ...stagedSet]) {
     const shas = rel ? archived.get(rel) : undefined;
     if (!shas) continue;
@@ -250,12 +260,13 @@ export function dropArchivedDuplicates(store: string, label: string): number {
     try { sha = git(store, ['hash-object', '--', rel]).trim(); } catch { continue; }
     if (!shas.has(sha)) continue;
     try {
-      if (stagedSet.has(rel)) git(store, ['rm', '-q', '-f', '--', rel]); // unstage + delete (only ever an index-ADDED path)
+      if (stagedSet.has(rel)) rmStaged(store, rel); // unstage + delete (only ever an index-ADDED path)
       else fs.unlinkSync(path.join(store, rel));
       removed++;
-    } catch { /* raced away */ }
+    } catch (e) { failed.push(`${rel}: ${String((e as Error)?.message ?? e).split('\n')[0]}`); }
   }
   if (removed) console.log(`[${label}] skipped ${removed} file(s) identical to their archived copy (not re-added)`);
+  if (failed.length) console.warn(`[${label}] WARN could not drop ${failed.length} archived duplicate(s) (they will be committed): ${failed.slice(0, 3).join(' | ')}`);
   return removed;
 }
 
@@ -314,7 +325,7 @@ export function dropEchoedSessions(store: string, label: string): number {
     if (!common?.length) continue;
     for (const rel of files) {
       try {
-        if (stagedSet.has(rel)) git(store, ['rm', '-q', '-f', '--', rel]);
+        if (stagedSet.has(rel)) rmStaged(store, rel);
         else fs.unlinkSync(path.join(store, rel));
         removed++;
       } catch { /* raced away */ }

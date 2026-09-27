@@ -41,6 +41,8 @@ export interface CanonArtifactsResult {
 const SECRET_PATTERNS: [RegExp, string][] = [
   [/sk-[A-Za-z0-9_-]{16,}/g, '[redacted:sk]'],
   [/ghp_[A-Za-z0-9]{20,}/g, '[redacted:ghp]'],
+  [/gho_[A-Za-z0-9]{20,}/g, '[redacted:gho]'],
+  [/ghr_[A-Za-z0-9]{20,}/g, '[redacted:ghr]'],
   [/github_pat_[A-Za-z0-9_]{20,}/g, '[redacted:ghpat]'],
   [/hf_[A-Za-z0-9]{20,}/g, '[redacted:hf]'],
   [/AIza[A-Za-z0-9_-]{20,}/g, '[redacted:aiza]'],
