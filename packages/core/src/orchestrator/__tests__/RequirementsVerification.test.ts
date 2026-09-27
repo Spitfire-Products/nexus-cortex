@@ -296,11 +296,8 @@ describe('isTaskShaped — R161 broadened shapes', () => {
 // ── Stage 4f REQUIREMENT COVERAGE (CORTEX_ENDTURN_REQ_COVERAGE, 2026-09-27) ────────────────────────────────────────────────────
 // MiMo tb64 sweep (186 failing hidden tests / 111 fails): 101 check a requirement the task states or implies, and the agent's own
 // verification covered it only partially. The harness quotes back the task's OWN uncovered clauses — never an invented check.
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 import { resolveEndTurnReqCoverage, extractStatedRequirements, uncoveredRequirements, coverageCheck } from '../requirementsVerification.js';
-const MIMO_0260 = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'mimo-0260-instruction.md'), 'utf8');
+import { MIMO_0260_INSTRUCTION as MIMO_0260 } from './fixtures/mimo0260Instruction.js';
 
 describe('Stage 4f — requirement coverage', () => {
   it('lever: off by default; true/on arms it', () => {
