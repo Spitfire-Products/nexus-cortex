@@ -174,12 +174,27 @@ export const SCOPE_DOCTRINE =
   'Reading any file is fine. Last step before finishing: list the files changed since the start (`sh .cortex/changed` when that ' +
   'file exists, else `git status`) and revert every change the task did not require.\n';
 
+/**
+ * CORTEX_LIFT_PLAN_SCOPE=adaptive (2026-09-27, dark): the scope bullet for work that is not a graded repair. `true` (above, what the MiMo
+ * sweep measured) forbids touching tests/runners/fixtures/data outright, which is wrong for "write tests", "update the runner" or
+ * build-from-scratch tasks; here only files the TASK names bind, and the revert step covers EXISTING files only (new files are the work).
+ * The changed-files command is not named: it exists only when orient recorded a baseline; `git status` is the general fallback.
+ */
+export const SCOPE_DOCTRINE_ADAPTIVE =
+  '- EDIT SCOPE: in the plan, list the files the junior will MODIFY or CREATE. If the task names the files or modules to repair or ' +
+  'change, modify only those existing files — never declare another existing file mutable, and fix the defect inside them even when ' +
+  'another file looks like a shortcut. If the task names none, keep modifications to the smallest set of files the task needs, and do ' +
+  'not modify vendored or third-party code unless the task points there. Tests, runner scripts, fixtures and input data are in scope ' +
+  'only when the task asks for work on them. Before finishing, list what changed since the start (the orient baseline command when ' +
+  'orient printed one, else `git status`) and revert changes to EXISTING files the task did not require.\n';
+
 /** Select the planner persona by CORTEX_LIFT_PLAN_DOCTRINE ('v2' → bullets on; anything else → v1 baseline); R171 `investigate`
  *  = 'offer' while rounds remain, 'withdraw' on the last round of a multi-round plan, undefined for the single-shot default. */
 export function plannerSystem(env: NodeJS.ProcessEnv = process.env, investigate?: 'offer' | 'withdraw'): string {
   const doctrine = (env.CORTEX_LIFT_PLAN_DOCTRINE || '').trim().toLowerCase() === 'v2' ? PLANNER_SYSTEM : PLANNER_SYSTEM_V1;
-  const scope = (env.CORTEX_LIFT_PLAN_SCOPE || '').trim().toLowerCase() === 'true';
-  const base = scope ? doctrine.replace('Output ONLY the plan', SCOPE_DOCTRINE + 'Output ONLY the plan') : doctrine;
+  const scopeMode = (env.CORTEX_LIFT_PLAN_SCOPE || '').trim().toLowerCase();
+  const bullet = scopeMode === 'true' ? SCOPE_DOCTRINE : scopeMode === 'adaptive' ? SCOPE_DOCTRINE_ADAPTIVE : '';
+  const base = bullet ? doctrine.replace('Output ONLY the plan', bullet + 'Output ONLY the plan') : doctrine;
   return investigate === 'offer' ? base + PLANNER_INVESTIGATE_CLAUSE : investigate === 'withdraw' ? base + PLANNER_DECIDE_NOW_CLAUSE : base;
 }
 

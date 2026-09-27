@@ -85,6 +85,30 @@ CHANGED
   fi
   BN=$(wc -l < "$W/.cortex/baseline.cksum" 2>/dev/null | tr -d ' ')
   echo "-- baseline: ${BN:-0} files recorded at start; \`sh .cortex/changed\` lists files you modified/added/deleted. Before finishing, run it and revert every change the task did not require."
+elif [ "${CORTEX_ORIENT_BASELINE:-0}" = "auto" ] && ! { command -v git >/dev/null 2>&1 && git -C "$W" rev-parse --is-inside-work-tree >/dev/null 2>&1; }; then
+  # auto (general work, 2026-09-27): a git repo already has `git status`, so skip it; otherwise keep the baseline OUTSIDE the project
+  # (the user's ~/.cortex, else /tmp), keyed by the workspace path, so nothing is written into the tree being worked on.
+  KEY=$(printf %s "$W" | cksum | cut -d' ' -f1)
+  BD="${HOME:-/tmp}/.cortex/baselines/$KEY"
+  mkdir -p "$BD" 2>/dev/null && [ -w "$BD" ] || { BD="${TMPDIR:-/tmp}/cortex-baselines/$KEY"; mkdir -p "$BD" 2>/dev/null; }
+  { printf '#!/bin/sh\n# Lists files modified / added / deleted in %s since orient recorded its start state.\nW=%s\nB=%s\n' "$W" "'$W'" "'$BD/baseline.cksum'"
+    cat <<'CHANGED'
+cd "$W" || exit 0
+[ -f "$B" ] || { echo "no baseline recorded ($B missing)"; exit 0; }
+T=$(mktemp 2>/dev/null || echo /tmp/cortex-now.$$)
+find . \( -path ./.git -o -path ./.cortex -o -name node_modules -o -name __pycache__ -o -name .venv -o -name venv -o -name .cache -o -name .pytest_cache -o -name .mypy_cache \) -prune -o -type f -size -20M -print 2>/dev/null | head -20000 | tr '\n' '\0' | xargs -0 cksum 2>/dev/null > "$T"
+awk 'function k(  f) { f=$0; sub(/^[0-9]+[ \t]+[0-9]+[ \t]+/, "", f); return f }
+  NR==FNR { b[k()]=$1" "$2; next } { n[k()]=$1" "$2 } END {
+  for (f in n) { if (!(f in b)) print "added     " f; else if (b[f] != n[f]) print "modified  " f }
+  for (f in b) if (!(f in n)) print "deleted   " f }' "$B" "$T" | sort -k2
+rm -f "$T"
+CHANGED
+  } > "$BD/changed" 2>/dev/null
+  if [ ! -f "$BD/baseline.cksum" ]; then
+    ( cd "$W" && find . \( -path ./.git -o -path ./.cortex -o -name node_modules -o -name __pycache__ -o -name .venv -o -name venv -o -name .cache -o -name .pytest_cache -o -name .mypy_cache \) -prune -o -type f -size -20M -print 2>/dev/null | head -20000 | tr '\n' '\0' | xargs -0 cksum 2>/dev/null > "$BD/baseline.cksum" )
+  fi
+  BN=$(wc -l < "$BD/baseline.cksum" 2>/dev/null | tr -d ' ')
+  echo "-- baseline: ${BN:-0} files recorded at start (not a git repo); \`sh $BD/changed\` lists files you modified/added/deleted. Before finishing, run it and revert changes to existing files the task did not require."
 fi
 # Bare-box hint (2026-09-03, operator-simplified): a task container may ship WITHOUT the language, compiler,
 # package or library the objective needs — on purpose (the agent phase is bare; internet is usually allowed).

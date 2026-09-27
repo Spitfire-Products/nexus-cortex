@@ -4,6 +4,7 @@ import {
   PLANNER_SYSTEM_V1,
   DOCTRINE_V2,
   SCOPE_DOCTRINE,
+  SCOPE_DOCTRINE_ADAPTIVE,
   plannerSystem,
   buildPlannerUserPrompt,
   resolveLiftPlanConfig,
@@ -154,6 +155,24 @@ describe('CORTEX_LIFT_PLAN_SCOPE (edit-scope doctrine, 2026-09-27, r-mimo64-val 
   it('composes with the investigation clause', () => {
     expect(plannerSystem({ CORTEX_LIFT_PLAN_SCOPE: 'true' }, 'offer')).toContain(SCOPE_DOCTRINE);
     expect(plannerSystem({ CORTEX_LIFT_PLAN_SCOPE: 'true' }, 'offer').endsWith(PLANNER_INVESTIGATE_CLAUSE)).toBe(true);
+  });
+});
+
+
+describe('CORTEX_LIFT_PLAN_SCOPE=adaptive (general-work wording, 2026-09-27)', () => {
+  it('true keeps the measured strict bullet; adaptive selects the conditional one; they never both appear', () => {
+    const strict = plannerSystem({ CORTEX_LIFT_PLAN_SCOPE: 'true' });
+    const adaptive = plannerSystem({ CORTEX_LIFT_PLAN_SCOPE: 'Adaptive' });
+    expect(strict).toContain(SCOPE_DOCTRINE); expect(strict).not.toContain(SCOPE_DOCTRINE_ADAPTIVE);
+    expect(adaptive).toContain(SCOPE_DOCTRINE_ADAPTIVE); expect(adaptive).not.toContain(SCOPE_DOCTRINE);
+    expect(adaptive.replace(SCOPE_DOCTRINE_ADAPTIVE, '')).toBe(PLANNER_SYSTEM_V1);
+  });
+  it('adaptive is conditional: named files bind; otherwise tests/runners/fixtures/data are in scope when the task asks for them', () => {
+    expect(SCOPE_DOCTRINE_ADAPTIVE).toMatch(/If the task names/);
+    expect(SCOPE_DOCTRINE_ADAPTIVE).toMatch(/only when the task asks/);
+    expect(SCOPE_DOCTRINE_ADAPTIVE).toMatch(/third-party/);
+    expect(SCOPE_DOCTRINE_ADAPTIVE).toMatch(/EXISTING files/);
+    expect(SCOPE_DOCTRINE_ADAPTIVE).not.toMatch(/\.cortex\/changed/);
   });
 });
 
