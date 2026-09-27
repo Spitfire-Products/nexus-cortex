@@ -17,6 +17,8 @@ import {
   verifyRequirements,
   resolveEndTurnRequirementsMode,
   resolveEndTurnRequirementsStrict,
+  resolveEndTurnReqCoverage,
+  coverageCheck,
 } from './requirementsVerification.js';
 import { verifyIntegrity, resolveEndTurnIntegrityMode } from './integrityVerification.js';
 
@@ -42,6 +44,8 @@ export class TurnEvidence {
   lastCitations: Array<{ reference: string; verbatim_source: string }> | undefined;
   endTurnCalled = false;
   effortTailBounced = false;
+  /** Stage 4f: the requirement-coverage check fires at most once per turn. */
+  reqCoverageNudged = false;
 
   /** Call once per executed batch with the tool_use blocks (before or after execution). */
   noteToolUses(toolUses: GateToolUse[]): void {
@@ -162,6 +166,17 @@ export function evaluateEndTurnGates(
           tr.is_error = true;
           tr.content = s4.nudge!;
           log('[Orchestrator] Stage4: EndTurn rejected — requirements attestation unsatisfied.');
+        }
+      }
+      if (accepted && resolveEndTurnReqCoverage(env)) { // Stage 4f (CORTEX_ENDTURN_REQ_COVERAGE, dark)
+        const cov = coverageCheck({ taskText: deps.userTaskText, requirements: input.requirements, alreadyNudged: ev.reqCoverageNudged });
+        deps.recordEvent('req_coverage', { clauses: cov.clauses.length, uncovered: cov.uncovered.length, nudged: !cov.ok, alreadyNudged: ev.reqCoverageNudged, rows: Array.isArray(input.requirements) ? input.requirements.length : 0 });
+        if (!cov.ok) {
+          accepted = false;
+          ev.reqCoverageNudged = true;
+          tr.is_error = true;
+          tr.content = cov.nudge!;
+          log(`[Orchestrator] Stage4f: EndTurn rejected — ${cov.uncovered.length}/${cov.clauses.length} stated requirement(s) uncovered.`);
         }
       }
       if (accepted && resolveEndTurnIntegrityMode(env)) {

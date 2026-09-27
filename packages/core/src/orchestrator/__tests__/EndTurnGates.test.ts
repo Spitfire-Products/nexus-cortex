@@ -137,3 +137,32 @@ describe('buildMissingEndTurnReminder', () => {
     expect(buildMissingEndTurnReminder(ev, {} as any)).not.toMatch(/Also include `requirements`/);
   });
 });
+
+describe('evaluateEndTurnGates — Stage 4f requirement coverage (CORTEX_ENDTURN_REQ_COVERAGE)', () => {
+  const task = 'Repair the report generator so /app/out.json is correct.\n\n' +
+    '- every record must carry its original id field unchanged;\n- totals must be computed from the raw input, not cached values;\n' +
+    '- clean inputs must remain clean.\n';
+  const rows = [{ requirement: 'totals computed from raw input', satisfied_by: 'report.py', verified_how: '$ python3 check.py -> ok' }];
+  const env = { CORTEX_ENDTURN_REQ_COVERAGE: 'true' } as any;
+  it('rejects ONCE per turn with the task\'s own uncovered clauses, banks the event, then lets the next finish through', () => {
+    const ev = new TurnEvidence(); const rec = vi.fn();
+    const tr1 = etResult();
+    evaluateEndTurnGates(ev, [tr1], [endTurn({ citations: [], requirements: rows })], deps({ userTaskText: task, env, recordEvent: rec }));
+    expect(tr1.is_error).toBe(true);
+    expect(String(tr1.content)).toMatch(/requirement coverage/);
+    expect(String(tr1.content)).toContain('every record must carry its original id field unchanged;');
+    expect(String(tr1.content)).not.toContain('totals must be computed from the raw input'); // covered by the row
+    expect(ev.endTurnCalled).toBe(false);
+    expect(rec).toHaveBeenCalledWith('req_coverage', expect.objectContaining({ clauses: 3, uncovered: 2, nudged: true }));
+    const tr2 = etResult();
+    evaluateEndTurnGates(ev, [tr2], [endTurn({ citations: [], requirements: rows })], deps({ userTaskText: task, env, recordEvent: rec }));
+    expect(tr2.is_error).toBeFalsy();
+    expect(ev.endTurnCalled).toBe(true);
+  });
+  it('off by default: no coverage rejection, no event', () => {
+    const ev = new TurnEvidence(); const rec = vi.fn(); const tr = etResult();
+    evaluateEndTurnGates(ev, [tr], [endTurn({ citations: [], requirements: rows })], deps({ userTaskText: task, env: {} as any, recordEvent: rec }));
+    expect(tr.is_error).toBeFalsy();
+    expect(rec).not.toHaveBeenCalledWith('req_coverage', expect.anything());
+  });
+});

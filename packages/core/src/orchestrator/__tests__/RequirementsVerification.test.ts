@@ -292,3 +292,49 @@ describe('isTaskShaped — R161 broadened shapes', () => {
     expect(isTaskShaped('thanks, that looks right')).toBe(false);
   });
 });
+
+// ── Stage 4f REQUIREMENT COVERAGE (CORTEX_ENDTURN_REQ_COVERAGE, 2026-09-27) ────────────────────────────────────────────────────
+// MiMo tb64 sweep (186 failing hidden tests / 111 fails): 101 check a requirement the task states or implies, and the agent's own
+// verification covered it only partially. The harness quotes back the task's OWN uncovered clauses — never an invented check.
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { resolveEndTurnReqCoverage, extractStatedRequirements, uncoveredRequirements, coverageCheck } from '../requirementsVerification.js';
+const MIMO_0260 = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'mimo-0260-instruction.md'), 'utf8');
+
+describe('Stage 4f — requirement coverage', () => {
+  it('lever: off by default; true/on arms it', () => {
+    expect(resolveEndTurnReqCoverage({})).toBe(false);
+    expect(resolveEndTurnReqCoverage({ CORTEX_ENDTURN_REQ_COVERAGE: 'true' })).toBe(true);
+    expect(resolveEndTurnReqCoverage({ CORTEX_ENDTURN_REQ_COVERAGE: 'off' })).toBe(false);
+  });
+  it('extracts the task\'s own clauses: bullets (with wrapped continuation lines) + must/exactly/do-not sentences, deduped, capped', () => {
+    const c = extractStatedRequirements(MIMO_0260);
+    expect(c.some((x) => x.startsWith('bidirectional Unicode controls are reported as B613'))).toBe(true);
+    expect(c.some((x) => /generic tester enrichment must not erase it/.test(x))).toBe(true); // continuation joined
+    expect(c.some((x) => /clean files must remain clean/.test(x))).toBe(true);
+    expect(c.some((x) => /schema version must be exactly/.test(x))).toBe(true);
+    expect(c.some((x) => /Do not replace the scanner/.test(x))).toBe(true);
+    expect(c.length).toBeLessThanOrEqual(12);
+    for (const x of c) expect(MIMO_0260.replace(/\s+/g, ' ')).toContain(x); // verbatim clauses only
+  });
+  it('no clauses from a bare question or chat text', () => {
+    expect(extractStatedRequirements('What does this function do?')).toEqual([]);
+  });
+  it('coverage: a row covering a clause (content-token overlap) removes it; the rest are uncovered', () => {
+    const clauses = ['clean files must remain clean.', 'the non-UTF-8 fixture must be decoded according to its Python encoding declaration;'];
+    const rows = [{ requirement: 'clean fixture files stay clean (no findings)', satisfied_by: 'output.json', verified_how: '$ jq ... → []' }];
+    expect(uncoveredRequirements(clauses, rows)).toEqual([clauses[1]]);
+    expect(uncoveredRequirements(clauses, [])).toEqual(clauses);
+  });
+  it('coverageCheck: nudges ONCE per turn quoting only the task\'s own clauses; passes when covered or already nudged', () => {
+    const rows = [{ requirement: 'B613 reported with HIGH severity MEDIUM confidence', satisfied_by: 'x', verified_how: 'y' }];
+    const r1 = coverageCheck({ taskText: MIMO_0260, requirements: rows, alreadyNudged: false });
+    expect(r1.ok).toBe(false);
+    expect(r1.nudge).toMatch(/EndTurn REJECTED \(requirement coverage\)/);
+    expect(r1.uncovered.length).toBeGreaterThan(0);
+    for (const u of r1.uncovered) expect(r1.nudge).toContain(u);
+    expect(coverageCheck({ taskText: MIMO_0260, requirements: rows, alreadyNudged: true }).ok).toBe(true);
+    expect(coverageCheck({ taskText: 'Explain the design.', requirements: [], alreadyNudged: false }).ok).toBe(true);
+  });
+});

@@ -115,6 +115,10 @@ export interface EndTurnResolverConfig {
   specSamples: number;
   /** R174d: veto evidence = the averaged per-sample spec-fail fraction ≥ this (0<f≤1), not ANY failed check (73–92% false holds). */
   specVetoFrac: number;
+  /** R174e (r-mimo64-val-2026-09-27 §2): `shown` (default, 4.120–4.124) puts the spec checks' commands + output in the judge prompt and
+   *  the writer's veto message; `hidden` keeps them out of both — spec evidence acts ONLY through the averaged fraction gate, a judge
+   *  CHECK that echoes a spec check is not a named check, and a fraction hold on a MEETS gives the writer a neutral re-verify lead. */
+  specText: 'shown' | 'hidden';
   /** R176 HB-INDEPENDENT-DERIVATION (docs/R176_INDEPENDENT_DERIVATION_DESIGN.md): on a value-shaped task, before an otherwise-standing
    *  finish, elicit a SECOND derivation by a different method, run it, reconcile; disagreement holds the finish ONCE. off | on. */
   derivation: 'off' | 'on';
@@ -137,7 +141,7 @@ export interface EndTurnResolverConfig {
   reqLedgerFailJevMin: number;
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', specSamples: 3, specVetoFrac: 0.5, derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7, reqLedgerFailVeto: false, reqLedgerFailVetoMax: 2, reqLedgerFailVetoMinRemaining: 0.25, reqLedgerFailJev: 'shadow', reqLedgerFailJevMin: 0.7 };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', specSamples: 3, specVetoFrac: 0.5, specText: 'shown', derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7, reqLedgerFailVeto: false, reqLedgerFailVetoMax: 2, reqLedgerFailVetoMinRemaining: 0.25, reqLedgerFailJev: 'shadow', reqLedgerFailJevMin: 0.7 };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
@@ -202,6 +206,7 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
     specTestsAt: sta === 'lift' ? 'lift' : 'finish',
     specSamples: Number.isInteger(ssm) && ssm >= 1 ? Math.min(5, ssm) : DEFAULTS.specSamples,
     specVetoFrac: Number.isFinite(svf) && svf > 0 && svf <= 1 ? svf : DEFAULTS.specVetoFrac,
+    specText: (env.CORTEX_JUDGE_SPEC_TEXT ?? '').trim().toLowerCase() === 'hidden' ? 'hidden' : 'shown',
     derivation: idv === 'on' || idv === 'true' || idv === '1' ? 'on' : 'off',
     derivationTol: Number.isFinite(idt) && idt > 0 && idt < 1 ? idt : DEFAULTS.derivationTol,
     reqLedger: /^(on|true|1)$/i.test((env.CORTEX_JUDGE_REQ_LEDGER ?? '').trim()),
@@ -644,4 +649,44 @@ export function buildFinishConfirmMessage(input: {
     `\n\nIf every requirement in the TASK's own words is verified by a command you actually ran, call EndTurn again and it will ` +
     `stand. Otherwise continue: pick the most valuable open item, work it with tools, verify against the task's criteria, then finish.`
   );
+}
+
+
+// ── R174e (CORTEX_JUDGE_SPEC_TEXT=hidden): spec evidence without spec TEXT ────────────────────────────────────────────────────────
+// MiMo validation arm sp (28/64 vs control 59.9%): the judge quoted a failing blind check as its own named check (bypassing the
+// fraction gate through namedFailed) and the writer reshaped correct output to satisfy the invented check.
+
+/** The SPEC CHECKS block for the judge prompt — empty when hidden (the judge never sees an invented check). */
+export function specBlockForJudge(specResults: string, specText: 'shown' | 'hidden'): string {
+  if (!specResults || specText === 'hidden') return '';
+  return `SPEC CHECKS (derived from the TASK text before any work was seen; executed by the harness just now — a FAILED one is a requirement not yet met):\n${specResults}`;
+}
+
+const normCmd = (c: string): string => c.trim().replace(/\s+/g, ' ');
+
+/** When hidden, drop judge-named checks that are the same command as a spec check, so a spec failure can never reach the veto as a
+ *  single named failure (the namedFailed bypass of the fraction gate). */
+export function dropSpecEchoes(checks: string[], specChecks: string[] | null, specText: 'shown' | 'hidden'): string[] {
+  if (specText !== 'hidden' || !specChecks || specChecks.length === 0) return checks;
+  const spec = new Set(specChecks.map(normCmd));
+  return checks.filter((c) => !spec.has(normCmd(c)));
+}
+
+/** The writer-facing SPEC CHECKS block of a veto message — empty when hidden or when no spec check failed. */
+export function specBlockForWriter(specFailed: number, specResults: string, specText: 'shown' | 'hidden'): string {
+  if (specFailed <= 0 || specText === 'hidden') return '';
+  return `\n\nSPEC CHECKS (derived from the TASK text before your work was seen, executed just now — a FAILED one is a stated requirement not yet met):\n${specResults.slice(0, 3000)}`;
+}
+
+/** Neutral lead for a finish held ONLY by the spec fraction gate over a MEETS verdict: no check text, no invented requirement. */
+export const SPEC_HIDDEN_HOLD_LEAD =
+  'EndTurn HELD (finish review) — an independent re-check of the work against the task statement did not pass. Re-read the task and ' +
+  'verify each requirement it states against its real entry points (the task\'s own scripts, contract, docs or tests). Fix only what ' +
+  'the task asks for — do not change behaviour or output formats the task did not ask you to change — then call EndTurn again.';
+
+/** The opening of the writer's veto message: the judge's fix plan, except when hidden spec evidence alone held a MEETS. */
+export function vetoMessageLead(input: { plan: string; meets: boolean; specVetoHit: boolean; specText: 'shown' | 'hidden' }): string {
+  if (input.specText === 'hidden' && input.meets && input.specVetoHit) return SPEC_HIDDEN_HOLD_LEAD;
+  return `EndTurn HELD (finish review) — the work does not yet meet the task's requirements. Fix plan:\n\n` +
+    `${input.plan}\n\nDo this, verify against the task's own criteria (not your own tests), then call EndTurn again.`;
 }

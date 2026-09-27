@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { specFailFraction, groundSpecCheck,
+import { specFailFraction, groundSpecCheck, specBlockForJudge, dropSpecEchoes, vetoMessageLead, specBlockForWriter, SPEC_HIDDEN_HOLD_LEAD,
   RESOLVER_SYSTEM,
   resolverSystemPrompt,
   buildResolverUserPrompt,
@@ -459,6 +459,43 @@ describe('endTurnResolver — R174d spec-fraction veto + MEETS override (r-specr
     expect(decideVetoAction({ ...base, meets: true, specOverride: true, rejects: 1 })).toBe('accept'); // evidence cap spent → stands
     expect(decideVetoAction({ ...base, meets: true })).toBe('accept');                                // no override → unchanged
     expect(decideVetoAction({ ...base, meets: true, specOverride: true, vetoMode: 'never' })).toBe('accept'); // record-only mode never holds
+  });
+});
+
+describe('endTurnResolver — R174e spec checks hidden from judge and writer (CORTEX_JUDGE_SPEC_TEXT, r-mimo64-val-2026-09-27 §2)', () => {
+  // MiMo validation arm sp: 28/64 vs control 59.9% — the judge QUOTED a failing blind check (specFrac 0.17–0.25, below the veto
+  // fraction), named it as its own check (namedFailed → ordinary veto), and the writer reshaped correct output to the invented check.
+  const results = 'CHECK RUN: `python3 -c "import json; assert json.load(open(\'/app/output.json\'))[\'cases\']"` → FAILED (exit 1)';
+  it('config: shown by default (unchanged behaviour); hidden only on explicit opt-in', () => {
+    expect(resolveEndTurnResolverConfig({} as any).specText).toBe('shown');
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_SPEC_TEXT: ' Hidden ' } as any).specText).toBe('hidden');
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_SPEC_TEXT: 'junk' } as any).specText).toBe('shown');
+  });
+  it('judge prompt: the SPEC CHECKS block is present when shown, absent (empty) when hidden', () => {
+    expect(specBlockForJudge(results, 'shown')).toMatch(/^SPEC CHECKS/);
+    expect(specBlockForJudge(results, 'shown')).toContain(results);
+    expect(specBlockForJudge(results, 'hidden')).toBe('');
+    expect(specBlockForJudge('', 'shown')).toBe('');
+  });
+  it('named checks: a judge CHECK that echoes a spec check is dropped when hidden (closes the namedFailed bypass), kept when shown', () => {
+    const spec = ['test -f /app/output.json', 'python3  /app/probe.py'];
+    const named = ['python3 /app/probe.py', 'pytest -q tests/test_a.py', ' test -f /app/output.json '];
+    expect(dropSpecEchoes(named, spec, 'hidden')).toEqual(['pytest -q tests/test_a.py']);
+    expect(dropSpecEchoes(named, spec, 'shown')).toEqual(named);
+    expect(dropSpecEchoes(named, null, 'hidden')).toEqual(named);
+  });
+  it('writer message: no spec block when hidden; the fraction-gate hold on a MEETS gets a neutral lead with no check text', () => {
+    expect(specBlockForWriter(1, results, 'shown')).toContain(results);
+    expect(specBlockForWriter(1, results, 'hidden')).toBe('');
+    expect(specBlockForWriter(0, results, 'shown')).toBe('');
+    const plan = 'MEETS — all requirements satisfied.';
+    const hiddenLead = vetoMessageLead({ plan, meets: true, specVetoHit: true, specText: 'hidden' });
+    expect(hiddenLead).toBe(SPEC_HIDDEN_HOLD_LEAD);
+    expect(hiddenLead).not.toMatch(/CHECK|python3|cases/);
+    expect(SPEC_HIDDEN_HOLD_LEAD).toMatch(/task/);
+    const gapLead = vetoMessageLead({ plan: 'Fix the parser.', meets: false, specVetoHit: true, specText: 'hidden' });
+    expect(gapLead).toContain('Fix the parser.');
+    expect(vetoMessageLead({ plan, meets: true, specVetoHit: true, specText: 'shown' })).toContain(plan);
   });
 });
 

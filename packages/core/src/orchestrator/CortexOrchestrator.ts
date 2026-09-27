@@ -28,7 +28,7 @@ import { join as pathJoin } from 'path';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'node:child_process';
 import { ENV_RECON_COMMAND, resolveLiftPlanConfig, parsePlannerResponse } from '../training/liftPlanner.js';
-import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage, gapHoldable, parseSpecChecks, groundSpecCheck, specFailFraction, applyVetoFloor, holdProgressed, planSimilarity, specCheckEvidence } from '../training/endTurnResolver.js';
+import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage, gapHoldable, parseSpecChecks, groundSpecCheck, specFailFraction, applyVetoFloor, holdProgressed, planSimilarity, specCheckEvidence, specBlockForJudge, dropSpecEchoes, specBlockForWriter, vetoMessageLead } from '../training/endTurnResolver.js';
 import { jevAvailable, jevNoul, buildGapHoldState, GAP_HOLD_QUESTIONS } from '../training/jevGate.js'; // R173b
 import { resolveFrameConfig, FRAME_CONTRACT, FRAME_TOOL_NAME } from '../frames/frameConfig.js'; // R179
 import { FrameRunner } from '../frames/frameRunner.js'; // R179
@@ -1324,7 +1324,7 @@ export class CortexOrchestrator {
         reqResults = formatLedgerForJudge(this.reqLedger);
       }
       const combinedCheck = [checkResult, namedResults ? `JUDGE-NAMED CHECKS (from your previous fix plan; executed by the harness just now):\n${namedResults}` : '',
-        specResults ? `SPEC CHECKS (derived from the TASK text before any work was seen; executed by the harness just now — a FAILED one is a requirement not yet met):\n${specResults}` : '', // R174
+        specBlockForJudge(specResults, cfg.specText), // R174 (R174e: empty when CORTEX_JUDGE_SPEC_TEXT=hidden)
         reqResults] // R187
         .filter(Boolean).join('\n\n');
       const callsSince = this.turnToolCallTotal - this.toolCallsAtLastVeto;
@@ -1377,7 +1377,7 @@ export class CortexOrchestrator {
         if (!canInvestigate) { verdict = { ...verdict, blank: true, parsed: false }; break; } // asked after withdrawal → abstain, never re-loop
         const checkResults: string[] = []; const readResults: string[] = [];
         if (autoLoop) { autoLooped += 1; checkResults.push(`Your provisional verdict was \`${(text ?? '').split('\n', 1)[0]?.trim().slice(0, 80)}\`. The harness ran the CHECK lines you named before accepting it — decide again on these results:`); }
-        for (const c of verdict.checks.slice(0, 3)) {
+        for (const c of dropSpecEchoes(verdict.checks, this.specChecks, cfg.specText).slice(0, 3)) { // R174e: never a spec check
           if (!isInvestigateCommandAllowed(c)) { investigateRefused += 1; checkResults.push(`CHECK RUN: \`${c}\` → REFUSED (investigation checks must be read-only)`); continue; }
           const r = runCheck(judgeCwd, c, jcfg); ranCache.set(c, r);
           investigateChecks += 1; namedRan += 1; { const k = classifyCheckRun(r); if (k === 'passed') namedPassed += 1; else if (k === 'failed') namedFailed += 1; else namedInconclusive += 1; }
@@ -1392,7 +1392,7 @@ export class CortexOrchestrator {
       let namedRanNow = 0; let namedResultsNow = '';
       // R168: with meetsConfirm the checks a MEETS names run too — their passing is what lets the MEETS stand.
       if (cfg.semantic && cfg.vetoMode === 'evidence' && (!verdict.meets || cfg.meetsConfirm) && !verdict.blank && !verdict.investigate && verdict.checks.length > 0) {
-        for (const c of verdict.checks.slice(0, 3)) {
+        for (const c of dropSpecEchoes(verdict.checks, this.specChecks, cfg.specText).slice(0, 3)) { // R174e: a spec echo is not a named check
           const cached = ranCache.get(c); // R170b: already run (and counted) inside the loop this adjudication
           const r = cached ?? runCheck(judgeCwd, c, jcfg);
           if (!cached) { namedRanNow += 1; namedRan += 1; { const k = classifyCheckRun(r); if (k === 'passed') namedPassed += 1; else if (k === 'failed') namedFailed += 1; else namedInconclusive += 1; } } // R166b
@@ -1499,7 +1499,7 @@ export class CortexOrchestrator {
           vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap, namedRanNow, namedInconclusive, // R166 / R166b
           toolRounds: cfg.toolRounds, roundsUsed, investigateChecks, investigateReads, investigateRefused, autoLooped, toolAutoLoop: cfg.toolAutoLoop, roundLatencyMs, evidenceChars: evidenceRounds.join('').length, // R170 / R170b
           gapHold: cfg.gapHold, gapHoldable: holdable, jevMode: cfg.gapHoldJev, jevFixable, jevLatencyMs, // R173 / R173b
-          specTests: cfg.specTests, specChecks: this.specChecks?.length ?? 0, specRan, specPassed, specFailed, specInconclusive, specSuspect, specFrac: specFrac === null ? null : Number(specFrac.toFixed(3)), specSets: this.specCheckSets.length, specVetoFrac: cfg.specVetoFrac, specGenLatencyMs: this.specChecksMeta.genLatencyMs, specTestsAt: cfg.specTestsAt, // R174 / R174b
+          specTests: cfg.specTests, specChecks: this.specChecks?.length ?? 0, specRan, specPassed, specFailed, specInconclusive, specSuspect, specFrac: specFrac === null ? null : Number(specFrac.toFixed(3)), specSets: this.specCheckSets.length, specVetoFrac: cfg.specVetoFrac, specText: cfg.specText, specGenLatencyMs: this.specChecksMeta.genLatencyMs, specTestsAt: cfg.specTestsAt, // R174 / R174b
           vetoMinRemaining: cfg.vetoMinRemaining, belowFloor, holdProgressed: holdProg, holdGapMs: msSinceLastHold, planSim: Number(planSimilarity(this.judgePriorPlan, verdict.plan).toFixed(3)), msSinceLastHold, // R173c
           derivation: cfg.derivation, derivationAgreement: derivationInfo?.agreement ?? null, derivationHeld: !!derivationHold, // R176
           reqLedger: cfg.reqLedger, reqLines: reqCounts.lines, reqOpen: reqCounts.open, reqExercised: reqCounts.exercised, reqFailed: reqCounts.failed, reqUnverifiable: reqCounts.unverifiable, reqHeld: !!reqHold, reqHolds: this.reqLedgerHolds, reqGenLatencyMs: this.reqLedgerMeta.genLatencyMs, reqJev: cfg.reqLedgerJev, reqJevAsked: reqJev?.asked ?? 0, reqJevClosed: reqJev?.closed ?? [], reqJevLatencyMs: reqJev?.latencyMs ?? 0, // R187/R187b
@@ -1534,13 +1534,12 @@ export class CortexOrchestrator {
         this.endTurnResolverRejects += 1;
         this.lastHoldMs = Date.now(); // R173c
         ev.endTurnCalled = false; // VETO the finish
-        if (cfg.semantic) { this.judgeNamedChecks = verdict.checks; this.judgePriorPlan = verdict.plan.slice(0, 2500); this.toolCallsAtLastVeto = this.turnToolCallTotal; this.judgePriorNamedPassed = namedPassed; }
+        if (cfg.semantic) { this.judgeNamedChecks = dropSpecEchoes(verdict.checks, this.specChecks, cfg.specText); this.judgePriorPlan = verdict.plan.slice(0, 2500); this.toolCallsAtLastVeto = this.turnToolCallTotal; this.judgePriorNamedPassed = namedPassed; }
         et.is_error = true;
         et.content =
-          `EndTurn HELD (finish review) — the work does not yet meet the task's requirements. Fix plan:\n\n` +
-          `${verdict.plan}\n\nDo this, verify against the task's own criteria (not your own tests), then call EndTurn again.` +
+          vetoMessageLead({ plan: verdict.plan, meets: verdict.meets, specVetoHit, specText: cfg.specText }) + // R174e
           (namedResultsNow ? `\n\nHARNESS-RUN CHECKS (named by the reviewer, executed just now — the failing ones are the gap):\n${namedResultsNow.slice(0, 3000)}` : '') + // R166
-          (specFailed > 0 ? `\n\nSPEC CHECKS (derived from the TASK text before your work was seen, executed just now — a FAILED one is a stated requirement not yet met):\n${specResults.slice(0, 3000)}` : '') + // R174
+          specBlockForWriter(specFailed, specResults, cfg.specText) + // R174 (R174e: empty when hidden)
           (reqCounts.failed > 0 ? `\n\nREQUIREMENT LEDGER (stated requirements, checked just now — a FAILED line is a stated requirement not yet met):\n${reqResults.slice(0, 3000)}` : '') + // R187
           (holdable && !checksFailed ? `\n\nNo harness-run check failed, but the reviewer named open items and budget remains — this hold returns them to you (hold ${this.endTurnResolverRejects}/${resolverCap}).` : '') + // R173
           budgetedVetoEscalation(this.endTurnResolverRejects, resolverCap, resolverRemainingMs ?? 0, this.turnDeadlineMsActive); // R160

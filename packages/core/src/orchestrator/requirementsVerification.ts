@@ -221,3 +221,81 @@ export function verifyRequirements(input: {
 
   return { ok: true };
 }
+
+// ── Stage 4f REQUIREMENT COVERAGE (CORTEX_ENDTURN_REQ_COVERAGE, 2026-09-27, dark) ──────────────────────────────────────────────────
+// MiMo tb64 sweep (.bench/mimo/fail-criteria-sweep-v2.jsonl): of 186 failing hidden tests, 101 check a requirement the task states or
+// implies, and the agent's own verification covered it only partially — its attestation lists the requirements it chose to check. The
+// harness extracts the task's OWN requirement clauses deterministically (no model, no invented check — the R174 failure) and, once per
+// turn, quotes back the ones no attestation row covers.
+
+export function resolveEndTurnReqCoverage(env: NodeJS.ProcessEnv = process.env): boolean {
+  return /^(true|on|1)$/i.test((env.CORTEX_ENDTURN_REQ_COVERAGE ?? '').trim());
+}
+
+const BULLET_RE = /^\s*(?:[-*•]|\d{1,2}[.)]|\(\d{1,2}\)|\([a-z]\))\s+(.*)$/;
+const MODAL_RE = /\b(must|must not|exactly|do not|don't|never|preserve|remain|unchanged|only)\b/i;
+const MAX_CLAUSES = 12;
+
+/** The task's own requirement clauses, verbatim (whitespace-collapsed): list items (wrapped continuation lines joined) first, then
+ *  sentences carrying a requirement modal (must / exactly / do not / never / preserve / remain / unchanged / only). ≥ 20 chars. */
+export function extractStatedRequirements(taskText: string): string[] {
+  const lines = (taskText || '').split('\n');
+  const bullets: string[] = []; const paras: string[] = [];
+  let cur: string[] | null = null; let para: string[] = [];
+  const flushPara = () => { if (para.length) { paras.push(para.join(' ')); para = []; } };
+  const flushBullet = () => { if (cur) { bullets.push(cur.join(' ')); cur = null; } };
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, '');
+    if (!line.trim()) { flushBullet(); flushPara(); continue; }
+    if (/^\s*(#|```)/.test(line)) { flushBullet(); flushPara(); continue; }
+    const m = line.match(BULLET_RE);
+    if (m) { flushBullet(); flushPara(); cur = [m[1]!.trim()]; continue; }
+    if (cur && /^\s+\S/.test(raw)) { cur.push(line.trim()); continue; }
+    flushBullet(); para.push(line.trim());
+  }
+  flushBullet(); flushPara();
+  const out: string[] = [];
+  const add = (s: string) => {
+    const c = s.replace(/\s+/g, ' ').trim().slice(0, 300);
+    if (c.length >= 20 && !out.includes(c)) out.push(c);
+  };
+  for (const b of bullets) add(b);
+  for (const p of paras) for (const s of p.split(/(?<=[.!?])\s+(?=[A-Z`(])/)) if (MODAL_RE.test(s)) add(s);
+  return out.slice(0, MAX_CLAUSES);
+}
+
+const STOP = new Set(['must', 'with', 'that', 'this', 'from', 'have', 'each', 'into', 'their', 'they', 'when', 'then', 'only', 'also',
+  'been', 'will', 'should', 'does', 'still', 'your', 'them', 'than', 'were', 'what', 'which', 'while', 'where', 'there', 'these', 'those']);
+const toks = (s: string): Set<string> =>
+  new Set((s.toLowerCase().match(/[a-z0-9_]+/g) ?? []).filter((t) => t.length >= 4 && !STOP.has(t)));
+
+/** Clauses no attestation row covers (best single-row content-token overlap < 40% of the clause's tokens). */
+export function uncoveredRequirements(clauses: string[], rows: Array<Partial<RequirementRow>>): string[] {
+  const rowToks = rows.map((r) => toks(`${r.requirement ?? ''} ${r.satisfied_by ?? ''} ${r.verified_how ?? ''}`));
+  return clauses.filter((c) => {
+    const ct = toks(c);
+    if (ct.size === 0) return false;
+    const best = Math.max(0, ...rowToks.map((rt) => [...ct].filter((t) => rt.has(t)).length / ct.size));
+    return best < 0.4;
+  });
+}
+
+export interface CoverageVerdict { ok: boolean; nudge?: string; clauses: string[]; uncovered: string[] }
+
+/** Stage 4f: once per turn, reject a finish whose attestation leaves some of the task's own stated clauses uncovered. */
+export function coverageCheck(input: { taskText: string; requirements: unknown; alreadyNudged: boolean }): CoverageVerdict {
+  const clauses = extractStatedRequirements(input.taskText);
+  if (input.alreadyNudged || clauses.length < 2 || !isTaskShaped(input.taskText)) return { ok: true, clauses, uncovered: [] };
+  const rows = (Array.isArray(input.requirements) ? input.requirements : []).filter((r) => r && typeof r === 'object') as Array<Partial<RequirementRow>>;
+  const uncovered = uncoveredRequirements(clauses, rows);
+  if (uncovered.length === 0) return { ok: true, clauses, uncovered };
+  return {
+    ok: false, clauses, uncovered,
+    nudge:
+      `EndTurn REJECTED (requirement coverage) — the task states these requirements and your attestation does not cover them:\n` +
+      uncovered.map((u) => ` - "${u}"`).join('\n') +
+      `\n\nFor EACH: check it against the task's own entry points (its scripts, contract, docs or tests — not a test you invent) and add a ` +
+      `\`requirements\` row with the observed result; fix only what fails, without changing behaviour the task did not ask you to change. ` +
+      `Then call EndTurn again. (This check runs once per turn.)`,
+  };
+}
