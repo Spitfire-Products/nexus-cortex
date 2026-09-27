@@ -17,7 +17,7 @@
  * Every leg is fail-soft and bounded (shell timeouts, output caps); a judge must never hang or throw on
  * evidence collection. Pure config resolution is exported for tests.
  */
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import { existsSync, readFileSync, statSync, readdirSync } from 'fs';
 import { join, resolve, sep } from 'path';
 
@@ -215,6 +215,15 @@ export function runCheck(cwd: string, cmd: string, cfg: JudgeGroundingConfig = r
 
 /** Commands an investigation round refuses to run: anything that plausibly mutates the workspace or the box. Pure. */
 const INVESTIGATE_DENY_RE = /(^|[\s;&|(])(rm|mv|dd|mkfs|shred|truncate|chmod|chown|kill|pkill|reboot|shutdown)\b|\bgit\s+(checkout|reset|clean|stash|restore|commit|push|rebase|merge|rm)\b|(^|[^<>&|])>(?!&|>&)\s*[^&\s]|\bsudo\b|\b(pip|npm|apt(-get)?|yum|apk|cargo)\s+(install|remove|uninstall|purge)\b/;
+/**
+ * R174c: a spec check /bin/sh cannot even parse must never run — the one-line parser keeps only the first line of a multi-line
+ * `python3 -c "..."`, and a truncated command's non-zero exit read as a FAILED requirement (18 false alarms in 526 checks, offline
+ * experiment 2026-09-27). `sh -n` = syntax only, nothing executes.
+ */
+export function specCheckParses(cmd: string): boolean {
+  try { return spawnSync('/bin/sh', ['-n', '-c', cmd], { timeout: 3000, stdio: 'ignore' }).status === 0; } catch { return false; }
+}
+
 export function isInvestigateCommandAllowed(cmd: string): boolean {
   return !INVESTIGATE_DENY_RE.test(String(cmd ?? ''));
 }

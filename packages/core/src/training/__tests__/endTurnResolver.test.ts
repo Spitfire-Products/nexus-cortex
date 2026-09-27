@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
+import { specFailFraction, groundSpecCheck,
   RESOLVER_SYSTEM,
   resolverSystemPrompt,
   buildResolverUserPrompt,
@@ -408,6 +408,57 @@ describe('endTurnResolver — R174 blind spec-derived tests (HB-SPEC-TESTS)', ()
     expect(c).toEqual(['test -f /app/out.csv || { echo MISSING; exit 1; }', 'head -1 /app/out.csv | grep -q "a,b,c" || { echo BAD HEADER; exit 1; }', 'python3 -c "import x" || exit 1', 'ls']);
     expect(parseSpecChecks('VERDICT: MEETS\nno checks here')).toEqual([]);
     expect(parseSpecChecks('CHECK: ' + 'x'.repeat(500))).toEqual([]);
+  });
+});
+
+describe('endTurnResolver — R174c spec-check GROUNDING (offline reliability experiment, 2026-09-27)', () => {
+  // 64 MiMo tasks, checks run on the broken state and on grader-confirmed correct states: 29% of checks false-alarmed on CORRECT
+  // solutions; the largest cause was asserting literals / paths the author could not know. A check may only depend on what the task
+  // text or the environment report states.
+  const task = 'Repair the parser in /app/vendor/pkg/src/parse.py so that /app/output.json reports schema "parse-report.v2".';
+  const env = '== TOOLING ==\n  python3=/usr/local/bin/python3\n/app/inputs/sample.txt';
+  it('keeps checks grounded in the task text or the environment report', () => {
+    expect(groundSpecCheck('test -f /app/output.json || { echo MISSING; exit 1; }', task, env).ok).toBe(true);
+    expect(groundSpecCheck(`python3 -c "import json; assert json.load(open('/app/output.json'))['schema']=='parse-report.v2'"`, task, env).ok).toBe(true);
+    expect(groundSpecCheck('test -f /app/inputs/sample.txt', task, env).ok).toBe(true);
+    expect(groundSpecCheck('grep -q def /app/vendor/pkg/src/parse.py', task, env).ok).toBe(true);
+  });
+  it('drops a check asserting a literal the task never states', () => {
+    const r = groundSpecCheck(`python3 -c "import json; assert json.load(open('/app/output.json'))['schema_version']=='workflow-repair-1'"`, task, env);
+    expect(r.ok).toBe(false); expect(r.reason).toMatch(/literal/);
+  });
+  it('drops a check on a guessed path whose directory the task never names', () => {
+    const r = groundSpecCheck('test -f /app/vendor/other/plugins/callbacks.py || exit 1', task, env);
+    expect(r.ok).toBe(false); expect(r.reason).toMatch(/path/);
+  });
+  it('a file inside a directory the task names is grounded (the author may name the artifact the task implies)', () => {
+    expect(groundSpecCheck('test -f /app/vendor/pkg/src/tokenize.py', task, env).ok).toBe(true);
+  });
+  it('code words and short tokens are not treated as literals', () => {
+    expect(groundSpecCheck(`python3 -c "open('/app/output.json', encoding='utf-8').read()"`, task, env).ok).toBe(true);
+  });
+});
+
+describe('endTurnResolver — R174d spec-fraction veto + MEETS override (r-specrel-2026-09-27)', () => {
+  // 175 replayed MiMo finishes: the judge alone accepted 82% of wrong finishes (J 0.11); "any spec check fails" held 73–92% of correct
+  // ones; judge AND an averaged 3-sample spec-fail fraction < 0.5 → J 0.30. And a MEETS could never be overridden by spec evidence.
+  it('config: 3 author samples and a 0.5 veto fraction by default; clamped', () => {
+    const d = resolveEndTurnResolverConfig({} as any);
+    expect(d.specSamples).toBe(3); expect(d.specVetoFrac).toBe(0.5);
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_SPEC_TESTS_SAMPLES: '9', CORTEX_JUDGE_SPEC_VETO_FRAC: '0.67' } as any)).toMatchObject({ specSamples: 5, specVetoFrac: 0.67 });
+    expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_SPEC_TESTS_SAMPLES: '0', CORTEX_JUDGE_SPEC_VETO_FRAC: '2' } as any)).toMatchObject({ specSamples: 3, specVetoFrac: 0.5 });
+  });
+  it('specFailFraction: mean of per-sample failed/ran fractions; empty samples ignored; null when nothing ran', () => {
+    expect(specFailFraction([[true, false, false], [true, true], []])).toBeCloseTo((1 / 3 + 1) / 2, 5);
+    expect(specFailFraction([[false, false]])).toBe(0);
+    expect(specFailFraction([[], []])).toBeNull();
+  });
+  const base = { blank: false, retire: false, confidence: 'high' as const, rejects: 0, cap: 6, progressed: true, escalated: false, checksFailed: false, vetoMode: 'evidence' as const, evidenceCap: 1 };
+  it('a MEETS is held ONCE when the spec-fail fraction reaches the threshold (specOverride)', () => {
+    expect(decideVetoAction({ ...base, meets: true, specOverride: true })).toBe('veto');
+    expect(decideVetoAction({ ...base, meets: true, specOverride: true, rejects: 1 })).toBe('accept'); // evidence cap spent → stands
+    expect(decideVetoAction({ ...base, meets: true })).toBe('accept');                                // no override → unchanged
+    expect(decideVetoAction({ ...base, meets: true, specOverride: true, vetoMode: 'never' })).toBe('accept'); // record-only mode never holds
   });
 });
 

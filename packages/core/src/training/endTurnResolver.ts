@@ -110,6 +110,11 @@ export interface EndTurnResolverConfig {
   /** R174b: when to author the blind spec checks — `finish` (first adjudication, 4.120.0) or `lift` (at task lift, in the background,
    *  so a session whose first finish comes late still has them). */
   specTestsAt: 'finish' | 'lift';
+  /** R174d (r-specrel-2026-09-27): author the blind spec checks this many times (1..5) — one sample is noisy (J 0.08–0.25), three
+   *  averaged are stable (J 0.25–0.33). */
+  specSamples: number;
+  /** R174d: veto evidence = the averaged per-sample spec-fail fraction ≥ this (0<f≤1), not ANY failed check (73–92% false holds). */
+  specVetoFrac: number;
   /** R176 HB-INDEPENDENT-DERIVATION (docs/R176_INDEPENDENT_DERIVATION_DESIGN.md): on a value-shaped task, before an otherwise-standing
    *  finish, elicit a SECOND derivation by a different method, run it, reconcile; disagreement holds the finish ONCE. off | on. */
   derivation: 'off' | 'on';
@@ -132,7 +137,7 @@ export interface EndTurnResolverConfig {
   reqLedgerFailJevMin: number;
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7, reqLedgerFailVeto: false, reqLedgerFailVetoMax: 2, reqLedgerFailVetoMinRemaining: 0.25, reqLedgerFailJev: 'shadow', reqLedgerFailJevMin: 0.7 };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', specSamples: 3, specVetoFrac: 0.5, derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7, reqLedgerFailVeto: false, reqLedgerFailVetoMax: 2, reqLedgerFailVetoMinRemaining: 0.25, reqLedgerFailJev: 'shadow', reqLedgerFailJevMin: 0.7 };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
@@ -161,6 +166,8 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
   const ghi = parseInt((env.CORTEX_JUDGE_GAP_HOLD_MIN_INTERVAL_MS ?? '').trim(), 10);
   const ghs = parseFloat((env.CORTEX_JUDGE_GAP_HOLD_PLAN_MAX_SIMILARITY ?? '').trim());
   const srm = parseInt((env.CORTEX_JUDGE_SPEC_REPEAT_MAX ?? '').trim(), 10); // R174b
+  const ssm = parseInt(env.CORTEX_JUDGE_SPEC_TESTS_SAMPLES ?? '', 10);
+  const svf = parseFloat(env.CORTEX_JUDGE_SPEC_VETO_FRAC ?? '');
   const sta = (env.CORTEX_JUDGE_SPEC_TESTS_AT ?? '').trim().toLowerCase();
   const idv = (env.CORTEX_JUDGE_INDEPENDENT_DERIVATION ?? '').trim().toLowerCase(); // R176
   const idt = parseFloat((env.CORTEX_JUDGE_INDEPENDENT_DERIVATION_TOL ?? '').trim());
@@ -193,6 +200,8 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
     gapHoldPlanMaxSimilarity: Number.isFinite(ghs) && ghs >= 0 && ghs <= 1 ? ghs : DEFAULTS.gapHoldPlanMaxSimilarity,
     specRepeatMax: Number.isInteger(srm) && srm >= 1 ? Math.min(10, srm) : DEFAULTS.specRepeatMax,
     specTestsAt: sta === 'lift' ? 'lift' : 'finish',
+    specSamples: Number.isInteger(ssm) && ssm >= 1 ? Math.min(5, ssm) : DEFAULTS.specSamples,
+    specVetoFrac: Number.isFinite(svf) && svf > 0 && svf <= 1 ? svf : DEFAULTS.specVetoFrac,
     derivation: idv === 'on' || idv === 'true' || idv === '1' ? 'on' : 'off',
     derivationTol: Number.isFinite(idt) && idt > 0 && idt < 1 ? idt : DEFAULTS.derivationTol,
     reqLedger: /^(on|true|1)$/i.test((env.CORTEX_JUDGE_REQ_LEDGER ?? '').trim()),
@@ -393,6 +402,12 @@ export function parseResolverVerdict(text: string): ResolverVerdict {
 
 /** R165: what to do with a verdict. Pure, so the policy is unit-testable and readable in one place. */
 export type VetoAction = 'accept' | 'veto' | 'escalate' | 'accept-with-gap' | 'accept-low-confidence';
+/** R174d: mean over author samples of (failed / ran) for the spec checks that ran; empty samples ignored; null when none ran. Pure. */
+export function specFailFraction(samples: boolean[][]): number | null {
+  const fr = samples.filter((x) => x.length > 0).map((x) => x.filter(Boolean).length / x.length);
+  return fr.length ? fr.reduce((a, b) => a + b, 0) / fr.length : null;
+}
+
 export function decideVetoAction(input: {
   meets: boolean; blank: boolean; retire: boolean; confidence: 'high' | 'medium' | 'low';
   rejects: number; cap: number; progressed: boolean; escalated: boolean;
@@ -404,7 +419,13 @@ export function decideVetoAction(input: {
   evidenceCap?: number;
   /** R173: hold an unevidenced GAP while budget remains (see gapHoldable). */
   gapHoldable?: boolean;
+  /** R174d: the averaged spec-fail fraction reached specVetoFrac — objective evidence that can hold even a MEETS, once. */
+  specOverride?: boolean;
 }): VetoAction {
+  // R174d (r-specrel-2026-09-27): before 4.124.26 a MEETS returned 'accept' before any evidence was looked at, so the spec checks — the
+  // one lever pointed at the confident-wrong finish (82% of MiMo fails) — could never hold it. Held once, inside the evidence cap.
+  if (input.meets && input.specOverride && (input.vetoMode ?? 'evidence') !== 'never' && !input.blank && !input.retire &&
+      input.rejects < Math.min(input.cap, input.evidenceCap ?? 1)) return 'veto';
   if (input.meets || input.blank || input.retire) return 'accept';
   const mode = input.vetoMode ?? 'evidence';
   if (mode === 'never') return 'accept-with-gap';
@@ -510,6 +531,32 @@ export function buildSpecTestsPrompt(task: string, envReport: string | undefined
   if (envReport && envReport.trim()) parts.push(`ENVIRONMENT REPORT (at task start):\n${envReport.trim().slice(0, 2500)}`);
   parts.push(`Write at most ${max} CHECK lines, the most discriminating requirements first. Example form:\nCHECK: test -f /app/out.csv || { echo "MISSING /app/out.csv"; exit 1; }`);
   return parts.join('\n\n');
+}
+
+/**
+ * R174c HB-SPEC-GROUNDING (2026-09-27, offline experiment `.bench/specrel/`: 64 MiMo tasks, checks run on the broken state and on
+ * grader-confirmed correct states). 29% of blind checks false-alarmed on CORRECT solutions and 53% of check SETS vetoed a correct
+ * solution; the largest cause was asserting what the author could not know (invented literals, guessed file paths). A check may depend
+ * only on what the TASK text or the ENVIRONMENT REPORT states: a quoted identifier-like literal (≥4 chars) absent from both, or an
+ * absolute path that neither names (nor its parent directory), drops the check before it runs. Measured: set false alarms 55% → 44%,
+ * detection on broken 89% → 86%. Pure.
+ */
+const SPEC_TRIVIAL_LITERALS = new Set(['utf-8', 'utf8', 'json', 'python3', 'ignore', 'strict', 'replace', '__main__', 'PASS', 'FAIL', 'True', 'False']);
+export function groundSpecCheck(check: string, task: string, envReport = ''): { ok: boolean; reason: string } {
+  const corpus = `${task}\n${envReport}`;
+  for (const m of check.matchAll(/['"]([^'"\n]{4,80})['"]/g)) {
+    const lit = m[1]!;
+    if (/^[\/$-]/.test(lit) || SPEC_TRIVIAL_LITERALS.has(lit) || (lit.includes(' ') && lit.length > 40)) continue;
+    if (/^[\w.:-]+$/.test(lit) && !corpus.includes(lit)) return { ok: false, reason: `literal ${JSON.stringify(lit)} not stated in the task or environment` };
+  }
+  for (const m of check.matchAll(/(\/(?:app|workspace|home|root|srv|opt|data)[\w./-]*)/g)) {
+    const p = m[1]!.replace(/[.,;:)]+$/, '');
+    if (corpus.includes(p)) continue;
+    const parent = p.slice(0, p.lastIndexOf('/'));
+    if (parent && corpus.includes(parent)) continue;
+    return { ok: false, reason: `path ${p} not named in the task or environment` };
+  }
+  return { ok: true, reason: '' };
 }
 
 /** R174: parse `CHECK:` lines out of the author's reply; dedup; cap. Pure. */

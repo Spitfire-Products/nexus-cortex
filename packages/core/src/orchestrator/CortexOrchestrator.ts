@@ -28,7 +28,7 @@ import { join as pathJoin } from 'path';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'node:child_process';
 import { ENV_RECON_COMMAND, resolveLiftPlanConfig, parsePlannerResponse } from '../training/liftPlanner.js';
-import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage, gapHoldable, parseSpecChecks, applyVetoFloor, holdProgressed, planSimilarity, specCheckEvidence } from '../training/endTurnResolver.js';
+import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage, gapHoldable, parseSpecChecks, groundSpecCheck, specFailFraction, applyVetoFloor, holdProgressed, planSimilarity, specCheckEvidence } from '../training/endTurnResolver.js';
 import { jevAvailable, jevNoul, buildGapHoldState, GAP_HOLD_QUESTIONS } from '../training/jevGate.js'; // R173b
 import { resolveFrameConfig, FRAME_CONTRACT, FRAME_TOOL_NAME } from '../frames/frameConfig.js'; // R179
 import { FrameRunner } from '../frames/frameRunner.js'; // R179
@@ -80,7 +80,7 @@ import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from 
 import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage, memoryIndexLine, upsertMemoryIndex, scaleEstimateToRequestView, approxCharsOf, anchoredRequestEstimate, resolveCompactionHandoffQA, resolveHandoffQAMaxQuestions, runHandoffQA, type HandoffQAResult } from './compactionResume.js';
 import { renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBand, resolveRearmBand } from './compactionResumeTemplate.js';
 import { resolveCortexStateDir, cortexStatePath } from '../utils/stateDir.js';
-import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig, classifyCheckRun, isInvestigateCommandAllowed, readFileSlice, formatEvidenceRound } from '../training/judgeEvidence.js';
+import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig, classifyCheckRun, isInvestigateCommandAllowed, specCheckParses, readFileSlice, formatEvidenceRound } from '../training/judgeEvidence.js';
 import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, mentorSurfaceTimeoutMs, type MentorCallMeta } from '../training/mentorRole.js';
 import { resolveOuterToolDeadlineMs, resolveOuterToolTimeoutFloorMs } from './outerToolTimeout.js';
 import { resolveSubAgentTimeoutMs } from './subAgentTimeout.js';
@@ -667,7 +667,8 @@ export class CortexOrchestrator {
   private judgeEscalated = false;
   private judgeAdjudicatedThisFinish = false;
   private specChecks: string[] | null = null; // R174: blind spec-derived checks authored for this turn (null = not yet)
-  private specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; // R174
+  private specChecksMeta: { genLatencyMs: number; refused: number; raw: number; unparsable?: number; ungrounded?: number } = { genLatencyMs: 0, refused: 0, raw: 0 }; // R174 (+R174c counts)
+  private specCheckSets: string[][] = []; // R174d: the per-sample check sets (their union is specChecks)
   private specChecksPromise: Promise<string[]> | null = null; // R174b: authored at lift in the background (CORTEX_JUDGE_SPEC_TESTS_AT=lift)
   private reqLedger: LedgerEntry[] | null = null; // R187: the stated-requirement ledger for this turn (null = not yet authored)
   private reqLedgerPromise: Promise<LedgerEntry[]> | null = null; // R187: authored at lift in the background
@@ -1146,10 +1147,25 @@ export class CortexOrchestrator {
     if (!this.helperMiddleware?.deriveSpecChecks) { this.specChecks = []; return []; }
     const specTimeoutMs = mentorSurfaceTimeoutMs('endturn-resolver', parseInt(process.env.CORTEX_ENDTURN_RESOLVER_TIMEOUT_MS ?? '90000', 10));
     try {
-      const raw = await withTimeout(this.helperMiddleware.deriveSpecChecks({ task, envReport: this.gatherEnvReport({ fresh: false }), max: cfg.specTestsMax, helperModelId: this.config.reactiveMentorship?.helperModelId }), specTimeoutMs);
-      const parsed = parseSpecChecks(raw ?? '', cfg.specTestsMax);
-      const allowed = parsed.filter((c) => isInvestigateCommandAllowed(c));
-      this.specChecks = allowed; this.specChecksMeta = { genLatencyMs: Date.now() - g0, refused: parsed.length - allowed.length, raw: (raw ?? '').length };
+      const specEnv = this.gatherEnvReport({ fresh: false });
+      // R174d: K independent author samples (one is noisy; three averaged are stable — r-specrel-2026-09-27), authored in parallel.
+      const raws = await Promise.all(Array.from({ length: cfg.specSamples }, () =>
+        withTimeout(this.helperMiddleware!.deriveSpecChecks!({ task, envReport: specEnv, max: cfg.specTestsMax, helperModelId: this.config.reactiveMentorship?.helperModelId }), specTimeoutMs)));
+      let refused = 0, unparsable = 0, ungrounded = 0, rawChars = 0;
+      const sets: string[][] = [];
+      for (const raw of raws) {
+        const parsed = parseSpecChecks(raw ?? '', cfg.specTestsMax);
+        const allowed = parsed.filter((c) => isInvestigateCommandAllowed(c));
+        // R174c: drop checks /bin/sh cannot parse and checks that depend on what the task / env report never states (grounding).
+        const parses = allowed.filter((c) => specCheckParses(c));
+        const grounded = parses.filter((c) => groundSpecCheck(c, task, specEnv).ok);
+        refused += parsed.length - allowed.length; unparsable += allowed.length - parses.length; ungrounded += parses.length - grounded.length;
+        rawChars += (raw ?? '').length;
+        sets.push(grounded);
+      }
+      this.specCheckSets = sets;
+      this.specChecks = [...new Set(sets.flat())];
+      this.specChecksMeta = { genLatencyMs: Date.now() - g0, refused, raw: rawChars, unparsable, ungrounded };
     } catch { this.specChecks = []; this.specChecksMeta = { genLatencyMs: Date.now() - g0, refused: 0, raw: 0 }; }
     if (store) void store.recordEvent({ sessionId, kind: 'spec_tests', toolName: 'EndTurn', detail: { checks: this.specChecks, ...this.specChecksMeta, at: cfg.specTestsAt, mentor: this.mentorWire('endturn-resolver', cfg.effort, 1200) } }).catch(() => {});
     console.warn(`[EndTurnResolver] R174 SPEC-TESTS — ${this.specChecks.length} blind check(s) authored at ${cfg.specTestsAt} in ${this.specChecksMeta.genLatencyMs} ms (${this.specChecksMeta.refused} refused)`);
@@ -1254,18 +1270,23 @@ export class CortexOrchestrator {
       // R174 HB-SPEC-TESTS: blind spec-derived checks — authored ONCE per turn from the task text alone (never the work product),
       // run at EVERY adjudication; a FAILED one is objective evidence for the veto (R166 checksFailed) and is shown to the judge.
       let specRan = 0; let specPassed = 0; let specFailed = 0; let specInconclusive = 0; let specSuspect = 0; let specResults = '';
+      let specFrac: number | null = null; // R174d: averaged per-sample spec-fail fraction
       if (cfg.specTests) {
         if (this.specChecks === null) this.specChecks = await (this.specChecksPromise ?? this.authorSpecChecks(task)); // R174b: lift-authored or now
         // R174b: two passes — classify every check, then apply repeat suppression (a check failing identically at
         // specRepeatMax consecutive adjudications, while no OTHER check failed, is `suspect`: shown, not evidence).
         const runs = this.specChecks.map((c) => { const r = runCheck(judgeCwd, c, jcfg); return { c, r, k: classifyCheckRun(r) }; });
         const failedCmds = runs.filter((x) => x.k === 'failed').map((x) => x.c);
+        const specEv = new Map<string, string>();
         for (const x of runs) {
           const ev = specCheckEvidence(this.specFailHistory, x.c, x.r, x.k, cfg.specRepeatMax, failedCmds.some((f) => f !== x.c));
           specRan += 1;
           if (ev === 'passed') specPassed += 1; else if (ev === 'failed') specFailed += 1; else if (ev === 'suspect') specSuspect += 1; else specInconclusive += 1;
           specResults += (specResults ? '\n\n' : '') + x.r + (ev === 'suspect' ? '\n(this check has failed identically at consecutive finishes while everything else passed — treat it as SUSPECT, not as proof of a gap)' : '');
+          specEv.set(x.c, ev);
         }
+        const sets = this.specCheckSets.length ? this.specCheckSets : [this.specChecks];
+        specFrac = specFailFraction(sets.map((set) => set.filter((c) => specEv.has(c)).map((c) => specEv.get(c) === 'failed')));
       }
       // R187 HB-REQUIREMENT-LEDGER: run each stated requirement's check; a FAILED line is R166 evidence; an OPEN line (never exercised) can hold once.
       let reqResults = ''; let reqCounts = { lines: 0, open: 0, exercised: 0, failed: 0, unverifiable: 0 }; let reqJev: { asked: number; closed: string[]; latencyMs: number; error?: boolean } | null = null;
@@ -1315,11 +1336,12 @@ export class CortexOrchestrator {
       const timeoutMs = mentorSurfaceTimeoutMs('endturn-resolver', parseInt(process.env.CORTEX_ENDTURN_RESOLVER_TIMEOUT_MS ?? '90000', 10)); // thinking-aware
       const t0 = Date.now();
       const evidenceRounds: string[] = []; // R170
+      let judgeEnvReport = ''; // the ENVIRONMENT REPORT the judge last saw (banked on the event — it is not in the session record)
       const judgeOnce = (reasoning?: 'on', investigate?: 'offer' | 'withdraw') => withTimeout(
         this.helperMiddleware!.evaluateEndTurn({
           task,
           liftPlan: this.liftPlanText || undefined,
-          envReport: this.gatherEnvReport({ fresh: true }),
+          envReport: (judgeEnvReport = this.gatherEnvReport({ fresh: true })),
           workProduct,
           attestation,
           workspaceDelta,
@@ -1384,13 +1406,14 @@ export class CortexOrchestrator {
         if (jr) { jevFixable = jr.probabilities.fixable_with_more_turns ?? null; jevLatencyMs = jr.latencyMs; }
       }
       const holdable = gapHoldable({ gapHold: cfg.gapHold, remainingFrac: resolverRemainingFrac, minRemaining: resolveBudgetContinueMinRemaining(), planChars: verdict.plan.length, jevMode: cfg.gapHoldJev, jevFixable, jevMin: cfg.gapHoldJevMin });
-      const checksFailed = namedFailed > 0 || specFailed > 0 || reqCounts.failed > 0; // R166 + R174 + R187
+      const specVetoHit = specFrac !== null && specFrac >= cfg.specVetoFrac; // R174d: a fraction of the spec checks, not ANY one
+      const checksFailed = namedFailed > 0 || specVetoHit || reqCounts.failed > 0; // R166 + R174d + R187
       // R173c: a re-hold needs real work since the last hold (elapsed time or a changed open-items list), not just tool calls.
       const msSinceLastHold = this.lastHoldMs > 0 ? Date.now() - this.lastHoldMs : null;
       const holdProg = holdProgressed({ rejects: this.endTurnResolverRejects, msSinceLastHold, priorPlan: this.judgePriorPlan, plan: verdict.plan, minIntervalMs: cfg.gapHoldMinIntervalMs, maxSimilarity: cfg.gapHoldPlanMaxSimilarity });
       const progressedForHold = holdable ? (progressed && holdProg) : progressed;
       let action: VetoAction = cfg.semantic
-        ? decideVetoAction({ meets: verdict.meets, blank: verdict.blank, retire: verdict.retire && cfg.abstain, confidence: verdict.confidence, rejects: this.endTurnResolverRejects, cap: resolverCap, progressed: progressedForHold, escalated: this.judgeEscalated, checksFailed, vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap, gapHoldable: holdable })
+        ? decideVetoAction({ meets: verdict.meets, blank: verdict.blank, retire: verdict.retire && cfg.abstain, confidence: verdict.confidence, rejects: this.endTurnResolverRejects, cap: resolverCap, progressed: progressedForHold, escalated: this.judgeEscalated, checksFailed, vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap, gapHoldable: holdable, specOverride: specVetoHit })
         : (verdict.blank || (verdict.retire && cfg.abstain) || verdict.meets || !verdict.plan ? 'accept' : 'veto');
       if (action === 'escalate') {
         // R165: the junior re-attested without working the plan — one thinking-on adjudication before we accept with the gap recorded.
@@ -1401,7 +1424,7 @@ export class CortexOrchestrator {
           const v2 = parseResolverVerdict(text2 ?? '');
           if (!v2.blank) { text = text2; verdict = v2; }
         }
-        action = decideVetoAction({ meets: verdict.meets, blank: verdict.blank, retire: verdict.retire && cfg.abstain, confidence: verdict.confidence, rejects: this.endTurnResolverRejects, cap: resolverCap, progressed: progressedForHold, escalated: true, checksFailed, vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap, gapHoldable: holdable });
+        action = decideVetoAction({ meets: verdict.meets, blank: verdict.blank, retire: verdict.retire && cfg.abstain, confidence: verdict.confidence, rejects: this.endTurnResolverRejects, cap: resolverCap, progressed: progressedForHold, escalated: true, checksFailed, vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap, gapHoldable: holdable, specOverride: specVetoHit });
         if (action === 'escalate') action = 'accept-with-gap';
       }
       // R173c: the budget floor — below CORTEX_JUDGE_VETO_MIN_REMAINING nothing holds the finish (the gap is recorded).
@@ -1476,7 +1499,7 @@ export class CortexOrchestrator {
           vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap, namedRanNow, namedInconclusive, // R166 / R166b
           toolRounds: cfg.toolRounds, roundsUsed, investigateChecks, investigateReads, investigateRefused, autoLooped, toolAutoLoop: cfg.toolAutoLoop, roundLatencyMs, evidenceChars: evidenceRounds.join('').length, // R170 / R170b
           gapHold: cfg.gapHold, gapHoldable: holdable, jevMode: cfg.gapHoldJev, jevFixable, jevLatencyMs, // R173 / R173b
-          specTests: cfg.specTests, specChecks: this.specChecks?.length ?? 0, specRan, specPassed, specFailed, specInconclusive, specSuspect, specGenLatencyMs: this.specChecksMeta.genLatencyMs, specTestsAt: cfg.specTestsAt, // R174 / R174b
+          specTests: cfg.specTests, specChecks: this.specChecks?.length ?? 0, specRan, specPassed, specFailed, specInconclusive, specSuspect, specFrac: specFrac === null ? null : Number(specFrac.toFixed(3)), specSets: this.specCheckSets.length, specVetoFrac: cfg.specVetoFrac, specGenLatencyMs: this.specChecksMeta.genLatencyMs, specTestsAt: cfg.specTestsAt, // R174 / R174b
           vetoMinRemaining: cfg.vetoMinRemaining, belowFloor, holdProgressed: holdProg, holdGapMs: msSinceLastHold, planSim: Number(planSimilarity(this.judgePriorPlan, verdict.plan).toFixed(3)), msSinceLastHold, // R173c
           derivation: cfg.derivation, derivationAgreement: derivationInfo?.agreement ?? null, derivationHeld: !!derivationHold, // R176
           reqLedger: cfg.reqLedger, reqLines: reqCounts.lines, reqOpen: reqCounts.open, reqExercised: reqCounts.exercised, reqFailed: reqCounts.failed, reqUnverifiable: reqCounts.unverifiable, reqHeld: !!reqHold, reqHolds: this.reqLedgerHolds, reqGenLatencyMs: this.reqLedgerMeta.genLatencyMs, reqJev: cfg.reqLedgerJev, reqJevAsked: reqJev?.asked ?? 0, reqJevClosed: reqJev?.closed ?? [], reqJevLatencyMs: reqJev?.latencyMs ?? 0, // R187/R187b
@@ -1484,6 +1507,12 @@ export class CortexOrchestrator {
           reqBroken: [...this.reqLedgerBroken], reqLinesDetail: (this.reqLedger ?? []).map((e) => ({ id: e.id, kind: e.kind, status: e.status, check: !!e.check, runs: e.runs, last: (e.lastResult ?? '').split('\n').slice(0, 2).join(' / ').slice(0, 200) })), // R191: per-line outcomes so a false-failure read is possible from the decisions file
           latencyMs, rawLen: (text ?? '').length,
           deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,
+          // The judge's evidence INPUTS, banked at the sizes the prompt shows them (buildResolverUserPrompt): the env report is
+          // gathered by the harness itself (execSync recon), so it exists nowhere else; with the delta + check text this makes a
+          // verdict replayable offline (2026-09-27, MiMo K=3: 0/329 verdicts could be replayed faithfully).
+          envChars: judgeEnvReport.length, envSample: judgeEnvReport.trim().slice(0, 2500),
+          deltaSample: workspaceDelta.trim().slice(0, 6000), deltaTruncated: workspaceDelta.trim().length > 6000,
+          checkSample: combinedCheck.trim().slice(0, 3000),
           liftPlanChars: this.liftPlanText.length,
           mentor: this.mentorWire('endturn-resolver', cfg.effort, cfg.outputBudgetTokens),
           planText: verdict.plan.slice(0, 4000),

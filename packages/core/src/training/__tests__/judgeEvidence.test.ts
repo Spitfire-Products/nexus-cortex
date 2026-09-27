@@ -7,7 +7,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { execSync } from 'child_process';
-import {
+import { specCheckParses,
   resolveJudgeGroundingConfig, selectDeltaFiles, formatWorkspaceDelta, collectWorkspaceDelta,
   detectCheckCommand, runCheck,
 } from '../judgeEvidence.js';
@@ -158,5 +158,19 @@ describe('judgeEvidence — R170 investigation surface', () => {
     const e = formatEvidenceRound(2, ['CHECK RUN: `ls` → PASSED in 1 ms\nout'], ['READ: `a` → lines 1-1 of 1\n1: x']);
     expect(e.startsWith('EVIDENCE (investigation round 2')).toBe(true); expect(e.indexOf('CHECK RUN')).toBeLessThan(e.indexOf('READ:'));
     expect(formatEvidenceRound(1, ['x'.repeat(9000)], [], 6000)).toContain('(evidence truncated)');
+  });
+});
+
+
+describe('judgeEvidence — R174c spec-check syntax gate (2026-09-27)', () => {
+  // The one-line parser keeps only the first line of a multi-line `python3 -c "..."`; the harness then RAN a truncated command
+  // ("Syntax error: Unterminated quoted string") and read its non-zero exit as a failed requirement — 18 false alarms in 526 checks.
+  it('accepts a well-formed one-line check', () => {
+    expect(specCheckParses('test -f /app/out.csv || { echo MISSING; exit 1; }')).toBe(true);
+    expect(specCheckParses(`python3 -c "import json; json.load(open('/app/out.json'))" || exit 1`)).toBe(true);
+  });
+  it('rejects a check /bin/sh cannot parse (unterminated quote from a truncated multi-line command)', () => {
+    expect(specCheckParses('python3 -c "import pandas as pd; x=1;')).toBe(false);
+    expect(specCheckParses('test -f /a || { echo x; exit 1;')).toBe(false);
   });
 });
