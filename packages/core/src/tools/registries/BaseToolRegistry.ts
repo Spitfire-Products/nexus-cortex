@@ -2328,6 +2328,24 @@ Set stripSignatures=true when the session was recorded under a DIFFERENT provide
 ];
 
 /**
+ * CORTEX_TOOL_DOCTRINE=mimo-v1 (2026-09-28, dark): the three doctrine edits BOTH MiMo tb64 doctrine mines proposed (reasoning sweep, 320
+ * sessions; verification cell, 255 sessions — r-mimo64-{sweep,verif}-2026-09-27.md): Read over bash file viewing, no reference mining outside
+ * the workspace, dependency manifests as graded inputs. Each is appended after an anchor sentence that must exist exactly once (tested).
+ * Wording chosen to agree with standing directives: the manifest edit does NOT forbid ad hoc installs (the install directive stands) and the
+ * mining edit does NOT forbid running a project's own tests (regression checks stay legitimate).
+ */
+export const TOOL_DOCTRINE_MIMO_V1: ReadonlyArray<{ tool: string; anchor: string; append: string }> = [
+  { tool: 'Read', anchor: 'Read on a binary file returns unusable bytes.',
+    append: ' Use Read for all file inspection instead of bash cat/head/tail/sed/awk/echo — bash file-viewing bypasses the read-tracking that Edit relies on.' },
+  { tool: 'Bash', anchor: 'bash file-viewing bypasses the read-tracking that Edit relies on.',
+    append: ' It is the most common tool-misuse failure.' },
+  { tool: 'Bash', anchor: "for a task's reference solution — solve in the workspace.",
+    append: ' This includes searching parent directories, sibling projects, or the whole filesystem for the harness or solution files.' },
+  { tool: 'Bash', anchor: 'fails for lack of a compiler.',
+    append: ' Installing extra packages ad hoc for experimentation is also a manifest change — if the final manifest includes them, you must prove the fresh install.' },
+];
+
+/**
  * Immutable registry of base tools
  */
 export class BaseToolRegistry implements ToolRegistry {
@@ -2350,6 +2368,14 @@ export class BaseToolRegistry implements ToolRegistry {
     const endTurn = this.tools.get('EndTurn');
     if (endTurn && endTurn.discoveryTier !== tier) {
       this.tools.set('EndTurn', { ...endTurn, discoveryTier: tier });
+    }
+    // CORTEX_TOOL_DOCTRINE=mimo-v1 (dark): apply the doctrine edits by anchor. Unset/unknown = byte-identical descriptions.
+    if ((env.CORTEX_TOOL_DOCTRINE || '').trim().toLowerCase() === 'mimo-v1') {
+      for (const e of TOOL_DOCTRINE_MIMO_V1) {
+        const t = this.tools.get(e.tool);
+        const d = t ? String(t.description ?? '') : '';
+        if (t && d.includes(e.anchor)) this.tools.set(e.tool, { ...t, description: d.replace(e.anchor, e.anchor + e.append) });
+      }
     }
     // R172 HB-ACTION-PLAN-FIELDS (4.119.0): with CORTEX_ACTION_PLAN_FIELDS=true the action tools (Bash/Edit/Write) carry REQUIRED
     // `analysis` + `plan` string fields — the per-step plan as part of the action's own JSON (Terminus 2's shape through function
