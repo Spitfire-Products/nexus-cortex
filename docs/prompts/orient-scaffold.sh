@@ -22,8 +22,11 @@ fi
 # files with a content peek, which copy of the code imports, missing deps, task env, services, data outside the workdir) replaces the
 # workspace map and the v2 verification section; the tooling / git / baseline / setup lines below still print. Unset = unchanged output.
 INV=""; if [ "${CORTEX_INVENTORY:-0}" = "1" ]; then for c in "$(dirname "$0")/inventory" "${CORTEX_ROOT:-/nonexistent}/.cortex/inventory"; do [ -f "$c" ] && { INV="$c"; break; }; done; fi
+INV_OUT=""
 if [ -n "$INV" ]; then
-  sh "$INV" "$W" 2>/dev/null
+  # Captured here, PRINTED after the setup line below (2026-09-29): the model reads orient through `| head -50/-100` in ~93% of sessions,
+  # and with the inventory first 8/17 cw sessions lost orient's own short lines (git, the `-- baseline:` revert instruction, setup).
+  INV_OUT=$(sh "$INV" "$W" 2>/dev/null)
 else
 echo "== WORKSPACE MAP: $W =="
 ls -1A "$W" 2>/dev/null | head -40
@@ -148,7 +151,22 @@ if [ "${CORTEX_ORIENT_BOOTSTRAP:-0}" = "1" ] && { ! command -v python3 >/dev/nul
   PM=""; for m in apt-get apk dnf yum pacman zypper brew; do command -v "$m" >/dev/null 2>&1 && { PM="$m"; break; }; done
   ROOT=$([ "$(id -u 2>/dev/null)" = "0" ] && echo yes || echo no)
   GUARD=""; [ "$V2" = "1" ] && GUARD=" Install into the system or a venv, never into the task's own source or vendored tree."
+  # With the inventory on and a python interpreter present, the inventory has already checked the workspace manifests (requirements/
+  # pyproject/package.json) against what is installed. Replace the speculative "may be missing" paragraph with those facts
+  # (r-orient-deficiencies-2026-09-29 §3.3: "print only the MISSING ones … keep the generic line otherwise"); keep the install discipline
+  # (once, cached, never into the task's source/vendored tree). No manifest, no python, or no inventory = the generic line below, unchanged.
+  INV_MF=""; INV_MISS=""
+  if [ -n "$INV_OUT" ] && { command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; }; then
+    printf '%s\n' "$INV_OUT" | grep -qE "declared but NOT installed|declared python dependencies are installed|^-- NODE " && INV_MF=1
+    printf '%s\n' "$INV_OUT" | grep -qE "declared but NOT installed|^-- NODE .*NOT installed:" && INV_MISS=1
+  fi
+  if [ -n "$INV_MF" ] && [ -n "$INV_MISS" ]; then
+    echo "-- setup: the workspace manifests declare dependencies that are NOT installed (listed in the inventory below; pkg-mgr=${PM:-none}, root=$ROOT). Install what the task needs ONCE and reuse it, with a fast cached installer for the language (uv for Python, bun for JS) — do not re-download a large dependency twice.$GUARD Pin versions, then verify with a real run before finishing."
+  elif [ -n "$INV_MF" ]; then
+    echo "-- setup: the declared dependencies are installed (see the inventory below). If you still need a package, install it once$( [ "$V2" = "1" ] && echo " into the system or a venv, never into the task's own source or vendored tree" )."
+  else
   echo "-- setup: this box may be missing a tool/language/library the task needs (pkg-mgr=${PM:-none}, root=$ROOT). If so, INSTALL what you need yourself following standard practice (the system package manager, or the language's own installer); install ONCE and reuse it, and prefer a fast cached installer for the language (uv for Python, bun for JS) — do not re-download a large dependency twice.$GUARD Pin versions, then verify with a real run before finishing. An empty box is part of the task, not an error."
+  fi
 fi
 # orient v2 — VERIFICATION ENTRY POINTS: how this task's correctness is checked, so work is built and verified against the real
 # criteria, not the agent's own guess (MiMo K=3: in 57/79 failures the agent's own test passed on a wrong solution). Same usage-line
@@ -169,6 +187,8 @@ for f in pytest.ini tox.ini setup.cfg pyproject.toml Makefile package.json; do
 done
 TD=$(find . -maxdepth 3 -type d \( -name tests -o -name test \) 2>/dev/null | grep -vE "node_modules|/\.|site-packages" | head -4 | tr '\n' ' ')
 fi
+# The inventory (captured above) prints AFTER orient's short facts — tooling, git, baseline, setup — so a `| head -N` read keeps them.
+[ -n "$INV" ] && printf '%s\n' "$INV_OUT"
 if [ -n "$VE$TC$TD" ] && [ -z "$INV" ]; then
   echo "== VERIFICATION ENTRY POINTS (build to and verify against these — not a test you invent) =="
   for f in $VE; do

@@ -41,8 +41,19 @@ W = os.path.abspath(sys.argv[1])
 SKIP_DIRS = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', '.cortex', '.cache', '.pytest_cache', '.mypy_cache', '.tox', '.npm',
              '.gradle', '.m2', 'site-packages', 'dist-packages', '.idea', '.vscode', '.addon-tools'}
 MAX_WALK = 60000
-out = []
-p = out.append
+# Output is bucketed per section and emitted DECISIVE-FIRST (2026-09-29): the model reads orient through `| head -50/-100` in ~93% of sessions
+# (504/541, .bench/mimo/boot-prompt-audit.py) and cut the inventory in 8/17 cw sessions — so what decides a task (how it is checked, which
+# copy of the code runs, missing deps, services, data outside the workdir) comes before the long per-file listing. Computation order is unchanged.
+SECTIONS, CUR = {}, ['header']
+EMIT = ['header', 'checked', 'python', 'node', 'services', 'outside', 'structure', 'files', 'env']
+
+
+def sec(name):
+    CUR[0] = name
+
+
+def p(line):
+    SECTIONS.setdefault(CUR[0], []).append(line)
 
 
 def rel(x):
@@ -191,6 +202,7 @@ counts = ', '.join(f'{r} {len(v)}' for r, v in sorted(by_role.items(), key=lambd
 p('by role: ' + counts)
 
 # ---------------------------------------------------------------- 1. verification + contracts (PRIORITY — never capped)
+sec('checked')
 chk = by_role.get('checker/runner', []); con = by_role.get('contract/spec', [])
 if chk or con:
     p('-- HOW THIS TASK IS CHECKED (task-shipped checkers/runners and contracts — read these before building) --')
@@ -213,6 +225,7 @@ if chk or con:
         p('  test dirs: ' + ', '.join(shown) + (f' (+{len(tests)-12} more — find . -type d -name "test*")' if len(tests) > 12 else ''))
 
 # ---------------------------------------------------------------- 2. structure: every dir with counts (capped with marker)
+sec('structure')
 p('-- STRUCTURE (dir: files directly inside) --')
 dl = sorted(d for d in dirs if d != '.')
 top = [d for d in dl if d.count('/') <= 1]
@@ -226,6 +239,7 @@ if deep:
     p(f'  ({len(deep)} deeper directories — find . -mindepth 3 -type d)')
 
 # ---------------------------------------------------------------- 3. files by role with a peek (priority roles in full, bulk capped)
+sec('files')
 CAPS = {'source': 40, 'doc': 30, 'data': 40, 'manifest/config': 30, 'test': 20, 'other': 20}
 ORDER = ['doc', 'manifest/config', 'source', 'data', 'test', 'other']
 for r in ORDER:
@@ -244,6 +258,7 @@ for r in ORDER:
                f'list: find . -type f | grep -v -e .git/ -e node_modules  (role here = {r})'))
 
 # ---------------------------------------------------------------- 4. python: which interpreter, which copy of the code runs, missing deps
+sec('python')
 def run(cmd, timeout=20):
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=W)
@@ -307,6 +322,7 @@ if declared:
         p(f'  all {len(declared)} declared python dependencies are installed')
 
 # ---------------------------------------------------------------- 5. node
+sec('node')
 pj = [f for f, _ in by_role.get('manifest/config', []) if os.path.basename(f) == 'package.json' and f.count('/') <= 2 and 'node_modules' not in f]
 for f in pj[:3]:
     try:
@@ -321,6 +337,7 @@ for f in pj[:3]:
       (f', NOT installed: {", ".join(miss[:20])}' + (' …' if len(miss) > 20 else '') if miss else (', node_modules present' if os.path.isdir(nm) else ', no node_modules')))
 
 # ---------------------------------------------------------------- 6. task environment (from the container's own init env; secrets redacted)
+sec('env')
 BOILER = {'PATH', 'HOME', 'HOSTNAME', 'TERM', 'SHLVL', 'PWD', 'OLDPWD', '_', 'LANG', 'LC_ALL', 'DEBIAN_FRONTEND', 'container', 'GPG_KEY',
           'PYTHON_VERSION', 'PYTHON_SHA256', 'PYTHON_PIP_VERSION', 'PYTHON_GET_PIP_URL', 'PYTHON_GET_PIP_SHA256', 'PYTHON_SETUPTOOLS_VERSION',
           'NODE_VERSION', 'YARN_VERSION', 'LS_COLORS', 'SSL_CERT_DIR', 'SSL_CERT_FILE', 'NVIDIA_VISIBLE_DEVICES', 'NVIDIA_DRIVER_CAPABILITIES'}
@@ -349,6 +366,7 @@ if src_note is not None:
         if len(keep) > 40: p(more(len(keep) - 40, 'variables', 'cat /proc/1/environ | tr "\\0" "\\n"'))
 
 # ---------------------------------------------------------------- 7. services + paths outside the workdir
+sec('services')
 hosts = []
 try:
     for l in open('/etc/hosts'):
@@ -372,6 +390,7 @@ if hosts or ports or urlvars:
     if hosts: p('  other hosts on this network: ' + ', '.join(sorted(set(hosts))[:20]))
     if ports: p('  listening locally: ' + ', '.join(str(x) for x in sorted(set(ports))[:20]))
     for u in urlvars[:12]: p('  ' + u)
+sec('outside')
 outside = []
 for d in ('/shared', '/data', '/mnt', '/srv', '/workspace', '/input', '/inputs', '/output', '/outputs', '/reference', '/resources', '/task', '/opt/task'):
     if os.path.isdir(d) and not W.startswith(d) and not d.startswith(W):
@@ -386,5 +405,5 @@ for d in ('/shared', '/data', '/mnt', '/srv', '/workspace', '/input', '/inputs',
         if n: outside.append(f'{d} ({n}{"+" if capped else ""} files)')
 if outside:
     p('-- OUTSIDE THE WORKDIR (task data may live here) -- ' + ', '.join(outside) + ' — list: find <dir> -type f | head -100')
-print('\n'.join(out))
+print('\n'.join(line for name in EMIT for line in SECTIONS.get(name, [])))
 PYINV
