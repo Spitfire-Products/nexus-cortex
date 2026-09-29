@@ -27,7 +27,8 @@ import { buildRouterSample, appendJsonlRotating } from './cortexTrainingRecord.j
 import { join as pathJoin } from 'path';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'node:child_process';
-import { ENV_RECON_COMMAND, resolveLiftPlanConfig, parsePlannerResponse } from '../training/liftPlanner.js';
+import { ENV_RECON_COMMAND, resolveLiftPlanConfig, parsePlannerResponse, bankPlanText } from '../training/liftPlanner.js';
+import { clipIn, FULL_CAPS, HINTS, resolveInventory, resolveInventoryPath } from '../training/steerInputs.js';
 import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage, gapHoldable, parseSpecChecks, groundSpecCheck, specFailFraction, applyVetoFloor, holdProgressed, planSimilarity, specCheckEvidence, specBlockForJudge, dropSpecEchoes, specBlockForWriter, vetoMessageLead } from '../training/endTurnResolver.js';
 import { jevAvailable, jevNoul, buildGapHoldState, GAP_HOLD_QUESTIONS } from '../training/jevGate.js'; // R173b
 import { resolveFrameConfig, FRAME_CONTRACT, FRAME_TOOL_NAME } from '../frames/frameConfig.js'; // R179
@@ -79,7 +80,7 @@ import type { ChunkRead } from '../training/chunkReadProgression.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
 import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage, memoryIndexLine, upsertMemoryIndex, scaleEstimateToRequestView, approxCharsOf, anchoredRequestEstimate, resolveCompactionHandoffQA, resolveHandoffQAMaxQuestions, runHandoffQA, type HandoffQAResult } from './compactionResume.js';
 import { renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBand, resolveRearmBand } from './compactionResumeTemplate.js';
-import { resolveCortexStateDir, cortexStatePath } from '../utils/stateDir.js';
+import { resolveCortexStateDir, cortexStatePath, resolveWorkspaceClean, cortexProjectDir } from '../utils/stateDir.js';
 import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig, classifyCheckRun, isInvestigateCommandAllowed, specCheckParses, readFileSlice, formatEvidenceRound } from '../training/judgeEvidence.js';
 import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, mentorSurfaceTimeoutMs, type MentorCallMeta } from '../training/mentorRole.js';
 import { resolveOuterToolDeadlineMs, resolveOuterToolTimeoutFloorMs } from './outerToolTimeout.js';
@@ -882,8 +883,8 @@ export class CortexOrchestrator {
       const observations = (lastMsg.message.content as any[])
         .filter((b) => b?.type === 'tool_result')
         .map((b) => (typeof b.content === 'string' ? b.content : JSON.stringify(b.content)))
-        .join('\n')
-        .slice(0, 4000);
+        .join('\n');
+      const observationsForPlanner = clipIn(observations, 4000, FULL_CAPS.observations, "the agent's first observation", HINTS.observations);
       // v1.1 (2026-09-04): gather a GUARANTEED environment report so the planner steers installs +
       // Bash timeouts from the box's REAL resources (tooling/packages/disk/tests) — not just whatever
       // the model's first action happened to observe. Bounded + fail-open (partial stdout on
@@ -910,7 +911,7 @@ export class CortexOrchestrator {
         const text = await withTimeout(
           this.helperMiddleware.generateTaskPlan({
             task: this.lastRealUserText(),
-            observations,
+            observations: observationsForPlanner,
             envReport,
             evidenceRounds: evidenceRounds.length ? evidenceRounds.slice() : undefined,
             investigate: mode,
@@ -955,7 +956,7 @@ export class CortexOrchestrator {
         kind: 'lift_plan',
         // OBSERVABILITY (resolver-AB follow-up): bank the plan TEXT + latency, not just counts —
         // so a k=5 run can score plan QUALITY (and read the reasoning behind a RETIRE).
-        detail: { fired: true, planChars: plan.length, retire, criteriaStated, latencyMs, ...r171, mentor: this.mentorWire('lift-plan', resolveLiftPlanConfig().effort, resolveLiftPlanConfig().outputBudgetTokens), planText: plan.slice(0, 4000) },
+        detail: { fired: true, planChars: plan.length, retire, criteriaStated, latencyMs, ...r171, mentor: this.mentorWire('lift-plan', resolveLiftPlanConfig().effort, resolveLiftPlanConfig().outputBudgetTokens), ...bankPlanText(plan) },
       }).catch(() => {});
       if (this.config.debug) {
         console.log(`[LiftPlan] plan delivered at lift (${plan.length} chars, retire=${retire}, criteria=${criteriaStated})`);
@@ -1013,10 +1014,29 @@ export class CortexOrchestrator {
           stdio: ['ignore', 'pipe', 'ignore'],
           shell: '/bin/sh',
         }),
-      ).slice(0, 6000);
+      );
     } catch (re: any) {
-      r = String(re?.stdout ?? '').slice(0, 6000);
+      r = String(re?.stdout ?? '');
     }
+    // CORTEX_INVENTORY=1 (dark, 2026-09-29): the canonical workspace inventory LEADS the report the steering models plan and judge from —
+    // the same picture orient gives the action model (TB4.0: a lift plan named a workspace asset only when orient had shown it, 0/6 vs 4/4).
+    if (resolveInventory()) {
+      const inv = resolveInventoryPath(this.config.projectPath);
+      if (inv) {
+        try {
+          const cwd = this.config.projectPath || process.cwd();
+          const out = String(execSync(`sh ${JSON.stringify(inv)} ${JSON.stringify(cwd)}`, {
+            cwd, timeout: Math.max(resolveLiftPlanConfig().reconTimeoutMs, 30_000), encoding: 'utf8', maxBuffer: 2 * 1024 * 1024,
+            stdio: ['ignore', 'pipe', 'ignore'], shell: '/bin/sh',
+          }));
+          if (out.trim()) r = `${out.trim()}\n\n${r}`;
+        } catch (ie: any) {
+          const part = String(ie?.stdout ?? '').trim();
+          if (part) r = `${part}\n[inventory incomplete: timed out or failed]\n\n${r}`;
+        }
+      }
+    }
+    r = clipIn(r, 6000, FULL_CAPS.env, 'the environment report', 'the recon ran on the task box');
     this.cachedEnvReport = r;
     return r;
   }
@@ -1515,7 +1535,7 @@ export class CortexOrchestrator {
           checkSample: combinedCheck.trim().slice(0, 3000),
           liftPlanChars: this.liftPlanText.length,
           mentor: this.mentorWire('endturn-resolver', cfg.effort, cfg.outputBudgetTokens),
-          planText: verdict.plan.slice(0, 4000),
+          ...bankPlanText(verdict.plan),
           workProductSample: workProduct.slice(0, 1500),
           attestation: attestation.slice(0, 800),
         },
@@ -9212,7 +9232,8 @@ export class CortexOrchestrator {
     // (lean context) once CORTEX.md exists and there's nothing to initialize.
     try {
       const projectPath = this.config.projectPath || process.cwd();
-      const hasCortexMd = existsSync(pathJoin(projectPath, '.cortex', 'CORTEX.md'));
+      const hasCortexMd = existsSync(pathJoin(projectPath, '.cortex', 'CORTEX.md'))
+        || (resolveWorkspaceClean() && existsSync(pathJoin(cortexProjectDir(projectPath), 'CORTEX.md')));
       if (!hasCortexMd) {
         def.discoveryTier = 'essential';
       }

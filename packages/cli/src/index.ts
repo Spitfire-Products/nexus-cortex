@@ -53,6 +53,7 @@ import { autoResearchExperiment } from './commands/autoresearch/experiment.js';
 import { autoResearchFix } from './commands/autoresearch/fix.js';
 import { autoResearchJudge } from './commands/autoresearch/judge.js';
 import { autoResearchLoop } from './commands/autoresearch/loop.js';
+import { autoResearchArms } from './commands/autoresearch/arms.js';
 import {
   autoResearchBacklogList,
   autoResearchBacklogShow,
@@ -721,6 +722,20 @@ autoresearch
   .action(async (opts) => {
     const globalOpts = program.opts();
     await autoResearchLoop({ ...opts, json: globalOpts.json });
+  });
+
+autoresearch
+  .command('arms')
+  .description('Print the arm plan (model per arm) as JSON — the loop\'s multi-provider planner, for callers outside the CLI (bench TB2_ATTEMPTS)')
+  .option('--width <n>', 'number of arms / attempts', '1')
+  .option('--model <id>', 'base model — leads the rotation (arm 1)')
+  .option('--arm-models <list>', 'comma-separated model ids rotated across arms')
+  .option('--providers <list>', 'comma-separated providers; each contributes its flagship tool-supporting model')
+  .option('--strategy <label>', 'strategy label recorded per arm')
+  .option('--missing-provider-key-policy <policy>', 'platform_fallback | omit | redistribute', 'platform_fallback')
+  .action(async (opts) => {
+    const globalOpts = program.opts();
+    await autoResearchArms({ ...opts, json: opts.json ?? globalOpts.json });
   });
 
 // ── backlog: view + manage the deficiency pool (.cortex/research-backlog.jsonl) ──

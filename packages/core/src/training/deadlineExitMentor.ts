@@ -20,6 +20,7 @@
  * mis-calls a closing-in task HURTS), so this ships DARK and is A/B-validated. Pure + testable;
  * the hard-floor break rung stays as the unconditional failsafe underneath.
  */
+import { clipIn, FULL_CAPS, HINTS } from './steerInputs.js';
 
 export interface DeadlineExitConfig {
   /** Master switch: CORTEX_DEADLINE_EXIT_MENTOR. Dark by default. */
@@ -108,17 +109,17 @@ export interface DeadlineExitContext {
 
 export function buildDeadlineExitPrompt(ctx: DeadlineExitContext): string {
   const parts: string[] = [];
-  parts.push(`TASK:\n${(ctx.task || '').trim().slice(0, 2500)}`);
+  parts.push(`TASK:\n${clipIn((ctx.task || '').trim(), 2500, FULL_CAPS.task, 'the task text', HINTS.task)}`);
   const lift = (ctx.liftPlan || '').trim();
-  if (lift) parts.push(`PLAN OF ATTACK (stated at lift by the planner — ADVISORY: judge against the TASK's real criteria; where the plan and the TASK disagree, the TASK wins — say so in one line):\n${lift.slice(0, 3500)}`);
+  if (lift) parts.push(`PLAN OF ATTACK (stated at lift by the planner — ADVISORY: judge against the TASK's real criteria; where the plan and the TASK disagree, the TASK wins — say so in one line):\n${clipIn(lift, 3500, FULL_CAPS.plan, 'the lift plan', HINTS.plan)}`);
   const env = (ctx.envReport || '').trim();
-  if (env) parts.push(`ENVIRONMENT REPORT:\n${env.slice(0, 2000)}`);
+  if (env) parts.push(`ENVIRONMENT REPORT:\n${clipIn(env, 2000, FULL_CAPS.env, 'the environment report', HINTS.env)}`);
   parts.push(`REMAINING BUDGET: ${(ctx.remainingBudget || '').trim().slice(0, 200)}`);
   const prog = (ctx.recentProgress || '').trim();
-  if (prog) parts.push(`RECENT PROGRESS (did each step reduce the gap?):\n${prog.slice(0, 1500)}`);
+  if (prog) parts.push(`RECENT PROGRESS (did each step reduce the gap?):\n${clipIn(prog, 1500, FULL_CAPS.progress, 'the recent progress')}`);
   const delta = (ctx.workspaceDelta || '').trim();
-  if (delta) parts.push(`WORKSPACE DELTA — THE ARTIFACT (files changed this task, with heads; ground truth):\n${delta.slice(0, 5000)}`);
-  parts.push(`WORK SO FAR (latest answer + recent tool outputs):\n${(ctx.workProduct || '').trim().slice(0, 5000)}`);
+  if (delta) parts.push(`WORKSPACE DELTA — THE ARTIFACT (files changed this task, with heads; ground truth):\n${clipIn(delta, 5000, FULL_CAPS.delta, 'the workspace delta', HINTS.delta)}`);
+  parts.push(`WORK SO FAR (latest answer + recent tool outputs):\n${clipIn((ctx.workProduct || '').trim(), 5000, FULL_CAPS.workProduct, 'the work so far', HINTS.workProduct)}`);
   parts.push(
     'Checkpoint now. First line: `VERDICT: CONTINUE` | `FINISH` | `ACTION` | `RETIRE`. ' +
       'If ACTION, the single step + its check; if RETIRE, one line why; if FINISH, one confirming clause.',

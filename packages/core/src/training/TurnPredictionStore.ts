@@ -18,6 +18,7 @@
  */
 import { join } from 'path';
 import { appendJsonlRotating } from '../orchestrator/cortexTrainingRecord.js';
+import { resolveWorkspaceClean, resolveCortexStateDir } from '../utils/stateDir.js';
 
 /**
  * How the ACTUAL next message relates to the displayed prediction (the TUI
@@ -125,7 +126,10 @@ export function scoreAndRecordTurnPrediction(
       scored_at_ms: nowMs,
       prefill_provenance: prefillProvenance,
     };
-    appendJsonlRotating(join(projectRoot, STORE_RELATIVE_PATH), JSON.stringify(record));
+    const storePath = resolveWorkspaceClean()
+      ? join(resolveCortexStateDir(projectRoot).dir, 'training', 'turn-predictions.jsonl')
+      : join(projectRoot, STORE_RELATIVE_PATH);
+    appendJsonlRotating(storePath, JSON.stringify(record));
     return record;
   } catch {
     return null;

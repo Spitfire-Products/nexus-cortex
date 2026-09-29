@@ -13,6 +13,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { Message } from '../session/MessageTypes.js';
 import { isSystemMessage } from '../session/MessageTypes.js';
+import { resolveWorkspaceClean, resolveCortexStateDir } from '../utils/stateDir.js';
 
 /**
  * Compaction semantic metadata for search and retrieval
@@ -174,7 +175,9 @@ export class StoredCompactionManager {
   private baseDir: string;
 
   constructor(workspaceRoot: string = process.cwd()) {
-    this.baseDir = path.join(workspaceRoot, StoredCompactionManager.COMPACTIONS_DIR);
+    this.baseDir = resolveWorkspaceClean()
+      ? path.join(resolveCortexStateDir(workspaceRoot).dir, 'compactions')
+      : path.join(workspaceRoot, StoredCompactionManager.COMPACTIONS_DIR);
   }
 
   /**

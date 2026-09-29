@@ -25,6 +25,7 @@ import { AutoApproveHandler } from './AutoApproveHandler.js';
 import { DenyAllHandler } from './DenyAllHandler.js';
 import { PermissionAuditLogger } from './PermissionAuditLogger.js';
 import { PermissionsMiddleware } from '../PermissionsMiddleware.js';
+import { resolveWorkspaceClean, resolveCortexStateDir } from '../../utils/stateDir.js';
 
 /**
  * Options for configuration loader
@@ -321,7 +322,9 @@ export class PermissionConfigLoader {
     }
 
     const logPath =
-      auditConfig.path || '.cortex/audit/permissions.log';
+      auditConfig.path || (resolveWorkspaceClean()
+        ? path.join(resolveCortexStateDir(process.cwd()).dir, 'audit', 'permissions.log')
+        : '.cortex/audit/permissions.log');
 
     return new PermissionAuditLogger(logPath, {
       maxFileSizeBytes: auditConfig.maxFileSizeBytes,

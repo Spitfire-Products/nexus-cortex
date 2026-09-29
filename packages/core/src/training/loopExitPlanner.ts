@@ -11,6 +11,7 @@
  * one-shot planner cannot grind) and the big output budget avoids reasoning-eats-the-answer
  * truncation on DeepSeek (the same landmine documented for the resolver/lift-planner).
  */
+import { clipIn, FULL_CAPS, HINTS } from './steerInputs.js';
 
 export interface LoopExitConfig {
   effort: string;
@@ -66,7 +67,7 @@ export const LOOP_EXIT_SYSTEM =
 export function buildLoopExitPrompt(ctx: LoopExitContext): string {
   const parts = [
     `TASK:\n${ctx.task}`,
-    ctx.liftPlan ? `\nPLAN OF ATTACK (stated at lift — ADVISORY: your exit plan must not contradict it without saying why; the TASK wins):\n${ctx.liftPlan.slice(0, 3500)}` : '',
+    ctx.liftPlan ? `\nPLAN OF ATTACK (stated at lift — ADVISORY: your exit plan must not contradict it without saying why; the TASK wins):\n${clipIn(ctx.liftPlan, 3500, FULL_CAPS.plan, 'the lift plan', HINTS.plan)}` : '',
     ctx.envReport ? `\nENVIRONMENT REPORT:\n${ctx.envReport}` : '',
     `\nLOOPING TOOL (blocked twice): ${ctx.loopingTool}`,
     ctx.recentAttempts ? `\nRECENT ATTEMPTS (what the junior kept doing):\n${ctx.recentAttempts}` : '',

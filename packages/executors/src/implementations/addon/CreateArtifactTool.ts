@@ -1,5 +1,5 @@
 import { BaseTool } from '../../base/BaseTool.js';
-import { resolveCortexStateDir } from '@nexus-cortex/core';
+import { resolveCortexStateDir, harnessScratchBase } from '@nexus-cortex/core';
 import type { ToolResult } from '../../base/ToolResult.js';
 import { spawn, ChildProcess } from 'child_process';
 import { promises as fs } from 'fs';
@@ -301,7 +301,8 @@ export class CreateArtifactToolExecutor extends BaseTool<CreateArtifactToolParam
     });
 
     // Also initialize sandbox registry for backwards compatibility
-    const sandboxRegistry = SandboxRegistry.getInstance(config.workingDirectory);
+    // .addon-tools/registry.json was written into EVERY task workspace at server start; the state dir under CORTEX_WORKSPACE_CLEAN.
+    const sandboxRegistry = SandboxRegistry.getInstance(harnessScratchBase(config.workingDirectory));
     sandboxRegistry.initialize().catch((error: any) => {
       console.error(`⚠  Failed to initialize SandboxRegistry: ${error.message}`);
     });
@@ -966,7 +967,7 @@ if __name__ == '__main__':
     });
 
     // Also store in sandbox registry for backwards compatibility
-    const sandboxRegistry = SandboxRegistry.getInstance(this.workingDirectory);
+    const sandboxRegistry = SandboxRegistry.getInstance(harnessScratchBase(this.workingDirectory));
     await sandboxRegistry.register({
       id: artifactId,
       name: params.name,

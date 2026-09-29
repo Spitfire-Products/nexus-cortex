@@ -11,6 +11,7 @@
  * the mentor quarantines that reasoning where it belongs and hands the action model a plan, not a
  * puzzle. Same delivery as the lift planner: orchestrator-invoke → system-reminder. Pure + testable.
  */
+import { clipIn, FULL_CAPS, HINTS } from './steerInputs.js';
 
 /** R188 (2026-09-23): the task text is the spec — 25 of 64 TB4.0 tasks exceed 2000 chars and 14 exceed 2500; every steerer sees the whole text up to this cap. */
 export const TASK_TEXT_CAP = 8000;
@@ -333,23 +334,23 @@ export function resolverClosingInstruction(abstain: boolean, meetsConfirm = fals
 /** Build the user prompt for the judge. Bounded slices keep the call cheap and cache-stable. */
 export function buildResolverUserPrompt(ctx: EndTurnResolverContext, abstain = false, meetsConfirm = false, investigate?: 'offer' | 'withdraw'): string {
   const parts: string[] = [];
-  parts.push(`TASK:\n${(ctx.task || '').trim().slice(0, TASK_TEXT_CAP)}`);
+  parts.push(`TASK:\n${clipIn((ctx.task || '').trim(), TASK_TEXT_CAP, FULL_CAPS.task, 'the task text', HINTS.task)}`);
   const lift = (ctx.liftPlan || '').trim();
-  if (lift) parts.push(`PLAN OF ATTACK (stated at lift by the planner — ADVISORY: judge against the TASK's real criteria; where the plan and the TASK disagree, the TASK wins — say so in one line):\n${lift.slice(0, 3500)}`);
+  if (lift) parts.push(`PLAN OF ATTACK (stated at lift by the planner — ADVISORY: judge against the TASK's real criteria; where the plan and the TASK disagree, the TASK wins — say so in one line):\n${clipIn(lift, 3500, FULL_CAPS.plan, 'the lift plan', HINTS.plan)}`);
   const env = (ctx.envReport || '').trim();
-  if (env) parts.push(`ENVIRONMENT REPORT:\n${env.slice(0, 2500)}`);
+  if (env) parts.push(`ENVIRONMENT REPORT:\n${clipIn(env, 2500, FULL_CAPS.env, 'the environment report', HINTS.env)}`);
   const delta = (ctx.workspaceDelta || '').trim();
-  if (delta) parts.push(`WORKSPACE DELTA — THE ARTIFACT (files changed this task, with heads; ground truth):\n${delta.slice(0, 6000)}`);
+  if (delta) parts.push(`WORKSPACE DELTA — THE ARTIFACT (files changed this task, with heads; ground truth):\n${clipIn(delta, 6000, FULL_CAPS.delta, 'the workspace delta', HINTS.delta)}`);
   const check = (ctx.checkResult || '').trim();
-  if (check) parts.push(`CHECK RUN (an evident check entry point, executed by the harness just now; ground truth):\n${check.slice(0, 3000)}`);
-  parts.push(`WORK PRODUCT (the junior's final answer + its most recent checks/tool outputs):\n${(ctx.workProduct || '').trim().slice(0, 5000)}`);
+  if (check) parts.push(`CHECK RUN (an evident check entry point, executed by the harness just now; ground truth):\n${clipIn(check, 3000, FULL_CAPS.check, 'the check output', HINTS.check)}`);
+  parts.push(`WORK PRODUCT (the junior's final answer + its most recent checks/tool outputs):\n${clipIn((ctx.workProduct || '').trim(), 5000, FULL_CAPS.workProduct, 'the work product', HINTS.workProduct)}`);
   const att = (ctx.attestation || '').trim();
-  if (att) parts.push(`THE JUNIOR'S OWN ATTESTATION (treat as a claim to VERIFY, not as truth):\n${att.slice(0, 2000)}`);
+  if (att) parts.push(`THE JUNIOR'S OWN ATTESTATION (treat as a claim to VERIFY, not as truth):\n${clipIn(att, 2000, FULL_CAPS.attestation, 'the attestation', HINTS.attestation)}`);
   const prior = (ctx.priorVetoItems || '').trim();
-  if (prior) parts.push(`PRIOR VETO ITEMS (your own fix plan from the previous adjudication of this finish — grade each CLOSED or STILL OPEN before anything else):\n${prior.slice(0, 2500)}`);
+  if (prior) parts.push(`PRIOR VETO ITEMS (your own fix plan from the previous adjudication of this finish — grade each CLOSED or STILL OPEN before anything else):\n${clipIn(prior, 2500, FULL_CAPS.prior, 'the prior veto items')}`);
   const prog = (ctx.progressSummary || '').trim();
-  if (prog) parts.push(`PROGRESS SINCE THAT VETO (harness-observed, ground truth):\n${prog.slice(0, 1500)}`);
-  for (const ev of ctx.evidenceRounds ?? []) { const e = (ev || '').trim(); if (e) parts.push(e.slice(0, 6000)); } // R170
+  if (prog) parts.push(`PROGRESS SINCE THAT VETO (harness-observed, ground truth):\n${clipIn(prog, 1500, FULL_CAPS.progress, 'the progress summary')}`);
+  for (const ev of ctx.evidenceRounds ?? []) { const e = (ev || '').trim(); if (e) parts.push(clipIn(e, 6000, FULL_CAPS.evidence, 'this evidence round')); } // R170
   parts.push(resolverClosingInstruction(abstain, meetsConfirm, investigate));
   return parts.join('\n\n');
 }
@@ -533,7 +534,7 @@ export const SPEC_TESTS_SYSTEM =
 
 export function buildSpecTestsPrompt(task: string, envReport: string | undefined, max: number): string {
   const parts = [`TASK:\n${(task || '').trim().slice(0, TASK_TEXT_CAP)}`];
-  if (envReport && envReport.trim()) parts.push(`ENVIRONMENT REPORT (at task start):\n${envReport.trim().slice(0, 2500)}`);
+  if (envReport && envReport.trim()) parts.push(`ENVIRONMENT REPORT (at task start):\n${clipIn(envReport.trim(), 2500, FULL_CAPS.env, 'the environment report', HINTS.env)}`);
   parts.push(`Write at most ${max} CHECK lines, the most discriminating requirements first. Example form:\nCHECK: test -f /app/out.csv || { echo "MISSING /app/out.csv"; exit 1; }`);
   return parts.join('\n\n');
 }

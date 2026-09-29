@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
+  bankPlanText,
+  BANKED_PLAN_CHARS,
   PLANNER_SYSTEM,
   PLANNER_SYSTEM_V1,
   DOCTRINE_V2,
@@ -227,5 +229,20 @@ describe('ENV_RECON_COMMAND — checker usage leg (2026-09-23)', () => {
     expect(out).toMatch(/add_argument\("--layout"/);
     expect(out).not.toMatch(/notes\.txt.*usage/);
     expect(ENV_RECON_COMMAND.indexOf('== CHECKER')).toBeLessThan(ENV_RECON_COMMAND.indexOf('== WORKSPACE'));
+  });
+});
+
+describe('liftPlanner — bankPlanText (decision-event plan banking, 2026-09-29)', () => {
+  it('banks a real-sized plan in full (lift plans run to ~8.6K chars; the old 4000 cap cut 280/439 MiMo plans)', () => {
+    const plan = 'x'.repeat(8641);
+    expect(bankPlanText(plan)).toEqual({ planText: plan, planTextTruncated: false });
+  });
+  it('caps a runaway plan at BANKED_PLAN_CHARS and says so', () => {
+    const b = bankPlanText('y'.repeat(BANKED_PLAN_CHARS + 10));
+    expect(b.planText.length).toBe(BANKED_PLAN_CHARS);
+    expect(b.planTextTruncated).toBe(true);
+  });
+  it('tolerates an empty/undefined plan', () => {
+    expect(bankPlanText(undefined)).toEqual({ planText: '', planTextTruncated: false });
   });
 });

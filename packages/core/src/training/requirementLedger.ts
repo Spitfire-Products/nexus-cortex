@@ -14,6 +14,7 @@
  */
 
 import { TASK_TEXT_CAP } from './endTurnResolver.js';
+import { clipIn, FULL_CAPS, HINTS } from './steerInputs.js';
 
 export type ReqKind = 'threshold' | 'contract' | 'exactness' | 'constraint' | 'latency' | 'artifact' | 'command' | 'other';
 export interface RequirementLine { id: string; kind: ReqKind; text: string; check: string | null }
@@ -52,7 +53,7 @@ export function looksLikeBrokenCheck(result: string): boolean {
 
 export function buildRequirementLedgerPrompt(task: string, envReport: string | undefined, max: number): string {
   const parts = [`TASK:\n${(task || '').trim().slice(0, TASK_TEXT_CAP)}`];
-  if (envReport && envReport.trim()) parts.push(`ENVIRONMENT REPORT (at task start):\n${envReport.trim().slice(0, 2500)}`);
+  if (envReport && envReport.trim()) parts.push(`ENVIRONMENT REPORT (at task start):\n${clipIn(envReport.trim(), 2500, FULL_CAPS.env, 'the environment report', HINTS.env)}`);
   parts.push(`Write at most ${max} REQ lines. Format example (from an UNRELATED task — never copy it):\nREQ 1 | contract | a second identical submission must not rewrite crm_leads.json | CHECK: cp /app/data/crm_leads.json /tmp/a.json && npm run -s submit >/dev/null 2>&1; cmp -s /app/data/crm_leads.json /tmp/a.json || { echo "ledger rewritten by a duplicate submit"; exit 1; }`);
   return parts.join('\n\n');
 }

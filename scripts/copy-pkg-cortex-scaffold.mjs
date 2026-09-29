@@ -61,6 +61,13 @@ if (existsSync(orientScaffold)) {
   copyFileSync(orientScaffold, join(dest, 'orient'));
   copied++;
 }
+// Canonical workspace inventory (CORTEX_INVENTORY=1, dark, 2026-09-29): vendored beside orient as <pkg>/.cortex/inventory. Orient runs it
+// (sibling of its own path) and the harness runs it for the steering models' environment report (resolveInventoryPath).
+const inventoryScaffold = resolve(pkgDir, '..', '..', 'docs', 'prompts', 'inventory-scaffold.sh');
+if (existsSync(inventoryScaffold)) {
+  copyFileSync(inventoryScaffold, join(dest, 'inventory'));
+  copied++;
+}
 
 // Fresh-install onboarding memory: ship the seed as MEMORY.md (never the dev MEMORY.md,
 // which is project-private). Injected on turn 1; tells the first agent how to /init,

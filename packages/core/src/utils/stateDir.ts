@@ -10,7 +10,7 @@
  * Order: `CORTEX_STATE_DIR` (explicit override) → `<project>/.cortex` → `~/.cortex/projects/<hash>` → `<tmpdir>/nexus-cortex/<hash>`.
  */
 import { existsSync, mkdirSync, writeFileSync, unlinkSync, readFileSync, appendFileSync, statSync } from 'fs';
-import { join } from 'path';
+import { join, relative, isAbsolute } from 'path';
 import { homedir, tmpdir } from 'os';
 import { createHash } from 'crypto';
 
@@ -26,6 +26,17 @@ export interface CortexStateDir {
 }
 
 const cache = new Map<string, CortexStateDir>();
+
+/**
+ * CORTEX_WORKSPACE_CLEAN (dark, 2026-09-29): nothing the harness writes lands in the task's tree. Scratch AND project knowledge (orient's
+ * mechanical CORTEX.md + baseline, MemoryWrite, init_cortex_context, doctrine staging, sub-agent results, turn predictions, stored
+ * compactions, the sandbox registry) go to the state dir, and the project dir stops being a state-dir candidate. Graders that list the
+ * directory or diff the repo see only the model's work (TB2.1 sanitize-git-repo graded a repo holding .cortex/ copies of the secrets;
+ * polyglot tasks assert listdir == [one file]). Unset = unchanged.
+ */
+export function resolveWorkspaceClean(env: NodeJS.ProcessEnv = process.env): boolean {
+  return /^(1|true|on)$/i.test(String(env.CORTEX_WORKSPACE_CLEAN ?? '').trim());
+}
 const warned = new Set<string>();
 
 function probeWritable(dir: string): string | null {
@@ -50,20 +61,22 @@ export function hashProjectPath(projectPath: string): string {
  */
 export function resolveCortexStateDir(projectPath?: string, env: NodeJS.ProcessEnv = process.env): CortexStateDir {
   const project = projectPath || process.cwd();
-  const cached = cache.get(project);
+  const clean = resolveWorkspaceClean(env);
+  const key = project; // memoized per project (one answer for every caller in a process)
+  const cached = cache.get(key);
   if (cached) return cached;
   // A project path that does not exist (unit tests with synthetic roots, a not-yet-created workspace) is resolved PURELY —
   // no probe, no fallback, no side effects. A real working directory always exists, so the read-only case is still caught.
   if (!existsSync(project)) {
     const pure: CortexStateDir = { dir: join(project, '.cortex'), fallback: false, projectPath: project };
-    cache.set(project, pure);
+    cache.set(key, pure);
     return pure;
   }
 
   const candidates: Array<{ dir: string; label: string }> = [];
   const override = String(env.CORTEX_STATE_DIR ?? '').trim();
   if (override) candidates.push({ dir: override, label: 'CORTEX_STATE_DIR' });
-  candidates.push({ dir: join(project, '.cortex'), label: 'project' });
+  if (!clean) candidates.push({ dir: join(project, '.cortex'), label: 'project' });
   const hash = hashProjectPath(project);
   candidates.push({ dir: join(homedir() || tmpdir(), '.cortex', 'projects', hash), label: 'home' });
   candidates.push({ dir: join(tmpdir(), 'nexus-cortex', hash), label: 'tmp' });
@@ -76,6 +89,7 @@ export function resolveCortexStateDir(projectPath?: string, env: NodeJS.ProcessE
       const isPrimary = c.label === 'project' || c.label === 'CORTEX_STATE_DIR';
       result = { dir: c.dir, fallback: !isPrimary, reason: isPrimary ? undefined : reason, projectPath: project };
       if (c.label === 'project') ensureGitExcludesRuntimeState(project);
+      if (clean) ensureGitExcludesStateDir(project, c.dir);
       break;
     }
     if (c.label === 'project') reason = err;
@@ -88,8 +102,47 @@ export function resolveCortexStateDir(projectPath?: string, env: NodeJS.ProcessE
     warned.add(project);
     console.warn(`[WARN] cortex state: ${join(project, '.cortex')} is not writable (${result.reason}); using ${result.dir}`);
   }
-  cache.set(project, result);
+  cache.set(key, result);
   return result;
+}
+
+/** Where project knowledge lives (CORTEX.md, MEMORY.md + memory/, doctrine staging): `<project>/.cortex`, or the state dir when clean. */
+export function cortexProjectDir(projectPath?: string, env: NodeJS.ProcessEnv = process.env): string {
+  const project = projectPath || process.cwd();
+  return resolveWorkspaceClean(env) ? resolveCortexStateDir(project, env).dir : join(project, '.cortex');
+}
+
+/** Base dir for writers that root their own subdir at the working dir (the sandbox registry's .addon-tools/): the state dir when clean. */
+export function harnessScratchBase(workingDir?: string, env: NodeJS.ProcessEnv = process.env): string {
+  const wd = workingDir || process.cwd();
+  return resolveWorkspaceClean(env) ? resolveCortexStateDir(wd, env).dir : wd;
+}
+
+/** Clean mode with a state dir that still sits inside the project's repo (an explicit CORTEX_STATE_DIR under it): exclude it whole. */
+function ensureGitExcludesStateDir(project: string, dir: string): void {
+  try {
+    const rel = relative(project, dir);
+    if (!rel || rel.startsWith('..') || isAbsolute(rel)) return;
+    const gitDir = gitDirOf(project);
+    if (!gitDir) return;
+    const excludePath = join(gitDir, 'info', 'exclude');
+    const line = `${rel.split('\\').join('/')}/`;
+    const current = existsSync(excludePath) ? readFileSync(excludePath, 'utf8') : '';
+    if (current.split(/\r?\n/).includes(line)) return;
+    mkdirSync(join(gitDir, 'info'), { recursive: true });
+    const lead = current.length && !current.endsWith('\n') ? '\n' : '';
+    appendFileSync(excludePath, `${lead}# nexus-cortex state dir (CORTEX_WORKSPACE_CLEAN)\n${line}\n`);
+  } catch { /* best-effort */ }
+}
+
+function gitDirOf(project: string): string | null {
+  const dotGit = join(project, '.git');
+  if (!existsSync(dotGit)) return null;
+  if (!statSync(dotGit).isFile()) return dotGit;
+  const m = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, 'utf8'));
+  if (!m) return null;
+  const g = m[1]!.trim();
+  return g.startsWith('/') ? g : join(project, g);
 }
 
 /** Runtime-state paths under <project>/.cortex that must never ride into the project's git history. */

@@ -5,13 +5,34 @@
 # has no .cortex/orient of its own. Deterministic, read-only except for one
 # mechanical .cortex/CORTEX.md render (never overwrites), always exits 0.
 W="$(pwd)"
+# Clean workspace (CORTEX_WORKSPACE_CLEAN=1, dark, 2026-09-29): orient writes nothing into the task's tree. The mechanical CORTEX.md and the
+# baseline go to the harness state dir ($CORTEX_STATE_DIR, else ~/.cortex/projects/<sha1(path)[:12]>, else /tmp/nexus-cortex/<same>, the
+# same order and key as the harness's resolveCortexStateDir). Graders that list the directory or diff the repo (TB2.1 sanitize-git-repo,
+# polyglot listdir == [one file]) see only the model's work. Unset = unchanged.
+CX="$W/.cortex"; CLEAN=0
+case "${CORTEX_WORKSPACE_CLEAN:-0}" in 1|true|TRUE|True|on|ON) CLEAN=1;; esac
+if [ "$CLEAN" = "1" ]; then
+  if [ -n "${CORTEX_STATE_DIR:-}" ] && mkdir -p "$CORTEX_STATE_DIR" 2>/dev/null && [ -w "$CORTEX_STATE_DIR" ]; then CX="$CORTEX_STATE_DIR"
+  else
+    H=$(printf %s "$W" | sha1sum 2>/dev/null | cut -c1-12); [ -n "$H" ] || H=$(printf %s "$W" | cksum | cut -d' ' -f1)
+    CX="${HOME:-/tmp}/.cortex/projects/$H"; mkdir -p "$CX" 2>/dev/null && [ -w "$CX" ] || { CX="${TMPDIR:-/tmp}/nexus-cortex/$H"; mkdir -p "$CX" 2>/dev/null; }
+  fi
+fi
+# Canonical workspace inventory (CORTEX_INVENTORY=1, dark, 2026-09-29): the full role-labelled inventory (checkers + contracts, every dir,
+# files with a content peek, which copy of the code imports, missing deps, task env, services, data outside the workdir) replaces the
+# workspace map and the v2 verification section; the tooling / git / baseline / setup lines below still print. Unset = unchanged output.
+INV=""; if [ "${CORTEX_INVENTORY:-0}" = "1" ]; then for c in "$(dirname "$0")/inventory" "${CORTEX_ROOT:-/nonexistent}/.cortex/inventory"; do [ -f "$c" ] && { INV="$c"; break; }; done; fi
+if [ -n "$INV" ]; then
+  sh "$INV" "$W" 2>/dev/null
+else
 echo "== WORKSPACE MAP: $W =="
 ls -1A "$W" 2>/dev/null | head -40
+fi
 # orient v2 ships DARK (2026-09-27): every v2 section runs only with CORTEX_ORIENT_V2=1; unset = the v1 output byte-for-byte.
 V2="${CORTEX_ORIENT_V2:-0}"
 # orient v2 (2026-09-27, MiMo: the whole library lived under vendor/ and the map showed one level): one more level for the top
 # directories (skipping caches/vendored deps of the toolchain), capped so the map stays small.
-[ "$V2" = "1" ] && for d in $(ls -1A "$W" 2>/dev/null | head -40); do
+[ "$V2" = "1" ] && [ -z "$INV" ] && for d in $(ls -1A "$W" 2>/dev/null | head -40); do
   [ -d "$W/$d" ] || continue
   case "$d" in .git|node_modules|__pycache__|.venv|venv|.cache|.cortex|.addon-tools|dist|build|target) continue;; esac
   n=$(ls -1A "$W/$d" 2>/dev/null | wc -l | tr -d ' ')
@@ -64,7 +85,7 @@ fi
 # protected-file guard (a file outside the task's repair set was modified, usually vendored library code) and the workspaces are not git
 # repos, so nothing could show the agent what it had changed. Record a checksum list ONCE (never overwritten, so a re-run of orient keeps
 # the start state) and ship `.cortex/changed`, which lists modified / added / deleted files against it. POSIX cksum; capped.
-if [ "${CORTEX_ORIENT_BASELINE:-0}" = "1" ]; then
+if [ "${CORTEX_ORIENT_BASELINE:-0}" = "1" ] && [ "$CLEAN" != "1" ]; then
   mkdir -p "$W/.cortex" 2>/dev/null
   cat > "$W/.cortex/changed" 2>/dev/null <<'CHANGED'
 #!/bin/sh
@@ -85,12 +106,13 @@ CHANGED
   fi
   BN=$(wc -l < "$W/.cortex/baseline.cksum" 2>/dev/null | tr -d ' ')
   echo "-- baseline: ${BN:-0} files recorded at start; \`sh .cortex/changed\` lists files you modified/added/deleted. Before finishing, run it and revert every change the task did not require."
-elif [ "${CORTEX_ORIENT_BASELINE:-0}" = "auto" ] && ! { command -v git >/dev/null 2>&1 && git -C "$W" rev-parse --is-inside-work-tree >/dev/null 2>&1; }; then
+elif { [ "${CORTEX_ORIENT_BASELINE:-0}" = "1" ] && [ "$CLEAN" = "1" ]; } || { [ "${CORTEX_ORIENT_BASELINE:-0}" = "auto" ] && ! { command -v git >/dev/null 2>&1 && git -C "$W" rev-parse --is-inside-work-tree >/dev/null 2>&1; }; }; then
   # auto (general work, 2026-09-27): a git repo already has `git status`, so skip it; otherwise keep the baseline OUTSIDE the project
   # (the user's ~/.cortex, else /tmp), keyed by the workspace path, so nothing is written into the tree being worked on.
   KEY=$(printf %s "$W" | cksum | cut -d' ' -f1)
   BD="${HOME:-/tmp}/.cortex/baselines/$KEY"
   mkdir -p "$BD" 2>/dev/null && [ -w "$BD" ] || { BD="${TMPDIR:-/tmp}/cortex-baselines/$KEY"; mkdir -p "$BD" 2>/dev/null; }
+  [ "$CLEAN" = "1" ] && { BD="$CX/baseline"; mkdir -p "$BD" 2>/dev/null; }
   { printf '#!/bin/sh\n# Lists files modified / added / deleted in %s since orient recorded its start state.\nW=%s\nB=%s\n' "$W" "'$W'" "'$BD/baseline.cksum'"
     cat <<'CHANGED'
 cd "$W" || exit 0
@@ -108,7 +130,11 @@ CHANGED
     ( cd "$W" && find . \( -path ./.git -o -path ./.cortex -o -name node_modules -o -name __pycache__ -o -name .venv -o -name venv -o -name .cache -o -name .pytest_cache -o -name .mypy_cache \) -prune -o -type f -size -20M -print 2>/dev/null | head -20000 | tr '\n' '\0' | xargs -0 cksum 2>/dev/null > "$BD/baseline.cksum" )
   fi
   BN=$(wc -l < "$BD/baseline.cksum" 2>/dev/null | tr -d ' ')
+  if [ "$CLEAN" = "1" ] && [ "${CORTEX_ORIENT_BASELINE:-0}" = "1" ]; then
+    echo "-- baseline: ${BN:-0} files recorded at start; \`sh $BD/changed\` lists files you modified/added/deleted. Before finishing, run it and revert every change the task did not require."
+  else
   echo "-- baseline: ${BN:-0} files recorded at start (not a git repo); \`sh $BD/changed\` lists files you modified/added/deleted. Before finishing, run it and revert changes to existing files the task did not require."
+  fi
 fi
 # Bare-box hint (2026-09-03, operator-simplified): a task container may ship WITHOUT the language, compiler,
 # package or library the objective needs — on purpose (the agent phase is bare; internet is usually allowed).
@@ -143,7 +169,7 @@ for f in pytest.ini tox.ini setup.cfg pyproject.toml Makefile package.json; do
 done
 TD=$(find . -maxdepth 3 -type d \( -name tests -o -name test \) 2>/dev/null | grep -vE "node_modules|/\.|site-packages" | head -4 | tr '\n' ' ')
 fi
-if [ -n "$VE$TC$TD" ]; then
+if [ -n "$VE$TC$TD" ] && [ -z "$INV" ]; then
   echo "== VERIFICATION ENTRY POINTS (build to and verify against these — not a test you invent) =="
   for f in $VE; do
     echo "  $f"
@@ -196,28 +222,29 @@ machine_block() {
   ls -1A "$W" 2>/dev/null | head -25 | sed 's/^/- /'
   echo "$MB_END"
 }
-DOC=.cortex/CORTEX.md
+DOC=.cortex/CORTEX.md; CD=.cortex
+[ "$CLEAN" = "1" ] && { DOC="$CX/CORTEX.md"; CD="$CX"; }
 if [ ! -f "$DOC" ]; then
-  mkdir -p .cortex 2>/dev/null
+  mkdir -p "$CD" 2>/dev/null
   {
     echo "# CORTEX.md (mechanical orient scan — refine with init_cortex_context)"
     echo
     machine_block
-  } > "$DOC" 2>/dev/null && echo "(wrote mechanical .cortex/CORTEX.md)"
+  } > "$DOC" 2>/dev/null && echo "(wrote mechanical $DOC)"
 elif grep -q "orient:auto:begin" "$DOC" 2>/dev/null; then
-  machine_block > .cortex/.orient-fresh-block 2>/dev/null
-  awk '/orient:auto:begin/{f=1} f{print} /orient:auto:end/{f=0}' "$DOC" > .cortex/.orient-cur-block 2>/dev/null
-  if cmp -s .cortex/.orient-cur-block .cortex/.orient-fresh-block; then
-    rm -f .cortex/.orient-fresh-block .cortex/.orient-cur-block
+  machine_block > "$CD"/.orient-fresh-block 2>/dev/null
+  awk '/orient:auto:begin/{f=1} f{print} /orient:auto:end/{f=0}' "$DOC" > "$CD"/.orient-cur-block 2>/dev/null
+  if cmp -s "$CD"/.orient-cur-block "$CD"/.orient-fresh-block; then
+    rm -f "$CD"/.orient-fresh-block "$CD"/.orient-cur-block
     rm -f "$DOC.next" "$DOC.diff"
     echo "(CORTEX.md current)"
   else
-    awk -v fresh=.cortex/.orient-fresh-block '
+    awk -v fresh="$CD/.orient-fresh-block" '
       /orient:auto:begin/ {skip=1; while ((getline line < fresh) > 0) print line; close(fresh); next}
       /orient:auto:end/ {skip=0; next}
       skip!=1 {print}' "$DOC" > "$DOC.next" 2>/dev/null
     diff -u "$DOC" "$DOC.next" > "$DOC.diff" 2>/dev/null
-    rm -f .cortex/.orient-fresh-block .cortex/.orient-cur-block
+    rm -f "$CD"/.orient-fresh-block "$CD"/.orient-cur-block
     echo "(doctrine refresh staged for curation: machine sections drifted)"
   fi
 fi

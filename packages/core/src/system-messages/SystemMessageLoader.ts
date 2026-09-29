@@ -26,6 +26,7 @@ import type {
 import type { MessageRegistryEntry } from './types.js';
 import { truncateDocForInjection, resolveDocMaxBytes } from './docTruncation.js';
 import { pruneMemoryFileToArchive, resolveMemoryArchiveMaxBytes } from './memoryArchive.js';
+import { resolveWorkspaceClean, cortexProjectDir } from '../utils/stateDir.js';
 
 /**
  * User registry format (from .cortex/registry.json)
@@ -299,7 +300,11 @@ export class SystemMessageLoader {
     // Special handling for CORTEX.md - it's in .cortex/ root, not system-messages/
     if (definition.id === 'cortex') {
       // Try project-level first
-      const projectCortexPath = join(this.projectPath, '.cortex', 'CORTEX.md');
+      // Clean workspace: a CORTEX.md in the project (hand-authored) still wins; else the one orient wrote to the state dir.
+      let projectCortexPath = join(this.projectPath, '.cortex', 'CORTEX.md');
+      if (resolveWorkspaceClean() && !(await this.fileExists(projectCortexPath))) {
+        projectCortexPath = join(cortexProjectDir(this.projectPath), 'CORTEX.md');
+      }
       if (await this.fileExists(projectCortexPath)) {
         const content = await this.readFileCached(projectCortexPath);
         if (this.debug) {
@@ -435,7 +440,11 @@ export class SystemMessageLoader {
     // Special handling for MEMORY.md - persistent cross-session memory
     if (definition.id === 'claude_memory') {
       // Try .cortex/ location first (created by /init)
-      const cortexMemoryPath = join(this.projectPath, '.cortex', 'MEMORY.md');
+      // Clean workspace: MemoryWrite writes the index to the state dir — read it from there first.
+      let cortexMemoryPath = join(this.projectPath, '.cortex', 'MEMORY.md');
+      if (resolveWorkspaceClean() && await this.fileExists(join(cortexProjectDir(this.projectPath), 'MEMORY.md'))) {
+        cortexMemoryPath = join(cortexProjectDir(this.projectPath), 'MEMORY.md');
+      }
       if (await this.fileExists(cortexMemoryPath)) {
         const content = await this.loadCortexMemory(cortexMemoryPath);
         if (this.debug) {

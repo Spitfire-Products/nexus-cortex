@@ -16,6 +16,7 @@
 import { existsSync, readFileSync, writeFileSync, copyFileSync, renameSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
+import { cortexProjectDir } from '../utils/stateDir.js';
 
 export interface StagedDoctrine {
   staleDoc: string;
@@ -28,9 +29,10 @@ export interface StagedDoctrine {
 
 /** Read the staged refresh, if the orient script left one. */
 export function readStagedDoctrine(projectPath: string): StagedDoctrine | null {
-  const docPath = join(projectPath, '.cortex', 'CORTEX.md');
-  const nextPath = join(projectPath, '.cortex', 'CORTEX.md.next');
-  const diffPath = join(projectPath, '.cortex', 'CORTEX.md.diff');
+  const dir = cortexProjectDir(projectPath); // where orient staged it (the state dir under CORTEX_WORKSPACE_CLEAN)
+  const docPath = join(dir, 'CORTEX.md');
+  const nextPath = join(dir, 'CORTEX.md.next');
+  const diffPath = join(dir, 'CORTEX.md.diff');
   if (!existsSync(nextPath)) return null;
   return {
     staleDoc: existsSync(docPath) ? readFileSync(docPath, 'utf8') : '',

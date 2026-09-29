@@ -7,6 +7,7 @@
  * such a finish stands, the harness elicits a SECOND derivation by a DIFFERENT method, runs it, and treats disagreement as evidence
  * for one hold. Everything here is pure so the policy is unit-testable; the orchestrator does the model call + the runCheck.
  */
+import { clipIn, FULL_CAPS, HINTS } from './steerInputs.js';
 
 /** The persona of the second-method author. Sees the task, the agent's deliverable and its stated method — and must pick a
  *  DIFFERENT method. */
@@ -22,10 +23,10 @@ export const DERIVATION_SYSTEM =
   'METHOD_INDEPENDENT: … / one or more `CHECK: <cmd>` lines.';
 
 export function buildDerivationPrompt(input: { task: string; deliverable: string; agentSummary: string; envReport?: string; values: string[] }): string {
-  const parts = [`TASK:\n${(input.task || '').trim().slice(0, 6000)}`];
-  parts.push(`THE AGENT'S DELIVERABLE (the file(s) the task names, read by the harness just now):\n${(input.deliverable || '').trim().slice(0, 3000)}`);
-  parts.push(`THE AGENT'S OWN SUMMARY OF WHAT IT DID:\n${(input.agentSummary || '').trim().slice(0, 2500)}`);
-  if (input.envReport?.trim()) parts.push(`ENVIRONMENT REPORT:\n${input.envReport.trim().slice(0, 2000)}`);
+  const parts = [`TASK:\n${clipIn((input.task || '').trim(), 6000, FULL_CAPS.task, 'the task text', HINTS.task)}`];
+  parts.push(`THE AGENT'S DELIVERABLE (the file(s) the task names, read by the harness just now):\n${clipIn((input.deliverable || '').trim(), 3000, FULL_CAPS.deliverable, 'the deliverable', 'the file is in the workspace')}`);
+  parts.push(`THE AGENT'S OWN SUMMARY OF WHAT IT DID:\n${clipIn((input.agentSummary || '').trim(), 2500, FULL_CAPS.summary, "the agent's summary")}`);
+  if (input.envReport?.trim()) parts.push(`ENVIRONMENT REPORT:\n${clipIn(input.envReport.trim(), 2000, FULL_CAPS.env, 'the environment report', HINTS.env)}`);
   parts.push(`VALUES TO RECOMPUTE (names as the task uses them): ${input.values.join(', ') || 'the primary result the task asks for'}.`);
   return parts.join('\n\n');
 }

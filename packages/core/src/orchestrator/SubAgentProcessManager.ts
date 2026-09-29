@@ -39,6 +39,7 @@ import {
   type IPCPermissionRequestMessage,
 } from './SubAgentIPC.js';
 import type { ApprovalHandler } from '../middleware/contracts/MiddlewareContracts.js';
+import { resolveWorkspaceClean, resolveCortexStateDir } from '../utils/stateDir.js';
 
 // ============================================
 // TYPES
@@ -820,9 +821,18 @@ export class SubAgentProcessManager implements ISubAgentManager {
   // ============================================
 
   private getSubagentStoreDir(): string {
-    const sessionDir = process.env.SESSION_STORAGE_DIR || '.cortex/sessions';
     const root = process.env.PROJECT_ROOT || this.config.projectPath || process.cwd();
-    return join(root, sessionDir, `${this.config.parentSessionId}.subagents`);
+    return SubAgentProcessManager.subagentStoreDir(root, this.config.parentSessionId!);
+  }
+
+  /** `<root>/<SESSION_STORAGE_DIR|.cortex/sessions>/<sid>.subagents`; under CORTEX_WORKSPACE_CLEAN (no explicit SESSION_STORAGE_DIR)
+   *  `<stateDir>/sessions/<sid>.subagents`, so sub-agent results never land in the task's tree. */
+  private static subagentStoreDir(root: string, sessionId: string): string {
+    if (!process.env.SESSION_STORAGE_DIR && resolveWorkspaceClean()) {
+      return join(resolveCortexStateDir(root).dir, 'sessions', `${sessionId}.subagents`);
+    }
+    const sessionDir = process.env.SESSION_STORAGE_DIR || '.cortex/sessions';
+    return join(root, sessionDir, `${sessionId}.subagents`);
   }
 
   /** R147: a delegate that did not run through this manager's IPC (herdr pane) still gets the durable orphan-recovery record. */
@@ -854,9 +864,8 @@ export class SubAgentProcessManager implements ISubAgentManager {
     projectRoot?: string,
   ): SubAgentResult | null {
     try {
-      const sessionDir = process.env.SESSION_STORAGE_DIR || '.cortex/sessions';
       const root = projectRoot || process.env.PROJECT_ROOT || process.cwd();
-      const filePath = join(root, sessionDir, `${sessionId}.subagents`, `${toolUseId}.json`);
+      const filePath = join(SubAgentProcessManager.subagentStoreDir(root, sessionId), `${toolUseId}.json`);
       if (!existsSync(filePath)) return null;
       return JSON.parse(readFileSync(filePath, 'utf-8')) as SubAgentResult;
     } catch {

@@ -15,9 +15,20 @@
  * call (v1 is single-shot; a token cap would truncate DeepSeek mid-thought, so v1 is bounded by
  * the output budget, not a token/turn cap — see spec §2.4). Sibling of mentorConsult.ts.
  */
+import { clipIn, FULL_CAPS, HINTS } from './steerInputs.js';
+import { resolveWorkspaceClean } from '../utils/stateDir.js';
 
 /** R188 (2026-09-23): the task text is the spec — 25 of 64 TB4.0 tasks exceed 2000 chars and 14 exceed 2500; every steerer sees the whole text up to this cap. */
 export const TASK_TEXT_CAP = 8000;
+
+/** Plan text banked in decision events (lift_plan, endturn_resolver). Was a hard 4000-char slice, which cut 280 of 439 delivered MiMo lift
+ *  plans (median 4.8K, max 8.6K chars) — the tail with the numbered steps — so offline plan analysis judged truncated plans (2026-09-29).
+ *  The cap only guards a runaway response; `planTextTruncated` says when it bit. */
+export const BANKED_PLAN_CHARS = 32000;
+export function bankPlanText(plan: string | undefined): { planText: string; planTextTruncated: boolean } {
+  const s = plan ?? '';
+  return { planText: s.slice(0, BANKED_PLAN_CHARS), planTextTruncated: s.length > BANKED_PLAN_CHARS };
+}
 
 export interface LiftPlanConfig {
   /**
@@ -174,6 +185,13 @@ export const SCOPE_DOCTRINE =
   'Reading any file is fine. Last step before finishing: list the files changed since the start (`sh .cortex/changed` when that ' +
   'file exists, else `git status`) and revert every change the task did not require.\n';
 
+/** CORTEX_WORKSPACE_CLEAN: orient keeps the baseline in the state dir, so `.cortex/changed` is not in the workspace — point at the command
+ *  orient printed instead (its `-- baseline:` line carries the absolute path). Same bullet otherwise. */
+export const SCOPE_DOCTRINE_CLEAN = SCOPE_DOCTRINE.replace(
+  '(`sh .cortex/changed` when that file exists, else `git status`)',
+  '(the `sh …/changed` command on orient\'s `-- baseline:` line when orient printed one, else `git status`)',
+);
+
 /**
  * CORTEX_LIFT_PLAN_SCOPE=adaptive (2026-09-27, dark): the scope bullet for work that is not a graded repair. `true` (above, what the MiMo
  * sweep measured) forbids touching tests/runners/fixtures/data outright, which is wrong for "write tests", "update the runner" or
@@ -193,7 +211,7 @@ export const SCOPE_DOCTRINE_ADAPTIVE =
 export function plannerSystem(env: NodeJS.ProcessEnv = process.env, investigate?: 'offer' | 'withdraw'): string {
   const doctrine = (env.CORTEX_LIFT_PLAN_DOCTRINE || '').trim().toLowerCase() === 'v2' ? PLANNER_SYSTEM : PLANNER_SYSTEM_V1;
   const scopeMode = (env.CORTEX_LIFT_PLAN_SCOPE || '').trim().toLowerCase();
-  const bullet = scopeMode === 'true' ? SCOPE_DOCTRINE : scopeMode === 'adaptive' ? SCOPE_DOCTRINE_ADAPTIVE : '';
+  const bullet = scopeMode === 'true' ? (resolveWorkspaceClean(env) ? SCOPE_DOCTRINE_CLEAN : SCOPE_DOCTRINE) : scopeMode === 'adaptive' ? SCOPE_DOCTRINE_ADAPTIVE : '';
   const base = bullet ? doctrine.replace('Output ONLY the plan', bullet + 'Output ONLY the plan') : doctrine;
   return investigate === 'offer' ? base + PLANNER_INVESTIGATE_CLAUSE : investigate === 'withdraw' ? base + PLANNER_DECIDE_NOW_CLAUSE : base;
 }
@@ -241,16 +259,16 @@ export interface LiftPlanContext {
  */
 export function buildPlannerUserPrompt(ctx: LiftPlanContext, investigate?: 'offer' | 'withdraw'): string {
   const parts: string[] = [];
-  parts.push(`TASK:\n${(ctx.task || '').trim().slice(0, TASK_TEXT_CAP)}`);
+  parts.push(`TASK:\n${clipIn((ctx.task || '').trim(), TASK_TEXT_CAP, FULL_CAPS.task, 'the task text', HINTS.task)}`);
   const env = (ctx.envReport || '').trim();
   if (env) {
-    parts.push(`ENVIRONMENT REPORT (what is actually on this box — tooling, installed packages, resources, tests):\n${env.slice(0, 3000)}`);
+    parts.push(`ENVIRONMENT REPORT (what is actually on this box — tooling, installed packages, resources, tests):\n${clipIn(env, 3000, FULL_CAPS.env, 'the environment report', HINTS.env)}`);
   }
   const obs = (ctx.observations || '').trim();
   if (obs) {
-    parts.push(`WHAT THE AGENT HAS OBSERVED SO FAR (its first action + output):\n${obs.slice(0, 2000)}`);
+    parts.push(`WHAT THE AGENT HAS OBSERVED SO FAR (its first action + output):\n${clipIn(obs, 2000, FULL_CAPS.observations, "the agent's first observation", HINTS.observations)}`);
   }
-  for (const ev of ctx.evidenceRounds ?? []) { const e = (ev || '').trim(); if (e) parts.push(e.slice(0, 6000)); } // R171
+  for (const ev of ctx.evidenceRounds ?? []) { const e = (ev || '').trim(); if (e) parts.push(clipIn(e, 6000, FULL_CAPS.evidence, 'this evidence round')); } // R171
   if (investigate === 'offer') {
     parts.push(
       'Decide whether you can name the REAL criteria and the first steps from what is shown. If not — the real tests, the grader ' +

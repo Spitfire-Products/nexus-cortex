@@ -16,6 +16,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { CanonicalTool } from '../types/CanonicalTool.js';
+import { cortexProjectDir } from '../../utils/stateDir.js';
 
 export interface InitCortexContextInput {
   /**
@@ -160,7 +161,7 @@ export class InitCortexContext {
     const scanDir = scope === 'global' ? process.env.HOME || '~' : workingDir;
     const targetDir = scope === 'global'
       ? path.join(process.env.HOME || '~', '.cortex')
-      : path.join(workingDir, '.cortex');
+      : cortexProjectDir(workingDir); // <workingDir>/.cortex; the state dir under CORTEX_WORKSPACE_CLEAN
 
     const isMonorepo = await this.detectMonorepo(scanDir);
     const maxDepth = options.max_depth || (isMonorepo ? 5 : 4);

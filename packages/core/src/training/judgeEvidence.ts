@@ -20,6 +20,7 @@
 import { execSync, spawnSync } from 'child_process';
 import { existsSync, readFileSync, statSync, readdirSync } from 'fs';
 import { join, resolve, sep } from 'path';
+import { resolveDeltaMaxChars } from './steerInputs.js';
 
 export interface JudgeGroundingConfig {
   /** CORTEX_JUDGE_DELTA: hand the judges the workspace delta (files changed this task + heads). Default on. */
@@ -55,7 +56,9 @@ export function resolveJudgeGroundingConfig(env: NodeJS.ProcessEnv = process.env
     checkTimeoutMs: intOr(env.CORTEX_JUDGE_CHECK_TIMEOUT_MS, DEFAULTS.checkTimeoutMs),
     deltaMaxFiles: intOr(env.CORTEX_JUDGE_DELTA_MAX_FILES, DEFAULTS.deltaMaxFiles),
     deltaHeadLines: intOr(env.CORTEX_JUDGE_DELTA_HEAD_LINES, DEFAULTS.deltaHeadLines),
-    deltaMaxChars: DEFAULTS.deltaMaxChars,
+    // CORTEX_STEER_INPUTS=full: collect up to 16000 chars (the judge's full cap leaves room for the "…[delta truncated]" marker the old
+    // 6000/6000 pairing sliced off); default unchanged.
+    deltaMaxChars: resolveDeltaMaxChars(DEFAULTS.deltaMaxChars, env),
   };
 }
 

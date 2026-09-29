@@ -18,6 +18,7 @@
  */
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { cortexProjectDir } from '../../utils/stateDir.js';
 
 const MEMORY_DIR = 'memory';
 const INDEX_FILE = 'MEMORY.md';
@@ -33,7 +34,7 @@ short and load-bearing.
 `;
 
 function cortexDir(projectPath: string): string {
-  return path.join(projectPath, '.cortex');
+  return cortexProjectDir(projectPath); // <project>/.cortex; the state dir under CORTEX_WORKSPACE_CLEAN
 }
 
 function slugOk(name: string): boolean {
