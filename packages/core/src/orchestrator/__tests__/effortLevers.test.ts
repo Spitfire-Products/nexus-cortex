@@ -52,20 +52,23 @@ describe('HB-EFFORT-RAMP', () => {
     expect(resolveEffortRamp({ CORTEX_EFFORT_RAMP: 'off' }).enabled).toBe(false);
     expect(resolveEffortRamp({ CORTEX_EFFORT_RAMP: 'false' }).enabled).toBe(false);
   });
-  it('parses level:calls; bare level defaults to 8 calls; on = low:8', () => {
-    expect(resolveEffortRamp({ CORTEX_EFFORT_RAMP: 'low:6' })).toEqual({ enabled: true, level: 'low', calls: 6 });
-    expect(resolveEffortRamp({ CORTEX_EFFORT_RAMP: 'low' })).toEqual({ enabled: true, level: 'low', calls: 8 });
-    expect(resolveEffortRamp({ CORTEX_EFFORT_RAMP: 'on' })).toEqual({ enabled: true, level: 'low', calls: 8 });
-    expect(resolveEffortRamp({ CORTEX_EFFORT_RAMP: 'low:0' }).enabled).toBe(false);
-    expect(resolveEffortRamp({ CORTEX_EFFORT_RAMP: 'low:500' }).calls).toBe(100);
-    expect(resolveEffortRamp({ CORTEX_EFFORT_RAMP: 'bogus:3' }).enabled).toBe(false);
+  it('parses level:from-to; on = low:2-8; level:n = calls 2..n+1; the initial call is never ramped', () => {
+    expect(resolveEffortRamp({ CORTEX_EFFORT_RAMP: 'low:2-8' })).toEqual({ enabled: true, level: 'low', from: 2, to: 8 });
+    expect(resolveEffortRamp({ CORTEX_EFFORT_RAMP: 'on' })).toEqual({ enabled: true, level: 'low', from: 2, to: 8 });
+    expect(resolveEffortRamp({ CORTEX_EFFORT_RAMP: 'low:7' })).toEqual({ enabled: true, level: 'low', from: 2, to: 8 });
+    expect(resolveEffortRamp({ CORTEX_EFFORT_RAMP: 'low:1-8' }).enabled).toBe(false);
+    expect(resolveEffortRamp({ CORTEX_EFFORT_RAMP: 'low:8-2' }).enabled).toBe(false);
+    expect(resolveEffortRamp({ CORTEX_EFFORT_RAMP: 'low:2-500' }).to).toBe(100);
+    expect(resolveEffortRamp({ CORTEX_EFFORT_RAMP: 'low' }).enabled).toBe(false);
+    expect(resolveEffortRamp({ CORTEX_EFFORT_RAMP: 'bogus:2-8' }).enabled).toBe(false);
   });
-  it('ramps the first N calls (call index 0 = the turn\'s initial request), then yields to the configured effort', () => {
-    const cfg = resolveEffortRamp({ CORTEX_EFFORT_RAMP: 'low:3' });
-    expect(rampEffortFor(cfg, 0)).toBe('low');
-    expect(rampEffortFor(cfg, 2)).toBe('low');
-    expect(rampEffortFor(cfg, 3)).toBeUndefined();
-    expect(rampEffortFor(resolveEffortRamp({}), 0)).toBeUndefined();
+  it('call 1 (index 0) keeps the configured effort; calls 2-8 ramp; call 9 hands back', () => {
+    const cfg = resolveEffortRamp({ CORTEX_EFFORT_RAMP: 'low:2-8' });
+    expect(rampEffortFor(cfg, 0)).toBeUndefined();
+    expect(rampEffortFor(cfg, 1)).toBe('low');
+    expect(rampEffortFor(cfg, 7)).toBe('low');
+    expect(rampEffortFor(cfg, 8)).toBeUndefined();
+    expect(rampEffortFor(resolveEffortRamp({}), 1)).toBeUndefined();
   });
 });
 

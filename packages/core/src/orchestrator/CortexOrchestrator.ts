@@ -10248,7 +10248,7 @@ export class CortexOrchestrator {
   private computeNudgeFired = 0;
 
   /**
-   * HB-EFFORT-RAMP (CORTEX_EFFORT_RAMP, dark): the ramp level for the next main action call, or undefined (off / ramp over).
+   * HB-EFFORT-RAMP (CORTEX_EFFORT_RAMP, dark): the ramp level for the next main action call (calls from..to, 1 = initial), or undefined.
    * `startTurn` (the initial request of sendMessage/streamMessage) resets the per-turn counters (ramp + compute nudge).
    * Banks one effort_ramp event when the ramp hands back to the configured effort (and at the first ramped call).
    */
@@ -10258,12 +10258,13 @@ export class CortexOrchestrator {
       const cfg = resolveEffortRamp();
       if (!cfg.enabled) return undefined;
       const idx = this.effortRampCallIndex++;
+      const call = idx + 1;
       const level = rampEffortFor(cfg, idx);
       const store = this.getDecisionStore();
       if (level) {
         this.effortRampCalls++;
-        if (idx === 0 && store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'effort_ramp', detail: { phase: 'start', level, calls: cfg.calls } }).catch(() => {});
-      } else if (idx === cfg.calls && store) {
+        if (call === cfg.from && store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'effort_ramp', detail: { phase: 'start', level, from: cfg.from, to: cfg.to } }).catch(() => {});
+      } else if (call === cfg.to + 1 && store) {
         void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'effort_ramp', detail: { phase: 'end', level: cfg.level, rampedCalls: this.effortRampCalls } }).catch(() => {});
       }
       return level;

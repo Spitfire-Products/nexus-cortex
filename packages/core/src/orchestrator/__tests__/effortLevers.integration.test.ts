@@ -81,12 +81,12 @@ describe('effort levers loop integration', () => {
   }
 
   for (const mode of ['sendMessage', 'streamMessage'] as const) {
-    it(`${mode}: CORTEX_EFFORT_RAMP=low:2 → calls 0-1 low, then the configured effort`, async () => {
-      process.env.CORTEX_EFFORT_RAMP = 'low:2';
+    it(`${mode}: CORTEX_EFFORT_RAMP=low:2-3 → call 1 configured, calls 2-3 low, then configured`, async () => {
+      process.env.CORTEX_EFFORT_RAMP = 'low:2-3';
       const api = await run(mode);
       expect(api.efforts.length).toBeGreaterThanOrEqual(4);
-      expect(api.efforts.slice(0, 2)).toEqual(['low', 'low']);
-      expect(api.efforts.slice(2).every((e) => e === 'high')).toBe(true);
+      expect(api.efforts.slice(0, 3)).toEqual(['high', 'low', 'low']);
+      expect(api.efforts.slice(3).every((e) => e === 'high')).toBe(true);
     });
     it(`${mode}: ramp unset → every call carries the configured effort`, async () => {
       const api = await run(mode);
