@@ -91,6 +91,23 @@ describe('workspace clean — writers', () => {
     expect(SubAgentProcessManager.loadPersistedResult('sess1', 'tu1', p)).toMatchObject({ output: 'x' });
     expect(dotCortex(p)).toBe(false);
   });
+  it('sub-agent results on + the SHIPPED default SESSION_STORAGE_DIR=.cortex/sessions: still the state dir (c21ba smoke leak, 09-30)', () => {
+    const p = proj(); const s = state();
+    process.env.CORTEX_WORKSPACE_CLEAN = '1'; process.env.CORTEX_STATE_DIR = s; process.env.SESSION_STORAGE_DIR = '.cortex/sessions';
+    const m: any = new (SubAgentProcessManager as any)({ projectPath: p, parentSessionId: 'sess1' });
+    m.persistExternalResult('tu1', { success: true, output: 'x' });
+    expect(readdirSync(join(s, 'sessions', 'sess1.subagents'))).toEqual(['tu1.json']);
+    expect(SubAgentProcessManager.loadPersistedResult('sess1', 'tu1', p)).toMatchObject({ output: 'x' });
+    expect(dotCortex(p)).toBe(false);
+  });
+  it('sub-agent results on + an ABSOLUTE SESSION_STORAGE_DIR: honoured (outside the task tree by construction)', () => {
+    const p = proj(); const s = state(); const abs = state();
+    process.env.CORTEX_WORKSPACE_CLEAN = '1'; process.env.CORTEX_STATE_DIR = s; process.env.SESSION_STORAGE_DIR = abs;
+    const m: any = new (SubAgentProcessManager as any)({ projectPath: p, parentSessionId: 'sess1' });
+    m.persistExternalResult('tu1', { success: true, output: 'x' });
+    expect(existsSync(join(abs, 'sess1.subagents', 'tu1.json'))).toBe(true);
+    expect(dotCortex(p)).toBe(false);
+  });
   it('sub-agent results off: unchanged (<project>/.cortex/sessions)', () => {
     const p = proj();
     const m: any = new (SubAgentProcessManager as any)({ projectPath: p, parentSessionId: 'sess1' });

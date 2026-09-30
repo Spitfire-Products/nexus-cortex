@@ -22,6 +22,7 @@ import { resolveTerminalBackend, registerPaneOutputHandle, outputAfterCommandEch
 import { stripAnsi } from '../../utils/TextUtils.js';
 import { BackgroundProcessRegistry } from './BackgroundProcessRegistry.js';
 import { bashOomPriorityPrelude } from '../../utils/oomPriority.js';
+import { killGuardSpawnEnv } from '../../utils/killGuard.js';
 import type { ExecutorConfig } from '../../base/ToolRegistry.js';
 import { parseBashFileAccess } from './bashFileAccess.js';
 import { FileReadTracker } from '../file/EditTool.js';
@@ -401,6 +402,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
           stdio: ['ignore', 'pipe', 'pipe'],
           detached: true, // Create process group
           cwd,
+          env: killGuardSpawnEnv(), // HB-KILL-GUARD: pkill/killall/pgrep wrappers first on PATH (undefined = inherit, when off)
         });
 
     // Output tracking
@@ -1193,6 +1195,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
             stdio: ['ignore', 'pipe', 'pipe'],
             detached: true,
             cwd,
+            env: killGuardSpawnEnv(), // HB-KILL-GUARD
           });
 
       if (!shell.pid) {

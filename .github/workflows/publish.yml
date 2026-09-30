@@ -135,7 +135,8 @@ jobs:
           done
           if [ -n "${pending:-}" ]; then
             echo "::notice::verifying in the registry document:${pending}"
-            deadline=$(( $(date +%s) + 600 ))   # 10 min for the whole batch: tui@4.119.1 promoted after ~5 min, core@4.124.16 after 9.5 min
+            deadline=$(( $(date +%s) + 3000 ))  # 50 min for the whole batch: tui@4.119.1 promoted after ~5 min, core@4.124.16 after 9.5 min;
+            # 2026-09-30: 4.124.34/.35/.36 all promoted ~40 min after publish and this check (then 10 min) reported each as failed.
             while :; do
               still=""
               for nv in $pending; do
@@ -150,7 +151,7 @@ jobs:
               pending="${still# }"
               [ -z "$pending" ] && break
               if [ "$(date +%s)" -ge "$deadline" ]; then
-                echo "::error::NOT in the registry document 10 min after publish — npm left these STAGED:$still. Bump every package and republish (see npm-token-90-day-expiry memory)."
+                echo "::error::NOT in the registry document 50 min after publish — npm left these STAGED:$still. Bump every package and republish (see npm-token-90-day-expiry memory)."
                 exit 1
               fi
               sleep 15

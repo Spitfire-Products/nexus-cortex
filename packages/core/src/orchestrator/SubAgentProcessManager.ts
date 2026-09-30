@@ -19,7 +19,7 @@
  */
 
 import { fork, execSync, type ChildProcess } from 'child_process';
-import { join, dirname } from 'path';
+import { join, dirname, isAbsolute } from 'path';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS } from './subAgentTimeout.js';
@@ -825,14 +825,17 @@ export class SubAgentProcessManager implements ISubAgentManager {
     return SubAgentProcessManager.subagentStoreDir(root, this.config.parentSessionId!);
   }
 
-  /** `<root>/<SESSION_STORAGE_DIR|.cortex/sessions>/<sid>.subagents`; under CORTEX_WORKSPACE_CLEAN (no explicit SESSION_STORAGE_DIR)
-   *  `<stateDir>/sessions/<sid>.subagents`, so sub-agent results never land in the task's tree. */
+  /** An ABSOLUTE SESSION_STORAGE_DIR → `<it>/<sid>.subagents`. Otherwise under CORTEX_WORKSPACE_CLEAN → `<stateDir>/sessions/
+   *  <sid>.subagents` (a relative dir — including the shipped default `.cortex/sessions` that bootstrapEnv loads from .env.defaults —
+   *  would land in the task's tree, which clean forbids; 09-30 c21ba smoke: `<ws>/.cortex/sessions/<sid>.subagents`). Clean off →
+   *  `<root>/<SESSION_STORAGE_DIR|.cortex/sessions>/<sid>.subagents` as before. */
   private static subagentStoreDir(root: string, sessionId: string): string {
-    if (!process.env.SESSION_STORAGE_DIR && resolveWorkspaceClean()) {
+    const envDir = process.env.SESSION_STORAGE_DIR;
+    if (envDir && isAbsolute(envDir)) return join(envDir, `${sessionId}.subagents`);
+    if (resolveWorkspaceClean()) {
       return join(resolveCortexStateDir(root).dir, 'sessions', `${sessionId}.subagents`);
     }
-    const sessionDir = process.env.SESSION_STORAGE_DIR || '.cortex/sessions';
-    return join(root, sessionDir, `${sessionId}.subagents`);
+    return join(root, envDir || '.cortex/sessions', `${sessionId}.subagents`);
   }
 
   /** R147: a delegate that did not run through this manager's IPC (herdr pane) still gets the durable orphan-recovery record. */
