@@ -114,15 +114,42 @@ export function isReasoningExhaustion(cls: EmptyResponseClassification | null | 
   return !!cls && cls.kind === 'truncated' && cls.hadReasoning && !cls.hadToolUse;
 }
 
-export type ReasoningEffortLevel = 'low' | 'medium' | 'high';
+export type ReasoningEffortLevel = 'low' | 'medium' | 'high' | 'max';
 
-/** One level down from the effective effort; unknown/card-default effort steps to 'medium' first. */
-export function stepDownEffort(current: string | undefined): ReasoningEffortLevel {
+/**
+ * R153c (2026-09-30): the reasoning-effort ladder the PROVIDER actually honours. DeepSeek reasoning_effort is low | high | max —
+ * `medium` is accepted but runs as HIGH (deepseek-v4-1-flash card), so the legacy high → medium step-down was a no-op there
+ * (t4cw photonic r2: wall at high, "medium" wall again, only then low).
+ */
+export function effortLadderFor(provider: string | undefined): readonly ReasoningEffortLevel[] {
+  return String(provider ?? '').trim().toLowerCase() === 'deepseek' ? ['low', 'high', 'max'] : ['low', 'medium', 'high'];
+}
+
+/** CORTEX_REASONING_EXHAUST_LADDER = provider (default: step down the provider's real ladder) | legacy (pre-R153c steps). */
+export function resolveExhaustLadderMode(env: NodeJS.ProcessEnv = process.env): 'provider' | 'legacy' {
+  return String(env.CORTEX_REASONING_EXHAUST_LADDER ?? '').trim().toLowerCase() === 'legacy' ? 'legacy' : 'provider';
+}
+
+/**
+ * One level down from the effective effort. Without a ladder: the legacy steps (unknown/card-default steps to 'medium' first).
+ * With a ladder: normalise the current level onto it (xhigh → max, none/minimal → low, a level the ladder lacks → the next
+ * level up, unknown/card default → high) and step one rung down, floored at the lowest rung.
+ */
+export function stepDownEffort(current: string | undefined, ladder?: readonly ReasoningEffortLevel[]): ReasoningEffortLevel {
   const c = (current ?? '').trim().toLowerCase();
-  if (c === 'max' || c === 'high' || c === 'xhigh') return 'medium';
-  if (c === 'medium') return 'low';
-  if (c === 'low' || c === 'minimal' || c === 'none') return 'low';
-  return 'medium';
+  if (!ladder || ladder.length === 0) {
+    if (c === 'max' || c === 'high' || c === 'xhigh') return 'medium';
+    if (c === 'medium') return 'low';
+    if (c === 'low' || c === 'minimal' || c === 'none') return 'low';
+    return 'medium';
+  }
+  const order: ReasoningEffortLevel[] = ['low', 'medium', 'high', 'max'];
+  // unknown / card default is treated as 'high' (the level the legacy steps assumed)
+  const norm = c === 'xhigh' ? 'max' : (c === 'none' || c === 'minimal') ? 'low' : order.includes(c as ReasoningEffortLevel) ? c : 'high';
+  const rank = order.indexOf(norm as ReasoningEffortLevel);
+  let idx = ladder.findIndex((l) => order.indexOf(l) >= rank); // a level the ladder lacks runs as the next level up
+  if (idx < 0) idx = ladder.length - 1; // above the ladder's top → the top
+  return ladder[Math.max(0, idx - 1)]!;
 }
 
 export interface ReasoningExhaustBackoffConfig { enabled: boolean; turns: number }

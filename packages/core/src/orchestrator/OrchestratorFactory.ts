@@ -21,7 +21,7 @@ import { ContextBudgetManager } from '../conversation/ContextBudgetManager.js';
 import { JSONLHistoryStore } from '../session/JSONLHistoryStore.js';
 import { HistoricalContextService } from '../tools/historical/HistoricalContextService.js';
 import type { ExecutorConfig } from '@nexus-cortex/types';
-import { createExecutorRegistry, FileReadTracker } from '@nexus-cortex/executors';
+import { createExecutorRegistry, FileReadTracker, BackgroundProcessRegistry } from '@nexus-cortex/executors';
 import { McpConfigManager } from '../mcp/McpConfigManager.js';
 import { McpServerRegistry } from '../mcp/McpServerRegistry.js';
 import { McpClientManager } from '../mcp/index.js';
@@ -524,6 +524,9 @@ export async function createOrchestrator(
     systemMessageMiddleware,
     mentorshipMiddleware,
   );
+
+  // HB-TURN-STATUS: the status tail reads running background shells from the SAME registry Bash/BashOutput/KillShell use.
+  orchestrator.setBackgroundShellsProvider(() => BackgroundProcessRegistry.getInstance().getAllProcesses());
 
   // Wire CLIApprovalHandler callbacks if in interactive mode
   if (cliApprovalHandler) {

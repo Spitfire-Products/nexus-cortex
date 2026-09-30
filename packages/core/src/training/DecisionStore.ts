@@ -68,6 +68,8 @@ export type SteeringEventKind =
   | 'action_plan_reject' // R172 HB-ACTION-PLAN-FIELDS: an action-tool call lacked the required analysis/plan fields and was returned unexecuted — detail {iteration, rejects, missing}
   | 'budget_continue_nudge'
   | 'inaction_nudge'
+  | 'effort_ramp' // HB-EFFORT-RAMP (dark): first N action calls at a lower effort — detail {phase: start|end, level, calls|rampedCalls}
+  | 'compute_nudge' // HB-COMPUTE-NUDGE (dark): 'compute/test instead' tail after a heavily-reasoned step — detail {round, reasoningTokens, fired, threshold, streaming}
   | 'effort_pulse' // def-efdbb67fd8: think-harder ablation arm fired (mechanism-engagement evidence)
   | 'time_budget_break' // #2 (2026-09-04): the per-turn wall-clock deadline forced synthesis (mechanism-engagement evidence)
   | 'lift_plan' // LIFT_MENTOR_PLANNER: bounded mentor-planner fired at the lift (mechanism-engagement evidence; detail carries {planChars, retire, criteriaStated})
@@ -106,6 +108,7 @@ export type SteeringEventKind =
   | 'independent_derivation' // R176: second-method recomputation before a standing finish — {valueShaped, methodAgent, methodIndependent, checks, derived, agreement, held}
   | 'frame_turn' // R179: one Terminus-frame turn — candidates, the chooser's pick + probabilities, executed keys, rc, wait
   | 'spec_tests' | 'requirement_ledger' | 'requirement_ledger_delivered' | 'session_usage' // R174: the blind spec-derived checks authored for this turn (checks + generation latency)
+  | 'turn_status' // HB-TURN-STATUS (CORTEX_TURN_STATUS): one row per turn — detail {lines, mode, streaming}: STATUS tails appended to tool results this turn
   | 'finish_confirm'; // R165: the judge still saw a gap but the finish was accepted (cap, no-progress after escalation, or low confidence) — detail {action, rejects, confidence, plan, checks}: the provider rejected an image block; user-side image blocks were stubbed and the request retried — detail {stripped, label, reason}
 
 export interface SteeringEventInput {

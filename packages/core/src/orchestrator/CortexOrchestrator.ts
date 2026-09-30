@@ -80,6 +80,7 @@ import type { ChunkRead } from '../training/chunkReadProgression.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
 import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage, memoryIndexLine, upsertMemoryIndex, scaleEstimateToRequestView, approxCharsOf, anchoredRequestEstimate, resolveCompactionHandoffQA, resolveHandoffQAMaxQuestions, runHandoffQA, type HandoffQAResult } from './compactionResume.js';
 import { renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBand, resolveRearmBand } from './compactionResumeTemplate.js';
+import { resolveTurnStatusMode, turnStatusActive, buildTurnStatusLine, appendStatusToNewestToolResult, type StatusShell } from './turnStatus.js';
 import { resolveCortexStateDir, cortexStatePath, resolveWorkspaceClean, cortexProjectDir } from '../utils/stateDir.js';
 import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig, classifyCheckRun, isInvestigateCommandAllowed, specCheckParses, readFileSlice, formatEvidenceRound } from '../training/judgeEvidence.js';
 import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, mentorSurfaceTimeoutMs, type MentorCallMeta } from '../training/mentorRole.js';
@@ -155,7 +156,9 @@ import { InitCortexContext, MemoryWrite, MemoryRecall } from '../tools/context-m
 import { ContextBudgetManager } from '../conversation/ContextBudgetManager.js';
 import { pruneAgedToolResults } from '../conversation/ToolResultPruner.js';
 import { detectTailRepetition, tailLoopGuardEnabled } from './tailRepetitionDetector.js';
-import { classifyEmptyResponse, emptyResponseNudge, nudgeForbidsTools, emptyResponseNudgeFor, isReasoningExhaustion, stepDownEffort, resolveReasoningExhaustBackoff, type ReasoningEffortLevel, type EmptyResponseClassification } from './emptyResponseClassifier.js';
+import { resolveEffortRamp, rampEffortFor } from './effortRamp.js';
+import { resolveComputeNudge, computeNudgeDecision, buildComputeNudgeLine, lastAssistantReasoningTokens } from './computeNudge.js';
+import { classifyEmptyResponse, emptyResponseNudge, nudgeForbidsTools, emptyResponseNudgeFor, isReasoningExhaustion, stepDownEffort, effortLadderFor, resolveExhaustLadderMode, resolveReasoningExhaustBackoff, type ReasoningEffortLevel, type EmptyResponseClassification } from './emptyResponseClassifier.js';
 import { isImageRejectionError, stripRejectedImages } from './imageRejectionHeal.js'; // R154
 import type { PreparedRequest } from '../adapters/GatewayTranslationLayer.js';
 import type { APIResponse } from './APIClient.js';
@@ -566,6 +569,10 @@ export class CortexOrchestrator {
   // R132 HB-COMPACTION-ESTIMATE: the last REAL prompt_tokens the provider reported + the request-view char size at that moment.
   // ensureHistoryFitsModel anchors its estimate here (anchor + grown chars/4) instead of the ~5-7x over-reading heuristic.
   private lastUsageAnchor: { promptTokens: number; requestChars: number } | null = null;
+  /** HB-TURN-STATUS: running background shells (executors' BackgroundProcessRegistry, wired by OrchestratorFactory). */
+  private backgroundShellsProvider: (() => readonly StatusShell[]) | null = null;
+  /** HB-TURN-STATUS: status tails appended this turn (banked once per turn as a turn_status event). */
+  private turnStatusLines = 0;
   /** R150: last error message that ended (or interrupted) the tool loop — banked on the abnormal-exit-bypass event. */
   private lastToolLoopError = '';
 
@@ -2382,7 +2389,7 @@ export class CortexOrchestrator {
         temperature: options.parameters?.temperature,
         maxTokens: options.parameters?.maxTokens,
         topP: options.parameters?.topP,
-        reasoningEffort: options.parameters?.reasoningEffort, // GPT-5.1 reasoning level
+        reasoningEffort: this.nextRampEffort(true) ?? options.parameters?.reasoningEffort, // HB-EFFORT-RAMP (dark) > request param
         stream: options.streaming,
         staticSystemPrompt: this.currentStaticSystemPrompt, // R28
         conversationId: this.currentConversationId, // R28b
@@ -2712,6 +2719,7 @@ export class CortexOrchestrator {
     this.herdrTurnLabel = `turn:${Math.floor(this.turnNumber / 2) + 1}`; this.herdrReport('working', this.herdrTurnLabel); // R145
     let timeWarnFired = false;
     let lastBudgetBand = -1; // R151: budget-visibility band already announced
+    this.turnStatusLines = 0; // HB-TURN-STATUS
 
     let totalToolErrors = 0;
 
@@ -2872,7 +2880,7 @@ export class CortexOrchestrator {
               `[Orchestrator] Empty response detected (${emptyClass.kind}, hadReasoning=${emptyClass.hadReasoning}, iteration=${toolCallIteration}). ` +
               `Retrying once with explicit completion prompt.`,
             );
-            const exhaustionLevel = this.armReasoningBackoffIfExhausted(emptyClass, options.parameters?.reasoningEffort ?? (effectiveModel as any)?.reasoning?.effort, toolCallIteration, (currentAssistantMessage as any)?.usage?.outputTokens);
+            const exhaustionLevel = this.armReasoningBackoffIfExhausted(emptyClass, options.parameters?.reasoningEffort ?? (effectiveModel as any)?.reasoning?.effort, toolCallIteration, (currentAssistantMessage as any)?.usage?.outputTokens, effectiveModel.provider);
 
             // R26 (2026-05-15, surfaced by A/B benchmark): the empty assistant
             // turn is already in messageHistory. The retry below rebuilds the
@@ -3893,6 +3901,10 @@ export class CortexOrchestrator {
         }
         ladderSignal = null; // consumed — never re-inject on later iterations
       }
+      // HB-COMPUTE-NUDGE (CORTEX_COMPUTE_NUDGE, dark): after a heavily-reasoned step, 'compute/test instead' at the same tail.
+      this.injectComputeNudge(toolCallIteration, false);
+      // HB-TURN-STATUS (CORTEX_TURN_STATUS, dark): clock + context + bg shells at the TAIL of this round's newest tool_result.
+      this.injectTurnStatus(loopStartMs, TURN_DEADLINE_MS, effectiveModel, toolCallIteration);
 
       // Ladder break (teach-then-break): the break instruction is already in
       // the tool result above; exit the loop R29b-style so the post-loop
@@ -4035,7 +4047,7 @@ export class CortexOrchestrator {
       // where the window is empty). Attaching it only to the initial assembly made the force unreachable.
       const continuationForcedChoice = await this.resolveForcedMentorChoice(toolsToUse, toolCallIteration);
       // R153: resolve the effort ONCE (the backoff/pulse counters are consumed per call, not per build).
-      const continuationEffort = this.consumeReasoningBackoff() ?? this.consumeEffortPulse() ?? options.parameters?.reasoningEffort; // R153 backoff > effort pulse > request param > card
+      const continuationEffort = this.consumeReasoningBackoff() ?? this.consumeEffortPulse() ?? this.nextRampEffort() ?? options.parameters?.reasoningEffort; // R153 backoff > effort pulse > HB-EFFORT-RAMP > request param > card
 
       // R154: the request is built by a closure so the image-rejection heal can rebuild it from the
       // (stubbed) history and retry once. Byte-identical request when no heal is needed.
@@ -4531,6 +4543,7 @@ export class CortexOrchestrator {
     // 16. Build orchestrator response (use final message from multi-turn loop)
     // Include all executed tool uses from all iterations (not just final message)
     this.herdrReport('idle', this.herdrTurnLabel); // R145: turn returned
+    this.bankTurnStatusEvent(false); // HB-TURN-STATUS
     return {
       messageId: currentAssistantMessage.uuid,
       content: currentAssistantCanonicalMessage.content,
@@ -4963,7 +4976,7 @@ export class CortexOrchestrator {
         temperature: options.parameters?.temperature,
         maxTokens: options.parameters?.maxTokens,
         topP: options.parameters?.topP,
-        reasoningEffort: options.parameters?.reasoningEffort, // GPT-5.1 reasoning level
+        reasoningEffort: this.nextRampEffort(true) ?? options.parameters?.reasoningEffort, // HB-EFFORT-RAMP (dark) > request param
         stream: true, // Enable streaming!
         staticSystemPrompt: this.currentStaticSystemPrompt, // R28
         conversationId: this.currentConversationId, // R28b
@@ -5230,6 +5243,7 @@ export class CortexOrchestrator {
     this.herdrTurnLabel = `turn:${Math.floor(this.turnNumber / 2) + 1}`; this.herdrReport('working', this.herdrTurnLabel); // R145
     let timeWarnFired = false;
     let lastBudgetBand = -1; // R151: budget-visibility band already announced
+    this.turnStatusLines = 0; // HB-TURN-STATUS
     // HB-ENDTURN-TERMINAL (2026-09-08): dark gate + bounded continue-counter (streaming parity).
     const EMPTY_TURN_CONTINUE = loopDefaults.emptyTurnContinue;
     const EMPTY_CONTINUE_MAX = 3;
@@ -5284,7 +5298,7 @@ export class CortexOrchestrator {
             `[Orchestrator Streaming] R32/R18b: Empty response (${emptyClass.kind}, iteration=${toolCallIteration}). ` +
             `Retrying with tools preserved.`,
           );
-          const exhaustionLevel = this.armReasoningBackoffIfExhausted(emptyClass, options.parameters?.reasoningEffort ?? (effectiveModel as any)?.reasoning?.effort, toolCallIteration, (this.messageHistory[this.messageHistory.length - 1] as any)?.usage?.outputTokens);
+          const exhaustionLevel = this.armReasoningBackoffIfExhausted(emptyClass, options.parameters?.reasoningEffort ?? (effectiveModel as any)?.reasoning?.effort, toolCallIteration, (this.messageHistory[this.messageHistory.length - 1] as any)?.usage?.outputTokens, effectiveModel.provider);
 
           // R26 repair: ensure the empty assistant turn has content (xAI hard-400s on empty)
           for (let i = this.messageHistory.length - 1; i >= 0; i--) {
@@ -5903,6 +5917,10 @@ export class CortexOrchestrator {
           }
           ladderSignal = null; // consumed
         }
+        // HB-COMPUTE-NUDGE (streaming parity).
+        this.injectComputeNudge(toolCallIteration, true);
+        // HB-TURN-STATUS (streaming parity): same tail, same carrier.
+        this.injectTurnStatus(loopStartMs, TURN_DEADLINE_MS, effectiveModel, toolCallIteration);
 
         // Ladder break (streaming parity): instruction already injected above;
         // exit R29b-style so the streaming synthesis net closes the turn.
@@ -6021,7 +6039,7 @@ export class CortexOrchestrator {
         // §13-B2: re-evaluate the forced mentor choice on THIS streaming continuation — thrash
         // develops here, not on the initial request (mirror of the non-stream continuation fix).
         const continuationForcedChoice = await this.resolveForcedMentorChoice(toolsToUse, toolCallIteration);
-        const streamContinuationEffort = this.consumeReasoningBackoff() ?? this.consumeEffortPulse() ?? options.parameters?.reasoningEffort; // R153 backoff > effort pulse > request param > card
+        const streamContinuationEffort = this.consumeReasoningBackoff() ?? this.consumeEffortPulse() ?? this.nextRampEffort() ?? options.parameters?.reasoningEffort; // R153 backoff > effort pulse > HB-EFFORT-RAMP > request param > card
 
         // Phase 2.8: Prepare continuation request (R154: built by a closure so the image-rejection heal can
         // rebuild it from the stubbed history and re-stream once; byte-identical request otherwise).
@@ -6560,6 +6578,7 @@ export class CortexOrchestrator {
 
     // Yield message_stop with usage data for CLI turn summary display
     this.herdrReport('idle', this.herdrTurnLabel); // R145: turn returned (streaming)
+    this.bankTurnStatusEvent(true); // HB-TURN-STATUS
     const finalUsage = convertedResponse?.usage || { inputTokens: 0, outputTokens: 0 };
     yield {
       type: 'message_stop' as const,
@@ -7556,6 +7575,55 @@ export class CortexOrchestrator {
       const MAX = 2500;
       return state.length > MAX ? state.slice(0, MAX) + '\n[… workspace state truncated]' : state;
     } catch { return ''; }
+  }
+
+  /** HB-TURN-STATUS: OrchestratorFactory wires executors' BackgroundProcessRegistry here (keeps core free of the dependency). */
+  setBackgroundShellsProvider(provider: (() => readonly StatusShell[]) | null): void {
+    this.backgroundShellsProvider = provider;
+  }
+
+  /**
+   * HB-TURN-STATUS (CORTEX_TURN_STATUS=off|auto|on; default off = byte-identical): append one STATUS line (elapsed/remaining
+   * on the turn clock the deadline rungs use, usage-anchored context estimate, running background shells) to the tail of the
+   * newest tool_result of this round. Persisted in the in-memory history like the R151 band line, so later requests keep a
+   * byte-identical prefix and only the new tail varies. Fail-open.
+   */
+  private injectTurnStatus(loopStartMs: number, deadlineMs: number, model: ModelConfig, iteration: number): void {
+    try {
+      if (!turnStatusActive(resolveTurnStatusMode(), deadlineMs)) return;
+      const now = Date.now();
+      let contextTokens = 0;
+      const anchor = this.lastUsageAnchor;
+      if (anchor && anchor.promptTokens > 0) {
+        try {
+          const currentChars = approxCharsOf(this.convertToCanonicalMessages(this.messageHistory));
+          contextTokens = anchoredRequestEstimate({ anchorTokens: anchor.promptTokens, anchorChars: anchor.requestChars, currentChars, heuristicTokens: anchor.promptTokens }).tokens;
+        } catch { contextTokens = anchor.promptTokens; }
+      }
+      let shells: readonly StatusShell[] = [];
+      try { shells = this.backgroundShellsProvider?.() ?? []; } catch { shells = []; }
+      const line = buildTurnStatusLine({
+        elapsedMs: now - loopStartMs,
+        deadlineMs,
+        contextTokens,
+        contextWindow: model.limits?.contextWindow ?? this.lastKnownContextWindow,
+        shells,
+        nowMs: now,
+      });
+      if (appendStatusToNewestToolResult(this.messageHistory as any[], line)) {
+        this.turnStatusLines++;
+        if (this.config.debug) console.log(`[TurnStatus] iteration ${iteration}: ${line}`);
+      }
+    } catch { /* fail-open: never break the loop for a status line */ }
+  }
+
+  /** HB-TURN-STATUS: one turn_status event per turn (lines appended) — proves engagement without a per-round row. */
+  private bankTurnStatusEvent(streaming: boolean): void {
+    if (this.turnStatusLines <= 0) return;
+    const lines = this.turnStatusLines;
+    this.turnStatusLines = 0;
+    const store = this.getDecisionStore();
+    if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'turn_status', detail: { lines, mode: resolveTurnStatusMode(), streaming } }).catch(() => {});
   }
 
   /**
@@ -10172,12 +10240,62 @@ export class CortexOrchestrator {
     return this.reasoningBackoffLevel;
   }
 
+  /** HB-EFFORT-RAMP: index of the next MAIN action call in this turn (0 = the initial request); retry/synthesis calls don't count. */
+  private effortRampCallIndex = 0;
+  private effortRampCalls = 0;
+  /** HB-COMPUTE-NUDGE per-turn state. */
+  private computeNudgeLastRound = -1_000_000;
+  private computeNudgeFired = 0;
+
+  /**
+   * HB-EFFORT-RAMP (CORTEX_EFFORT_RAMP, dark): the ramp level for the next main action call, or undefined (off / ramp over).
+   * `startTurn` (the initial request of sendMessage/streamMessage) resets the per-turn counters (ramp + compute nudge).
+   * Banks one effort_ramp event when the ramp hands back to the configured effort (and at the first ramped call).
+   */
+  private nextRampEffort(startTurn = false): ReasoningEffortLevel | undefined {
+    if (startTurn) { this.effortRampCallIndex = 0; this.effortRampCalls = 0; this.computeNudgeLastRound = -1_000_000; this.computeNudgeFired = 0; }
+    try {
+      const cfg = resolveEffortRamp();
+      if (!cfg.enabled) return undefined;
+      const idx = this.effortRampCallIndex++;
+      const level = rampEffortFor(cfg, idx);
+      const store = this.getDecisionStore();
+      if (level) {
+        this.effortRampCalls++;
+        if (idx === 0 && store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'effort_ramp', detail: { phase: 'start', level, calls: cfg.calls } }).catch(() => {});
+      } else if (idx === cfg.calls && store) {
+        void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'effort_ramp', detail: { phase: 'end', level: cfg.level, rampedCalls: this.effortRampCalls } }).catch(() => {});
+      }
+      return level;
+    } catch { return undefined; }
+  }
+
+  /**
+   * HB-COMPUTE-NUDGE (CORTEX_COMPUTE_NUDGE=on, dark): when the response that issued this round reasoned past the threshold,
+   * append one 'compute/test instead of deliberating' line to the tail of the newest tool_result (the HB-TURN-STATUS carrier —
+   * earlier request prefixes stay byte-identical). Cooldown + per-turn cap; one compute_nudge event per firing. Fail-open.
+   */
+  private injectComputeNudge(round: number, streaming: boolean): void {
+    try {
+      const cfg = resolveComputeNudge();
+      if (!cfg.enabled) return;
+      const reasoningTokens = lastAssistantReasoningTokens(this.messageHistory as any[]);
+      if (!computeNudgeDecision(cfg, { reasoningTokens, round, lastFiredRound: this.computeNudgeLastRound, firedThisTurn: this.computeNudgeFired })) return;
+      if (!appendStatusToNewestToolResult(this.messageHistory as any[], buildComputeNudgeLine(reasoningTokens))) return;
+      this.computeNudgeLastRound = round;
+      this.computeNudgeFired++;
+      const store = this.getDecisionStore();
+      if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'compute_nudge', detail: { round, reasoningTokens, fired: this.computeNudgeFired, threshold: cfg.thresholdTokens, streaming } }).catch(() => {});
+    } catch { /* fail-open */ }
+  }
+
   /** Arms the backoff when the empty turn is a reasoning exhaustion; returns the level the next calls will use. */
   private armReasoningBackoffIfExhausted(
     cls: EmptyResponseClassification | null,
     effectiveEffort: string | undefined,
     iteration: number,
     outputTokens?: number,
+    provider?: string,
   ): ReasoningEffortLevel | undefined {
     if (!isReasoningExhaustion(cls)) return undefined;
     const cfg = resolveReasoningExhaustBackoff();
@@ -10190,12 +10308,14 @@ export class CortexOrchestrator {
     // A repeat exhaustion in the same turn steps down AGAIN from the last level (high → medium → low), whether or not the
     // counter is still armed (R153b). The counter covers the empty-retry call PLUS cfg.turns continuations.
     const base = this.reasoningBackoffLastLevel ?? effectiveEffort;
-    const level = stepDownEffort(base);
+    // R153c: step down the PROVIDER's real ladder (DeepSeek: low | high | max — the legacy high → medium step ran as high).
+    const ladderMode = resolveExhaustLadderMode();
+    const level = stepDownEffort(base, ladderMode === 'provider' ? effortLadderFor(provider) : undefined);
     this.reasoningBackoffLevel = level;
     this.reasoningBackoffLastLevel = level;
     this.reasoningBackoffRemaining = cfg.turns + 1;
     console.warn(`[Orchestrator] R153: reasoning exhaustion at iteration ${iteration} (${outputTokens ?? '?'} output tokens, no text/tool) — next ${cfg.turns} continuation(s) at effort '${level}' (was '${base ?? 'card default'}').`);
-    if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'reasoning_exhaustion', detail: { iteration, outputTokens, from: base ?? null, level, turns: cfg.turns } }).catch(() => {});
+    if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'reasoning_exhaustion', detail: { iteration, outputTokens, from: base ?? null, level, turns: cfg.turns, ladder: ladderMode, provider: provider ?? null } }).catch(() => {});
     return level;
   }
 
