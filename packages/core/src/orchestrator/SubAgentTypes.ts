@@ -346,6 +346,8 @@ export interface SubAgentResult {
 
   /** Last lines of the herdr pane (runtime === 'herdr'); the partial transcript on timeout. */
   transcriptTail?: string;
+  /** 2026-10-01: the child orchestrator's own session ledger (exact main usage + helper estimates); the parent folds it into its ledger. */
+  usage?: import('../training/usageAccounting.js').SessionUsage;
 }
 
 /**

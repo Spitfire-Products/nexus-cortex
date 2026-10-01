@@ -1775,3 +1775,14 @@ resume memory pre compaction and then another hook and instruction to rebuild co
    model ever reaches for it.
 **Test:** seeded long session (synthetic 800K-token history on the flash card) → assert resume memory written, reminder injected, event
 recorded, task text preserved; then a real TB4 8-h task on 4.108.x with the compaction counter.
+
+## DELTA 2026-10-01 — R201–R207 (detail in the Rxx ledger memory `omniclaude-v4-harness-deficiencies`)
+| Rxx | item | state | field evidence / next |
+|---|---|---|---|
+| R201 | R153c provider-aware exhaustion ladder (DeepSeek high→low; medium was a no-op) | ON 4.124.34 (93ec051f1f) | backoff itself buys nothing post-wall + busts cache → c23 arm w runs BACKOFF=false |
+| R202 | HB-EFFORT-RAMP (`low:2-8`) + HB-COMPUTE-NUDGE | dark 4.124.34/.36 | c22 arm C +0.0 vs arm B +8.5 over history; recommend drop the ramp; verdict at c22 adjudication |
+| R203 | HB-KILL-GUARD (pkill/killall/pgrep wrappers protect shell + harness) | ON 4.124.37 (f1a765668e) | c21ba r3 self-SIGTERM; other adapter deaths: signal tracing on bench VMs |
+| R204 | WORKSPACE_CLEAN sub-agent store leak | fixed 4.124.37 (4bbc2f7c73) | — |
+| R205 | HB-WALL-DROP (dark) + HB-OUTPUT-CAP (dark; 48000 REJECTED) | 4.124.38 (bcb5b8cfc7) | c23 arm w; streaming wall path untested |
+| R206 | HB-WALL-SUMMARY (helper CONCLUDED/STUCK ON/NEXT in the wall nudge) | dark 4.124.38 (0e2a5fafd3) | c23 arm w |
+| R207 | HB-SUBAGENT-LEDGER (sub-agent spend in session usage) | built be1659cac0, UNRELEASED | next release after a full build incl. cli |

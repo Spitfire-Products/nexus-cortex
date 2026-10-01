@@ -22,3 +22,26 @@ describe('R190 cumulative usage', () => {
     expect(c.main).toBeCloseTo(0.1 * 0.14 + 0.9 * 0.007 + 0.1 * 0.28, 6); expect(c.cacheHitRate).toBeCloseTo(0.9, 6); expect(c.helperEst).toBe(0);
   });
 });
+
+
+import { addSubagentUsage, emptySessionUsage as _empty, usageCost as _cost } from '../usageAccounting.js';
+describe('subagents bucket (2026-10-01)', () => {
+  const child = { requests: 3, inputTokens: 1000, outputTokens: 200, cacheReadTokens: 600, cacheCreationTokens: 0, uncachedInputTokens: 400, reasoningTokens: 50,
+    helper: { calls: 1, inputTokensEst: 100, outputTokensEst: 10, bySurface: {} } };
+  it('folds the child exact usage into the totals AND the breakdown; helper estimates into the breakdown only', () => {
+    const a = addSubagentUsage(_empty(), child as any);
+    expect(a.inputTokens).toBe(1000); expect(a.uncachedInputTokens).toBe(400); expect(a.requests).toBe(3);
+    expect(a.helper.inputTokensEst).toBe(0);
+    expect(a.subagents).toMatchObject({ calls: 1, requests: 3, inputTokens: 1000, outputTokens: 200, helperInputTokensEst: 100, helperOutputTokensEst: 10 });
+  });
+  it('missing child usage still counts the call; malformed numbers are ignored', () => {
+    const a = addSubagentUsage(addSubagentUsage(_empty(), undefined), { inputTokens: -5, outputTokens: NaN } as any);
+    expect(a.subagents.calls).toBe(2); expect(a.inputTokens).toBe(0);
+  });
+  it('usageCost prices sub-agent spend (main via the totals, helper estimates via the breakdown)', () => {
+    const p = { inputPerM: 1, cacheHitPerM: 0.1, outputPerM: 2, helperInputPerM: 10, helperOutputPerM: 20 };
+    const c = _cost(addSubagentUsage(_empty(), child as any), p);
+    expect(c.main).toBeCloseTo((400 * 1 + 600 * 0.1 + 200 * 2) / 1e6, 12);
+    expect(c.helperEst).toBeCloseTo((100 * 10 + 10 * 20) / 1e6, 12);
+  });
+});

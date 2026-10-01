@@ -573,6 +573,9 @@ function buildResult(status: SubAgentResult['status']): SubAgentResult {
       estimatedCost,
       cacheHits,
     },
+    // 2026-10-01: the orchestrator's own exact session ledger — the parent folds it into its subagents bucket (the stream-event counts
+    // above can miss chat-completions input, and estimatedCost uses fixed Sonnet rates).
+    usage: (() => { try { return orchestrator?.getSessionUsage?.(); } catch { return undefined; } })(),
   };
 }
 

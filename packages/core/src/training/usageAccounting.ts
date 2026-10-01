@@ -19,10 +19,32 @@ export interface SessionUsage {
   reasoningTokens: number;
   /** helper + mentor calls (compaction, planner, judge, ledger, author, consults) — ESTIMATED from characters */
   helper: { calls: number; inputTokensEst: number; outputTokensEst: number; bySurface: Record<string, number> };
+  /** Task sub-agents (child processes with their own orchestrator) — 2026-10-01. Their EXACT main-model usage is ALSO folded into the
+   *  totals above (so every consumer that prices the totals — the bench adapter's metrics, usageCost — includes sub-agent spend); this
+   *  bucket is the breakdown. Their helper calls stay estimates and are priced here (helperInputTokensEst / helperOutputTokensEst). */
+  subagents: { calls: number; requests: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; uncachedInputTokens: number; reasoningTokens: number; helperInputTokensEst: number; helperOutputTokensEst: number };
 }
 
 export function emptySessionUsage(): SessionUsage {
-  return { requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, uncachedInputTokens: 0, reasoningTokens: 0, helper: { calls: 0, inputTokensEst: 0, outputTokensEst: 0, bySurface: {} } };
+  return { requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, uncachedInputTokens: 0, reasoningTokens: 0, helper: { calls: 0, inputTokensEst: 0, outputTokensEst: 0, bySurface: {} }, subagents: { calls: 0, requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, uncachedInputTokens: 0, reasoningTokens: 0, helperInputTokensEst: 0, helperOutputTokensEst: 0 } };
+}
+
+/** Fold one finished sub-agent's own session ledger into the parent's: its exact main usage into the totals AND the subagents breakdown,
+ *  its helper estimates into the breakdown only. Missing / malformed child usage → the call is still counted (calls + 1). Pure. */
+export function addSubagentUsage(acc: SessionUsage, child: Partial<SessionUsage> | undefined | null): SessionUsage {
+  const sa = acc.subagents ?? emptySessionUsage().subagents;
+  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+  const c = child ?? {};
+  const req = n(c.requests), inp = n(c.inputTokens), out = n(c.outputTokens), cr = n(c.cacheReadTokens), cc = n(c.cacheCreationTokens), un = n(c.uncachedInputTokens), rt = n(c.reasoningTokens);
+  const hi = n(c.helper?.inputTokensEst), ho = n(c.helper?.outputTokensEst);
+  return {
+    ...acc,
+    requests: acc.requests + req,
+    inputTokens: acc.inputTokens + inp, outputTokens: acc.outputTokens + out,
+    cacheReadTokens: acc.cacheReadTokens + cr, cacheCreationTokens: acc.cacheCreationTokens + cc, uncachedInputTokens: acc.uncachedInputTokens + un,
+    reasoningTokens: acc.reasoningTokens + rt,
+    subagents: { calls: sa.calls + 1, requests: sa.requests + req, inputTokens: sa.inputTokens + inp, outputTokens: sa.outputTokens + out, cacheReadTokens: sa.cacheReadTokens + cr, uncachedInputTokens: sa.uncachedInputTokens + un, reasoningTokens: sa.reasoningTokens + rt, helperInputTokensEst: sa.helperInputTokensEst + hi, helperOutputTokensEst: sa.helperOutputTokensEst + ho },
+  };
 }
 
 /** Add one main-model request's provider usage. A usage with no tokens at all (synthesized streaming usage) is ignored. Pure. */
@@ -52,7 +74,8 @@ export interface UsagePrices { inputPerM: number; cacheHitPerM: number; outputPe
 /** Cost of the session at the given per-million prices; helper calls priced at the helper rates when given, else the main rates. Pure. */
 export function usageCost(acc: SessionUsage, p: UsagePrices): { main: number; helperEst: number; total: number; cacheHitRate: number } {
   const main = (acc.uncachedInputTokens * p.inputPerM + acc.cacheReadTokens * p.cacheHitPerM + acc.outputTokens * p.outputPerM) / 1e6;
-  const helperEst = (acc.helper.inputTokensEst * (p.helperInputPerM ?? p.inputPerM) + acc.helper.outputTokensEst * (p.helperOutputPerM ?? p.outputPerM)) / 1e6;
+  const hIn = acc.helper.inputTokensEst + (acc.subagents?.helperInputTokensEst ?? 0); const hOut = acc.helper.outputTokensEst + (acc.subagents?.helperOutputTokensEst ?? 0);
+  const helperEst = (hIn * (p.helperInputPerM ?? p.inputPerM) + hOut * (p.helperOutputPerM ?? p.outputPerM)) / 1e6;
   const denom = acc.cacheReadTokens + acc.uncachedInputTokens;
   return { main, helperEst, total: main + helperEst, cacheHitRate: denom > 0 ? acc.cacheReadTokens / denom : 0 };
 }

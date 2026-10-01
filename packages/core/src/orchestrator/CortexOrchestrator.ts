@@ -33,7 +33,7 @@ import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects
 import { jevAvailable, jevNoul, buildGapHoldState, GAP_HOLD_QUESTIONS } from '../training/jevGate.js'; // R173b
 import { resolveFrameConfig, FRAME_CONTRACT, FRAME_TOOL_NAME } from '../frames/frameConfig.js'; // R179
 import { FrameRunner } from '../frames/frameRunner.js'; // R179
-import { emptySessionUsage, addMainUsage, type SessionUsage } from '../training/usageAccounting.js'; // R190
+import { emptySessionUsage, addMainUsage, type SessionUsage, addSubagentUsage } from '../training/usageAccounting.js'; // R190
 import { parseRequirementLedger, initLedger, updateLedger, ledgerCounts, ledgerHoldable, formatLedgerForWriter, formatLedgerForJudge, formatLedgerHoldMessage, buildLedgerJevState, buildLedgerJevQuestions, applyLedgerJevAnswers, looksLikeBrokenCheck, ledgerFailVetoable, buildLedgerFailJevState, buildLedgerFailJevQuestions, applyLedgerFailJevAnswers, formatLedgerFailVetoMessage, type LedgerEntry, type CheckOutcome } from '../training/requirementLedger.js'; // R187 / R191 / R192
 import { isValueShapedTask, parseDerivationReply, methodsDiffer, parseValueLines, extractNumbers, reconcile, buildDerivationHoldMessage, isDerivationCommandAllowed, checkRunPassed, checkRunBody } from '../training/independentDerivation.js'; // R176
 import { resolveDeadlineExitConfig, deadlineExitCallBudget, parseDeadlineExitVerdict } from '../training/deadlineExitMentor.js';
@@ -995,6 +995,9 @@ export class CortexOrchestrator {
       if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'requirement_ledger_delivered', toolName: 'EndTurn', detail: { lines: (entries ?? []).length, chars: text.length } }).catch(() => {});
     } catch { /* fail-open */ }
   }
+
+  /** The session ledger snapshot (exact main usage + helper estimates + sub-agent breakdown) — read by the agent-mode child to report its spend. */
+  getSessionUsage(): SessionUsage { return this.snapshotSessionUsage(); }
 
   /** R190: the session usage with the helper middleware's estimated calls merged in, plus a decision-store row so trajectories carry it. */
   private snapshotSessionUsage(): SessionUsage {
@@ -8809,6 +8812,7 @@ export class CortexOrchestrator {
                     envOverrides: { ...(timeoutSource === 'deadline' || timeoutSource === 'requested' ? { CORTEX_TURN_DEADLINE_MS: String(timeoutMs) } : {}), ...(envOverrides ?? {}) },
                     toolUseId: toolUse.id,
                   });
+                  this.sessionUsage = addSubagentUsage(this.sessionUsage, (subAgentResult as { usage?: SessionUsage }).usage); // 2026-10-01: sub-agent spend in the ledger
 
                   // Clean up event listeners after completion
                   progressListeners.cleanup();
@@ -9106,6 +9110,7 @@ export class CortexOrchestrator {
             envOverrides: { ...(timeoutSource === 'deadline' || timeoutSource === 'requested' ? { CORTEX_TURN_DEADLINE_MS: String(timeoutMs) } : {}), ...(envOverrides ?? {}) },
             toolUseId: toolUse.id,
           });
+                  this.sessionUsage = addSubagentUsage(this.sessionUsage, (subAgentResult as { usage?: SessionUsage }).usage); // 2026-10-01: sub-agent spend in the ledger
 
           progressListeners.cleanup();
 
