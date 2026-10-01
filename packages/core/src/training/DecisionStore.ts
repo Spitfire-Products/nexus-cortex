@@ -68,6 +68,8 @@ export type SteeringEventKind =
   | 'action_plan_reject' // R172 HB-ACTION-PLAN-FIELDS: an action-tool call lacked the required analysis/plan fields and was returned unexecuted — detail {iteration, rejects, missing}
   | 'budget_continue_nudge'
   | 'inaction_nudge'
+  | 'wall_summary' // HB-WALL-SUMMARY (dark): helper condensed the walled reasoning into the nudge — detail {iteration, inputChars, summaryChars, ok, ms, streaming}
+  | 'wall_drop' // HB-WALL-DROP (dark): walled turn dropped from the in-memory history before the retry — detail {iteration, droppedChars, carrier, streaming}
   | 'effort_ramp' // HB-EFFORT-RAMP (dark): first N action calls at a lower effort — detail {phase: start|end, level, calls|rampedCalls}
   | 'compute_nudge' // HB-COMPUTE-NUDGE (dark): 'compute/test instead' tail after a heavily-reasoned step — detail {round, reasoningTokens, fired, threshold, streaming}
   | 'effort_pulse' // def-efdbb67fd8: think-harder ablation arm fired (mechanism-engagement evidence)

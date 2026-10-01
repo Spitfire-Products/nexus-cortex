@@ -41,6 +41,7 @@ import {
   type EndTurnResolverContext,
   SPEC_TESTS_SYSTEM, buildSpecTestsPrompt,
 } from '../training/endTurnResolver.js';
+import { WALL_SUMMARY_SYSTEM, buildWallSummaryPrompt } from '../orchestrator/wallGuard.js';
 import { DERIVATION_SYSTEM, buildDerivationPrompt } from '../training/independentDerivation.js'; // R176
 import {
   DEADLINE_EXIT_SYSTEM,
@@ -1643,6 +1644,28 @@ Give concise, actionable guidance in plain text with these labeled parts:
         effort: cfg.effort,
       },
       buildResolverUserPrompt(ctx, cfg.abstain, cfg.meetsConfirm, context.investigate), // R168 / R170
+      context.helperModelId,
+    );
+  }
+
+  /**
+   * summarizeWalledThinking (HB-WALL-SUMMARY, 2026-10-01) — condenses the reasoning of a turn that hit the output wall into CONCLUDED /
+   * STUCK ON / NEXT lines (wallGuard.ts WALL_SUMMARY_SYSTEM). Same mentor wire as the EndTurn judge, small budget. Returns the raw reply;
+   * the orchestrator attributes it and carries it inside the wall nudge (user-role system-reminder; never the thinking channel).
+   */
+  async summarizeWalledThinking(context: { reasoning: string; helperModelId?: string }): Promise<string> {
+    const cfg = resolveEndTurnResolverConfig();
+    const budget = 500;
+    return this.generateGuidance(
+      {
+        surface: 'endturn-resolver',
+        mentor: resolveMentorRoleConfig('endturn-resolver', process.env, { modelId: context.helperModelId, effort: cfg.effort, outputBudgetTokens: budget }),
+        persona: WALL_SUMMARY_SYSTEM,
+        task: 'Condense the cut-off reasoning into at most five lines: CONCLUDED, STUCK ON, NEXT. Output only those lines.',
+        outputBudgetTokens: budget,
+        effort: cfg.effort,
+      },
+      buildWallSummaryPrompt(context.reasoning),
       context.helperModelId,
     );
   }

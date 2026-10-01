@@ -157,6 +157,7 @@ import { ContextBudgetManager } from '../conversation/ContextBudgetManager.js';
 import { pruneAgedToolResults } from '../conversation/ToolResultPruner.js';
 import { detectTailRepetition, tailLoopGuardEnabled } from './tailRepetitionDetector.js';
 import { resolveEffortRamp, rampEffortFor } from './effortRamp.js';
+import { resolveWallDrop, resolveOutputCap, dropWalledTurn, resolveWallSummary, extractWalledReasoning, clipReasoning, formatWallSummary, type WallDropResult } from './wallGuard.js';
 import { resolveComputeNudge, computeNudgeDecision, buildComputeNudgeLine, lastAssistantReasoningTokens } from './computeNudge.js';
 import { classifyEmptyResponse, emptyResponseNudge, nudgeForbidsTools, emptyResponseNudgeFor, isReasoningExhaustion, stepDownEffort, effortLadderFor, resolveExhaustLadderMode, resolveReasoningExhaustBackoff, type ReasoningEffortLevel, type EmptyResponseClassification } from './emptyResponseClassifier.js';
 import { isImageRejectionError, stripRejectedImages } from './imageRejectionHeal.js'; // R154
@@ -1929,6 +1930,7 @@ export class CortexOrchestrator {
     if (!this.sessionTimeline) {
       throw new Error('Session not initialized. Call createSession() first.');
     }
+    this.applyOutputCap(options); // HB-OUTPUT-CAP (dark)
 
     // Item 10: full-mass pre-assembly boundary — doctrine curation completes
     // BEFORE the turn-0 prompt is built (under defer this no-ops here and the
@@ -2881,6 +2883,10 @@ export class CortexOrchestrator {
               `Retrying once with explicit completion prompt.`,
             );
             const exhaustionLevel = this.armReasoningBackoffIfExhausted(emptyClass, options.parameters?.reasoningEffort ?? (effectiveModel as any)?.reasoning?.effort, toolCallIteration, (currentAssistantMessage as any)?.usage?.outputTokens, effectiveModel.provider);
+            // HB-WALL-DROP (CORTEX_WALL_DROP, dark): drop the walled turn + carry the nudge on the newest tool_result (cache-preserving retry).
+            const wallSummary = await this.summarizeWall(emptyClass, toolCallIteration, false); // HB-WALL-SUMMARY (dark); '' when off/failed
+            const wallNudge = `<system-reminder>${emptyResponseNudgeFor(emptyClass, exhaustionLevel, (effectiveModel as any)?.limits?.outputTokens)}${nudgeForbidsTools(emptyClass.kind) ? ' Do not call any more tools.' : ''}${wallSummary}</system-reminder>`;
+            const wallDrop = this.applyWallDrop(emptyClass, wallNudge, toolCallIteration, false);
 
             // R26 (2026-05-15, surfaced by A/B benchmark): the empty assistant
             // turn is already in messageHistory. The retry below rebuilds the
@@ -2890,8 +2896,8 @@ export class CortexOrchestrator {
             // the entire retry. R18b was validated on Claude, so this was
             // invisible until a grok run emitted an empty turn. Repair the
             // empty assistant message in-place with a minimal placeholder so
-            // every provider's message-content contract is satisfied.
-            for (let i = this.messageHistory.length - 1; i >= 0; i--) {
+            // every provider's message-content contract is satisfied. (Skipped when HB-WALL-DROP removed the turn.)
+            for (let i = wallDrop.dropped ? -1 : this.messageHistory.length - 1; i >= 0; i--) {
               const m: any = this.messageHistory[i];
               const isAssistant = m?.type === 'assistant' || m?.message?.role === 'assistant';
               if (!isAssistant) continue;
@@ -2920,7 +2926,7 @@ export class CortexOrchestrator {
                 role: 'user',
                 content: [{
                   type: 'text',
-                  text: `<system-reminder>${emptyResponseNudgeFor(emptyClass, exhaustionLevel, (effectiveModel as any)?.limits?.outputTokens)}${nudgeForbidsTools(emptyClass.kind) ? ' Do not call any more tools.' : ''}</system-reminder>`,
+                  text: wallNudge,
                 }],
               },
               timeline: {
@@ -2935,8 +2941,10 @@ export class CortexOrchestrator {
               },
             } as any;
 
-            this.messageHistory.push(followupUserMessage);
-            await this.historyStore.appendMessage(this.currentSessionId, followupUserMessage);
+            if (wallDrop.carrier !== 'tool_result') { // HB-WALL-DROP carried the nudge on the newest tool_result already
+              this.messageHistory.push(followupUserMessage);
+              await this.historyStore.appendMessage(this.currentSessionId, followupUserMessage);
+            }
 
             // Build a continuation request and re-call. Mirrors the
             // tool-result continuation path (lines ~1395-1466) but without
@@ -4603,6 +4611,7 @@ export class CortexOrchestrator {
     if (!this.currentSessionId || !this.sessionTimeline) {
       throw new Error('Session not initialized. Call createSession() first.');
     }
+    this.applyOutputCap(options); // HB-OUTPUT-CAP (dark)
 
     // Graduation-signal capture (Decision Capture Layer §5) — same as sendMessage:
     // score the previous turn's prediction against THIS user message + record.
@@ -5299,9 +5308,13 @@ export class CortexOrchestrator {
             `Retrying with tools preserved.`,
           );
           const exhaustionLevel = this.armReasoningBackoffIfExhausted(emptyClass, options.parameters?.reasoningEffort ?? (effectiveModel as any)?.reasoning?.effort, toolCallIteration, (this.messageHistory[this.messageHistory.length - 1] as any)?.usage?.outputTokens, effectiveModel.provider);
+          // HB-WALL-DROP (streaming parity).
+          const wallSummary = await this.summarizeWall(emptyClass, toolCallIteration, true);
+          const wallNudge = `<system-reminder>${emptyResponseNudgeFor(emptyClass, exhaustionLevel, (effectiveModel as any)?.limits?.outputTokens)}${nudgeForbidsTools(emptyClass.kind) ? ' Do not call any more tools.' : ''}${wallSummary}</system-reminder>`;
+          const wallDrop = this.applyWallDrop(emptyClass, wallNudge, toolCallIteration, true);
 
-          // R26 repair: ensure the empty assistant turn has content (xAI hard-400s on empty)
-          for (let i = this.messageHistory.length - 1; i >= 0; i--) {
+          // R26 repair: ensure the empty assistant turn has content (xAI hard-400s on empty). Skipped when HB-WALL-DROP removed it.
+          for (let i = wallDrop.dropped ? -1 : this.messageHistory.length - 1; i >= 0; i--) {
             const m: any = this.messageHistory[i];
             const isAssistant = m?.type === 'assistant' || m?.message?.role === 'assistant';
             if (!isAssistant) continue;
@@ -5324,7 +5337,7 @@ export class CortexOrchestrator {
               role: 'user',
               content: [{
                 type: 'text',
-                text: `<system-reminder>${emptyResponseNudgeFor(emptyClass, exhaustionLevel, (effectiveModel as any)?.limits?.outputTokens)}${nudgeForbidsTools(emptyClass.kind) ? ' Do not call any more tools.' : ''}</system-reminder>`,
+                text: wallNudge,
               }],
             },
             timeline: {
@@ -5339,8 +5352,10 @@ export class CortexOrchestrator {
             },
           } as any;
 
-          this.messageHistory.push(followupUserMessage);
-          await this.historyStore.appendMessage(this.currentSessionId, followupUserMessage);
+          if (wallDrop.carrier !== 'tool_result') {
+            this.messageHistory.push(followupUserMessage);
+            await this.historyStore.appendMessage(this.currentSessionId, followupUserMessage);
+          }
 
           try {
             await this.ensureHistoryFitsModel(effectiveModel);
@@ -10269,6 +10284,47 @@ export class CortexOrchestrator {
       }
       return level;
     } catch { return undefined; }
+  }
+
+  /** HB-WALL-SUMMARY (CORTEX_WALL_SUMMARY=on, dark): one helper call condensing the walled turn's reasoning; returns the attributed block for
+   *  the nudge, or '' (off / not a reasoning wall / no reasoning / timeout / error). Must run BEFORE HB-WALL-DROP removes the turn. */
+  private async summarizeWall(cls: EmptyResponseClassification | null, iteration: number, streaming: boolean): Promise<string> {
+    const cfg = resolveWallSummary();
+    if (!cfg.enabled || !isReasoningExhaustion(cls) || !this.helperMiddleware?.summarizeWalledThinking) return '';
+    const t0 = Date.now();
+    let block = ''; let inputChars = 0; let ok = false;
+    try {
+      const reasoning = extractWalledReasoning(this.messageHistory as any[]);
+      inputChars = reasoning.length;
+      if (reasoning.trim()) {
+        const reply = await withTimeout(this.helperMiddleware.summarizeWalledThinking({ reasoning: clipReasoning(reasoning, cfg.headChars, cfg.tailChars), helperModelId: this.config.reactiveMentorship?.helperModelId }), cfg.timeoutMs);
+        block = formatWallSummary(typeof reply === 'string' ? reply : '');
+        ok = !!block;
+      }
+    } catch { block = ''; }
+    const store = this.getDecisionStore();
+    if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'wall_summary', detail: { iteration, inputChars, summaryChars: block.length, ok, ms: Date.now() - t0, streaming } }).catch(() => {});
+    return block;
+  }
+
+  /** HB-OUTPUT-CAP (CORTEX_OUTPUT_CAP_TOKENS, dark): fills the action model's maxTokens when the request did not set one. */
+  private applyOutputCap(options: SendMessageOptions): void {
+    const cap = resolveOutputCap();
+    if (!cap) return;
+    options.parameters = options.parameters || {};
+    (options.parameters as { maxTokens?: number }).maxTokens ??= cap;
+  }
+
+  /** HB-WALL-DROP (CORTEX_WALL_DROP=on, dark): on a reasoning-exhaustion wall, drop the walled turn from the in-memory history and carry
+   *  the nudge on the newest tool_result; one wall_drop event per drop. Fail-open (no drop). */
+  private applyWallDrop(cls: EmptyResponseClassification | null, nudge: string, iteration: number, streaming: boolean): WallDropResult {
+    try {
+      if (!isReasoningExhaustion(cls) || !resolveWallDrop()) return { dropped: false };
+      const r = dropWalledTurn(this.messageHistory as any[], nudge);
+      const store = this.getDecisionStore();
+      if (r.dropped && store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'wall_drop', detail: { iteration, droppedChars: r.droppedChars, carrier: r.carrier, streaming } }).catch(() => {});
+      return r;
+    } catch { return { dropped: false }; }
   }
 
   /**
