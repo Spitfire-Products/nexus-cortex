@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   resolvePlateauStop, plateauBootInstruction, parsePlateauMetrics, decidePlateau, buildPlateauReminder, formatPct,
-  PlateauStopTracker, PLATEAU_DEFAULTS, plateauStatusSegment,
+  PlateauStopTracker, PLATEAU_DEFAULTS, plateauStatusSegment, resolvePlateauMode,
 } from '../plateauStop.js';
 import { buildTurnStatusLine } from '../turnStatus.js';
 
@@ -176,5 +176,47 @@ describe('R210 STATUS segment', () => {
     expect(buildTurnStatusLine({ ...base, plateau: null })).toBe(plain);
     expect(buildTurnStatusLine({ ...base, plateau: undefined })).toBe(plain);
     expect(buildTurnStatusLine({ ...base, plateau: 'score s: best 1 (1 eval)' })).toBe(plain.replace('</system-reminder>', '; score s: best 1 (1 eval)</system-reminder>'));
+  });
+});
+
+describe('R210 CORTEX_PLATEAU_STOP modes (off | on | status)', () => {
+  const STATUS = { CORTEX_PLATEAU_STOP: 'status', CORTEX_PLATEAU_WINDOW: '3', CORTEX_PLATEAU_MIN_POINTS: '5' } as NodeJS.ProcessEnv;
+  const ONW = { CORTEX_PLATEAU_STOP: 'on', CORTEX_PLATEAU_WINDOW: '3', CORTEX_PLATEAU_MIN_POINTS: '5' } as NodeJS.ProcessEnv;
+  const flat = [100, 101, 101, 101, 101, 101, 101, 101, 101, 101];
+  it('resolvePlateauMode: unset/off/junk → null; on|true|1 → on; status (any case) → status', () => {
+    expect(resolvePlateauMode({} as NodeJS.ProcessEnv)).toBeNull();
+    expect(resolvePlateauMode({ CORTEX_PLATEAU_STOP: 'off' } as NodeJS.ProcessEnv)).toBeNull();
+    expect(resolvePlateauMode({ CORTEX_PLATEAU_STOP: 'stat' } as NodeJS.ProcessEnv)).toBeNull();
+    expect(resolvePlateauMode({ CORTEX_PLATEAU_STOP: 'TRUE' } as NodeJS.ProcessEnv)).toBe('on');
+    expect(resolvePlateauMode({ CORTEX_PLATEAU_STOP: ' Status ' } as NodeJS.ProcessEnv)).toBe('status');
+    expect(resolvePlateauStop({ CORTEX_PLATEAU_STOP: 'status' } as NodeJS.ProcessEnv)).toEqual(PLATEAU_DEFAULTS);
+  });
+  it('off: no instruction, no tracking, no segment', () => {
+    const t = new PlateauStopTracker();
+    for (const v of flat) expect(t.step([line(v)], {} as NodeJS.ProcessEnv)).toEqual({ signal: null, newMetrics: [], fire: null });
+    expect(t.series.size).toBe(0);
+    expect(plateauBootInstruction({} as NodeJS.ProcessEnv)).toBeNull();
+    expect(plateauStatusSegment(t, {} as NodeJS.ProcessEnv)).toBeNull();
+  });
+  it('on: unchanged — reminders fire, no `detected` field, segment carries the PLATEAU label', () => {
+    const t = new PlateauStopTracker();
+    const rs = flat.map((v) => t.step([line(v)], ONW));
+    expect(rs.filter((r) => r.signal).length).toBe(2);
+    expect(rs.filter((r) => r.fire).map((r) => r.fire!.points)).toEqual([5, 8]);
+    expect(rs.every((r) => !('detected' in r))).toBe(true);
+    expect(plateauStatusSegment(t, ONW)).toMatch(/ — PLATEAU$/);
+  });
+  it('status: same instruction + tracking + segment numbers, NO reminder and NO fire; detected at the points `on` would fire', () => {
+    expect(plateauBootInstruction(STATUS)).toBe(plateauBootInstruction(ONW));
+    const t = new PlateauStopTracker();
+    const rs = flat.map((v) => t.step([line(v)], STATUS));
+    expect(rs.every((r) => r.signal === null && r.fire === null)).toBe(true);
+    expect(rs.filter((r) => r.detected).map((r) => r.detected!.points)).toEqual([5, 8]);
+    expect(rs[0]!.newMetrics).toEqual([{ name: 'score', dir: 'max', value: 100 }]);
+    expect(t.series.get('score')!.values).toEqual(flat);
+    const seg = plateauStatusSegment(t, STATUS)!;
+    const segOn = (() => { const u = new PlateauStopTracker(); for (const v of flat) u.step([line(v)], ONW); return plateauStatusSegment(u, ONW)!; })();
+    expect(seg).toBe(segOn.replace(/ — PLATEAU$/, ''));
+    expect(seg).not.toMatch(/PLATEAU/);
   });
 });

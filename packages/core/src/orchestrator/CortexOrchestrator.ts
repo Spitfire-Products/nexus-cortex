@@ -160,6 +160,7 @@ import { resolveEffortRamp, rampEffortFor } from './effortRamp.js';
 import { resolveWallDrop, resolveOutputCap, dropWalledTurn, resolveWallSummary, extractWalledReasoning, clipReasoning, formatWallSummary, type WallDropResult } from './wallGuard.js';
 import { resolvePid1Guard, detectPid1Note } from './pid1Guard.js'; // R209
 import { PlateauStopTracker, plateauBootInstruction, plateauStatusSegment } from './plateauStop.js'; // R210
+import { resolveTaskRules, taskRulesPlanBlock, taskRulesJudgeClause } from '../training/taskRules.js'; // R211–R214
 import { resolveComputeNudge, computeNudgeDecision, buildComputeNudgeLine, lastAssistantReasoningTokens } from './computeNudge.js';
 import { classifyEmptyResponse, emptyResponseNudge, nudgeForbidsTools, emptyResponseNudgeFor, isReasoningExhaustion, stepDownEffort, effortLadderFor, resolveExhaustLadderMode, resolveReasoningExhaustBackoff, type ReasoningEffortLevel, type EmptyResponseClassification } from './emptyResponseClassifier.js';
 import { isImageRejectionError, stripRejectedImages } from './imageRejectionHeal.js'; // R154
@@ -695,6 +696,7 @@ export class CortexOrchestrator {
   private specFailHistory = new Map<string, { streak: number; sig: string }>(); // R174b: consecutive identical spec failures
   private lastHoldMs = 0; // R173c: wall clock of the last hold/veto this turn
   private derivationHolds = 0; // R176: independent-derivation holds this turn (max 1)
+  private taskRulePlanRecorded = false; // R211–R214: task_rule_plan is banked once per session
   private liftPlanText = '';          // 4.107.0: the PLAN OF ATTACK delivered at lift — handed to the resolver / deadline-exit / loop-exit judges as an advisory anchor
   private effectiveDeferredLoading = true; // per-turn resolved deferred-loading (card > env > settings); set at assembly
 
@@ -854,11 +856,11 @@ export class CortexOrchestrator {
 
   /** R210 HB-PLATEAU-STOP: scan this round's tool results for PLATEAU_METRIC reports and return the plateau reminder (or null) for
    *  the budget-steering signals line. Off → null without scanning. Events: plateau_metric_seen (first report of a metric name),
-   *  plateau_stop (each firing, max 2 per session). Never throws. */
+   *  plateau_stop (each firing, max 2 per session); in `status` mode plateau_detected replaces plateau_stop and no reminder is returned. Never throws. */
   private observePlateau(toolResults: ReadonlyArray<{ content?: unknown }>, iteration: number, streaming: boolean): string | null {
     try {
       const r = this.plateauTracker.step(toolResults); // off → returns before touching the results
-      if (!r.newMetrics.length && !r.fire) return null;
+      if (!r.newMetrics.length && !r.fire && !r.detected) return null;
       const store = this.getDecisionStore();
       const sessionId = this.currentSessionId ?? 'unknown';
       for (const m of r.newMetrics) {
@@ -867,6 +869,9 @@ export class CortexOrchestrator {
       if (r.fire) {
         if (store) void store.recordEvent({ sessionId, kind: 'plateau_stop', detail: { ...r.fire, iteration, streaming } }).catch(() => {});
         if (this.config.debug) console.log(`[PlateauStop] ${r.fire.name} plateau (${r.fire.improvementPct}% over the window, ${r.fire.points} points) — firing ${r.fire.firing}`);
+      }
+      if (r.detected) { // CORTEX_PLATEAU_STOP=status: would-have-fired point, nothing steered
+        if (store) void store.recordEvent({ sessionId, kind: 'plateau_detected', detail: { ...r.detected, iteration, streaming } }).catch(() => {});
       }
       return r.signal;
     } catch { return null; }
@@ -1025,6 +1030,12 @@ export class CortexOrchestrator {
         // so a k=5 run can score plan QUALITY (and read the reasoning behind a RETIRE).
         detail: { fired: true, planChars: plan.length, retire, criteriaStated, latencyMs, ...r171, mentor: this.mentorWire('lift-plan', resolveLiftPlanConfig().effort, resolveLiftPlanConfig().outputBudgetTokens), ...bankPlanText(plan) },
       }).catch(() => {});
+      // R211–R214 HB-TASK-RULES (CORTEX_RULE_*, dark): the planner persona carried the active rule bullets — once per session.
+      const planRules = resolveTaskRules();
+      if (planRules.length && !this.taskRulePlanRecorded) {
+        this.taskRulePlanRecorded = true;
+        if (store) void store.recordEvent({ sessionId, kind: 'task_rule_plan', detail: { rules: planRules, blockChars: taskRulesPlanBlock(planRules).length, planChars: plan.length, retire } }).catch(() => {});
+      }
       if (this.config.debug) {
         console.log(`[LiftPlan] plan delivered at lift (${plan.length} chars, retire=${retire}, criteria=${criteriaStated})`);
       }
@@ -1578,6 +1589,8 @@ export class CortexOrchestrator {
       // merely that it fired. Bounded caps keep the decisions row sane. See HARNESS_IMPROVEMENT_BACKLOG.
       // R208 HB-VERIFY-AT-SCALE (CORTEX_VERIFY_SCALE=on, dark): the judge persona carried the scale rubric item on this adjudication.
       if (store && cfg.verifyScale) void store.recordEvent({ sessionId, kind: 'verify_scale_item', toolName: 'EndTurn', detail: { surface: 'endturn-resolver', clauseChars: RESOLVER_SCALE_CLAUSE.length, roundsUsed, meets: verdict.meets, parsed: verdict.parsed, confidence: verdict.confidence } }).catch(() => {});
+      // R211–R214 HB-TASK-RULES (CORTEX_RULE_*, dark): the judge persona carried the active rule clauses on this adjudication.
+      if (store && cfg.taskRules.length) void store.recordEvent({ sessionId, kind: 'task_rule_judge', toolName: 'EndTurn', detail: { surface: 'endturn-resolver', rules: cfg.taskRules, clauseChars: taskRulesJudgeClause(cfg.taskRules).length, roundsUsed, meets: verdict.meets, parsed: verdict.parsed, confidence: verdict.confidence } }).catch(() => {});
       if (store) void store.recordEvent({
         sessionId,
         kind: 'endturn_resolver',
@@ -1597,6 +1610,7 @@ export class CortexOrchestrator {
           reqLedger: cfg.reqLedger, reqLines: reqCounts.lines, reqOpen: reqCounts.open, reqExercised: reqCounts.exercised, reqFailed: reqCounts.failed, reqUnverifiable: reqCounts.unverifiable, reqHeld: !!reqHold, reqHolds: this.reqLedgerHolds, reqGenLatencyMs: this.reqLedgerMeta.genLatencyMs, reqJev: cfg.reqLedgerJev, reqJevAsked: reqJev?.asked ?? 0, reqJevClosed: reqJev?.closed ?? [], reqJevLatencyMs: reqJev?.latencyMs ?? 0, // R187/R187b
           reqFailVeto: !!reqFailVeto, reqFailVetoes: this.reqLedgerFailVetoes, reqFailedNow, reqFailJev, // R192
           verifyScale: cfg.verifyScale, // R208
+          taskRules: cfg.taskRules, // R211–R214
           reqBroken: [...this.reqLedgerBroken], reqLinesDetail: (this.reqLedger ?? []).map((e) => ({ id: e.id, kind: e.kind, status: e.status, check: !!e.check, runs: e.runs, last: (e.lastResult ?? '').split('\n').slice(0, 2).join(' / ').slice(0, 200) })), // R191: per-line outcomes so a false-failure read is possible from the decisions file
           latencyMs, rawLen: (text ?? '').length,
           deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,

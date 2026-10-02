@@ -9,7 +9,11 @@
  * stop optimizing, make sure the deliverable holds the best result, run the task's own verification once, finish. At most two
  * reminders per session (the second only after >= WINDOW more reports with still no real gain).
  *
- *   CORTEX_PLATEAU_STOP       = off (default) | on
+ *   CORTEX_PLATEAU_STOP       = off (default) | on | status
+ *     status (2026-10-02, dark): boot instruction + metric tracking + the STATUS score segment only — the detector still runs on the
+ *     same cadence (same firing cap and re-fire spacing) but steers NO reminder; each would-be firing is returned as `detected` and
+ *     banked as a plateau_detected event, so a run measures when `on` would have fired without changing what the model sees beyond
+ *     the instruction and the segment (the segment omits the ` — PLATEAU` label in this mode).
  *   CORTEX_PLATEAU_REL        = relative-improvement target (default 0.002 = 0.2%)
  *   CORTEX_PLATEAU_WINDOW     = most recent reports compared (default 6)
  *   CORTEX_PLATEAU_MIN_POINTS = reports needed before any stop can fire (default 8)
@@ -24,9 +28,17 @@ export interface PlateauConfig { rel: number; window: number; minPoints: number 
 export const PLATEAU_DEFAULTS: PlateauConfig = { rel: 0.002, window: 6, minPoints: 8 };
 export const PLATEAU_MAX_FIRINGS = 2;
 
-/** null when the lever is off. Bad numeric values fall back to the defaults. */
+export type PlateauMode = 'on' | 'status';
+
+/** on | true | 1 → 'on'; status → 'status'; anything else (off/unset) → null. */
+export function resolvePlateauMode(env: NodeJS.ProcessEnv = process.env): PlateauMode | null {
+  const v = (env.CORTEX_PLATEAU_STOP ?? '').trim().toLowerCase();
+  return /^(on|true|1)$/.test(v) ? 'on' : v === 'status' ? 'status' : null;
+}
+
+/** null when the lever is off (both `on` and `status` track). Bad numeric values fall back to the defaults. */
 export function resolvePlateauStop(env: NodeJS.ProcessEnv = process.env): PlateauConfig | null {
-  if (!/^(on|true|1)$/i.test((env.CORTEX_PLATEAU_STOP ?? '').trim())) return null;
+  if (!resolvePlateauMode(env)) return null;
   const num = (raw: string | undefined, dflt: number, ok: (n: number) => boolean): number => {
     const n = Number((raw ?? '').trim());
     return (raw ?? '').trim() !== '' && Number.isFinite(n) && ok(n) ? n : dflt;
@@ -37,7 +49,7 @@ export function resolvePlateauStop(env: NodeJS.ProcessEnv = process.env): Platea
   return { rel, window, minPoints };
 }
 
-/** The one boot instruction (CORTEX_PLATEAU_STOP=on), or null when off. */
+/** The one boot instruction (CORTEX_PLATEAU_STOP=on|status), or null when off. */
 export function plateauBootInstruction(env: NodeJS.ProcessEnv = process.env): string | null {
   if (!resolvePlateauStop(env)) return null;
   return 'If you are tuning a continuous objective (a similarity score, error, latency, size…), print one line after every evaluation: ' +
@@ -117,6 +129,8 @@ export interface PlateauStepResult {
   /** Metric names reported for the first time this round. */
   newMetrics: Array<{ name: string; dir: PlateauDir; value: number }>;
   fire: PlateauStopFire | null;
+  /** status mode only: the firing `on` would have made this round (no signal is steered). Absent in `on` mode. */
+  detected?: PlateauStopFire | null;
 }
 
 const EMPTY: PlateauStepResult = { signal: null, newMetrics: [], fire: null };
@@ -136,6 +150,7 @@ export class PlateauStopTracker {
     try {
       const cfg = resolvePlateauStop(env);
       if (!cfg) return EMPTY;
+      const statusOnly = resolvePlateauMode(env) === 'status';
       const newMetrics: PlateauStepResult['newMetrics'] = [];
       const touched = new Set<string>();
       for (const item of texts) {
@@ -169,6 +184,7 @@ export class PlateauStopTracker {
           break; // one reminder per round
         }
       }
+      if (statusOnly) return { signal: null, newMetrics, fire: null, detected: fire }; // status: measure, never steer
       return { signal, newMetrics, fire };
     } catch {
       return EMPTY;
@@ -194,7 +210,7 @@ export function plateauStatusSegment(tracker: PlateauStopTracker | null | undefi
     if (Number.isFinite(d.improvement)) {
       const pct = formatPct(d.improvement);
       seg += `; ${d.improvement >= 0 ? '+' : ''}${pct}% over last ${cfg.window} (target ≥${formatPct(cfg.rel)}%)`;
-      if (d.plateau) seg += ' — PLATEAU';
+      if (d.plateau && resolvePlateauMode(env) === 'on') seg += ' — PLATEAU'; // status mode: numbers only, no stop label
     }
     return seg;
   } catch {

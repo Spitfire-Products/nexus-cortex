@@ -12,6 +12,7 @@
  * puzzle. Same delivery as the lift planner: orchestrator-invoke → system-reminder. Pure + testable.
  */
 import { clipIn, FULL_CAPS, HINTS } from './steerInputs.js';
+import { resolveTaskRules, taskRulesJudgeClause, type TaskRule } from './taskRules.js'; // R211–R214
 
 /** R188 (2026-09-23): the task text is the spec — 25 of 64 TB4.0 tasks exceed 2000 chars and 14 exceed 2500; every steerer sees the whole text up to this cap. */
 export const TASK_TEXT_CAP = 8000;
@@ -145,9 +146,12 @@ export interface EndTurnResolverConfig {
    *  carries one extra rubric item (RESOLVER_SCALE_CLAUSE): verification evidence below the scale/volume/concurrency/timing the task's
    *  tests imply is a gap. CORTEX_VERIFY_SCALE=on; default off (persona byte-identical). */
   verifyScale: boolean;
+  /** R211–R214 HB-TASK-RULES (2026-10-02, tb4-never-passed requirement-miss pass): the active CORTEX_RULE_* rules (taskRules.ts); each
+   *  appends one rubric clause to the judge persona after the R208 scale item. Default none (persona byte-identical). */
+  taskRules: TaskRule[];
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', specSamples: 3, specVetoFrac: 0.5, specText: 'shown', derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7, reqLedgerFailVeto: false, reqLedgerFailVetoMax: 2, reqLedgerFailVetoMinRemaining: 0.25, reqLedgerFailJev: 'shadow', reqLedgerFailJevMin: 0.7, verifyScale: false };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', specSamples: 3, specVetoFrac: 0.5, specText: 'shown', derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7, reqLedgerFailVeto: false, reqLedgerFailVetoMax: 2, reqLedgerFailVetoMinRemaining: 0.25, reqLedgerFailJev: 'shadow', reqLedgerFailJevMin: 0.7, verifyScale: false, taskRules: [] };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
@@ -226,6 +230,7 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
     reqLedgerFailJev: (() => { const v = (env.CORTEX_JUDGE_REQ_LEDGER_FAIL_JEV ?? '').trim().toLowerCase(); return v === 'on' ? 'on' : v === 'off' || v === 'false' || v === '0' ? 'off' : v === 'shadow' ? 'shadow' : DEFAULTS.reqLedgerFailJev; })(),
     reqLedgerFailJevMin: (() => { const f = parseFloat((env.CORTEX_JUDGE_REQ_LEDGER_FAIL_JEV_MIN ?? '').trim()); return Number.isFinite(f) && f > 0 && f <= 1 ? f : DEFAULTS.reqLedgerFailJevMin; })(),
     verifyScale: /^(on|true|1)$/i.test((env.CORTEX_VERIFY_SCALE ?? '').trim()), // R208
+    taskRules: resolveTaskRules(env), // R211–R214
   };
 }
 
@@ -293,10 +298,11 @@ export const RESOLVER_DECIDE_NOW_CLAUSE =
   '\n\nNo further investigation is available — decide now on the evidence you have (MEETS or GAP; INVESTIGATE is no longer accepted).';
 
 /** The persona for the judge. With `abstain`, the RETIRE option is offered; with `meetsConfirm` (R168), a MEETS must name proving
- *  checks; `investigate` (R170) = 'offer' while rounds remain, 'withdraw' on the last round of a multi-round adjudication, undefined otherwise. */
-export function resolverSystemPrompt(abstain = false, meetsConfirm = false, investigate?: 'offer' | 'withdraw', verifyScale = false): string {
+ *  checks; `investigate` (R170) = 'offer' while rounds remain, 'withdraw' on the last round of a multi-round adjudication, undefined otherwise;
+ *  `taskRules` (R211–R214) appends one rubric clause per active CORTEX_RULE_* rule after the R208 scale item. */
+export function resolverSystemPrompt(abstain = false, meetsConfirm = false, investigate?: 'offer' | 'withdraw', verifyScale = false, taskRules: readonly TaskRule[] = []): string {
   const base0 = meetsConfirm ? RESOLVER_SYSTEM.replace(RESOLVER_MEETS_DEFAULT_LINE, RESOLVER_MEETS_CHECK_LINE) : RESOLVER_SYSTEM;
-  const base = verifyScale ? base0 + RESOLVER_SCALE_CLAUSE : base0; // R208
+  const base = (verifyScale ? base0 + RESOLVER_SCALE_CLAUSE : base0) + taskRulesJudgeClause(taskRules); // R208 / R211–R214 ('' when none)
   const withAbstain = abstain ? base + RESOLVER_ABSTAIN_CLAUSE : base;
   return investigate === 'offer' ? withAbstain + RESOLVER_INVESTIGATE_CLAUSE : investigate === 'withdraw' ? withAbstain + RESOLVER_DECIDE_NOW_CLAUSE : withAbstain;
 }

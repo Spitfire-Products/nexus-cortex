@@ -17,6 +17,7 @@
  */
 import { clipIn, FULL_CAPS, HINTS } from './steerInputs.js';
 import { resolveWorkspaceClean } from '../utils/stateDir.js';
+import { resolveTaskRules, taskRulesPlanBlock } from './taskRules.js'; // R211–R214
 
 /** R188 (2026-09-23): the task text is the spec — 25 of 64 TB4.0 tasks exceed 2000 chars and 14 exceed 2500; every steerer sees the whole text up to this cap. */
 export const TASK_TEXT_CAP = 8000;
@@ -206,13 +207,15 @@ export const SCOPE_DOCTRINE_ADAPTIVE =
   'only when the task asks for work on them. Before finishing, list what changed since the start (the orient baseline command when ' +
   'orient printed one, else `git status`) and revert changes to EXISTING files the task did not require.\n';
 
-/** Select the planner persona by CORTEX_LIFT_PLAN_DOCTRINE ('v2' → bullets on; anything else → v1 baseline); R171 `investigate`
+/** Select the planner persona by CORTEX_LIFT_PLAN_DOCTRINE ('v2' → bullets on; anything else → v1 baseline); CORTEX_LIFT_PLAN_SCOPE and the
+ *  R211–R214 CORTEX_RULE_* bullets (taskRules.ts) go just before the output instruction, scope first; R171 `investigate`
  *  = 'offer' while rounds remain, 'withdraw' on the last round of a multi-round plan, undefined for the single-shot default. */
 export function plannerSystem(env: NodeJS.ProcessEnv = process.env, investigate?: 'offer' | 'withdraw'): string {
   const doctrine = (env.CORTEX_LIFT_PLAN_DOCTRINE || '').trim().toLowerCase() === 'v2' ? PLANNER_SYSTEM : PLANNER_SYSTEM_V1;
   const scopeMode = (env.CORTEX_LIFT_PLAN_SCOPE || '').trim().toLowerCase();
   const bullet = scopeMode === 'true' ? (resolveWorkspaceClean(env) ? SCOPE_DOCTRINE_CLEAN : SCOPE_DOCTRINE) : scopeMode === 'adaptive' ? SCOPE_DOCTRINE_ADAPTIVE : '';
-  const base = bullet ? doctrine.replace('Output ONLY the plan', bullet + 'Output ONLY the plan') : doctrine;
+  const block = bullet + taskRulesPlanBlock(resolveTaskRules(env)); // R211–R214: '' when every CORTEX_RULE_* is off → byte-identical
+  const base = block ? doctrine.replace('Output ONLY the plan', block + 'Output ONLY the plan') : doctrine;
   return investigate === 'offer' ? base + PLANNER_INVESTIGATE_CLAUSE : investigate === 'withdraw' ? base + PLANNER_DECIDE_NOW_CLAUSE : base;
 }
 

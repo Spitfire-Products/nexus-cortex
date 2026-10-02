@@ -2,7 +2,8 @@
  * R210 HB-PLATEAU-STOP loop integration (CORTEX_PLATEAU_STOP). Scripted API: four rounds, each one Bash call that echoes a flat
  * `PLATEAU_METRIC score=100 dir=max`, then an answer. Off: no instruction, no plateau reminder, STATUS line carries no score segment
  * (byte-identical to the pre-R210 line shape). On (WINDOW=1, MIN_POINTS=2): the boot instruction rides the first tool_result, the
- * plateau reminder arrives on the budget-steering channel, and STATUS carries the score segment with the PLATEAU suffix.
+ * plateau reminder arrives on the budget-steering channel, and STATUS carries the score segment with the PLATEAU suffix. Status: the
+ * instruction and the score segment (no PLATEAU label), never a reminder.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
@@ -93,6 +94,21 @@ describe('R210 HB-PLATEAU-STOP loop integration', () => {
       const lines = statusLines(reqs[reqs.length - 1]);
       expect(lines[0]).toContain('; score score: best 100 (1 eval)</system-reminder>');
       expect(lines[lines.length - 1]).toContain('; score score: best 100 (4 evals); +0% over last 1 (target ≥0.2%) — PLATEAU</system-reminder>');
+    });
+
+    it(`${mode}: status → boot instruction + STATUS score segment (no PLATEAU label), NO plateau reminder`, async () => {
+      process.env.CORTEX_PLATEAU_STOP = 'status';
+      process.env.CORTEX_PLATEAU_WINDOW = '1';
+      process.env.CORTEX_PLATEAU_MIN_POINTS = '2';
+      const reqs = await run(mode);
+      expect(JSON.stringify(reqs[1])).toContain('If you are tuning a continuous objective');
+      const last = JSON.stringify(reqs[reqs.length - 1]);
+      expect((last.match(/If you are tuning/g) ?? []).length).toBe(1);
+      for (const r of reqs) expect(JSON.stringify(r)).not.toContain('PLATEAU:');
+      const lines = statusLines(reqs[reqs.length - 1]);
+      expect(lines[0]).toContain('; score score: best 100 (1 eval)</system-reminder>');
+      expect(lines[lines.length - 1]).toContain('; score score: best 100 (4 evals); +0% over last 1 (target ≥0.2%)</system-reminder>');
+      for (const l of lines) expect(l).not.toContain('PLATEAU');
     });
   }
 });

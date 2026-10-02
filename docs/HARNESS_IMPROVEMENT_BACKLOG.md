@@ -1812,3 +1812,8 @@ Test: a scripted turn that sleeps past the TTL on a short-TTL provider — cache
 | R208 | HB-VERIFY-AT-SCALE — agent verifies at toy scale, hidden tests run at ~920k records (payments 0/6 in c23) | open, def-3fc4ea72fb | finish-gate/judge rubric item: does the check reproduce the tests' scale? |
 | R209 | HB-CONTAINER-PID1 — agent SIGKILLs the supervisor PID 1 waits on → container stops → exit 137 | open, def-e6b615e4b1 | orient/inventory warning naming PID 1's child; post-mortem label |
 | R210 | HB-PLATEAU-STOP — optimization tasks grind infinitesimal gains to the 8 h cap (v39a layout 5.3 h+, 483 iterations) | open, def-21719c22ed | plateau variation target (operator): stop when relative gain over a trailing window < X%; deliverable kept at best-so-far |
+| R211 | HB-RULE-INPUTS — input field ignored / correct constant altered to force feasibility (cargo 32/32, data-anonymization, live-db) | building dark 4.124.43, def-a85ddab72e | planner line + judge clause, CORTEX_RULE_INPUTS |
+| R212 | HB-RULE-INTERP — ambiguity settled by heuristic; right alternative in own caveats (foodstuff, glycan, hof, ontology) | building dark, def-cb77e05d7d | CORTEX_RULE_INTERP |
+| R213 | HB-RULE-HOLDOUT — overfit to visible sample / own oracle (bun-sourcemap, sound-change, session-window) | building dark, def-2392684bbd | CORTEX_RULE_HOLDOUT |
+| R214 | HB-RULE-INDEP — producer = verifier; discrepancies unreconciled (layout, retro-console, satb) | building dark, def-734669404d | CORTEX_RULE_INDEP |
+
