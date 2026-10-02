@@ -72,7 +72,7 @@ describe('R210 HB-PLATEAU-STOP loop integration', () => {
       expect(last).toContain('PLATEAU_METRIC score=100 dir=max'); // the metric really reached the tool results
       for (const r of reqs) {
         const j = JSON.stringify(r);
-        expect(j).not.toContain('If you are optimizing');
+        expect(j).not.toContain('If you are tuning');
         expect(j).not.toContain('PLATEAU:');
       }
       const lines = statusLines(reqs[reqs.length - 1]);
@@ -85,9 +85,9 @@ describe('R210 HB-PLATEAU-STOP loop integration', () => {
       process.env.CORTEX_PLATEAU_WINDOW = '1';
       process.env.CORTEX_PLATEAU_MIN_POINTS = '2';
       const reqs = await run(mode);
-      expect(JSON.stringify(reqs[1])).toContain('If you are optimizing a measurable objective');
+      expect(JSON.stringify(reqs[1])).toContain('If you are tuning a continuous objective');
       const last = JSON.stringify(reqs[reqs.length - 1]);
-      expect((last.match(/If you are optimizing/g) ?? []).length).toBe(1);
+      expect((last.match(/If you are tuning/g) ?? []).length).toBe(1);
       // flat 100s: plateau at point 2 (firing 1), second firing at point 3 (>= window more points), then capped
       expect((last.match(/PLATEAU: your score improved only 0% over the last 1 evaluations/g) ?? []).length).toBe(2);
       const lines = statusLines(reqs[reqs.length - 1]);

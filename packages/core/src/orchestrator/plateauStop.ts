@@ -40,8 +40,9 @@ export function resolvePlateauStop(env: NodeJS.ProcessEnv = process.env): Platea
 /** The one boot instruction (CORTEX_PLATEAU_STOP=on), or null when off. */
 export function plateauBootInstruction(env: NodeJS.ProcessEnv = process.env): string | null {
   if (!resolvePlateauStop(env)) return null;
-  return 'If you are optimizing a measurable objective (a score, error, latency, size…), print one line after every evaluation: ' +
-    '`PLATEAU_METRIC <name>=<number> dir=<max|min>`. Keep the task\'s deliverable updated with your best result so far.';
+  return 'If you are tuning a continuous objective (a similarity score, error, latency, size…), print one line after every evaluation: ' +
+    '`PLATEAU_METRIC <name>=<number> dir=<max|min>`. Never report pass/fail or test counts this way. Keep the task\'s deliverable ' +
+    'updated with your best result so far.';
 }
 
 const METRIC_RE = /PLATEAU_METRIC (\S+)=(-?[0-9.eE+]+) dir=(max|min)/g;
@@ -102,7 +103,8 @@ export function formatPct(fraction: number): string {
 export function buildPlateauReminder(name: string, d: PlateauDecision, cfg: PlateauConfig): string {
   return `<system-reminder>PLATEAU: your ${name} improved only ${formatPct(d.improvement)}% over the last ${cfg.window} evaluations ` +
     `(target ≥ ${formatPct(cfg.rel)}%). Stop optimizing. Make sure the deliverable holds the best result (${d.best}), ` +
-    `run the task's own verification/tests once, then finish.</system-reminder>`;
+    `run the task's own verification/tests once, then finish. If the task's required checks are not yet passing, this is not a ` +
+    `stop signal — keep fixing them.</system-reminder>`;
 }
 
 export interface PlateauStopFire {
