@@ -20,6 +20,14 @@ import { GoogleGenAI } from '@google/genai';
 import { v4 as uuidv4 } from 'uuid';
 import { assertCompletionBody } from './completionBodyGuard.js';
 import { parseHFCompletion, normalizeToolCallArguments } from '../models/hfSpace/normalize.js';
+import {
+  isResponsesInlineRemindersEnabled,
+  inlineRemindersForResponses,
+  isResponsesStopReasonEnabled,
+  isAnthropicHistoryCacheEnabled,
+  applyAnthropicHistoryCache,
+  countAnthropicBreakpoints,
+} from './transportFixes.js';
 import type { ModelConfig } from '../models/ModelConfig.interface.js';
 import type { PreparedRequest } from '../adapters/GatewayTranslationLayer.js';
 import type { CanonicalToolUse } from '@nexus-cortex/types';
@@ -481,6 +489,15 @@ export class APIClient {
         anthropicRequest.tools = request.tools;
       }
       this.applyToolChoice(anthropicRequest, request, 'messages'); // §13-B1 forced tool_choice
+    }
+
+    // R218 (DARK, CORTEX_ANTHROPIC_HISTORY_CACHE=on): rolling message-level breakpoints so the conversation
+    // history is cached, within the 4-breakpoint cap (system + last tool counted). Anthropic only.
+    if (enableCaching && isAnthropicHistoryCacheEnabled()) {
+      anthropicRequest.messages = applyAnthropicHistoryCache(
+        anthropicRequest.messages,
+        countAnthropicBreakpoints({ system: anthropicRequest.system, tools: anthropicRequest.tools }),
+      ).messages;
     }
 
     // Phase 2.8: Enable extended thinking for Claude 4+ models with reasoning support
@@ -1197,7 +1214,12 @@ export class APIClient {
     //
     // Extract <system-reminder> content from user messages into `instructions` parameter.
     // This lets the Responses API cache system context separately from conversation content.
-    const { instructions, cleanedItems: inputItems } = this.extractSystemRemindersForResponsesAPI(request.messages);
+    // R215 (DARK, CORTEX_RESPONSES_INLINE_REMINDERS=on): keep reminders IN PLACE as user input_text items
+    // (xAI never receives `instructions`; OpenAI lost their position after the tool output). R63 system
+    // delivery below is unchanged — `instructions` then carries only the static system prompt.
+    const { instructions, cleanedItems: inputItems } = isResponsesInlineRemindersEnabled()
+      ? { instructions: undefined as string | undefined, cleanedItems: inlineRemindersForResponses(request.messages) }
+      : this.extractSystemRemindersForResponsesAPI(request.messages);
 
     // Check reasoning support
     const supportsReasoning = modelConfig.reasoning?.supported;
@@ -1612,6 +1634,14 @@ export class APIClient {
           anthropicRequest.tools = request.tools;
         }
         this.applyToolChoice(anthropicRequest, request, 'messages'); // §13-B1 forced tool_choice
+      }
+
+      // R218 (DARK): rolling message-level cache breakpoints — mirrors sendAnthropicMessagesAPI.
+      if (enableCaching && isAnthropicHistoryCacheEnabled()) {
+        anthropicRequest.messages = applyAnthropicHistoryCache(
+          anthropicRequest.messages,
+          countAnthropicBreakpoints({ system: anthropicRequest.system, tools: anthropicRequest.tools }),
+        ).messages;
       }
 
       // Phase 2.8: Enable extended thinking for Claude 4+ models with reasoning support
@@ -2456,7 +2486,10 @@ export class APIClient {
     // Re-wrapping them would strip tool results and function calls, breaking the tool loop.
     //
     // Extract <system-reminder> content from user messages into `instructions` parameter.
-    const { instructions, cleanedItems: inputItems } = this.extractSystemRemindersForResponsesAPI(request.messages);
+    // R215 (DARK): CORTEX_RESPONSES_INLINE_REMINDERS=on keeps them in place (mirrors sendResponsesAPI).
+    const { instructions, cleanedItems: inputItems } = isResponsesInlineRemindersEnabled()
+      ? { instructions: undefined as string | undefined, cleanedItems: inlineRemindersForResponses(request.messages) }
+      : this.extractSystemRemindersForResponsesAPI(request.messages);
 
     // Accumulate content from stream
     let fullContent = '';
@@ -2788,7 +2821,12 @@ export class APIClient {
           prompt_tokens: 0,
           completion_tokens: 0,
           total_tokens: 0
-        }
+        },
+        // R216 (DARK, CORTEX_RESPONSES_STOP_REASON=on): carry the terminal event's status +
+        // incomplete_details (response.completed / response.incomplete) so extractStopReason sees truncation.
+        ...(isResponsesStopReasonEnabled() && typeof finalResponse?.status === 'string'
+          ? { status: finalResponse.status, incomplete_details: finalResponse.incomplete_details ?? null }
+          : {})
       });
     }();
 

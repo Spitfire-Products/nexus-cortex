@@ -23,6 +23,8 @@ import { frameHelperPrompt, type HelperFrameSpec } from './helpers/helperFrame.j
 import { resolveMentorRoleConfig, mentorWireHint } from '../training/mentorRole.js';
 import { resolveVisionHelperModel } from '../tools/ToolProfile.js';
 import { hasImageBlocks, extractImages, replaceImageBlocks, markerFor } from './helpers/helperImageBlocks.js';
+import { matchHelperToActionProvider, resolveHelperMatchProviderFlag } from './helpers/helperProviderMatch.js'; // R217
+import { getShippedDefault } from '../config/SettingsLoader.js';
 import {
   buildMentorUserPrompt,
   MENTOR_REFRAME_SYSTEM,
@@ -220,6 +222,36 @@ export class HelperModelMiddleware {
     this.compactionManager = options?.compactionManager;
     this.timeline = options?.timeline;
     this.modelRegistry = options?.modelRegistry;
+  }
+
+  /** R217: reads the ACTION model's provider (late-bound by OrchestratorFactory to orchestrator.getCurrentModel()). */
+  private actionProviderResolver?: () => string | undefined;
+  private static _roleShippedDefaults: string[] | null = null;
+
+  /** R217: bind the action-model provider source (live — follows /model switches). */
+  setActionProviderResolver(fn: (() => string | undefined) | undefined): void {
+    this.actionProviderResolver = fn;
+  }
+
+  /**
+   * R217 CORTEX_HELPER_MATCH_PROVIDER: a defaulted HELPER/MENTOR role id resolves from the action model's provider
+   * (HELPER_MODEL_REGISTRY, the selectHelperModel map); an explicit id always wins. Flag off = `id` unchanged.
+   */
+  resolveRoleModelId(id: string): string {
+    if (!resolveHelperMatchProviderFlag(process.env)) return id;
+    if (HelperModelMiddleware._roleShippedDefaults === null) {
+      try {
+        HelperModelMiddleware._roleShippedDefaults = [getShippedDefault('HELPER_MODEL_ID'), getShippedDefault('MENTORSHIP_HELPER_MODEL')];
+      } catch { HelperModelMiddleware._roleShippedDefaults = []; }
+    }
+    let actionProvider: string | undefined;
+    try { actionProvider = this.actionProviderResolver?.(); } catch { actionProvider = undefined; }
+    return matchHelperToActionProvider({
+      resolvedId: id,
+      actionProvider,
+      registry: HELPER_MODEL_REGISTRY,
+      shippedDefaults: HelperModelMiddleware._roleShippedDefaults,
+    });
   }
 
   /**
@@ -1311,7 +1343,7 @@ Produce the FULL updated CORTEX.md. Rules, in priority order:
       outputBudgetTokens: budget,
     }, body);
     const helperConfig = this.getHelperModelConfig(
-      context.helperModelId || process.env.HELPER_MODEL_ID || 'deepseek-flash'
+      this.resolveRoleModelId(context.helperModelId || process.env.HELPER_MODEL_ID || 'deepseek-flash') // R217
     );
     const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
     const messages: HelperCanonicalMessage[] = [{ role: 'user', content: prompt }];
@@ -1333,7 +1365,11 @@ Produce the FULL updated CORTEX.md. Rules, in priority order:
     body: string,
     helperModelId?: string,
   ): Promise<string> {
-    const modelId = helperModelId || 'deepseek-flash';
+    const modelId = this.resolveRoleModelId(helperModelId || 'deepseek-flash'); // R217 (flag off = unchanged)
+    // R217: keep the banked mentor role honest — the ledger/wire model is the one actually called.
+    if (spec.mentor && spec.mentor.modelId !== modelId && resolveHelperMatchProviderFlag(process.env)) {
+      spec = { ...spec, mentor: { ...spec.mentor, modelId } };
+    }
     let helperConfig = this.getHelperModelConfig(modelId);
     // Optional per-call reasoning-effort override (e.g. 'max' for the lift planner). Only applies
     // when the model's reasoning is toggleable; clone so the shared registry config is not mutated.
@@ -1832,7 +1868,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
     const truncated = firstUserMessage.slice(0, 500);
     const prompt = `Generate a concise 5-10 word title for this conversation. Return ONLY the title, no quotes, no explanation.\n\nUser message: ${truncated}`;
 
-    const modelId = helperModelId || process.env.HELPER_MODEL_ID || 'deepseek-flash';
+    const modelId = this.resolveRoleModelId(helperModelId || process.env.HELPER_MODEL_ID || 'deepseek-flash'); // R217
     const helperConfig = this.getHelperModelConfig(modelId);
     const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
 
@@ -1869,7 +1905,7 @@ Respond in exactly this format (no other text):
 SUMMARY: <summary>
 PREDICTION: <prediction>`;
 
-    const modelId = context.helperModelId || process.env.HELPER_MODEL_ID || 'deepseek-flash';
+    const modelId = this.resolveRoleModelId(context.helperModelId || process.env.HELPER_MODEL_ID || 'deepseek-flash'); // R217
     const helperConfig = this.getHelperModelConfig(modelId);
     const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
 
@@ -1899,7 +1935,7 @@ PREDICTION: <prediction>`;
   }): Promise<Array<{ label: string; keystrokes: string; durationS: number; why: string }>> {
     const n = Math.max(1, Math.min(3, context.count));
     const prompt = context.prompt ?? buildAuthorPromptLegacy({ ...context, history: [] });
-    const modelId = context.helperModelId || process.env.HELPER_MODEL_ID || 'deepseek-flash';
+    const modelId = this.resolveRoleModelId(context.helperModelId || process.env.HELPER_MODEL_ID || 'deepseek-flash'); // R217
     const helperConfig = this.getHelperModelConfig(modelId);
     const adapter = this.helperAdapterRegistry.getAdapterForModel(helperConfig);
     const text = await this.generateTracked(adapter, [{ role: 'user', content: prompt }], helperConfig, 500);

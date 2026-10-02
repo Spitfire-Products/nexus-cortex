@@ -525,6 +525,12 @@ export async function createOrchestrator(
     mentorshipMiddleware,
   );
 
+  // R217 CORTEX_HELPER_MATCH_PROVIDER: the helper middleware reads the LIVE action model's provider (follows /model
+  // switches). Inert unless the flag is on (HelperModelMiddleware.resolveRoleModelId returns the id unchanged).
+  helperMiddleware.setActionProviderResolver(() => {
+    try { return orchestrator.getCurrentModel()?.provider; } catch { return undefined; }
+  });
+
   // HB-TURN-STATUS: the status tail reads running background shells from the SAME registry Bash/BashOutput/KillShell use.
   orchestrator.setBackgroundShellsProvider(() => BackgroundProcessRegistry.getInstance().getAllProcesses());
 

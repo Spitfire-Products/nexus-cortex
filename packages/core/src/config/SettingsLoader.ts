@@ -12,6 +12,7 @@ import { fileURLToPath } from 'url';
 import type { OrchestratorConfig } from '../orchestrator/CortexOrchestrator.js';
 import type { EnvironmentVariables } from './SettingsSchema.js';
 import { DEFAULT_SETTINGS, SETTINGS_METADATA, validateSetting, getSettingMetadata } from './SettingsSchema.js';
+import { applyInteractiveProfile, isInteractiveSession } from './interactiveProfile.js';
 
 /**
  * Result of a write operation
@@ -165,7 +166,7 @@ export function getEffectiveDefaults(): Readonly<typeof DEFAULT_SETTINGS> {
  *        (the dev/`omniclaude-v4/.env` location); pass the bin's resolved root.
  * @returns the list of files actually loaded (for an [OK]/[WARN] startup log).
  */
-export function bootstrapEnv(packageRoot?: string): { loadedFrom: string[] } {
+export function bootstrapEnv(packageRoot?: string, opts: { interactive?: boolean } = {}): { loadedFrom: string[] } {
   const cwd = process.cwd();
 
   // FIRST-ACTIVATION SEED — a KEYS-ONLY `~/.cortex/.env` (somewhere to put secrets),
@@ -197,11 +198,10 @@ export function bootstrapEnv(packageRoot?: string): { loadedFrom: string[] } {
   // default layer, below the user's files and below the real injected env — so a user
   // override (or a bench env-override) always wins, and unset levers flow from the
   // shipped defaults.
-  const baseFiles = [
+  const userBaseFiles = [
     path.join(cwd, '.env'),
     ...(packageRoot ? [path.join(packageRoot, '.env')] : []),
     getGlobalEnvPath(),
-    ...(defaultsPath ? [defaultsPath] : []),
   ];
   // `.local` overrides beside each base location (these DO override existing env).
   const localFiles = [
@@ -221,7 +221,16 @@ export function bootstrapEnv(packageRoot?: string): { loadedFrom: string[] } {
     if (used || fs.existsSync(file)) loadedFrom.push(file);
   };
 
-  for (const f of baseFiles) apply(f, false);   // first-wins, never clobber real env
+  for (const f of userBaseFiles) apply(f, false);   // first-wins, never clobber real env
+  // R219 CORTEX_INTERACTIVE_PROFILE (DARK): a named lever profile for INTERACTIVE sessions, layered ABOVE the
+  // shipped defaults and BELOW every user layer above — so it fills only levers the user did not set. Off/unset →
+  // nothing written (byte-identical). The name may come from a user layer or (future default flip) the shipped file.
+  let shippedProfile: string | undefined;
+  if (process.env.CORTEX_INTERACTIVE_PROFILE === undefined && defaultsPath) {
+    try { shippedProfile = parseEnvFile(fs.readFileSync(defaultsPath, 'utf-8')).CORTEX_INTERACTIVE_PROFILE; } catch { /* no profile */ }
+  }
+  applyInteractiveProfile(process.env, { interactive: opts.interactive ?? isInteractiveSession() }, shippedProfile);
+  if (defaultsPath) apply(defaultsPath, false); // the shipped read-live default layer — lowest base precedence
   for (const f of localFiles) apply(f, true);    // explicit overrides
   return { loadedFrom };
 }
@@ -580,6 +589,7 @@ export function mergeWithDefaults(env: EnvironmentVariables): Required<Environme
     CORTEX_MENTOR_THINKING_TIMEOUT_MS: env.CORTEX_MENTOR_THINKING_TIMEOUT_MS || process.env.CORTEX_MENTOR_THINKING_TIMEOUT_MS || D.CORTEX_MENTOR_THINKING_TIMEOUT_MS,
     CORTEX_LIFT_PLAN_REASONING: env.CORTEX_LIFT_PLAN_REASONING || process.env.CORTEX_LIFT_PLAN_REASONING || D.CORTEX_LIFT_PLAN_REASONING,
     CORTEX_LIFT_PLAN_DOCTRINE: env.CORTEX_LIFT_PLAN_DOCTRINE || process.env.CORTEX_LIFT_PLAN_DOCTRINE || D.CORTEX_LIFT_PLAN_DOCTRINE,
+    CORTEX_INTERACTIVE_PROFILE: env.CORTEX_INTERACTIVE_PROFILE || process.env.CORTEX_INTERACTIVE_PROFILE || D.CORTEX_INTERACTIVE_PROFILE,
     CORTEX_LIFT_PLAN_TOOL_ROUNDS: env.CORTEX_LIFT_PLAN_TOOL_ROUNDS || process.env.CORTEX_LIFT_PLAN_TOOL_ROUNDS || D.CORTEX_LIFT_PLAN_TOOL_ROUNDS,
     CORTEX_LIFT_PLAN_TOOL_ROUND_BUDGET_MS: env.CORTEX_LIFT_PLAN_TOOL_ROUND_BUDGET_MS || process.env.CORTEX_LIFT_PLAN_TOOL_ROUND_BUDGET_MS || D.CORTEX_LIFT_PLAN_TOOL_ROUND_BUDGET_MS,
     CORTEX_ENDTURN_TIER: env.CORTEX_ENDTURN_TIER || process.env.CORTEX_ENDTURN_TIER || D.CORTEX_ENDTURN_TIER,

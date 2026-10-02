@@ -1816,4 +1816,9 @@ Test: a scripted turn that sleeps past the TTL on a short-TTL provider — cache
 | R212 | HB-RULE-INTERP — ambiguity settled by heuristic; right alternative in own caveats (foodstuff, glycan, hof, ontology) | building dark, def-cb77e05d7d | CORTEX_RULE_INTERP |
 | R213 | HB-RULE-HOLDOUT — overfit to visible sample / own oracle (bun-sourcemap, sound-change, session-window) | building dark, def-2392684bbd | CORTEX_RULE_HOLDOUT |
 | R214 | HB-RULE-INDEP — producer = verifier; discrepancies unreconciled (layout, retro-console, satb) | building dark, def-734669404d | CORTEX_RULE_INDEP |
+| R215 | HB-RESPONSES-REMINDERS — OpenAI Responses moves, xAI Responses drops separate reminder blocks | DARK BUILT 4.124.44 (CORTEX_RESPONSES_INLINE_REMINDERS), def-0711e5da66 | keep reminders inline; validate on DeepSeek's native Responses API |
+| R216 | HB-RESPONSES-STOPREASON — no stop reason on responses/hf-space → wall levers never fire | DARK BUILT 4.124.44 (CORTEX_RESPONSES_STOP_REASON), def-f6ef3b6baa | map status=incomplete / max_output_tokens + hf-space finish reason |
+| R217 | HB-FAMILY-PRESETS — boot-minimal + orient pointer DeepSeek-only; helpers default deepseek-flash for all | open, def-87e7eb2d60 | per-family presets + provider-aware helper defaults |
+| R218 | HB-ANTHROPIC-CACHE — no message-level cache breakpoints on Claude | DARK BUILT 4.124.44 (CORTEX_ANTHROPIC_HISTORY_CACHE), def-d1ac37e22d | rolling message breakpoints |
+| R219 | HB-TUI-PROFILE — bench gains not in the TUIs; GOAL = pleasing human-navigable UX/UI in both TUIs (CC = visual standard; other harnesses may reveal more navigable patterns) | open, def-5b721c3810 | interactive lever profile + TUI-Bench arena |
 

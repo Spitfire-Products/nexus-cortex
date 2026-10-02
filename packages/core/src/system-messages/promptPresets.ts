@@ -19,7 +19,7 @@
  * card's `promptPreset` applies; otherwise full corpus (default unchanged).
  */
 
-export type PromptPreset = 'boot-minimal';
+export type PromptPreset = 'boot-minimal' | 'boot-minimal-generic';
 
 export const BOOT_MINIMAL_PROMPT =
   'You are Cortex, a coding agent working in this workspace through the provided tools. ' +
@@ -93,9 +93,53 @@ export const DELEGATION_HINT_CLAUSE =
   'a parallel branch), delegate it with the Task tool — give the sub-agent a self-contained prompt (it has no memory of ' +
   'this conversation) and continue from its summary; keep your own context for decisions.';
 
+/**
+ * R217 FAMILY PRESETS (2026-10-02, DARK). 'boot-minimal' is set only on the DeepSeek cards, and it is the ONLY prompt
+ * that points the model at the `.cortex/orient` script — so every other family (Claude/GPT/Grok/Gemini/…) got the full
+ * corpus and never the orient pointer, and the ORIENT_* / baseline levers were unreachable for them.
+ * CORTEX_FAMILY_PRESETS=on: when the active card carries NO promptPreset, apply a family preset — today ONE generic
+ * preset for every family ('boot-minimal-generic'); a family can override via FAMILY_PRESET_OVERRIDES later. Cards that
+ * set promptPreset (the DeepSeek cards) are untouched; off (default) = no preset for non-DeepSeek cards, byte-identical.
+ *
+ * 'boot-minimal-generic' = the boot-minimal text minus the one DeepSeek-tuned clause, SUPPRESS_CLAUSE ("Prefer acting
+ * over deliberating."): it was tuned on DeepSeek at effort low, and at high effort the model fought it (R153, see
+ * HB-TURN-CONTRACT above) — other families mostly run with thinking on, so the generic door does not suppress it. The
+ * text otherwise names no provider; the DeepSeek anchor cue is a separate card field (anchorCue), not part of a preset.
+ * Same mass mode (minimal), same orient pointer (definite path when resolved), same delegation hint / turn contract
+ * levers (derived from buildBootMinimalPrompt, so the two never drift).
+ */
+export const BOOT_MINIMAL_GENERIC_PROMPT = BOOT_MINIMAL_PROMPT.replace(SUPPRESS_CLAUSE, '');
+
+export function buildBootMinimalGenericPrompt(orientPath?: string, env: NodeJS.ProcessEnv = process.env): string {
+  return buildBootMinimalPrompt(orientPath, env).replace(SUPPRESS_CLAUSE, '');
+}
+
+/** Per-provider overrides of the generic family preset (empty = every family gets 'boot-minimal-generic'). */
+export const FAMILY_PRESET_OVERRIDES: Readonly<Record<string, PromptPreset>> = {};
+
+export function resolveFamilyPresetsFlag(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = String(env.CORTEX_FAMILY_PRESETS ?? '').trim().toLowerCase();
+  return v === 'on' || v === 'true' || v === '1';
+}
+
+/**
+ * The preset for a card: its own promptPreset always wins; with CORTEX_FAMILY_PRESETS on, a card without one gets its
+ * family's preset (override, else generic); off = the card's preset (undefined for non-DeepSeek cards — unchanged).
+ */
+export function resolveCardPreset(
+  model: { promptPreset?: PromptPreset; provider?: string } | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): PromptPreset | undefined {
+  const own = model?.promptPreset;
+  if (own) return own;
+  if (!resolveFamilyPresetsFlag(env)) return undefined;
+  const provider = String(model?.provider ?? '').trim().toLowerCase();
+  return FAMILY_PRESET_OVERRIDES[provider] ?? 'boot-minimal-generic';
+}
+
 /** The static-corpus filter mode a preset implies for the mass partition. */
 export function presetMassMode(preset: PromptPreset | undefined): 'minimal' | 'full' {
-  return preset === 'boot-minimal' ? 'minimal' : 'full';
+  return preset === 'boot-minimal' || preset === 'boot-minimal-generic' ? 'minimal' : 'full';
 }
 
 /** The replacement core system prompt a preset implies (undefined = keep). */
@@ -103,5 +147,7 @@ export function presetSystemPrompt(
   preset: PromptPreset | undefined,
   orientPath?: string
 ): string | undefined {
-  return preset === 'boot-minimal' ? buildBootMinimalPrompt(orientPath) : undefined;
+  if (preset === 'boot-minimal') return buildBootMinimalPrompt(orientPath);
+  if (preset === 'boot-minimal-generic') return buildBootMinimalGenericPrompt(orientPath);
+  return undefined;
 }

@@ -34,7 +34,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { toolFactory } from '../tools/ToolFactory.js';
 import { isTurnVaryingSystemMessage } from '../system-messages/turnVaryingClassifier.js';
-import { presetMassMode, presetSystemPrompt, type PromptPreset } from '../system-messages/promptPresets.js';
+import { presetMassMode, presetSystemPrompt, resolveCardPreset, type PromptPreset } from '../system-messages/promptPresets.js';
 
 /**
  * Item 9b: resolve a REAL orient script for the boot-minimal clause — project
@@ -355,7 +355,9 @@ export class SystemMessageMiddleware implements ISystemMessageInjector {
     // replacement core prompt (packaged, portable). Env always wins so
     // experiments/operators can override per session.
     const envMass = (process.env.CORTEX_PROMPT_MASS ?? '').trim().toLowerCase();
-    const cardPreset = (model as { promptPreset?: PromptPreset }).promptPreset;
+    // R217: resolveCardPreset = the card's own promptPreset; with CORTEX_FAMILY_PRESETS on, a card without one gets
+    // its family preset (boot-minimal-generic). Off = the card's preset only (byte-identical).
+    const cardPreset = resolveCardPreset(model as { promptPreset?: PromptPreset; provider?: string });
     const promptMass = envMass || presetMassMode(cardPreset);
     // Item 9a (defer-gate fix): 'defer' COMPOSES with the card preset — the
     // narrow replacement prompt holds turn 1 and the dropped corpus arrives at

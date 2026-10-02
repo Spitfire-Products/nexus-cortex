@@ -115,6 +115,7 @@ export interface EnvironmentVariables {
   CORTEX_MENTOR_THINKING_TIMEOUT_MS?: string; // integer ms, optional (thinking-on mentor surface timeout; overrides the per-effort table)
   CORTEX_LIFT_PLAN_REASONING?: string; // 'on' | 'none' — per-surface, wins over CORTEX_MENTOR_REASONING
   CORTEX_LIFT_PLAN_DOCTRINE?: string; // 'v1' | 'v2' — planner doctrine
+  CORTEX_INTERACTIVE_PROFILE?: string; // 'off' | 'bench-lite' — R219 lever profile for interactive (TTY) sessions; fills unset levers only
   CORTEX_LIFT_PLAN_TOOL_ROUNDS?: string; // max planner calls at the lift; >1 lets the planner INVESTIGATE (harness runs its read-only CHECK/READ lines between rounds) — R171 HB-LIFT-PLAN-TOOL-LOOP (default 1 = single-shot)
   CORTEX_LIFT_PLAN_TOOL_ROUND_BUDGET_MS?: string; // aggregate wall clock for the planner's investigation rounds (default 240000; 10000..1800000) — R171 bullets (4.107.2 lever)
   CORTEX_ENDTURN_TIER?: string; // 'standard' | 'essential' — EndTurn discovery tier (4.107.2 lever)
@@ -500,6 +501,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_MENTOR_THINKING_TIMEOUT_MS: '',
   CORTEX_LIFT_PLAN_REASONING: '',
   CORTEX_LIFT_PLAN_DOCTRINE: '',
+  CORTEX_INTERACTIVE_PROFILE: '',
   CORTEX_LIFT_PLAN_TOOL_ROUNDS: '',
   CORTEX_LIFT_PLAN_TOOL_ROUND_BUDGET_MS: '',
   CORTEX_ENDTURN_TIER: '',
@@ -1002,6 +1004,14 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_LIFT_PLAN_TOOL_ROUND_BUDGET_MS',
     displayName: 'Lift planner investigation budget',
     description: 'Aggregate wall clock (ms) the planner\'s investigation rounds may use before it must plan (default 240000). (R171)',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_INTERACTIVE_PROFILE',
+    displayName: 'Interactive lever profile',
+    description: 'R219: off (default) | bench-lite. In an interactive (TTY) session only, turns on the headless levers that are safe for a human-driven session (loop tool block, empty-turn continue, reasoning-wall drop + summary with no effort backoff, full steering inputs, orient v2) — only those you have not set yourself. Headless/bench sessions are never affected. Applied at launch (restart to change).',
     type: 'string',
     category: 'training',
     default: ''

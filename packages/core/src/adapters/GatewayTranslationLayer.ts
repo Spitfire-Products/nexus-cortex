@@ -17,6 +17,7 @@ import { AdapterRegistry } from '../adapters/AdapterRegistry.js';
 import { ToolNamingHandler } from '../adapters/ToolNamingHandler.js';
 import { noteServedModel, formatDriftWarning } from './servedModelDrift.js';
 import { translateToolChoice, type WireToolChoice, type NormalizedToolChoice } from '../orchestrator/toolChoiceTranslation.js';
+import { isResponsesStopReasonEnabled, mapResponsesStopReason, mapHFSpaceStopReason } from '../orchestrator/transportFixes.js';
 
 /**
  * Decode HTML entities in tool arguments (recursive).
@@ -1056,6 +1057,13 @@ export class GatewayTranslationLayer {
     } else if (modelConfig.api.pattern === 'generateContent' || modelConfig.api.pattern === 'google-sdk') {
       // Gemini REST API or Google GenAI SDK: { candidates: [{ finishReason }] }
       return resp.candidates?.[0]?.finishReason;
+    } else if (modelConfig.api.pattern === 'responses' && isResponsesStopReasonEnabled()) {
+      // R216 (DARK, CORTEX_RESPONSES_STOP_REASON=on): { status: 'incomplete', incomplete_details: { reason:
+      // 'max_output_tokens' } } → 'max_output_tokens' (truncation, seen by the empty-response classifier).
+      return mapResponsesStopReason(resp);
+    } else if (modelConfig.api.pattern === 'hf-space' && isResponsesStopReasonEnabled()) {
+      // R216: hf-space is normalized to a chat.completion shape (APIClient.sendHFSpaceAPI).
+      return mapHFSpaceStopReason(resp);
     }
 
     return undefined;

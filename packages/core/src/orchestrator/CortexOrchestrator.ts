@@ -8,6 +8,7 @@
  * Based on: docs/v4-core_library/Orchestrator_ARCHITECTURE.md
  */
 
+import { liftPlanAllowedInSession } from '../config/interactiveProfile.js';
 import { v4 as uuidv4 } from 'uuid';
 
 // Phase 1.5 Week 1: Multi-Provider
@@ -940,7 +941,9 @@ export class CortexOrchestrator {
     // there is no human watching — fine. In an interactive TUI a silent pause reads as a frozen UI,
     // so the planner is SUPPRESSED there UNLESS a thinking-indicator is wired and opted in via
     // CORTEX_LIFT_PLAN_INTERACTIVE=true. (autoApproveActions = !(stdin.isTTY && stdout.isTTY).)
-    if (!this.approvalMode.autoApproveActions && process.env.CORTEX_LIFT_PLAN_INTERACTIVE !== 'true') {
+    // R219: the gate lives in config/interactiveProfile.ts (same env the CORTEX_INTERACTIVE_PROFILE resolver fills;
+    // bench-lite leaves it closed — NEEDS-ADAPTATION: silent pause, first-request-only, grader persona).
+    if (!liftPlanAllowedInSession(this.approvalMode.autoApproveActions)) {
       return; // interactive session, no thinking-indicator opt-in → do not fire (do not consume one-shot)
     }
     this.liftPlanDelivered = true; // one-shot even if the call fails (never re-fire mid-task)

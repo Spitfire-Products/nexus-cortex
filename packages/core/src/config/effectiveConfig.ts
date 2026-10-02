@@ -13,6 +13,8 @@
  * /config view. Secrets are never shown — only set/unset.
  */
 
+import { profileAppliedKeys } from './interactiveProfile.js';
+
 export interface EffectiveLever {
   key: string;
   /** Plain-language: what this switch does. */
@@ -22,7 +24,7 @@ export interface EffectiveLever {
   /** The value the running process actually resolved. */
   effective: string;
   /** Where the effective value came from. */
-  source: 'env' | 'code-default';
+  source: 'env' | 'code-default' | 'profile'; // 'profile' = filled by CORTEX_INTERACTIVE_PROFILE (R219), not set by the user
   /** For flags: is the feature ON right now? */
   active?: boolean;
   /** Secrets report presence only. */
@@ -115,6 +117,9 @@ const GROUPS: Array<{ group: string; levers: LeverSpec[] }> = [
       { key: 'CORTEX_WALL_DROP', what: 'HB-WALL-DROP: on a reasoning-exhaustion wall, drop the walled turn (reasoning only, no text/tool) from the in-memory history before the retry and carry the nudge on the newest tool_result tail (exact pre-wall prefix + nudge, cache-preserving); never drops a turn with a tool call; wall_drop event. off | on', codeDefault: 'off', kind: 'value' },
       { key: 'CORTEX_OUTPUT_CAP_TOKENS', what: 'HB-OUTPUT-CAP: per-call output cap (max tokens) for the action model, applied only when the request sets none; integer >= 1024; recommended 48000 (c22 acting-call reasoning p99.9 = 40K)', codeDefault: '(unset — card limit)', kind: 'value' },
       { key: 'CORTEX_WALL_SUMMARY', what: 'HB-WALL-SUMMARY: on a reasoning-exhaustion wall, one helper call condenses the walled reasoning into CONCLUDED / STUCK ON / NEXT lines carried inside the wall nudge (attributed, user-role; never the thinking channel); fail-open; timeout CORTEX_WALL_SUMMARY_TIMEOUT_MS (30000); wall_summary event. off | on', codeDefault: 'off', kind: 'value' },
+      { key: 'CORTEX_RESPONSES_INLINE_REMINDERS', what: 'R215 HB-RESPONSES-REMINDERS: on the Responses path keep <system-reminder> blocks in place as user input_text items (moved after the function_call_output items they follow) instead of extracting them into `instructions` (xAI dropped them; OpenAI lost their position); instructions keep only the R63 system prompt. off | on', codeDefault: 'off', kind: 'value' },
+      { key: 'CORTEX_RESPONSES_STOP_REASON', what: "R216 HB-RESPONSES-STOPREASON: map the Responses truncation signal (status incomplete + incomplete_details.reason max_output_tokens, also from the streaming terminal event) and the hf-space finish_reason to stop reasons, so the wall levers + truncated-continue fire there. off | on", codeDefault: 'off', kind: 'value' },
+      { key: 'CORTEX_ANTHROPIC_HISTORY_CACHE', what: 'R218 HB-ANTHROPIC-CACHE: rolling message-level cache_control breakpoints (previous + newest user message) on the Anthropic Messages path within the 4-breakpoint cap (system + tool counted); needs ANTHROPIC_PROMPT_CACHING; never the xAI Messages branch. off | on', codeDefault: 'off', kind: 'value' },
       { key: 'CORTEX_PID1_GUARD', what: 'R209 HB-CONTAINER-PID1: at the first tool_result boundary (the boot observation), when PID 1 is not the harness, one note names PID 1 and the services it supervises (from /proc/1/cmdline + /proc/*/stat ppid==1) — killing them stops the container and ends the session; restart via the supervisor instead. Linux-only, fail-safe; pid1_guard event. off | on', codeDefault: 'off', kind: 'value' },
       { key: 'CORTEX_PLATEAU_STOP', what: 'R210 HB-PLATEAU-STOP: one boot instruction asks the model to print `PLATEAU_METRIC <name>=<number> dir=<max|min>` after every evaluation; the harness keeps a per-session series per metric and, when the best of the last CORTEX_PLATEAU_WINDOW reports improves on the best before them by < CORTEX_PLATEAU_REL (relative; worse counts), steers one stop-and-verify reminder (max 2/session); plateau_metric_seen / plateau_stop events. status = instruction + tracking + STATUS segment only (no reminder; would-be firings banked as plateau_detected). off | on | status', codeDefault: 'off', kind: 'value' },
       { key: 'CORTEX_PLATEAU_REL', what: 'R210: relative-improvement target over the trailing window (fraction; 0.002 = 0.2%)', codeDefault: '0.002', kind: 'value' },
@@ -213,9 +218,11 @@ const GROUPS: Array<{ group: string; levers: LeverSpec[] }> = [
     group: 'Prompt, tools & frame (mostly card-driven — cards win over env)',
     levers: [
       { key: 'CORTEX_PROMPT_MASS', what: 'UNSET = the model card decides the prompt (boot-minimal narrow door for deepseek). Setting it overrides the card', codeDefault: '(unset — card wins)', kind: 'value' },
+      { key: 'CORTEX_FAMILY_PRESETS', what: "R217 DARK: on = a model card WITHOUT its own promptPreset (every non-DeepSeek family) gets the family preset — today 'boot-minimal-generic' (the boot-minimal narrow door minus the DeepSeek-tuned 'Prefer acting over deliberating.' clause, with the .cortex/orient pointer). DeepSeek cards unchanged; CORTEX_PROMPT_MASS / CORTEX_SYSTEM_PROMPT_FILE still win", codeDefault: 'off', kind: 'value' },
       { key: 'CORTEX_TOOL_ANCHOR', what: 'Turn-1 tool narrowing (bash-edit = Bash+Edit only on turn 1)', codeDefault: '(card decides)', kind: 'value' },
       { key: 'TOOL_TIMEOUT_MODE', what: 'Bash deadline policy: auto = promote to background in headless sessions (kill in interactive); background/kill force', codeDefault: 'auto', kind: 'value' },
       { key: 'HELPER_MODEL_ID', what: 'HELPER role model (compaction, summaries, error guidance, vision hand-off; thinking OFF) — distinct from the MENTOR role (MENTORSHIP_HELPER_MODEL). Bench gates assert this key (cell-m-p2 2026-09-10 halted because it was unreported)', codeDefault: 'deepseek-flash', kind: 'value' },
+      { key: 'CORTEX_HELPER_MATCH_PROVIDER', what: 'R217 DARK: on = a HELPER_MODEL_ID / MENTORSHIP_HELPER_MODEL left at its default (deepseek-flash) resolves from the ACTION model provider (anthropic→claude-haiku-4-5, openai→gpt-4.1-mini, google→gemini-2.5-flash-lite, xai→grok-4.3, deepseek→deepseek-flash); any other explicit value wins. Covers the helper + mentor calls in HelperModelMiddleware; compaction, vision hand-off and sub-agents are not routed', codeDefault: 'off', kind: 'value' },
       { key: 'VISION_HELPER_MODEL', what: 'vision hand-off: text-only primaries keep ReadImage; the image + question go to this helper card via the helper middleware and text comes back (false = vision primaries only)', codeDefault: 'deepseek-flash', kind: 'value' },
       { key: 'VISION_HANDOFF_MAX', what: 'per-turn cap on ReadImage→vision-helper hand-offs; past it ReadImage returns a consolidate reminder (0 = unlimited)', codeDefault: '8', kind: 'value' },
       { key: 'CORTEX_SLICE_NUDGE', what: 'after 3 bash slice-reads of one file, remind to Read it once', codeDefault: 'true', kind: 'flag-not-false' },
@@ -230,6 +237,7 @@ const GROUPS: Array<{ group: string; levers: LeverSpec[] }> = [
       { key: 'ENABLE_WEBTOOLS', what: 'web surface mode: auto = WebFetch on, search/browse/hosted-search on iff a search key is present; true = all on; false = all off (benches pin explicitly)', codeDefault: 'auto', kind: 'value' },
       { key: 'ENABLE_DEFERRED_TOOL_LOADING', what: '16 curated tools offered; the rest discoverable via SearchTools', codeDefault: 'true (settings default)', kind: 'flag-not-false' },
       { key: 'CORTEX_LIFT_NUDGE', what: 'One-line signpost after the turn-1 lift pointing at SearchTools/AskForAdvice', codeDefault: 'false (cards set true)', kind: 'flag-true' },
+      { key: 'CORTEX_INTERACTIVE_PROFILE', what: 'R219 HB-INTERACTIVE-PROFILE: named lever profile for INTERACTIVE (TTY) sessions only, applied at launch to levers the user did not set (source shows `profile`). bench-lite = CORTEX_LOOP_TOOL_BLOCK=true, CORTEX_EMPTY_TURN_CONTINUE=true, CORTEX_WALL_DROP=on, CORTEX_WALL_SUMMARY=on, CORTEX_REASONING_EXHAUST_BACKOFF=false, CORTEX_STEER_INPUTS=full, CORTEX_ORIENT_V2=1; the lift plan stays headless-only (CORTEX_LIFT_PLAN_INTERACTIVE). off | bench-lite', codeDefault: 'off', kind: 'value' },
       { key: 'CORTEX_LIFT_PLAN', what: 'DARK: at the turn-1 lift, a bounded max-reasoning mentor plans the task (adversarial analysis + confirm real grader criteria + step plan or RETIRE) and injects it as a system-reminder for the narrow-door model to follow (LIFT_MENTOR_PLANNER spec)', codeDefault: 'false', kind: 'flag-true' },
       { key: 'CORTEX_ENDTURN_RESOLVER', what: 'DARK: at EndTurn, a bounded max-reasoning mentor adjudicates does-the-work-meet-the-task-requirements? — MEETS = finish, GAP = reject + a fix plan injected as a system-reminder (the finish-side twin of CORTEX_LIFT_PLAN; reroutes the rejection-loop reasoning from the narrow-door model to the mentor). Bounded by CORTEX_ENDTURN_RESOLVER_MAX_REJECTS then fallback-accept', codeDefault: 'false', kind: 'flag-true' },
       { key: 'CORTEX_ENDTURN_CITATION_LINEWISE', what: 'EndTurn Stage-2 citation grounding matches multi-line quotes line-wise (every non-trivial line verbatim; contiguity relaxed) and the corpus includes Bash-authored text + the task statement', codeDefault: 'true', kind: 'flag-not-false' },
@@ -275,12 +283,13 @@ const GROUPS: Array<{ group: string; levers: LeverSpec[] }> = [
 ];
 
 export function collectEffectiveConfig(env: NodeJS.ProcessEnv = process.env): EffectiveConfigGroup[] {
+  const fromProfile = profileAppliedKeys(env);
   return GROUPS.map(({ group, levers }) => ({
     group,
     levers: levers.map((s): EffectiveLever => {
       const raw = env[s.key];
       const present = raw !== undefined && raw !== '';
-      const source: EffectiveLever['source'] = present ? 'env' : 'code-default';
+      const source: EffectiveLever['source'] = present ? (fromProfile.has(s.key) ? 'profile' : 'env') : 'code-default';
       if (s.kind === 'secret') {
         return {
           key: s.key, what: s.what, codeDefault: s.codeDefault,
