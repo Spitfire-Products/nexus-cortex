@@ -159,6 +159,7 @@ import { detectTailRepetition, tailLoopGuardEnabled } from './tailRepetitionDete
 import { resolveEffortRamp, rampEffortFor } from './effortRamp.js';
 import { resolveWallDrop, resolveOutputCap, dropWalledTurn, resolveWallSummary, extractWalledReasoning, clipReasoning, formatWallSummary, type WallDropResult } from './wallGuard.js';
 import { resolvePid1Guard, detectPid1Note } from './pid1Guard.js'; // R209
+import { PlateauStopTracker, plateauBootInstruction, plateauStatusSegment } from './plateauStop.js'; // R210
 import { resolveComputeNudge, computeNudgeDecision, buildComputeNudgeLine, lastAssistantReasoningTokens } from './computeNudge.js';
 import { classifyEmptyResponse, emptyResponseNudge, nudgeForbidsTools, emptyResponseNudgeFor, isReasoningExhaustion, stepDownEffort, effortLadderFor, resolveExhaustLadderMode, resolveReasoningExhaustBackoff, type ReasoningEffortLevel, type EmptyResponseClassification } from './emptyResponseClassifier.js';
 import { isImageRejectionError, stripRejectedImages } from './imageRejectionHeal.js'; // R154
@@ -634,6 +635,8 @@ export class CortexOrchestrator {
   private deferredCorpusDelivered = false;
   private liftNudgeDelivered = false; // A′ proposal-1: lift-boundary SearchTools/AskForAdvice nudge, one-shot
   private pid1NoteChecked = false; // R209 HB-CONTAINER-PID1: PID 1 inspected once, at the first tool_result boundary
+  private plateauInstructionDelivered = false; // R210 HB-PLATEAU-STOP: boot instruction, one-shot at the first tool_result boundary
+  private readonly plateauTracker = new PlateauStopTracker(); // R210: per-session PLATEAU_METRIC series
   // CORTEX_LOOP_TOOL_BLOCK (hard loop intervention): when the ladder flags a
   // non-converging same-approach loop, disable the looping tool's EXECUTOR for
   // ONE turn (tools list unchanged → cache-safe); a call to it returns an
@@ -831,6 +834,42 @@ export class CortexOrchestrator {
       if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'pid1_guard', detail: { noted: true, pid1Cmd: r.info.pid1Cmd, children: r.info.children, chars: r.note.length } }).catch(() => {});
       if (this.config.debug) console.log(`[Pid1Guard] boot note delivered (PID 1 = ${r.info.pid1Cmd}, ${r.info.children.length} child(ren))`);
     } catch { /* fail-safe: no note */ }
+  }
+
+  /** R210 HB-PLATEAU-STOP (CORTEX_PLATEAU_STOP=on, dark): at the first tool_result boundary (same carrier and boundary as the R209
+   *  PID 1 note), append ONE system-reminder asking the model to print `PLATEAU_METRIC <name>=<number> dir=<max|min>` after every
+   *  evaluation and keep the deliverable at its best result. Off → nothing. One-shot; fail-safe. */
+  private deliverPlateauInstructionAtBoot(): void {
+    if (this.plateauInstructionDelivered) return;
+    try {
+      const text = plateauBootInstruction();
+      if (!text) return;
+      const lastMsg = this.messageHistory[this.messageHistory.length - 1] as any;
+      if (lastMsg?.message?.content?.[0]?.type !== 'tool_result') return; // not the boundary yet — leave the one-shot open
+      this.plateauInstructionDelivered = true;
+      lastMsg.message.content.push({ type: 'text', text: `<system-reminder>\n${text}\n</system-reminder>` });
+      if (this.config.debug) console.log('[PlateauStop] boot instruction delivered');
+    } catch { /* fail-safe: no instruction */ }
+  }
+
+  /** R210 HB-PLATEAU-STOP: scan this round's tool results for PLATEAU_METRIC reports and return the plateau reminder (or null) for
+   *  the budget-steering signals line. Off → null without scanning. Events: plateau_metric_seen (first report of a metric name),
+   *  plateau_stop (each firing, max 2 per session). Never throws. */
+  private observePlateau(toolResults: ReadonlyArray<{ content?: unknown }>, iteration: number, streaming: boolean): string | null {
+    try {
+      const r = this.plateauTracker.step(toolResults); // off → returns before touching the results
+      if (!r.newMetrics.length && !r.fire) return null;
+      const store = this.getDecisionStore();
+      const sessionId = this.currentSessionId ?? 'unknown';
+      for (const m of r.newMetrics) {
+        if (store) void store.recordEvent({ sessionId, kind: 'plateau_metric_seen', detail: { name: m.name, dir: m.dir, value: m.value, iteration, streaming } }).catch(() => {});
+      }
+      if (r.fire) {
+        if (store) void store.recordEvent({ sessionId, kind: 'plateau_stop', detail: { ...r.fire, iteration, streaming } }).catch(() => {});
+        if (this.config.debug) console.log(`[PlateauStop] ${r.fire.name} plateau (${r.fire.improvementPct}% over the window, ${r.fire.points} points) — firing ${r.fire.firing}`);
+      }
+      return r.signal;
+    } catch { return null; }
   }
 
   /** A′ proposal-1: at the anchor-lift boundary, when deferred loading is on and
@@ -3903,8 +3942,10 @@ export class CortexOrchestrator {
         }
         timeSignal = de?.signal || timeBudgetWarnNudge(Date.now() - loopStartMs, TURN_DEADLINE_MS);
       }
-      if (budgetSignal || diversityWarning || ladderSignal || timeSignal || budgetVisSignal) {
-        const signals = [budgetSignal, diversityWarning, ladderSignal, timeSignal, budgetVisSignal].filter(Boolean).join('\n');
+      // R210 HB-PLATEAU-STOP (dark unless CORTEX_PLATEAU_STOP): PLATEAU_METRIC series → one stop reminder on a plateau (same carrier).
+      const plateauSignal = this.observePlateau(toolResults, toolCallIteration, false);
+      if (budgetSignal || diversityWarning || ladderSignal || timeSignal || budgetVisSignal || plateauSignal) {
+        const signals = [budgetSignal, diversityWarning, ladderSignal, timeSignal, budgetVisSignal, plateauSignal].filter(Boolean).join('\n');
         const lastMsg = this.messageHistory[this.messageHistory.length - 1] as any;
         if (lastMsg?.message?.content?.[0]?.type === 'tool_result') {
           const block = lastMsg.message.content[0];
@@ -3923,6 +3964,7 @@ export class CortexOrchestrator {
               ladderSignal ? (ladderPollSteer ? 'poll_steer' : 'ladder') : null,
               timeSignal ? 'time' : null,
               budgetVisSignal ? 'budget_visibility' : null,
+              plateauSignal ? 'plateau' : null,
             ].filter(Boolean);
             void store
               .recordEvent({
@@ -4020,6 +4062,7 @@ export class CortexOrchestrator {
       await this.ensureHistoryFitsModel(effectiveModel);
 
       this.deliverPid1NoteAtBoot(); // R209 HB-CONTAINER-PID1 (dark unless CORTEX_PID1_GUARD): PID 1 note on the boot observation
+      this.deliverPlateauInstructionAtBoot(); // R210 HB-PLATEAU-STOP (dark unless CORTEX_PLATEAU_STOP): PLATEAU_METRIC instruction
 
       // Anchor lift (BASH_PLUS_SPEC.md P0): the first tool call has executed —
       // this continuation is the first tool_result boundary, so the session's
@@ -5931,8 +5974,10 @@ export class CortexOrchestrator {
           }
           timeSignal = de?.signal || timeBudgetWarnNudge(Date.now() - loopStartMs, TURN_DEADLINE_MS);
         }
-        if (budgetSignal || diversityWarning || ladderSignal || timeSignal || budgetVisSignal) {
-          const signals = [budgetSignal, diversityWarning, ladderSignal, timeSignal, budgetVisSignal].filter(Boolean).join('\n');
+        // R210 HB-PLATEAU-STOP (streaming parity).
+        const plateauSignal = this.observePlateau(toolResults, toolCallIteration, true);
+        if (budgetSignal || diversityWarning || ladderSignal || timeSignal || budgetVisSignal || plateauSignal) {
+          const signals = [budgetSignal, diversityWarning, ladderSignal, timeSignal, budgetVisSignal, plateauSignal].filter(Boolean).join('\n');
           const lastMsg = this.messageHistory[this.messageHistory.length - 1] as any;
           if (lastMsg?.message?.content?.[0]?.type === 'tool_result') {
             const block = lastMsg.message.content[0];
@@ -5948,6 +5993,7 @@ export class CortexOrchestrator {
                 ladderSignal ? (ladderPollSteer ? 'poll_steer' : 'ladder') : null,
                 timeSignal ? 'time' : null,
                 budgetVisSignal ? 'budget_visibility' : null,
+                plateauSignal ? 'plateau' : null,
               ].filter(Boolean);
               void store
                 .recordEvent({
@@ -6037,6 +6083,7 @@ export class CortexOrchestrator {
         await this.ensureHistoryFitsModel(effectiveModel);
 
         this.deliverPid1NoteAtBoot(); // R209 HB-CONTAINER-PID1 — streaming mirror
+        this.deliverPlateauInstructionAtBoot(); // R210 HB-PLATEAU-STOP — streaming mirror
 
         // Anchor lift — streaming mirror of the sendMessage continuation path.
         if (
@@ -7654,6 +7701,7 @@ export class CortexOrchestrator {
         contextWindow: model.limits?.contextWindow ?? this.lastKnownContextWindow,
         shells,
         nowMs: now,
+        plateau: plateauStatusSegment(this.plateauTracker), // R210: null when CORTEX_PLATEAU_STOP is off or no metric seen → line unchanged
       });
       if (appendStatusToNewestToolResult(this.messageHistory as any[], line)) {
         this.turnStatusLines++;

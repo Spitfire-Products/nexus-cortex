@@ -87,6 +87,8 @@ export interface TurnStatusInput {
   contextWindow?: number;
   shells?: readonly StatusShell[] | null;
   nowMs?: number;
+  /** R210 HB-PLATEAU-STOP: the tracked-metric segment (plateauStatusSegment); null/undefined = omitted (line unchanged). */
+  plateau?: string | null;
 }
 
 export function buildTurnStatusLine(input: TurnStatusInput): string {
@@ -107,6 +109,7 @@ export function buildTurnStatusLine(input: TurnStatusInput): string {
   }
   const bg = backgroundShellsSegment(input.shells, input.nowMs ?? Date.now());
   if (bg) segs.push(bg);
+  if (input.plateau) segs.push(input.plateau);
   return `<system-reminder>STATUS: ${segs.join('; ')}</system-reminder>`;
 }
 

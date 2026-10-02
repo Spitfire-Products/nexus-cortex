@@ -69,6 +69,8 @@ export type SteeringEventKind =
   | 'budget_continue_nudge'
   | 'inaction_nudge'
   | 'verify_scale_item' // R208 HB-VERIFY-AT-SCALE (dark): the EndTurn judge persona carried the scale rubric item — detail {surface, clauseChars, roundsUsed, meets, parsed, confidence}
+  | 'plateau_metric_seen' // R210 HB-PLATEAU-STOP (dark): first PLATEAU_METRIC report of a metric name this session — detail {name, dir, value, iteration, streaming}
+  | 'plateau_stop' // R210 HB-PLATEAU-STOP (dark): plateau reminder steered (max 2/session) — detail {name, dir, best, improvementPct, points, firing, iteration, streaming}
   | 'pid1_guard' // R209 HB-CONTAINER-PID1 (dark): PID 1 note appended to the boot observation — detail {noted, pid1Cmd, children, chars}
   | 'wall_summary' // HB-WALL-SUMMARY (dark): helper condensed the walled reasoning into the nudge — detail {iteration, inputChars, summaryChars, ok, ms, streaming}
   | 'wall_drop' // HB-WALL-DROP (dark): walled turn dropped from the in-memory history before the retry — detail {iteration, droppedChars, carrier, streaming}

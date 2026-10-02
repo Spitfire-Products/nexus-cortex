@@ -1811,4 +1811,4 @@ Test: a scripted turn that sleeps past the TTL on a short-TTL provider — cache
 |---|---|---|---|
 | R208 | HB-VERIFY-AT-SCALE — agent verifies at toy scale, hidden tests run at ~920k records (payments 0/6 in c23) | open, def-3fc4ea72fb | finish-gate/judge rubric item: does the check reproduce the tests' scale? |
 | R209 | HB-CONTAINER-PID1 — agent SIGKILLs the supervisor PID 1 waits on → container stops → exit 137 | open, def-e6b615e4b1 | orient/inventory warning naming PID 1's child; post-mortem label |
-
+| R210 | HB-PLATEAU-STOP — optimization tasks grind infinitesimal gains to the 8 h cap (v39a layout 5.3 h+, 483 iterations) | open, def-21719c22ed | plateau variation target (operator): stop when relative gain over a trailing window < X%; deliverable kept at best-so-far |
