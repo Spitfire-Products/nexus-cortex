@@ -547,3 +547,37 @@ describe('endTurnResolver — R176 independent derivation config', () => {
     expect(resolveEndTurnResolverConfig({ CORTEX_JUDGE_INDEPENDENT_DERIVATION: 'bogus', CORTEX_JUDGE_INDEPENDENT_DERIVATION_TOL: '5' } as any)).toMatchObject({ derivation: 'off', derivationTol: 1e-3 });
   });
 });
+
+import { RESOLVER_SCALE_CLAUSE } from '../endTurnResolver.js';
+describe('R208 HB-VERIFY-AT-SCALE — CORTEX_VERIFY_SCALE adds one scale item to the judge persona', () => {
+  it('lever is off by default and on for on|true|1', () => {
+    expect(resolveEndTurnResolverConfig({} as any).verifyScale).toBe(false);
+    expect(resolveEndTurnResolverConfig({ CORTEX_VERIFY_SCALE: 'off' } as any).verifyScale).toBe(false);
+    expect(resolveEndTurnResolverConfig({ CORTEX_VERIFY_SCALE: 'on' } as any).verifyScale).toBe(true);
+    expect(resolveEndTurnResolverConfig({ CORTEX_VERIFY_SCALE: 'true' } as any).verifyScale).toBe(true);
+  });
+  it('off: persona byte-identical for every existing combination', () => {
+    for (const ab of [false, true]) for (const mc of [false, true]) for (const inv of [undefined, 'offer', 'withdraw'] as const) {
+      expect(resolverSystemPrompt(ab, mc, inv, false)).toBe(resolverSystemPrompt(ab, mc, inv));
+      expect(resolverSystemPrompt(ab, mc, inv)).not.toContain('SCALE RULE');
+    }
+  });
+  it('on: the clause appears exactly once, on every combination, before the RETIRE/INVESTIGATE clauses', () => {
+    for (const ab of [false, true]) for (const mc of [false, true]) for (const inv of [undefined, 'offer', 'withdraw'] as const) {
+      const p = resolverSystemPrompt(ab, mc, inv, true);
+      expect(p.split('SCALE RULE').length - 1).toBe(1);
+      expect(p.startsWith(resolverSystemPrompt(false, mc, undefined, false))).toBe(true);
+    }
+    const p = resolverSystemPrompt(true, false, 'offer', true);
+    expect(p.indexOf('SCALE RULE')).toBeLessThan(p.indexOf('VERDICT: RETIRE'));
+    expect(p.indexOf('SCALE RULE')).toBeLessThan(p.indexOf('INVESTIGATE before deciding'));
+  });
+  it('the item asks scale, volume, concurrency and timing; smaller-scale evidence is a GAP with a CHECK at the stated scale', () => {
+    expect(RESOLVER_SCALE_CLAUSE).toMatch(/scale, volume, concurrency and timing/);
+    expect(RESOLVER_SCALE_CLAUSE).toMatch(/records\/requests/);
+    expect(RESOLVER_SCALE_CLAUSE).toMatch(/restarts/);
+    expect(RESOLVER_SCALE_CLAUSE).toMatch(/smaller run, treat that as a GAP/);
+    expect(RESOLVER_SCALE_CLAUSE).toMatch(/CHECK/);
+    expect(RESOLVER_SCALE_CLAUSE.length).toBeLessThan(600); // short and concrete
+  });
+});

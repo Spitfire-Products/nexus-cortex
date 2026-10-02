@@ -29,7 +29,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'node:child_process';
 import { ENV_RECON_COMMAND, resolveLiftPlanConfig, parsePlannerResponse, bankPlanText } from '../training/liftPlanner.js';
 import { clipIn, FULL_CAPS, HINTS, resolveInventory, resolveInventoryPath } from '../training/steerInputs.js';
-import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage, gapHoldable, parseSpecChecks, groundSpecCheck, specFailFraction, applyVetoFloor, holdProgressed, planSimilarity, specCheckEvidence, specBlockForJudge, dropSpecEchoes, specBlockForWriter, vetoMessageLead } from '../training/endTurnResolver.js';
+import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage, gapHoldable, parseSpecChecks, groundSpecCheck, specFailFraction, applyVetoFloor, holdProgressed, planSimilarity, specCheckEvidence, specBlockForJudge, dropSpecEchoes, specBlockForWriter, vetoMessageLead, RESOLVER_SCALE_CLAUSE } from '../training/endTurnResolver.js';
 import { jevAvailable, jevNoul, buildGapHoldState, GAP_HOLD_QUESTIONS } from '../training/jevGate.js'; // R173b
 import { resolveFrameConfig, FRAME_CONTRACT, FRAME_TOOL_NAME } from '../frames/frameConfig.js'; // R179
 import { FrameRunner } from '../frames/frameRunner.js'; // R179
@@ -158,6 +158,7 @@ import { pruneAgedToolResults } from '../conversation/ToolResultPruner.js';
 import { detectTailRepetition, tailLoopGuardEnabled } from './tailRepetitionDetector.js';
 import { resolveEffortRamp, rampEffortFor } from './effortRamp.js';
 import { resolveWallDrop, resolveOutputCap, dropWalledTurn, resolveWallSummary, extractWalledReasoning, clipReasoning, formatWallSummary, type WallDropResult } from './wallGuard.js';
+import { resolvePid1Guard, detectPid1Note } from './pid1Guard.js'; // R209
 import { resolveComputeNudge, computeNudgeDecision, buildComputeNudgeLine, lastAssistantReasoningTokens } from './computeNudge.js';
 import { classifyEmptyResponse, emptyResponseNudge, nudgeForbidsTools, emptyResponseNudgeFor, isReasoningExhaustion, stepDownEffort, effortLadderFor, resolveExhaustLadderMode, resolveReasoningExhaustBackoff, type ReasoningEffortLevel, type EmptyResponseClassification } from './emptyResponseClassifier.js';
 import { isImageRejectionError, stripRejectedImages } from './imageRejectionHeal.js'; // R154
@@ -632,6 +633,7 @@ export class CortexOrchestrator {
    *  exactly once, at the anchor-lift boundary. One-shot per orchestrator. */
   private deferredCorpusDelivered = false;
   private liftNudgeDelivered = false; // A′ proposal-1: lift-boundary SearchTools/AskForAdvice nudge, one-shot
+  private pid1NoteChecked = false; // R209 HB-CONTAINER-PID1: PID 1 inspected once, at the first tool_result boundary
   // CORTEX_LOOP_TOOL_BLOCK (hard loop intervention): when the ladder flags a
   // non-converging same-approach loop, disable the looping tool's EXECUTOR for
   // ONE turn (tools list unchanged → cache-safe); a call to it returns an
@@ -811,6 +813,24 @@ export class CortexOrchestrator {
     if (!resolveHeadlessDropAskUser(process.env, model?.headlessDropAskUser)) return tools; // card > env > false
     if (!this.approvalMode.autoApproveActions) return tools; // interactive: keep it
     return tools.filter((t) => t.name !== 'AskUserQuestion');
+  }
+
+  /** R209 HB-CONTAINER-PID1 (CORTEX_PID1_GUARD=on, dark): at the first tool_result boundary (the boot observation), when PID 1 is not
+   *  the harness, append ONE note naming PID 1 and the services it supervises — killing them stops the container and ends the session.
+   *  Independent of the tool anchor. One-shot; Linux-only; fail-safe (no note on any error). Event pid1_guard when the note is added. */
+  private deliverPid1NoteAtBoot(): void {
+    if (this.pid1NoteChecked || !resolvePid1Guard()) return;
+    try {
+      const lastMsg = this.messageHistory[this.messageHistory.length - 1] as any;
+      if (lastMsg?.message?.content?.[0]?.type !== 'tool_result') return; // not the boundary yet — leave the one-shot open
+      this.pid1NoteChecked = true;
+      const r = detectPid1Note();
+      if (!r) return;
+      lastMsg.message.content.push({ type: 'text', text: `<system-reminder>\n${r.note}\n</system-reminder>` });
+      const store = this.getDecisionStore();
+      if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'pid1_guard', detail: { noted: true, pid1Cmd: r.info.pid1Cmd, children: r.info.children, chars: r.note.length } }).catch(() => {});
+      if (this.config.debug) console.log(`[Pid1Guard] boot note delivered (PID 1 = ${r.info.pid1Cmd}, ${r.info.children.length} child(ren))`);
+    } catch { /* fail-safe: no note */ }
   }
 
   /** A′ proposal-1: at the anchor-lift boundary, when deferred loading is on and
@@ -1517,6 +1537,8 @@ export class CortexOrchestrator {
       // what it judged, not just counts — so a k=5 run can score the resolver's JUDGMENT QUALITY
       // (was the GAP warranted? was the fix plan good? did it judge the right artifact?) and not
       // merely that it fired. Bounded caps keep the decisions row sane. See HARNESS_IMPROVEMENT_BACKLOG.
+      // R208 HB-VERIFY-AT-SCALE (CORTEX_VERIFY_SCALE=on, dark): the judge persona carried the scale rubric item on this adjudication.
+      if (store && cfg.verifyScale) void store.recordEvent({ sessionId, kind: 'verify_scale_item', toolName: 'EndTurn', detail: { surface: 'endturn-resolver', clauseChars: RESOLVER_SCALE_CLAUSE.length, roundsUsed, meets: verdict.meets, parsed: verdict.parsed, confidence: verdict.confidence } }).catch(() => {});
       if (store) void store.recordEvent({
         sessionId,
         kind: 'endturn_resolver',
@@ -1535,6 +1557,7 @@ export class CortexOrchestrator {
           derivation: cfg.derivation, derivationAgreement: derivationInfo?.agreement ?? null, derivationHeld: !!derivationHold, // R176
           reqLedger: cfg.reqLedger, reqLines: reqCounts.lines, reqOpen: reqCounts.open, reqExercised: reqCounts.exercised, reqFailed: reqCounts.failed, reqUnverifiable: reqCounts.unverifiable, reqHeld: !!reqHold, reqHolds: this.reqLedgerHolds, reqGenLatencyMs: this.reqLedgerMeta.genLatencyMs, reqJev: cfg.reqLedgerJev, reqJevAsked: reqJev?.asked ?? 0, reqJevClosed: reqJev?.closed ?? [], reqJevLatencyMs: reqJev?.latencyMs ?? 0, // R187/R187b
           reqFailVeto: !!reqFailVeto, reqFailVetoes: this.reqLedgerFailVetoes, reqFailedNow, reqFailJev, // R192
+          verifyScale: cfg.verifyScale, // R208
           reqBroken: [...this.reqLedgerBroken], reqLinesDetail: (this.reqLedger ?? []).map((e) => ({ id: e.id, kind: e.kind, status: e.status, check: !!e.check, runs: e.runs, last: (e.lastResult ?? '').split('\n').slice(0, 2).join(' / ').slice(0, 200) })), // R191: per-line outcomes so a false-failure read is possible from the decisions file
           latencyMs, rawLen: (text ?? '').length,
           deltaChars: workspaceDelta.length, checkRan: !!checkResult, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null,
@@ -3996,6 +4019,8 @@ export class CortexOrchestrator {
       // Proactive context management - ensure history fits before continuation
       await this.ensureHistoryFitsModel(effectiveModel);
 
+      this.deliverPid1NoteAtBoot(); // R209 HB-CONTAINER-PID1 (dark unless CORTEX_PID1_GUARD): PID 1 note on the boot observation
+
       // Anchor lift (BASH_PLUS_SPEC.md P0): the first tool call has executed —
       // this continuation is the first tool_result boundary, so the session's
       // full profile applies from here. Rebuild from allTools because the
@@ -6010,6 +6035,8 @@ export class CortexOrchestrator {
         // Send continuation request with tool results
         // Proactive context management - ensure history fits before streaming continuation
         await this.ensureHistoryFitsModel(effectiveModel);
+
+        this.deliverPid1NoteAtBoot(); // R209 HB-CONTAINER-PID1 — streaming mirror
 
         // Anchor lift — streaming mirror of the sendMessage continuation path.
         if (

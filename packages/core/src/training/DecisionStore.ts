@@ -68,6 +68,8 @@ export type SteeringEventKind =
   | 'action_plan_reject' // R172 HB-ACTION-PLAN-FIELDS: an action-tool call lacked the required analysis/plan fields and was returned unexecuted — detail {iteration, rejects, missing}
   | 'budget_continue_nudge'
   | 'inaction_nudge'
+  | 'verify_scale_item' // R208 HB-VERIFY-AT-SCALE (dark): the EndTurn judge persona carried the scale rubric item — detail {surface, clauseChars, roundsUsed, meets, parsed, confidence}
+  | 'pid1_guard' // R209 HB-CONTAINER-PID1 (dark): PID 1 note appended to the boot observation — detail {noted, pid1Cmd, children, chars}
   | 'wall_summary' // HB-WALL-SUMMARY (dark): helper condensed the walled reasoning into the nudge — detail {iteration, inputChars, summaryChars, ok, ms, streaming}
   | 'wall_drop' // HB-WALL-DROP (dark): walled turn dropped from the in-memory history before the retry — detail {iteration, droppedChars, carrier, streaming}
   | 'effort_ramp' // HB-EFFORT-RAMP (dark): first N action calls at a lower effort — detail {phase: start|end, level, calls|rampedCalls}

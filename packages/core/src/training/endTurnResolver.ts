@@ -140,9 +140,14 @@ export interface EndTurnResolverConfig {
   reqLedgerFailVetoMinRemaining: number;
   reqLedgerFailJev: 'off' | 'shadow' | 'on';
   reqLedgerFailJevMin: number;
+  /** R208 HB-VERIFY-AT-SCALE (2026-10-01, c23 payments-pipeline-fix 0/6): the agent verified its fix at toy scale (0.2–1.9 s) and the
+   *  judge accepted that self-report; the hidden tests ran ~920k records against a 5 s SLA (8–22 s). With verifyScale the judge persona
+   *  carries one extra rubric item (RESOLVER_SCALE_CLAUSE): verification evidence below the scale/volume/concurrency/timing the task's
+   *  tests imply is a gap. CORTEX_VERIFY_SCALE=on; default off (persona byte-identical). */
+  verifyScale: boolean;
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', specSamples: 3, specVetoFrac: 0.5, specText: 'shown', derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7, reqLedgerFailVeto: false, reqLedgerFailVetoMax: 2, reqLedgerFailVetoMinRemaining: 0.25, reqLedgerFailJev: 'shadow', reqLedgerFailJevMin: 0.7 };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', specSamples: 3, specVetoFrac: 0.5, specText: 'shown', derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7, reqLedgerFailVeto: false, reqLedgerFailVetoMax: 2, reqLedgerFailVetoMinRemaining: 0.25, reqLedgerFailJev: 'shadow', reqLedgerFailJevMin: 0.7, verifyScale: false };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
@@ -220,6 +225,7 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
     reqLedgerFailVetoMinRemaining: (() => { const f = parseFloat((env.CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO_MIN_REMAINING ?? '').trim()); return Number.isFinite(f) && f >= 0 && f < 1 ? f : DEFAULTS.reqLedgerFailVetoMinRemaining; })(),
     reqLedgerFailJev: (() => { const v = (env.CORTEX_JUDGE_REQ_LEDGER_FAIL_JEV ?? '').trim().toLowerCase(); return v === 'on' ? 'on' : v === 'off' || v === 'false' || v === '0' ? 'off' : v === 'shadow' ? 'shadow' : DEFAULTS.reqLedgerFailJev; })(),
     reqLedgerFailJevMin: (() => { const f = parseFloat((env.CORTEX_JUDGE_REQ_LEDGER_FAIL_JEV_MIN ?? '').trim()); return Number.isFinite(f) && f > 0 && f <= 1 ? f : DEFAULTS.reqLedgerFailJevMin; })(),
+    verifyScale: /^(on|true|1)$/i.test((env.CORTEX_VERIFY_SCALE ?? '').trim()), // R208
   };
 }
 
@@ -268,6 +274,13 @@ export const RESOLVER_MEETS_CHECK_LINE =
   'acceptance criteria — the exact artifact, output, format or threshold the TASK names, not the junior\'s own tests. The harness ' +
   'RUNS them now; a MEETS with no passing check is treated as unverified and the finish is held for the junior to prove it. Then stop.\n';
 
+/** R208 HB-VERIFY-AT-SCALE: the one rubric item CORTEX_VERIFY_SCALE adds to the judge persona. */
+export const RESOLVER_SCALE_CLAUSE =
+  '\n\nSCALE RULE (HB-VERIFY-AT-SCALE): does the verification reproduce the scale, volume, concurrency and timing the task\'s tests ' +
+  'will use (data size, number of records/requests, parallel clients, restarts, time limits) rather than a toy-sized run? If the task ' +
+  'states or implies a larger scale or a time/latency limit and the evidence only covers a smaller run, treat that as a GAP and name a ' +
+  'CHECK that exercises the stated scale against the stated limit.';
+
 /** R170: offered while investigation rounds remain — the judge may gather evidence instead of deciding. */
 export const RESOLVER_INVESTIGATE_CLAUSE =
   '\n\nYou may INVESTIGATE before deciding: if the evidence shown is not enough to point at a passing check or a concrete defect, ' +
@@ -281,8 +294,9 @@ export const RESOLVER_DECIDE_NOW_CLAUSE =
 
 /** The persona for the judge. With `abstain`, the RETIRE option is offered; with `meetsConfirm` (R168), a MEETS must name proving
  *  checks; `investigate` (R170) = 'offer' while rounds remain, 'withdraw' on the last round of a multi-round adjudication, undefined otherwise. */
-export function resolverSystemPrompt(abstain = false, meetsConfirm = false, investigate?: 'offer' | 'withdraw'): string {
-  const base = meetsConfirm ? RESOLVER_SYSTEM.replace(RESOLVER_MEETS_DEFAULT_LINE, RESOLVER_MEETS_CHECK_LINE) : RESOLVER_SYSTEM;
+export function resolverSystemPrompt(abstain = false, meetsConfirm = false, investigate?: 'offer' | 'withdraw', verifyScale = false): string {
+  const base0 = meetsConfirm ? RESOLVER_SYSTEM.replace(RESOLVER_MEETS_DEFAULT_LINE, RESOLVER_MEETS_CHECK_LINE) : RESOLVER_SYSTEM;
+  const base = verifyScale ? base0 + RESOLVER_SCALE_CLAUSE : base0; // R208
   const withAbstain = abstain ? base + RESOLVER_ABSTAIN_CLAUSE : base;
   return investigate === 'offer' ? withAbstain + RESOLVER_INVESTIGATE_CLAUSE : investigate === 'withdraw' ? withAbstain + RESOLVER_DECIDE_NOW_CLAUSE : withAbstain;
 }

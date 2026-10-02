@@ -1786,3 +1786,29 @@ recorded, task text preserved; then a real TB4 8-h task on 4.108.x with the comp
 | R205 | HB-WALL-DROP (dark) + HB-OUTPUT-CAP (dark; 48000 REJECTED) | 4.124.38 (bcb5b8cfc7) | c23 arm w; streaming wall path untested |
 | R206 | HB-WALL-SUMMARY (helper CONCLUDED/STUCK ON/NEXT in the wall nudge) | dark 4.124.38 (0e2a5fafd3) | c23 arm w |
 | R207 | HB-SUBAGENT-LEDGER (sub-agent spend in session usage) | built be1659cac0, UNRELEASED | next release after a full build incl. cli |
+
+## HB-CACHE-TTL — keep the prompt cache alive across long tool waits on providers with SHORT cache expiry (filed 2026-10-01, operator)
+Problem: some providers expire the prompt cache after minutes of inactivity (Anthropic: 5-minute default TTL on `cache_control`
+breakpoints; OpenAI and Gemini implicit caches are also short-lived — verify each provider's CURRENT TTL and options at build time).
+A turn that waits on a long shell command, a background job or a monitor can come back to a cold cache and pay a full uncached
+re-read of the whole history. DeepSeek is NOT affected (disk cache, cleared "within a few hours to a few days" — api-docs
+guides/kv_cache; our TB sessions run ~97–98% hit), which is why nothing in the bench shows it.
+Today (grep 2026-10-01): no warming, keep-alive or extended-TTL logic in packages/core; only Anthropic `cache_control`
+forwarding (MessagesAPIAdapter.ts:475, APIClient.ts:455).
+Design (per provider, chosen from the model card — never global):
+1. Prefer the provider's longer cache option where one exists (Anthropic `cache_control: {type: "ephemeral", ttl: "1h"}` on the
+   stable-prefix breakpoints; check the price multiplier for the longer write vs the expected re-reads).
+2. Otherwise a warming ping: when a tool call or wait is expected to outlast the provider's TTL (tool timeout / Bash run_in_background
+   / a monitor wait), send a minimal request on the cached prefix shortly before expiry (max_tokens 1, no tools), at most every
+   TTL − margin, only while the turn is blocked. Never for providers whose cache outlives realistic waits.
+3. Lever `CORTEX_CACHE_KEEPALIVE=off|auto` (auto = per the card's cache TTL field), events `cache_keepalive {provider, ttl, pings}`,
+   and the session ledger counts ping tokens as their own bucket so the saving is measurable (uncached input before vs after).
+Model-card field needed: `cache: {ttlSeconds, extendedTtlOption?, writeMultiplier?}`.
+Test: a scripted turn that sleeps past the TTL on a short-TTL provider — cache-read tokens on the next call with vs without the lever.
+
+## DELTA 2026-10-01 night — R208–R209 (detail in the Rxx ledger memory `omniclaude-v4-harness-deficiencies`)
+| Rxx | item | state | next |
+|---|---|---|---|
+| R208 | HB-VERIFY-AT-SCALE — agent verifies at toy scale, hidden tests run at ~920k records (payments 0/6 in c23) | open, def-3fc4ea72fb | finish-gate/judge rubric item: does the check reproduce the tests' scale? |
+| R209 | HB-CONTAINER-PID1 — agent SIGKILLs the supervisor PID 1 waits on → container stops → exit 137 | open, def-e6b615e4b1 | orient/inventory warning naming PID 1's child; post-mortem label |
+
