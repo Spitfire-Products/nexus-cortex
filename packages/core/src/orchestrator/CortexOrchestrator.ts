@@ -158,6 +158,7 @@ import { ContextBudgetManager } from '../conversation/ContextBudgetManager.js';
 import { pruneAgedToolResults } from '../conversation/ToolResultPruner.js';
 import { detectTailRepetition, tailLoopGuardEnabled } from './tailRepetitionDetector.js';
 import { resolveEffortRamp, rampEffortFor } from './effortRamp.js';
+import { resolveWallCacheFix, resolvePersistInjected, resolveAppendOnlyTools, resolveKeepMentorMessages, resolveResponsesSliceAll, chainedSliceStart, tailUnitAfterLastAssistant, isPreviousResponseUnavailable } from './appendOnlyHistory.js'; // R221-R228 append-only history (dark)
 import { resolveWallDrop, resolveOutputCap, dropWalledTurn, resolveWallSummary, extractWalledReasoning, clipReasoning, formatWallSummary, type WallDropResult } from './wallGuard.js';
 import { resolvePid1Guard, detectPid1Note } from './pid1Guard.js'; // R209
 import { PlateauStopTracker, plateauBootInstruction, plateauStatusSegment } from './plateauStop.js'; // R210
@@ -795,6 +796,7 @@ export class CortexOrchestrator {
           type: 'text',
           text: `<system-reminder>\nFull session context follows (deferred until your first action; applies from here on).\n</system-reminder>\n${corpus}`
         });
+        this.invalidateTailUnitConversions(); // R221 safety net (CORTEX_WALL_CACHE_FIX; off = no-op)
         if (this.config.debug) {
           console.log(`[Anchor] deferred static corpus delivered at lift (${corpus.length} chars)`);
         }
@@ -833,6 +835,7 @@ export class CortexOrchestrator {
       const r = detectPid1Note();
       if (!r) return;
       lastMsg.message.content.push({ type: 'text', text: `<system-reminder>\n${r.note}\n</system-reminder>` });
+      this.invalidateTailUnitConversions(); // R221 safety net
       const store = this.getDecisionStore();
       if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'pid1_guard', detail: { noted: true, pid1Cmd: r.info.pid1Cmd, children: r.info.children, chars: r.note.length } }).catch(() => {});
       if (this.config.debug) console.log(`[Pid1Guard] boot note delivered (PID 1 = ${r.info.pid1Cmd}, ${r.info.children.length} child(ren))`);
@@ -851,6 +854,7 @@ export class CortexOrchestrator {
       if (lastMsg?.message?.content?.[0]?.type !== 'tool_result') return; // not the boundary yet — leave the one-shot open
       this.plateauInstructionDelivered = true;
       lastMsg.message.content.push({ type: 'text', text: `<system-reminder>\n${text}\n</system-reminder>` });
+      this.invalidateTailUnitConversions(); // R221 safety net
       if (this.config.debug) console.log('[PlateauStop] boot instruction delivered');
     } catch { /* fail-safe: no instruction */ }
   }
@@ -913,6 +917,7 @@ export class CortexOrchestrator {
           text: `<system-reminder>\n${parts.join(' ')}\n</system-reminder>`
         });
         this.liftNudgeDelivered = true; // one-shot: consumed only on ACTUAL delivery
+        this.invalidateTailUnitConversions(); // R221 safety net
         if (this.config.debug) {
           console.log(`[Anchor] lift nudge delivered (${parts.join(' ').length} chars, ${hidden.length} hidden tools)`);
         }
@@ -1026,6 +1031,7 @@ export class CortexOrchestrator {
           `It is anchored to the REAL success criteria (what the task's own grader checks), NOT your own ` +
           `tests. Your own tests are a means, never the finish line.\n\n${plan}\n</system-reminder>`,
       });
+      this.invalidateTailUnitConversions(); // R221 safety net
       if (store) void store.recordEvent({
         sessionId,
         kind: 'lift_plan',
@@ -1064,6 +1070,7 @@ export class CortexOrchestrator {
       if (!text) return; // nothing authored (yet) — leave the one-shot open
       this.reqLedgerDelivered = true;
       lastMsg?.message?.content?.push?.({ type: 'text', text: `<system-reminder>\n${text}\n</system-reminder>` });
+      this.invalidateTailUnitConversions(); // R221 safety net
       const store = this.getDecisionStore();
       if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'requirement_ledger_delivered', toolName: 'EndTurn', detail: { lines: (entries ?? []).length, chars: text.length } }).catch(() => {});
     } catch { /* fail-open */ }
@@ -2345,6 +2352,7 @@ export class CortexOrchestrator {
       }
     };
     messageHistoryForApi[messageHistoryForApi.length - 1] = userMessageForApi;
+    this.rememberInjectedContent(userMessage.uuid, injectedContent); // R223 (CORTEX_PERSIST_INJECTED; off = no-op): later requests send the same bytes
 
     // canonicalHistory will be re-computed after effectiveModel is determined
     // (see input-slicing for cross-turn chain below).
@@ -2423,7 +2431,7 @@ export class CortexOrchestrator {
 
     // Deferred loading: filter tools for non-PTC paths (essential + recently-used only)
     if (!isPTCEnabled && this.effectiveDeferredLoading && toolsToUse && toolsToUse.length > 0) {
-      toolsToUse = this.toolFilter.getFilteredTools(toolsToUse);
+      toolsToUse = this.toolFilter.getFilteredTools(toolsToUse, { appendOnly: resolveAppendOnlyTools() });
     }
     // First-turn anchoring narrows further while armed (no-op once lifted).
     // Card-level home door: capture the active card's anchorProfile (env
@@ -2465,21 +2473,32 @@ export class CortexOrchestrator {
 
     // §13-B2: force AskForAdvice this turn on high-confidence thrash (mentor-force armed).
     const forcedMentorChoice = await this.resolveForcedMentorChoice(toolsToUse, 0); // initial request: 0 tool calls yet
+    const initialPrepOpts = {
+      temperature: options.parameters?.temperature,
+      maxTokens: options.parameters?.maxTokens,
+      topP: options.parameters?.topP,
+      reasoningEffort: this.nextRampEffort(true) ?? options.parameters?.reasoningEffort, // HB-EFFORT-RAMP (dark) > request param
+      stream: options.streaming,
+      staticSystemPrompt: this.currentStaticSystemPrompt, // R28
+      conversationId: this.currentConversationId, // R28b
+      toolChoice: forcedMentorChoice // §13-B2 forced mentor tool_choice
+    };
     const preparedRequest = this.gatewayTranslation.prepareRequest(
       canonicalHistory,
       toolsToUse,
       effectiveModel,
-      {
-        temperature: options.parameters?.temperature,
-        maxTokens: options.parameters?.maxTokens,
-        topP: options.parameters?.topP,
-        reasoningEffort: this.nextRampEffort(true) ?? options.parameters?.reasoningEffort, // HB-EFFORT-RAMP (dark) > request param
-        stream: options.streaming,
-        staticSystemPrompt: this.currentStaticSystemPrompt, // R28
-        conversationId: this.currentConversationId, // R28b
-        toolChoice: forcedMentorChoice // §13-B2 forced mentor tool_choice
-      }
+      initialPrepOpts
     );
+    // R228 fallback (dark): the unchained full-history twin of preparedRequest, built only if the held response is gone.
+    const rebuildInitialFull = (): PreparedRequest => {
+      const r = this.gatewayTranslation.prepareRequest(this.convertToCanonicalMessages(messageHistoryForApi), toolsToUse, effectiveModel, initialPrepOpts);
+      r.conversationId = this.currentSessionId;
+      if (isPTCEnabled && toolsToUse && toolsToUse.length > 0) {
+        r.tools = this.gatewayTranslation.prepareToolsWithPTC(toolsToUse, effectiveModel);
+        (r.parameters as any).enablePTC = true;
+      }
+      return r;
+    };
 
     // Stateful Responses API: chain from prior response when available
     // (works across user turns — lastResponseId is preserved between messages).
@@ -2523,12 +2542,14 @@ export class CortexOrchestrator {
       // Use effectiveModel (which may have modified endpoint/pattern for server-side tools)
       // Wrap API call with retry middleware for automatic retry on transient errors
       if (this.retryMiddleware) {
-        const retryResult = await this.retryMiddleware.executeWithRetry(
-          () => this.apiClient.sendRequest(preparedRequest, effectiveModel),
-          'primary_api_call'
-        );
-
-        apiResponse = retryResult.result;
+        let retryResult: any;
+        apiResponse = await this.sendWithChainFallback(preparedRequest, async (r) => {
+          retryResult = await this.retryMiddleware!.executeWithRetry(
+            () => this.apiClient.sendRequest(r, effectiveModel),
+            'primary_api_call'
+          );
+          return retryResult.result;
+        }, rebuildInitialFull, 'primary_api_call'); // R228 fallback (dark; off = one send)
 
         // Log retry information if retries occurred
         if (this.config.debug && retryResult.attemptCount > 1) {
@@ -2537,7 +2558,7 @@ export class CortexOrchestrator {
         }
       } else {
         // Fallback: direct call if middleware not available
-        apiResponse = await this.apiClient.sendRequest(preparedRequest, effectiveModel);
+        apiResponse = await this.sendWithChainFallback(preparedRequest, (r) => this.apiClient.sendRequest(r, effectiveModel), rebuildInitialFull, 'primary_api_call'); // R228 fallback (dark)
       }
     } catch (error: any) {
       // Phase 2.2.3: Context rejection handling with helper middleware
@@ -2990,6 +3011,7 @@ export class CortexOrchestrator {
               if (isEmpty) {
                 m.message = m.message || { role: 'assistant' };
                 m.message.content = [{ type: 'text', text: '(no output)' }];
+                this.invalidateConversions([m]); // R221 safety net
                 if (this.config.debug) {
                   console.log(`[Orchestrator] R26: repaired empty assistant message at history[${i}] before retry`);
                 }
@@ -3034,7 +3056,7 @@ export class CortexOrchestrator {
             await this.ensureHistoryFitsModel(effectiveModel);
             const retryEffort = this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort; // R153 backoff > request param
             const buildRetryRequest = (): PreparedRequest => { // R154: rebuildable for the image-rejection heal
-              const retryCanonicalHistory = this.convertToCanonicalMessages([...this.messageHistory]);
+              const retryCanonicalHistory = this.convertToCanonicalMessages(this.chainedHistoryForApi(effectiveModel)); // R228 (CORTEX_RESPONSES_SLICE_ALL; off = full history)
               const req = this.gatewayTranslation.prepareRequest(
                 retryCanonicalHistory,
                 toolsToUse,
@@ -3096,6 +3118,7 @@ export class CortexOrchestrator {
                 ...(retryConverted.usage && { usage: retryConverted.usage }),
               } as any;
               this.messageHistory.push(retryAssistantMessage);
+              this.markChainedResponseCheckpoint(effectiveModel); // R228 (CORTEX_RESPONSES_SLICE_ALL; off = no-op)
               await this.historyStore.appendMessage(this.currentSessionId, retryAssistantMessage);
 
               // Update current pointer so the loop re-evaluates with new content.
@@ -3176,36 +3199,33 @@ export class CortexOrchestrator {
               await this.historyStore.appendMessage(this.currentSessionId, inactionUserMessage);
 
               await this.ensureHistoryFitsModel(effectiveModel);
-              const inactionCanonicalHistory = this.convertToCanonicalMessages([...this.messageHistory]);
-              const inactionRequest = this.gatewayTranslation.prepareRequest(
-                inactionCanonicalHistory,
-                toolsToUse,
-                effectiveModel,
-                {
-                  temperature: options.parameters?.temperature,
-                  maxTokens: options.parameters?.maxTokens,
-                  topP: options.parameters?.topP,
-                  reasoningEffort: this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort, // R153 backoff > request param
-                  stream: options.streaming,
-                  staticSystemPrompt: this.currentStaticSystemPrompt, // R28
-                  conversationId: this.currentConversationId, // R28b
-                },
-              );
-              if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
-                inactionRequest.previousResponseId = this.lastResponseId;
-              }
-              inactionRequest.conversationId = this.currentSessionId;
-
-              let inactionApiResponse;
-              if (this.retryMiddleware) {
-                const r = await this.retryMiddleware.executeWithRetry(
-                  () => this.apiClient.sendRequest(inactionRequest, effectiveModel),
-                  'inaction_nudge_retry',
+              const inactionEffort = this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort; // R153 backoff > request param (consumed once)
+              const buildInactionRequest = (): PreparedRequest => { // R228: rebuildable for the chain fallback
+                const inactionCanonicalHistory = this.convertToCanonicalMessages(this.chainedHistoryForApi(effectiveModel)); // R228 (CORTEX_RESPONSES_SLICE_ALL; off = full history)
+                const inactionRequest = this.gatewayTranslation.prepareRequest(
+                  inactionCanonicalHistory,
+                  toolsToUse,
+                  effectiveModel,
+                  {
+                    temperature: options.parameters?.temperature,
+                    maxTokens: options.parameters?.maxTokens,
+                    topP: options.parameters?.topP,
+                    reasoningEffort: inactionEffort,
+                    stream: options.streaming,
+                    staticSystemPrompt: this.currentStaticSystemPrompt, // R28
+                    conversationId: this.currentConversationId, // R28b
+                  },
                 );
-                inactionApiResponse = r.result;
-              } else {
-                inactionApiResponse = await this.apiClient.sendRequest(inactionRequest, effectiveModel);
-              }
+                if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
+                  inactionRequest.previousResponseId = this.lastResponseId;
+                }
+                inactionRequest.conversationId = this.currentSessionId;
+                return inactionRequest;
+              };
+              const sendInactionRequest = async (r: PreparedRequest): Promise<APIResponse> => this.retryMiddleware
+                ? (await this.retryMiddleware.executeWithRetry(() => this.apiClient.sendRequest(r, effectiveModel), 'inaction_nudge_retry')).result
+                : this.apiClient.sendRequest(r, effectiveModel);
+              const inactionApiResponse = await this.sendWithChainFallback(buildInactionRequest(), sendInactionRequest, buildInactionRequest, 'inaction_nudge_retry'); // R228 fallback (dark; off = one send)
 
               const inactionConverted = this.gatewayTranslation.convertResponse(
                 inactionApiResponse.data,
@@ -3243,6 +3263,7 @@ export class CortexOrchestrator {
                   ...(inactionConverted.usage && { usage: inactionConverted.usage }),
                 } as any;
                 this.messageHistory.push(inactionAssistantMessage);
+                this.markChainedResponseCheckpoint(effectiveModel); // R228 (CORTEX_RESPONSES_SLICE_ALL; off = no-op)
                 await this.historyStore.appendMessage(this.currentSessionId, inactionAssistantMessage);
                 currentAssistantMessage = inactionAssistantMessage as any;
                 currentAssistantCanonicalMessage = inactionAssistantCanonical;
@@ -3365,6 +3386,7 @@ export class CortexOrchestrator {
               if (isEmpty) {
                 m.message = m.message || { role: 'assistant' };
                 m.message.content = [{ type: 'text', text: '(no output)' }];
+                this.invalidateConversions([m]); // R221 safety net
               }
               break;
             }
@@ -3414,36 +3436,33 @@ export class CortexOrchestrator {
             await this.historyStore.appendMessage(this.currentSessionId, endTurnReminder);
 
             await this.ensureHistoryFitsModel(effectiveModel);
-            const gateCanonicalHistory = this.convertToCanonicalMessages([...this.messageHistory]);
-            const gateRequest = this.gatewayTranslation.prepareRequest(
-              gateCanonicalHistory,
-              toolsToUse,
-              effectiveModel,
-              {
-                temperature: options.parameters?.temperature,
-                maxTokens: options.parameters?.maxTokens,
-                topP: options.parameters?.topP,
-                reasoningEffort: this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort, // R153 backoff > request param
-                stream: options.streaming,
-                staticSystemPrompt: this.currentStaticSystemPrompt,
-                conversationId: this.currentConversationId,
-              },
-            );
-            if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
-              gateRequest.previousResponseId = this.lastResponseId;
-            }
-            gateRequest.conversationId = this.currentSessionId;
-
-            let gateApiResponse;
-            if (this.retryMiddleware) {
-              const gateResult = await this.retryMiddleware.executeWithRetry(
-                () => this.apiClient.sendRequest(gateRequest, effectiveModel),
-                'end_turn_gate',
+            const gateEffort = this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort; // R153 backoff > request param (consumed once)
+            const buildGateRequest = (): PreparedRequest => { // R228: rebuildable for the chain fallback
+              const gateCanonicalHistory = this.convertToCanonicalMessages(this.chainedHistoryForApi(effectiveModel)); // R228 (CORTEX_RESPONSES_SLICE_ALL; off = full history)
+              const gateRequest = this.gatewayTranslation.prepareRequest(
+                gateCanonicalHistory,
+                toolsToUse,
+                effectiveModel,
+                {
+                  temperature: options.parameters?.temperature,
+                  maxTokens: options.parameters?.maxTokens,
+                  topP: options.parameters?.topP,
+                  reasoningEffort: gateEffort,
+                  stream: options.streaming,
+                  staticSystemPrompt: this.currentStaticSystemPrompt,
+                  conversationId: this.currentConversationId,
+                },
               );
-              gateApiResponse = gateResult.result;
-            } else {
-              gateApiResponse = await this.apiClient.sendRequest(gateRequest, effectiveModel);
-            }
+              if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
+                gateRequest.previousResponseId = this.lastResponseId;
+              }
+              gateRequest.conversationId = this.currentSessionId;
+              return gateRequest;
+            };
+            const sendGate = async (r: PreparedRequest): Promise<APIResponse> => this.retryMiddleware
+              ? (await this.retryMiddleware.executeWithRetry(() => this.apiClient.sendRequest(r, effectiveModel), 'end_turn_gate')).result
+              : this.apiClient.sendRequest(r, effectiveModel);
+            const gateApiResponse = await this.sendWithChainFallback(buildGateRequest(), sendGate, buildGateRequest, 'end_turn_gate'); // R228 fallback (dark; off = one send)
 
             const gateConverted = this.gatewayTranslation.convertResponse(
               gateApiResponse.data,
@@ -3483,6 +3502,7 @@ export class CortexOrchestrator {
                 ...(gateConverted.usage && { usage: gateConverted.usage }),
               } as any;
               this.messageHistory.push(gateAssistantMessage);
+              this.markChainedResponseCheckpoint(effectiveModel); // R228 (CORTEX_RESPONSES_SLICE_ALL; off = no-op)
               await this.historyStore.appendMessage(this.currentSessionId, gateAssistantMessage);
               currentAssistantMessage = gateAssistantMessage as any;
               currentAssistantCanonicalMessage = gateAssistantCanonical;
@@ -3968,6 +3988,7 @@ export class CortexOrchestrator {
           const block = lastMsg.message.content[0];
           const existing = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
           block.content = existing + '\n\n' + signals;
+          this.invalidateTailUnitConversions(); // R221 safety net
           // Observability (backlog item 3, micro-suite defect #4): this
           // mutation happens AFTER the tool_result was persisted — the
           // durable session lacks the steering the model saw. Bank a
@@ -4114,7 +4135,7 @@ export class CortexOrchestrator {
       // are included in the continuation request's tools array
       if (this.effectiveDeferredLoading && !isPTCEnabled) {
         const beforeCount = toolsToUse.length;
-        toolsToUse = this.toolFilter.getFilteredTools(allTools);
+        toolsToUse = this.toolFilter.getFilteredTools(allTools, { appendOnly: resolveAppendOnlyTools() });
         // StructuredOutput: the re-filter rebuilds from allTools (which never
         // contained the request-scoped tool) — re-append so it stays present
         // on every request of the turn.
@@ -4464,7 +4485,7 @@ export class CortexOrchestrator {
         await this.ensureHistoryFitsModel(effectiveModel);
         const synthEffort = this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort; // R153 backoff > request param
         const buildSynthRequest = (): PreparedRequest => { // R154: rebuildable for the image-rejection heal
-          const synthCanonicalHistory = this.convertToCanonicalMessages([...this.messageHistory]);
+          const synthCanonicalHistory = this.convertToCanonicalMessages(this.chainedHistoryForApi(effectiveModel)); // R228 (CORTEX_RESPONSES_SLICE_ALL; off = full history)
           const req = this.gatewayTranslation.prepareRequest(
             synthCanonicalHistory,
             // Tools suppressed — the model MUST produce text, not call more tools.
@@ -4533,6 +4554,7 @@ export class CortexOrchestrator {
             ...(synthConverted.usage && { usage: synthConverted.usage }),
           } as any;
           this.messageHistory.push(synthAssistantMessage);
+          this.markChainedResponseCheckpoint(effectiveModel); // R228 (CORTEX_RESPONSES_SLICE_ALL; off = no-op)
           await this.historyStore.appendMessage(this.currentSessionId, synthAssistantMessage);
           this.sessionTimeline.recordMessage(synthAssistantMessage.uuid, 'assistant');
           if (synthConverted.usage) {
@@ -4975,6 +4997,7 @@ export class CortexOrchestrator {
       }
     };
     messageHistoryForApi[messageHistoryForApi.length - 1] = userMessageForApi;
+    this.rememberInjectedContent(userMessage.uuid, injectedContent); // R223 (CORTEX_PERSIST_INJECTED; off = no-op): later requests send the same bytes
 
     // canonicalHistory computed after effectiveModel is determined (input-slicing below).
 
@@ -5009,7 +5032,7 @@ export class CortexOrchestrator {
 
     // Deferred loading: filter tools for non-PTC paths (essential + recently-used only)
     if (!isPTCEnabled && this.effectiveDeferredLoading && toolsToUse && toolsToUse.length > 0) {
-      toolsToUse = this.toolFilter.getFilteredTools(toolsToUse);
+      toolsToUse = this.toolFilter.getFilteredTools(toolsToUse, { appendOnly: resolveAppendOnlyTools() });
     }
     // First-turn anchoring narrows further while armed (no-op once lifted).
     // Card-level home door: capture the active card's anchorProfile (env
@@ -5413,6 +5436,7 @@ export class CortexOrchestrator {
             if (isEmpty) {
               m.message = m.message || { role: 'assistant' };
               m.message.content = [{ type: 'text', text: '(no output)' }];
+              this.invalidateConversions([m]); // R221 safety net
             }
             break;
           }
@@ -5449,7 +5473,7 @@ export class CortexOrchestrator {
             await this.ensureHistoryFitsModel(effectiveModel);
             const retryEffort = this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort; // R153 backoff > request param
             const buildRetryRequest = (): PreparedRequest => { // R154: rebuildable for the image-rejection heal
-              const retryCanonicalHistory = this.convertToCanonicalMessages([...this.messageHistory]);
+              const retryCanonicalHistory = this.convertToCanonicalMessages(this.chainedHistoryForApi(effectiveModel)); // R228 (CORTEX_RESPONSES_SLICE_ALL; off = full history)
               const req = this.gatewayTranslation.prepareRequest(
                 retryCanonicalHistory,
                 toolsToUse,
@@ -5511,6 +5535,7 @@ export class CortexOrchestrator {
                 ...(retryConverted.usage && { usage: retryConverted.usage }),
               } as any;
               this.messageHistory.push(retryAssistantMessage);
+              this.markChainedResponseCheckpoint(effectiveModel); // R228 (CORTEX_RESPONSES_SLICE_ALL; off = no-op)
               await this.historyStore.appendMessage(this.currentSessionId, retryAssistantMessage);
 
               currentAssistantCanonicalMessage = retryAssistantCanonical;
@@ -5598,36 +5623,33 @@ export class CortexOrchestrator {
 
             try {
               await this.ensureHistoryFitsModel(effectiveModel);
-              const retryCanonicalHistory = this.convertToCanonicalMessages([...this.messageHistory]);
-              const retryRequest = this.gatewayTranslation.prepareRequest(
-                retryCanonicalHistory,
-                toolsToUse,
-                effectiveModel,
-                {
-                  temperature: options.parameters?.temperature,
-                  maxTokens: options.parameters?.maxTokens,
-                  topP: options.parameters?.topP,
-                  reasoningEffort: this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort, // R153 backoff > request param
-                  stream: false,
-                  staticSystemPrompt: this.currentStaticSystemPrompt,
-                  conversationId: this.currentConversationId,
-                },
-              );
-              if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
-                retryRequest.previousResponseId = this.lastResponseId;
-              }
-              retryRequest.conversationId = this.currentSessionId;
-
-              let retryApiResponse;
-              if (this.retryMiddleware) {
-                const retryResult = await this.retryMiddleware.executeWithRetry(
-                  () => this.apiClient.sendRequest(retryRequest, effectiveModel),
-                  'inaction_nudge_retry',
+              const retryEffort = this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort; // R153 backoff > request param (consumed once)
+              const buildRetryRequest = (): PreparedRequest => { // R228: rebuildable for the chain fallback
+                const retryCanonicalHistory = this.convertToCanonicalMessages(this.chainedHistoryForApi(effectiveModel)); // R228 (CORTEX_RESPONSES_SLICE_ALL; off = full history)
+                const retryRequest = this.gatewayTranslation.prepareRequest(
+                  retryCanonicalHistory,
+                  toolsToUse,
+                  effectiveModel,
+                  {
+                    temperature: options.parameters?.temperature,
+                    maxTokens: options.parameters?.maxTokens,
+                    topP: options.parameters?.topP,
+                    reasoningEffort: retryEffort,
+                    stream: false,
+                    staticSystemPrompt: this.currentStaticSystemPrompt,
+                    conversationId: this.currentConversationId,
+                  },
                 );
-                retryApiResponse = retryResult.result;
-              } else {
-                retryApiResponse = await this.apiClient.sendRequest(retryRequest, effectiveModel);
-              }
+                if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
+                  retryRequest.previousResponseId = this.lastResponseId;
+                }
+                retryRequest.conversationId = this.currentSessionId;
+                return retryRequest;
+              };
+              const sendRetryRequest = async (r: PreparedRequest): Promise<APIResponse> => this.retryMiddleware
+                ? (await this.retryMiddleware.executeWithRetry(() => this.apiClient.sendRequest(r, effectiveModel), 'inaction_nudge_retry')).result
+                : this.apiClient.sendRequest(r, effectiveModel);
+              const retryApiResponse = await this.sendWithChainFallback(buildRetryRequest(), sendRetryRequest, buildRetryRequest, 'inaction_nudge_retry'); // R228 fallback (dark; off = one send)
 
               const retryConverted = this.gatewayTranslation.convertResponse(
                 retryApiResponse.data,
@@ -5665,6 +5687,7 @@ export class CortexOrchestrator {
                   ...(retryConverted.usage && { usage: retryConverted.usage }),
                 } as any;
                 this.messageHistory.push(retryAssistantMessage);
+                this.markChainedResponseCheckpoint(effectiveModel); // R228 (CORTEX_RESPONSES_SLICE_ALL; off = no-op)
                 await this.historyStore.appendMessage(this.currentSessionId, retryAssistantMessage);
 
                 currentAssistantCanonicalMessage = retryAssistantCanonical;
@@ -6000,6 +6023,7 @@ export class CortexOrchestrator {
             const block = lastMsg.message.content[0];
             const existing = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
             block.content = existing + '\n\n' + signals;
+            this.invalidateTailUnitConversions(); // R221 safety net
             // Observability (backlog item 3): post-persist mutation — bank a
             // steering_injected event (streaming parity).
             const store = this.getDecisionStore();
@@ -6128,7 +6152,7 @@ export class CortexOrchestrator {
 
         // Re-filter tools after SearchTools discovery (same as sendMessage path)
         if (this.effectiveDeferredLoading && !isPTCEnabled) {
-          toolsToUse = this.toolFilter.getFilteredTools(allTools);
+          toolsToUse = this.toolFilter.getFilteredTools(allTools, { appendOnly: resolveAppendOnlyTools() });
           // StructuredOutput: re-filter rebuilds from allTools — re-append the
           // request-scoped tool (same as the sendMessage continuation path).
           if (structuredOutputState) {
@@ -6560,7 +6584,7 @@ export class CortexOrchestrator {
         await this.ensureHistoryFitsModel(effectiveModel);
         const synthEffort = this.consumeReasoningBackoff() ?? options.parameters?.reasoningEffort; // R153 backoff > request param
         const buildSynthRequest = (): PreparedRequest => { // R154: rebuildable for the image-rejection heal
-          const synthCanonicalHistory = this.convertToCanonicalMessages([...this.messageHistory]);
+          const synthCanonicalHistory = this.convertToCanonicalMessages(this.chainedHistoryForApi(effectiveModel)); // R228 (CORTEX_RESPONSES_SLICE_ALL; off = full history)
           const req = this.gatewayTranslation.prepareRequest(
             synthCanonicalHistory,
             [], // tools suppressed — must produce text
@@ -6625,6 +6649,7 @@ export class CortexOrchestrator {
             ...(synthConverted.usage && { usage: synthConverted.usage }),
           } as any;
           this.messageHistory.push(synthAssistantMessage);
+          this.markChainedResponseCheckpoint(effectiveModel); // R228 (CORTEX_RESPONSES_SLICE_ALL; off = no-op)
           await this.historyStore.appendMessage(this.currentSessionId, synthAssistantMessage);
           this.sessionTimeline.recordMessage(synthAssistantMessage.uuid, 'assistant');
           currentAssistantCanonicalMessage = synthCanonical;
@@ -7040,6 +7065,7 @@ export class CortexOrchestrator {
     // cleared on session reset so stale entries (including synthetic-repair
     // uuids from the previous session) can't leak into the new session.
     this.canonicalConversionCache.clear();
+    this.injectedApiContent.clear(); // R223
 
     // Reset XAI Responses API chain for new session (was leaking across `--new`).
     // Without this, a new session would reuse lastResponseId from the previous
@@ -7203,6 +7229,7 @@ export class CortexOrchestrator {
     // Round 6: clear canonical-conversion cache on session resume too —
     // entries from a previously running orchestrator instance are stale.
     this.canonicalConversionCache.clear();
+    this.injectedApiContent.clear(); // R223
 
     // Reuse the persistedMetadata loaded above — avoid a second disk read.
     const savedMetadata = persistedMetadata;
@@ -7721,6 +7748,7 @@ export class CortexOrchestrator {
         plateau: plateauStatusSegment(this.plateauTracker), // R210: null when CORTEX_PLATEAU_STOP is off or no metric seen → line unchanged
       });
       if (appendStatusToNewestToolResult(this.messageHistory as any[], line)) {
+        this.invalidateTailUnitConversions(); // R221 safety net
         this.turnStatusLines++;
         if (this.config.debug) console.log(`[TurnStatus] iteration ${iteration}: ${line}`);
       }
@@ -10417,7 +10445,15 @@ export class CortexOrchestrator {
   private applyWallDrop(cls: EmptyResponseClassification | null, nudge: string, iteration: number, streaming: boolean): WallDropResult {
     try {
       if (!isReasoningExhaustion(cls) || !resolveWallDrop()) return { dropped: false };
+      // R228 (CORTEX_RESPONSES_SLICE_ALL): on a chained Responses session the server already HOLDS the walled turn (previous_response_id
+      // = its id) — a local drop cannot remove it, and the nudge on an already-held tool_result would never be sent (sliced away). Keep
+      // the turn locally so the caller pushes the nudge as a new input item.
+      const tail: any = this.messageHistory[this.messageHistory.length - 1];
+      if (resolveResponsesSliceAll() && this.lastResponseId && tail?.model?.apiPattern === 'responses') return { dropped: false };
       const r = dropWalledTurn(this.messageHistory as any[], nudge);
+      // R221 (CORTEX_WALL_CACHE_FIX): the carrier tool_result was converted (and cached by uuid) while the walled turn was the tail —
+      // drop that stale copy so every later request carries the nudge (+ wall summary), not just the retry.
+      if (r.dropped && r.carrierMessage) this.invalidateConversions([r.carrierMessage]);
       const store = this.getDecisionStore();
       if (r.dropped && store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'wall_drop', detail: { iteration, droppedChars: r.droppedChars, carrier: r.carrier, streaming } }).catch(() => {});
       return r;
@@ -10436,6 +10472,7 @@ export class CortexOrchestrator {
       const reasoningTokens = lastAssistantReasoningTokens(this.messageHistory as any[]);
       if (!computeNudgeDecision(cfg, { reasoningTokens, round, lastFiredRound: this.computeNudgeLastRound, firedThisTurn: this.computeNudgeFired })) return;
       if (!appendStatusToNewestToolResult(this.messageHistory as any[], buildComputeNudgeLine(reasoningTokens))) return;
+      this.invalidateTailUnitConversions(); // R221 safety net
       this.computeNudgeLastRound = round;
       this.computeNudgeFired++;
       const store = this.getDecisionStore();
@@ -10480,12 +10517,13 @@ export class CortexOrchestrator {
       ? (await this.retryMiddleware.executeWithRetry(() => this.apiClient.sendRequest(req, model), label)).result
       : this.apiClient.sendRequest(req, model);
     try {
-      return await send(build());
+      return await this.sendWithChainFallback(build(), send, build, label); // R228 fallback (dark; off = send(build()))
     } catch (err: any) {
       if (!isImageRejectionError(err)) throw err;
       const reason = String(err?.message ?? err).slice(0, 300);
       const stripped = stripRejectedImages(this.messageHistory, reason);
       if (stripped === 0) throw err;
+      this.invalidateConversions(this.messageHistory); // R221 safety net: stubbed image blocks live in already-converted messages
       console.warn(`[Orchestrator] R154: provider rejected an image block on ${label} — stubbed ${stripped} image block(s) in history and retrying once.`);
       const store = this.getDecisionStore();
       if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'image_rejection_heal', detail: { stripped, label, reason: reason.slice(0, 160) } }).catch(() => {});
@@ -11018,6 +11056,10 @@ export class CortexOrchestrator {
    * so this cleanup just removes them from the in-memory array.
    */
   private cleanupEphemeralMessages(): void {
+    // R227 (CORTEX_KEEP_MENTOR_MESSAGES=on, dark): keep them — removing a mid-history message rewrites every later request's prefix and
+    // shifts the Responses slice checkpoint (messageCountAtLastResponse counts them). Kept, the history stays append-only and the
+    // checkpoint stays exact. Display already strips their system-reminder (sanitizeHistoryForDisplay); they were never persisted.
+    if (resolveKeepMentorMessages()) return;
     const beforeCount = this.messageHistory.length;
     this.messageHistory = this.messageHistory.filter(
       (msg: any) => !msg.metadata?.ephemeral
@@ -11470,7 +11512,79 @@ export class CortexOrchestrator {
    * Also validates and repairs the message history to handle crash recovery scenarios
    * where tool_use blocks might be orphaned without matching tool_results.
    */
-  private convertToCanonicalMessages(messages: Message[]): CanonicalMessage[] {
+  /** R223 (CORTEX_PERSIST_INJECTED, dark): uuid → the injected user content the first request of that turn sent. The message in
+   *  messageHistory keeps the RAW content (storage, display, title, judges and every text reader see the raw text); only the API
+   *  conversion swaps the injected content in, so every request of the session carries the same bytes for that message. */
+  private injectedApiContent = new Map<string, string | any[]>();
+
+  private rememberInjectedContent(uuid: string, injected: string | any[]): void {
+    if (resolvePersistInjected()) this.injectedApiContent.set(uuid, injected);
+  }
+
+  /** The record convertSingleMessage sees for the API (R223 swap; identity when off / not injected). */
+  private apiViewOf(msg: Message): Message {
+    if (this.injectedApiContent.size === 0 || !msg?.uuid) return msg;
+    const injected = this.injectedApiContent.get(msg.uuid);
+    if (injected === undefined) return msg;
+    return { ...msg, message: { ...(msg as any).message, content: injected } } as Message;
+  }
+
+  /** R221 general safety net (CORTEX_WALL_CACHE_FIX=on, dark; off = no-op): drop the cached canonical conversion of
+   *  messages mutated in place, so the next request converts them fresh instead of re-sending a stale copy. */
+  private invalidateConversions(msgs: readonly any[]): void {
+    if (!resolveWallCacheFix()) return;
+    for (const m of msgs) if (m?.uuid) this.canonicalConversionCache.delete(m.uuid);
+  }
+
+  /** R221 safety net for the steering carriers (all of them write into the messages after the newest assistant turn). */
+  private invalidateTailUnitConversions(): void {
+    if (!resolveWallCacheFix()) return;
+    this.invalidateConversions(tailUnitAfterLastAssistant(this.messageHistory));
+  }
+
+  /** R228 (CORTEX_RESPONSES_SLICE_ALL, dark): history for a request that chains previous_response_id — only the items added since the
+   *  held response. Off / not Responses / no chain / no checkpoint → the full history (the pre-existing behaviour). */
+  private chainedHistoryForApi(model: ModelConfig): Message[] {
+    const h = [...this.messageHistory];
+    if (!resolveResponsesSliceAll() || !this.lastResponseId || model.api.pattern !== 'responses') return h;
+    const from = chainedSliceStart(this.messageCountAtLastResponse, h.length);
+    return from > 0 ? h.slice(from) : h;
+  }
+
+  /** R228 (CORTEX_RESPONSES_SLICE_ALL) fallback: when the held response is gone (store off / expired / error naming it), drop the chain
+   *  and resend ONCE with the FULL history and NO previous_response_id — never both. `rebuildFull` is called AFTER the chain reset, so
+   *  every builder that reads this.lastResponseId / chainedHistoryForApi produces the unchained full-history request. Off, unchained, or
+   *  any other error → rethrown untouched (byte-identical). */
+  private async sendWithChainFallback(
+    req: PreparedRequest,
+    send: (r: PreparedRequest) => Promise<APIResponse>,
+    rebuildFull: () => PreparedRequest,
+    label: string,
+  ): Promise<APIResponse> {
+    try {
+      return await send(req);
+    } catch (err: any) {
+      if (!req.previousResponseId || !resolveResponsesSliceAll() || !isPreviousResponseUnavailable(err)) throw err;
+      const lost = req.previousResponseId;
+      this.lastResponseId = null;
+      this.lastResponseIdProvider = null;
+      this.messageCountAtLastResponse = 0;
+      const full = rebuildFull();
+      delete full.previousResponseId; // never both: full history XOR a chain id
+      console.warn(`[Orchestrator] R228: previous response ${lost} unavailable on ${label} — chain dropped, resending the full history once.`);
+      const store = this.getDecisionStore();
+      if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'responses_chain_fallback', detail: { label, reason: String(err?.message ?? err).slice(0, 160) } }).catch(() => {});
+      return await send(full);
+    }
+  }
+
+  /** R228: a chained non-continuation response (gate / retries / synthesis) was pushed — the server now holds everything up to here. */
+  private markChainedResponseCheckpoint(model: ModelConfig): void {
+    if (resolveResponsesSliceAll() && model.api.pattern === 'responses') this.messageCountAtLastResponse = this.messageHistory.length;
+  }
+
+  private convertToCanonicalMessages(rawMessages: Message[]): CanonicalMessage[] {
+    const messages = this.injectedApiContent.size > 0 ? rawMessages.map((m) => this.apiViewOf(m)) : rawMessages;
     const tailIdx = messages.length - 1;
     const converted = messages.map((msg, i) => {
       // Tail is recomputed every call (see cache doc-comment above).

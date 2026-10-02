@@ -1821,4 +1821,5 @@ Test: a scripted turn that sleeps past the TTL on a short-TTL provider — cache
 | R217 | HB-FAMILY-PRESETS — boot-minimal + orient pointer DeepSeek-only; helpers default deepseek-flash for all | open, def-87e7eb2d60 | per-family presets + provider-aware helper defaults |
 | R218 | HB-ANTHROPIC-CACHE — no message-level cache breakpoints on Claude | DARK BUILT 4.124.44 (CORTEX_ANTHROPIC_HISTORY_CACHE), def-d1ac37e22d | rolling message breakpoints |
 | R219 | HB-TUI-PROFILE — bench gains not in the TUIs; GOAL = pleasing human-navigable UX/UI in both TUIs (CC = visual standard; other harnesses may reveal more navigable patterns) | open, def-5b721c3810 | interactive lever profile + TUI-Bench arena |
+| R221–R227 | prompt-caching audit (wall-drop stale cache, tools churn, injected content lost, accounting, provider controls, Gemini gaps, mentor cleanup) | open | .cortex/research/caching-audit-2026-10-02.md; R221 before the full TB4.0 run |
 

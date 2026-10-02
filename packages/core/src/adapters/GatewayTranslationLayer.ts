@@ -18,6 +18,7 @@ import { ToolNamingHandler } from '../adapters/ToolNamingHandler.js';
 import { noteServedModel, formatDriftWarning } from './servedModelDrift.js';
 import { translateToolChoice, type WireToolChoice, type NormalizedToolChoice } from '../orchestrator/toolChoiceTranslation.js';
 import { isResponsesStopReasonEnabled, mapResponsesStopReason, mapHFSpaceStopReason } from '../orchestrator/transportFixes.js';
+import { isForcedChoiceFullToolsEnabled } from '../orchestrator/transportCacheFixes.js';
 
 /**
  * Decode HTML entities in tool arguments (recursive).
@@ -287,7 +288,9 @@ export class GatewayTranslationLayer {
       // another available tool. Restrict to the forced tool (canonical name, pre-naming-conversion).
       const forcedName =
         options?.toolChoice?.type === 'tool' ? options.toolChoice.name : undefined;
-      const effectiveTools = forcedName ? tools.filter((t) => t.name === forcedName) : tools;
+      // R225 (DARK, CORTEX_FORCED_CHOICE_FULL_TOOLS): keep the full array (cache-stable tools prefix) and let
+      // the provider's named tool_choice force the call. ⚠ DeepSeek ignored the choice with the full catalog.
+      const effectiveTools = forcedName && !isForcedChoiceFullToolsEnabled() ? tools.filter((t) => t.name === forcedName) : tools;
       // Apply naming convention BEFORE passing to adapter
       // This is the key architectural change - gateway handles naming
       const toolsWithCorrectNaming = this.toolNamingHandler.applyNamingConvention(

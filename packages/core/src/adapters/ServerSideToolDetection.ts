@@ -19,6 +19,7 @@
 import { ModelConfig } from '../models/ModelConfig.interface.js';
 import { CanonicalTool } from './FormatAdapter.interface.js';
 import { isServerSideTool, separateTools } from '../tools/ServerSideTools.js';
+import { isStableToolOrderEnabled } from '../orchestrator/transportCacheFixes.js';
 
 /**
  * Detection Result
@@ -153,7 +154,10 @@ export function shouldUseServerSideTools(
       useServerSideTools: true,
       endpoint: responsesEndpoint,
       apiPattern: 'responses',
-      tools: [...serverTools, ...clientTools], // ALL tools — hybrid mode
+      // ALL tools — hybrid mode. R230 (DARK, CORTEX_STABLE_TOOL_ORDER): keep the caller's original order —
+      // continuations send allTools in that order, so server-first here reordered the tools array (the
+      // cached prefix head) at every user-turn boundary.
+      tools: isStableToolOrderEnabled() ? tools : [...serverTools, ...clientTools],
       reason: 'Hybrid mode: server-side + client-side tools via Responses API'
     };
   }

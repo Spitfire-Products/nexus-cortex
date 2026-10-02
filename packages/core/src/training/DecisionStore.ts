@@ -113,6 +113,7 @@ export type SteeringEventKind =
   | 'dsml_recovered'
   | 'reasoning_exhaustion' // R153: a truncated reasoning-only turn (output cap hit, no text/tool) armed the effort backoff — detail {iteration, level, turns, outputTokens?}
   | 'image_rejection_heal' // R154
+  | 'responses_chain_fallback' // R228: previous_response_id unavailable → chain dropped, full history resent once
   | 'endturn_gap_accepted'
   | 'independent_derivation' // R176: second-method recomputation before a standing finish — {valueShaped, methodAgent, methodIndependent, checks, derived, agreement, held}
   | 'frame_turn' // R179: one Terminus-frame turn — candidates, the chooser's pick + probabilities, executed keys, rc, wait

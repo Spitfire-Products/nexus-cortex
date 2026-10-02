@@ -26,11 +26,12 @@ export function resolveOutputCap(env: NodeJS.ProcessEnv = process.env): number |
   return n >= 1024 ? n : undefined;
 }
 
-export interface WallDropResult { dropped: boolean; carrier?: 'tool_result' | 'none'; droppedChars?: number }
+export interface WallDropResult { dropped: boolean; carrier?: 'tool_result' | 'none'; droppedChars?: number; carrierMessage?: any }
 
 function roleOf(m: any): string | undefined { return m?.message?.role ?? m?.role ?? (m?.type === 'assistant' ? 'assistant' : undefined); }
 
-/** Drops the newest message when it is a walled assistant turn (no tool call); appends `nudge` to the newest tool_result. Mutates. */
+/** Drops the newest message when it is a walled assistant turn (no tool call); appends `nudge` to the newest tool_result. Mutates.
+ *  `carrierMessage` = the history record that received the nudge (R221: its cached conversion is stale and must be invalidated). */
 export function dropWalledTurn(history: any[], nudge: string): WallDropResult {
   const last = history[history.length - 1];
   if (!last || roleOf(last) !== 'assistant') return { dropped: false };
@@ -40,7 +41,16 @@ export function dropWalledTurn(history: any[], nudge: string): WallDropResult {
   let droppedChars = 0;
   for (const b of blocks) droppedChars += String(b?.thinking ?? b?.text ?? b?.reasoning ?? '').length;
   history.pop();
-  return { dropped: true, carrier: appendStatusToNewestToolResult(history, nudge) ? 'tool_result' : 'none', droppedChars };
+  const before = history.length;
+  const carried = appendStatusToNewestToolResult(history, nudge);
+  let carrierMessage: any;
+  if (carried) {
+    for (let i = before - 1; i >= 0; i--) {
+      const c = history[i]?.message?.content ?? history[i]?.content;
+      if (Array.isArray(c) && c.some((b: any) => b?.type === 'tool_result')) { carrierMessage = history[i]; break; }
+    }
+  }
+  return { dropped: true, carrier: carried ? 'tool_result' : 'none', droppedChars, ...(carrierMessage ? { carrierMessage } : {}) };
 }
 
 /**

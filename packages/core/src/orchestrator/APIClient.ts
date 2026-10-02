@@ -28,6 +28,13 @@ import {
   applyAnthropicHistoryCache,
   countAnthropicBreakpoints,
 } from './transportFixes.js';
+import {
+  isGeminiSystemFixEnabled,
+  isOpenAICacheKeyEnabled,
+  isStreamUsageEnabled,
+  applyAnthropicCacheLevers,
+  streamFinalUsage,
+} from './transportCacheFixes.js';
 import type { ModelConfig } from '../models/ModelConfig.interface.js';
 import type { PreparedRequest } from '../adapters/GatewayTranslationLayer.js';
 import type { CanonicalToolUse } from '@nexus-cortex/types';
@@ -499,6 +506,9 @@ export class APIClient {
         countAnthropicBreakpoints({ system: anthropicRequest.system, tools: anthropicRequest.tools }),
       ).messages;
     }
+    // R225 (DARK): CORTEX_ANTHROPIC_AUTO_CACHE top-level automatic cache_control (free slot only) +
+    // CORTEX_ANTHROPIC_CACHE_TTL=1h on every marker. Anthropic only; no-op with both flags off.
+    if (enableCaching) applyAnthropicCacheLevers(anthropicRequest);
 
     // Phase 2.8: Enable extended thinking for Claude 4+ models with reasoning support
     // Requires beta header: anthropic-beta: interleaved-thinking-2025-05-14
@@ -975,6 +985,17 @@ export class APIClient {
       this.applyToolChoice(chatRequest, request, 'chat/completions'); // §13-B1 forced tool_choice
     }
 
+    // R225 (DARK, CORTEX_OPENAI_CACHE_KEY): OpenAI routes same-key requests to the same prompt cache.
+    // OpenAI provider only (other chat/completions providers may reject the unknown field).
+    if (isOpenAICacheKeyEnabled() && modelConfig.provider === 'openai' && request.conversationId) {
+      chatRequest.prompt_cache_key = request.conversationId;
+    }
+    // R224a (DARK, CORTEX_STREAM_USAGE): ask for the final usage chunk on streaming requests (otherwise the
+    // reassembled message reports zeros). Body-level, after the prefix — cache-neutral.
+    if (opts.stream && isStreamUsageEnabled()) {
+      chatRequest.stream_options = { include_usage: true };
+    }
+
     this.logChatCompletionsPayload(chatRequest, request.modelId, opts.stream);
 
     return { client, chatRequest };
@@ -1290,6 +1311,10 @@ export class APIClient {
       // opt-in ZDR mode: "DESIGN NOTE — stateless ZDR mode" in
       // ResponsesAPIAdapter.ts (adapters/).
     }
+    // R225 (DARK, CORTEX_OPENAI_CACHE_KEY): the same session-scoped cache routing key for OpenAI Responses.
+    if (isOpenAICacheKeyEnabled() && modelConfig.provider?.toLowerCase() === 'openai' && request.conversationId) {
+      responsesRequest.prompt_cache_key = request.conversationId;
+    }
 
     // Set system context as instructions (enables provider-side caching).
     // R63: request.systemMessage (the R28 static system prompt) was previously
@@ -1414,6 +1439,12 @@ export class APIClient {
     if (request.tools && request.tools.length > 0) {
       return this.sendGenerateContentHTTP(request, modelConfig, apiKey);
     }
+    // R229 (DARK, CORTEX_GEMINI_SYSTEM_FIX): the @google/generative-ai SDK (v0.2.1, v1 endpoint) has no
+    // systemInstruction support, so a request carrying a system prompt goes through the v1beta REST builder,
+    // which sends it as system_instruction.
+    if (isGeminiSystemFixEnabled() && request.systemMessage) {
+      return this.sendGenerateContentHTTP(request, modelConfig, apiKey);
+    }
 
     // For non-tool requests, use SDK as before
     if (!this.googleClient) {
@@ -1475,6 +1506,12 @@ export class APIClient {
       contents: request.messages,
       generation_config: generationConfig  // Use the nested object directly
     };
+
+    // R229 (DARK, CORTEX_GEMINI_SYSTEM_FIX): deliver the system prompt (the streaming HTTP builder always did;
+    // this non-streaming builder never did). Same snake_case shape as streamGenerateContentHTTP.
+    if (isGeminiSystemFixEnabled() && request.systemMessage) {
+      requestBody.system_instruction = { parts: [{ text: request.systemMessage }] };
+    }
 
     // Add tools if present
     if (request.tools && request.tools.length > 0) {
@@ -1643,6 +1680,8 @@ export class APIClient {
           countAnthropicBreakpoints({ system: anthropicRequest.system, tools: anthropicRequest.tools }),
         ).messages;
       }
+      // R225 (DARK): automatic cache_control + 1h TTL — mirrors sendAnthropicMessagesAPI.
+      if (enableCaching) applyAnthropicCacheLevers(anthropicRequest);
 
       // Phase 2.8: Enable extended thinking for Claude 4+ models with reasoning support
       // Requires beta header: anthropic-beta: interleaved-thinking-2025-05-14
@@ -2305,6 +2344,9 @@ export class APIClient {
     // R153 (2026-09-16): keep the provider's LAST non-null finish_reason so a `length` cutoff survives reassembly
     // (the empty-response classifier keys `truncated` on it; the old hardcode reported every text turn as `stop`).
     let lastFinishReason: string | null = null;
+    // R224a (DARK, CORTEX_STREAM_USAGE): the provider's final usage chunk (choices: []) when requested.
+    const captureStreamUsage = isStreamUsageEnabled();
+    let streamUsage: any = null;
 
     // Capture this context before entering generator
     const self = this;
@@ -2321,8 +2363,9 @@ export class APIClient {
       for await (const chunk of stream) {
         if (!firstChunk) firstChunk = chunk;
         chunkCount++;
+        if (captureStreamUsage && chunk?.usage) streamUsage = chunk.usage;
 
-        const delta = chunk.choices[0]?.delta;
+        const delta = chunk.choices?.[0]?.delta;
 
         // Debug: Log first few chunks to see what fields are present
         if ((process.env.DEBUG === 'true' || process.env.DEBUG_THINKING === 'true') && chunkCount <= 3) {
@@ -2383,7 +2426,7 @@ export class APIClient {
         }
 
         // Check if finish_reason indicates tool_calls completion (or length-truncated tool call)
-        const finishReason = chunk.choices[0]?.finish_reason;
+        const finishReason = chunk.choices?.[0]?.finish_reason;
         if (finishReason) lastFinishReason = String(finishReason);
         if ((finishReason === 'tool_calls' || finishReason === 'length') && accumulatedToolCalls.size > 0) {
           // Emit tool_use_complete events for each accumulated tool call
@@ -2451,11 +2494,7 @@ export class APIClient {
           // ('length' = output cap hit) instead of a synthetic 'stop'.
           finish_reason: finalToolCalls.length > 0 ? 'tool_calls' : (lastFinishReason ?? 'stop')
         }],
-        usage: {
-          prompt_tokens: 0,
-          completion_tokens: 0,
-          total_tokens: 0
-        }
+        usage: streamFinalUsage(streamUsage)
       });
     }();
 
@@ -2570,6 +2609,10 @@ export class APIClient {
         if (request.conversationId) {
           responsesRequest.prompt_cache_key = request.conversationId;
         }
+      }
+      // R225 (DARK, CORTEX_OPENAI_CACHE_KEY): mirrors sendResponsesAPI.
+      if (isOpenAICacheKeyEnabled() && modelConfig.provider?.toLowerCase() === 'openai' && request.conversationId) {
+        responsesRequest.prompt_cache_key = request.conversationId;
       }
 
       // Set system context as instructions (enables provider-side caching).
@@ -2855,6 +2898,11 @@ export class APIClient {
     // For models with tools, use direct HTTP streaming to ensure v1beta endpoint
     // The SDK sometimes uses v1 which doesn't support tools for newer models
     if (request.tools && request.tools.length > 0) {
+      return this.streamGenerateContentHTTP(request, modelConfig, apiKey);
+    }
+    // R229 (DARK, CORTEX_GEMINI_SYSTEM_FIX): the old SDK cannot send a system prompt — use the v1beta REST
+    // streaming builder (already sends system_instruction) whenever one is present.
+    if (isGeminiSystemFixEnabled() && request.systemMessage) {
       return this.streamGenerateContentHTTP(request, modelConfig, apiKey);
     }
 
@@ -3276,7 +3324,13 @@ export class APIClient {
     };
 
     if (request.systemMessage) {
-      sdkRequest.systemInstruction = request.systemMessage;
+      if (isGeminiSystemFixEnabled()) {
+        // R229 (DARK): @google/genai reads the system prompt ONLY from config.systemInstruction
+        // (GenerateContentParameters = {model, contents, config}); a top-level field is dropped.
+        config.systemInstruction = request.systemMessage;
+      } else {
+        sdkRequest.systemInstruction = request.systemMessage;
+      }
     }
 
     if (process.env.DEBUG === 'true') {
@@ -3390,9 +3444,14 @@ export class APIClient {
       config  // Config contains both generation params and tools
     };
 
-    // Add system instruction if present (top level, not in config)
+    // Add system instruction if present. Legacy: top level (the SDK DROPS it — GenerateContentParameters =
+    // {model, contents, config}). R229 (DARK, CORTEX_GEMINI_SYSTEM_FIX): config.systemInstruction.
     if (request.systemMessage) {
-      sdkRequest.systemInstruction = request.systemMessage;
+      if (isGeminiSystemFixEnabled()) {
+        config.systemInstruction = request.systemMessage;
+      } else {
+        sdkRequest.systemInstruction = request.systemMessage;
+      }
     }
 
     if (process.env.DEBUG === 'true') {
