@@ -68,7 +68,11 @@ const ANTHROPIC_ADAPTIVE_THINKING_FAMILIES = new Set([
   'claude-4.7',
   'claude-4.8',
   'claude-5',         // Claude Sonnet 5 (and the Claude 5 generation)
-  'claude-fable-5'
+  'claude-fable-5',
+  // Opus 5.5 / Sonnet 5.5 / Fable 5.1 (2026-10-03): adaptive only — budget_tokens AND {type:'disabled'} 400
+  // (Sonnet 5.5's off-form is {type:'between_tools'}, never sent by the harness); omitting thinking runs adaptive.
+  'claude-5.5',
+  'claude-fable-5.1'
 ]);
 
 /**

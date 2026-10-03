@@ -20,6 +20,11 @@ export interface OpenAIResponsesModelOptions {
   supportsTools?: boolean;
   /** Enable reasoning modality for visible thinking traces */
   supportsReasoning?: boolean;
+  /** Cached-input price per 1M tokens → cost.cachedInputPerMillion. */
+  cachedInputCost?: number;
+  /** false = model rejects sampling params on /v1/responses (top_p → 400 on GPT-5.x reasoning models, live
+   *  2026-10-03): temperature + topP unsupported, no topP default. Omit = legacy behavior. */
+  samplingParams?: boolean;
 }
 
 export function createOpenAIResponsesModelConfig(options: OpenAIResponsesModelOptions): ModelConfig {
@@ -72,7 +77,7 @@ export function createOpenAIResponsesModelConfig(options: OpenAIResponsesModelOp
 
     parameters: {
       temperature: {
-        supported: true,
+        supported: options.samplingParams !== false,
         paramName: 'temperature',
         min: 0.0,
         max: 2.0
@@ -85,9 +90,9 @@ export function createOpenAIResponsesModelConfig(options: OpenAIResponsesModelOp
         max: options.outputTokens
       },
       topP: {
-        supported: true,
+        supported: options.samplingParams !== false,
         paramName: 'top_p',
-        default: 1.0,
+        ...(options.samplingParams !== false && { default: 1.0 }),
         min: 0.0,
         max: 1.0
       }
@@ -132,7 +137,8 @@ export function createOpenAIResponsesModelConfig(options: OpenAIResponsesModelOp
 
     cost: {
       inputPerMillion: options.inputCost,
-      outputPerMillion: options.outputCost
+      outputPerMillion: options.outputCost,
+      ...(options.cachedInputCost !== undefined && { cachedInputPerMillion: options.cachedInputCost })
     }
   };
 }

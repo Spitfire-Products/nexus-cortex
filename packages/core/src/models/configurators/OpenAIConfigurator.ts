@@ -50,6 +50,15 @@ export interface OpenAIModelOptions {
    * Recommended for the GPT-5 family.
    */
   supportsServerSideTools?: boolean;
+  /** Cached-input price per 1M tokens (cost.cachedInputPerMillion; gateway cache metrics prefer it over the 50% default). */
+  cachedInputCost?: number;
+  /**
+   * false = the model rejects sampling params on the Responses API ("Unsupported parameter: 'top_p' is not
+   * supported with this model" — gpt-5.6-sol, live 2026-10-03). Marks temperature + topP unsupported and
+   * drops the topP default (1.0). Omit = legacy behavior. (chat/completions already strips top_p when
+   * reasoning is on.)
+   */
+  samplingParams?: boolean;
 }
 
 export function createOpenAIModelConfig(options: OpenAIModelOptions): ModelConfig {
@@ -116,7 +125,7 @@ export function createOpenAIModelConfig(options: OpenAIModelOptions): ModelConfi
 
     parameters: {
       temperature: {
-        supported: true,
+        supported: options.samplingParams !== false,
         paramName: 'temperature',
         min: 0.0,
         max: 2.0
@@ -132,9 +141,9 @@ export function createOpenAIModelConfig(options: OpenAIModelOptions): ModelConfi
         max: options.outputTokens
       },
       topP: {
-        supported: true,
+        supported: options.samplingParams !== false,
         paramName: 'top_p',
-        default: 1.0,
+        ...(options.samplingParams !== false && { default: 1.0 }),
         min: 0.0,
         max: 1.0
       }
@@ -169,7 +178,8 @@ export function createOpenAIModelConfig(options: OpenAIModelOptions): ModelConfi
 
     cost: {
       inputPerMillion: options.inputCost,
-      outputPerMillion: options.outputCost
+      outputPerMillion: options.outputCost,
+      ...(options.cachedInputCost !== undefined && { cachedInputPerMillion: options.cachedInputCost })
     },
 
     reasoning: options.reasoning

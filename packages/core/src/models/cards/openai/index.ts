@@ -18,11 +18,15 @@ export { o1Pro } from './o1-pro.js';
 
 // GPT-5 family
 export { gpt55 } from './gpt-5-5.js';
+export { gpt55Pro } from './gpt-5-5-pro.js';
+export { gpt53Codex } from './gpt-5-3-codex.js';
 export { gpt56 } from './gpt-5-6.js';
 export { gpt56Terra } from './gpt-5-6-terra.js';
 export { gpt56Luna } from './gpt-5-6-luna.js';
+export { gpt56Sol } from './gpt-5-6-sol.js';
 export { gpt54 } from './gpt-5-4.js';
 export { gpt54Mini } from './gpt-5-4-mini.js';
+export { gpt54Nano } from './gpt-5-4-nano.js';
 export { gpt5 } from './gpt-5.js';
 export { gpt51 } from './gpt-5-1.js';
 export { gpt51Reasoning } from './gpt-5-1-reasoning.js';

@@ -3,7 +3,10 @@
  * Auto-exported for easy discovery
  */
 
+export { claudeFable51 } from './claude-fable-5-1.js';
 export { claudeFable5 } from './claude-fable-5.js';
+export { claudeOpus55 } from './claude-opus-5-5.js';
+export { claudeSonnet55 } from './claude-sonnet-5-5.js';
 export { claudeOpus5 } from './claude-opus-5.js';
 export { claudeOpus48 } from './claude-opus-4-8.js';
 export { claudeOpus47 } from './claude-opus-4-7.js';

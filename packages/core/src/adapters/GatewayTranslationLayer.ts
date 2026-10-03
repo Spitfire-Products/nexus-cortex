@@ -274,6 +274,18 @@ export class GatewayTranslationLayer {
       toolChoice?: NormalizedToolChoice;
     }
   ): PreparedRequest {
+    // Forced tool_choice capability gate (2026-10-03): a card declaring tools.supportsToolChoice === false
+    // (Claude Opus 5.5 / Sonnet 5.5 / Fable 5.1 — forced `any`/`tool` returns 400) never receives a forced
+    // choice: drop it here, before it narrows the tools array or reaches the wire. 'auto' passes. Cards
+    // without the declaration are unaffected.
+    if (
+      modelConfig.tools.supportsToolChoice === false &&
+      options?.toolChoice &&
+      options.toolChoice.type !== 'auto'
+    ) {
+      options = { ...options, toolChoice: undefined };
+    }
+
     // Get appropriate adapter
     const adapter = this.adapterRegistry.getAdapterForModel(modelConfig);
 
@@ -903,8 +915,14 @@ export class GatewayTranslationLayer {
         // Provider-specific discount rates
         let discountRate: number;
         if (provider === 'anthropic') {
-          // Anthropic: cache writes = 25% markup, cache reads = 90% discount
-          discountRate = 0.9;
+          // Anthropic: cache writes = 25% markup, cache reads = 90% discount — unless the card publishes its
+          // own read rate (Opus 5.5 0.05x, Fable 5.1 0.025x), which wins.
+          const cachedPM = modelConfig.cost?.cachedInputPerMillion;
+          const inputPM = modelConfig.cost?.inputPerMillion;
+          discountRate =
+            typeof cachedPM === 'number' && typeof inputPM === 'number' && inputPM > 0
+              ? Math.max(0, Math.min(1, 1 - cachedPM / inputPM))
+              : 0.9;
         } else {
           // XAI: cache reads = 75% discount (no cache creation - always automatic)
           discountRate = 0.75;

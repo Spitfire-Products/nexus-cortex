@@ -32,6 +32,9 @@ export interface GeminiModelOptions {
    * Not for Gemini 2.5 (which uses thinkingBudget, not thinking_level).
    */
   thinkingLevel?: 'low' | 'medium' | 'high';
+  /** Context-caching (cached input) price per 1M tokens → cost.cachedInputPerMillion (informational; the
+   *  gateway's Google cache-metrics branch still uses its fixed discount). */
+  cachedInputCost?: number;
 }
 
 export function createGeminiModelConfig(options: GeminiModelOptions): ModelConfig {
@@ -123,7 +126,8 @@ export function createGeminiModelConfig(options: GeminiModelOptions): ModelConfi
 
     cost: {
       inputPerMillion: options.inputCost,
-      outputPerMillion: options.outputCost
+      outputPerMillion: options.outputCost,
+      ...(options.cachedInputCost !== undefined && { cachedInputPerMillion: options.cachedInputCost })
     }
   };
 }

@@ -3,6 +3,8 @@
  * Auto-exported for easy discovery
  */
 
+export { grok47 } from './grok-4-7.js';
+export { grok47Chat } from './grok-4-7-chat.js';
 export { grok46 } from './grok-4-6.js';
 export { grok46Responses } from './grok-4-6-responses.js';
 export { grok45 } from './grok-4-5.js';

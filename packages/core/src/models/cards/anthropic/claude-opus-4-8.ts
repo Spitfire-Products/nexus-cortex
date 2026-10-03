@@ -26,5 +26,8 @@ export const claudeOpus48: ModelConfig = createClaudeModelConfig({
     pattern: 'interleaved',
     toggleable: true
   },
-  supportsPTC: true
+  supportsPTC: true,
+  // Sampling params (temperature / top_p / top_k) are REMOVED on this model → 400 (claude-api skill thinking/effort table; live
+  // 2026-10-03: claude-opus-5 400 "`top_p` is deprecated for this model"). The configurator's top_p 1.0 default broke every request.
+  samplingParams: false,
 });

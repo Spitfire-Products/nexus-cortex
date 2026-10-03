@@ -68,6 +68,8 @@ export class ModularModelRegistry implements ModelRegistry {
     const hfSpaceCard = huggingfaceModels.hfSpace;   // ModelConfig | null (set via HF_SPACE_ID)
     const allModelCards: ModelConfig[] = [
       // XAI models
+      xaiModels.grok47,                   // grok-4.7 via Messages API (added 2026-10-03)
+      xaiModels.grok47Chat,               // grok-4.7 via chat/completions (DARK third transport, 2026-10-03)
       xaiModels.grok46,
       xaiModels.grok46Responses,
       xaiModels.grok45,
@@ -96,7 +98,10 @@ export class ModularModelRegistry implements ModelRegistry {
       deepseekModels.deepseekV41Flash, // BETA, expires 2026-09-10 (probe-verified 2026-09-08)
       deepseekModels.deepseekV4FlashVisionExp,
 
-      // Anthropic models
+      // Anthropic models (Opus 5.5 / Sonnet 5.5 / Fable 5.1 added 2026-10-03)
+      anthropicModels.claudeFable51,
+      anthropicModels.claudeOpus55,
+      anthropicModels.claudeSonnet55,
       anthropicModels.claudeFable5,
       anthropicModels.claudeOpus5,
       anthropicModels.claudeOpus48,
@@ -121,6 +126,9 @@ export class ModularModelRegistry implements ModelRegistry {
       googleModels.gemini35Flash,
       googleModels.gemini36Flash,
       googleModels.gemini37Flash,
+      googleModels.gemini38Flash,       // added 2026-10-03
+      googleModels.gemini35FlashLite,   // added 2026-10-03
+      googleModels.gemini31FlashLite,   // GA (the -preview card stays discontinued), added 2026-10-03
       googleModels.gemini3FlashPreview,
       googleModels.gemini31ProPreview,
       googleModels.gemini25Pro,
@@ -133,11 +141,15 @@ export class ModularModelRegistry implements ModelRegistry {
       openaiModels.gpt4o,
       openaiModels.gpt4oMini,
       openaiModels.gpt55,
+      openaiModels.gpt55Pro,            // Responses-only, added 2026-10-03
+      openaiModels.gpt53Codex,          // Responses-only, added 2026-10-03
       openaiModels.gpt56,
       openaiModels.gpt56Terra,
       openaiModels.gpt56Luna,
+      openaiModels.gpt56Sol,            // added 2026-10-03
       openaiModels.gpt54,
       openaiModels.gpt54Mini,
+      openaiModels.gpt54Nano,           // added 2026-10-03
       openaiModels.gpt5,
       openaiModels.gpt51,
       openaiModels.gpt51Reasoning,
@@ -265,6 +277,13 @@ export class ModularModelRegistry implements ModelRegistry {
     const grok41FastNonReasoning = this.models.get('grok-4-1-fast-non-reasoning');
     if (grok41FastNonReasoning) {
       this.models.set('grok-4-1-fast-non-reasoning-latest', grok41FastNonReasoning);
+    }
+
+    // Dated Anthropic snapshot id → its alias card (GET /v1/models/claude-haiku-4-5 resolves to
+    // claude-haiku-4-5-20251001, 2026-10-03). Same config; the wire still sends the card id.
+    const claudeHaiku45 = this.models.get('claude-haiku-4-5');
+    if (claudeHaiku45) {
+      this.models.set('claude-haiku-4-5-20251001', claudeHaiku45);
     }
 
     // Dash-to-dot convenience aliases (users type dashes, IDs use dots)

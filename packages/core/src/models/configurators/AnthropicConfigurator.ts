@@ -34,6 +34,22 @@ export interface ClaudeModelOptions {
   };
   /** Model supports Anthropic Programmatic Tool Calling (PTC). */
   supportsPTC?: boolean;
+  /** Prompt-cache READ price per 1M tokens (cost.cachedInputPerMillion). Omit = unpublished on the card
+   *  (cache-metrics fall back to the legacy Anthropic 0.1x read rate). */
+  cachedInputCost?: number;
+  /**
+   * false = the model REJECTS forced tool_choice (`any` / `tool` → 400; Opus 5.5, Sonnet 5.5, Fable 5.1).
+   * Sets tools.supportsToolChoice=false + toolChoiceOptions ['auto','none']; the gateway then drops any
+   * forced choice (e.g. the §13-B2 mentor force) for this card. Omit = legacy behavior (no declaration).
+   */
+  forcedToolChoice?: boolean;
+  /**
+   * false = the model REJECTS sampling params (temperature / top_p / top_k → 400, e.g. "`top_p` is deprecated
+   * for this model" — live 2026-10-03 on Opus 5.5 / Sonnet 5.5 / Fable 5.1). Marks temperature + topP
+   * unsupported and drops the topP card default (1.0) so neither the card default nor a per-request value
+   * reaches the wire. Omit = legacy behavior.
+   */
+  samplingParams?: boolean;
 }
 
 /**
@@ -81,12 +97,16 @@ export function createClaudeModelConfig(options: ClaudeModelOptions): ModelConfi
       adapter: 'MessagesAPIAdapter',
       namingConvention: 'snake_case',
       maxTools: 64,
-      parallelToolCalls: true
+      parallelToolCalls: true,
+      ...(options.forcedToolChoice === false && {
+        supportsToolChoice: false,
+        toolChoiceOptions: ['auto', 'none'] as ('auto' | 'none')[]
+      })
     },
 
     parameters: {
       temperature: {
-        supported: true,
+        supported: options.samplingParams !== false,
         paramName: 'temperature',
         min: 0.0,
         max: 1.0
@@ -99,9 +119,9 @@ export function createClaudeModelConfig(options: ClaudeModelOptions): ModelConfi
         max: options.outputTokens
       },
       topP: {
-        supported: true,
+        supported: options.samplingParams !== false,
         paramName: 'top_p',
-        default: 1.0,
+        ...(options.samplingParams !== false && { default: 1.0 }),
         min: 0.0,
         max: 1.0
       }
@@ -136,7 +156,8 @@ export function createClaudeModelConfig(options: ClaudeModelOptions): ModelConfi
 
     cost: {
       inputPerMillion: options.inputCost,
-      outputPerMillion: options.outputCost
+      outputPerMillion: options.outputCost,
+      ...(options.cachedInputCost !== undefined && { cachedInputPerMillion: options.cachedInputCost })
     },
 
     reasoning: options.reasoning,
