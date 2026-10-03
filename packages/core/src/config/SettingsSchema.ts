@@ -306,7 +306,7 @@ export interface EnvironmentVariables {
   ENABLE_SERVER_SIDE_TOOLS?: string; // 'true' | 'false'
 
   /** XAI API mode: 'messages' (supports thinking) or 'responses' (supports server-side tools + stateful) */
-  XAI_API_MODE?: string; // 'messages' | 'responses'
+  XAI_API_MODE?: string; // 'messages' | 'responses' | 'chat'
 
   /** OpenAI API mode */
   OPENAI_API_MODE?: string; // 'chat/completions' | 'responses'
@@ -1757,10 +1757,10 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
   {
     key: 'XAI_API_MODE',
     displayName: 'XAI API Mode',
-    description: 'XAI API mode: messages (supports thinking) or responses (supports server-side tools + stateful)',
+    description: 'XAI API mode for un-pinned xAI cards: messages (supports thinking), responses (supports server-side tools + stateful), or chat (/v1/chat/completions — the DeepSeek chat builder, client tools only; DARK 2026-10-03)',
     type: 'choice',
     category: 'server_side_tools',
-    choices: ['messages', 'responses'],
+    choices: ['messages', 'responses', 'chat'],
     default: 'messages'
   },
   {

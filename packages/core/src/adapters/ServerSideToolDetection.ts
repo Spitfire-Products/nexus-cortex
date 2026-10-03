@@ -201,9 +201,13 @@ export function getResponsesAPIEndpoint(modelConfig: ModelConfig): string {
   // a doubled .../v1/responses/v1/responses path (R27: 404 "No handler found
   // on route"). Mirrors the openai branch below.
   if (modelConfig.provider === 'xai') {
+    // A chat-mode card (XAI_API_MODE=chat / apiMode 'chat', endpoint /v1/chat/completions) registers no server-side tools,
+    // so this is only reached if such a card opts back in (supportsServerSideTools: true) — strip that suffix too.
+    // (No-op string replace for the /v1/messages and /v1/responses endpoints.)
     const baseUrl = modelConfig.api.endpoint
       .replace('/v1/messages', '')
-      .replace('/v1/responses', '');
+      .replace('/v1/responses', '')
+      .replace('/v1/chat/completions', '');
     return `${baseUrl}/v1/responses`;
   }
 

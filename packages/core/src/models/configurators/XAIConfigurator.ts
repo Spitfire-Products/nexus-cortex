@@ -37,8 +37,14 @@ export interface XAIModelOptions {
    * wire protocol regardless of the global XAI_API_MODE env var. This lets two
    * cards for the same backend model be registered simultaneously (one
    * 'messages', one 'responses') for head-to-head benchmarking.
+   *
+   * 'chat' (2026-10-03, DARK/additive): OpenAI-shape https://api.x.ai/v1/chat/completions (Bearer XAI_API_KEY) through the
+   * SAME chat/completions builder DeepSeek uses (append-only prefix cache, reasoning_content replay). Client tools only:
+   * a chat-mode card registers NO serverSideTools block (xAI server tools are Responses-only), so ENABLE_SERVER_SIDE_TOOLS
+   * never injects them and ServerSideToolDetection never re-routes the card to /v1/responses — unless the card sets
+   * supportsServerSideTools: true explicitly. reasoning_effort is sent only when the card declares `reasoningEffort`.
    */
-  apiMode?: 'messages' | 'responses';
+  apiMode?: 'messages' | 'responses' | 'chat';
   /** Optional cached-input price per 1M tokens (xAI prompt-cache reads). */
   cachedInputCost?: number;
   /** Whether this model supports reasoning traces */
@@ -64,6 +70,12 @@ export function createXAIModelConfig(options: XAIModelOptions): ModelConfig {
   // ENABLE_SERVER_SIDE_TOOLS dynamically overrides to 'responses' at request time via ServerSideToolDetection
   const apiMode = options.apiMode || process.env.XAI_API_MODE || DEFAULT_SETTINGS.XAI_API_MODE;
   const useResponsesAPI = apiMode === 'responses';
+  // Third transport (DARK — only when a card pins 'chat' or XAI_API_MODE=chat). Every other mode builds byte-identical config.
+  const useChatAPI = apiMode === 'chat';
+  // Chat mode is client-tools only unless the card explicitly opts back in (see apiMode doc).
+  const registerServerSideTools = useChatAPI
+    ? options.supportsServerSideTools === true
+    : options.supportsServerSideTools !== false;
 
   // Temperature default: ONLY an explicit per-card override. Otherwise left
   // undefined so no temperature is sent and xAI applies its own default
@@ -80,7 +92,13 @@ export function createXAIModelConfig(options: XAIModelOptions): ModelConfig {
     displayName: options.displayName,
     family: options.family,
 
-    api: {
+    api: useChatAPI ? {
+      pattern: "chat/completions",
+      endpoint: "https://api.x.ai/v1/chat/completions",
+      apiKeyEnvVar: "XAI_API_KEY",
+      authHeader: "authorization",
+      authPrefix: "Bearer ",
+    } : {
       pattern: useResponsesAPI ? "responses" : "messages",
       endpoint: useResponsesAPI ? "https://api.x.ai/v1/responses" : "https://api.x.ai/v1/messages",
       apiKeyEnvVar: "XAI_API_KEY",
@@ -90,13 +108,13 @@ export function createXAIModelConfig(options: XAIModelOptions): ModelConfig {
 
     tools: {
       supported: true,
-      adapter: useResponsesAPI ? "ResponsesAPIAdapter" : "MessagesAPIAdapter",
+      adapter: useChatAPI ? "ChatCompletionsAPIAdapter" : useResponsesAPI ? "ResponsesAPIAdapter" : "MessagesAPIAdapter",
       namingConvention: "snake_case",
       maxTools: 128,
       parallelToolCalls: true,
     },
 
-    ...(options.supportsServerSideTools !== false && {
+    ...(registerServerSideTools && {
       serverSideTools: {
         supported: true,
         supportedEndpoints: ["responses"],

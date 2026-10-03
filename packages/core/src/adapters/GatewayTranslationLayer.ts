@@ -748,6 +748,15 @@ export class GatewayTranslationLayer {
       // request/action effort was withheld and only the builder default ('medium' / card) applied. Forward it
       // (chat/completions → reasoning_effort, Responses → reasoning.effort).
       params.reasoningEffort = options.reasoningEffort;
+    } else if (options?.reasoningEffort !== undefined
+        && modelConfig.reasoning?.supported
+        && modelConfig.provider === 'xai'
+        && modelConfig.api.pattern === 'chat/completions') {
+      // xAI chat/completions (third xAI transport, DARK — only an xAI card pinned/moded to 'chat' reaches this): grok cards
+      // declare toggleable:false (correct for /v1/messages, which stays untouched), but the chat route takes
+      // `reasoning_effort` — forward the request/action effort; the builder's per-card capability gate
+      // (xaiChatReasoningEffort) decides whether it is actually sent (never for grok-build-0.1).
+      params.reasoningEffort = options.reasoningEffort;
     }
 
     // Gemini tunable thinking (thinking_level, Gemini 3.6+/3.7): translate the

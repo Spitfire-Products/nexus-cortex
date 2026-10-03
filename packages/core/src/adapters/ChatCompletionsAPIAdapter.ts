@@ -250,6 +250,15 @@ export class ChatCompletionsAPIAdapter implements FormatAdapter {
         if (modelConfig.provider === 'deepseek' && modelConfig.reasoning?.supported) {
           const reasoning = thinkingBlocks.map(b => b.thinking || '').join('\n\n');
           assistantMessage.reasoning_content = reasoning || '';
+        } else if (thinkingBlocks.length > 0 && modelConfig.provider === 'xai' && modelConfig.reasoning?.supported) {
+          // xAI chat/completions (third xAI transport, DARK — no shipped xAI card rides this pattern): replay the
+          // model's own reasoning_content on its assistant turn, like DeepSeek. Live 2026-10-02: accepted + cache-neutral
+          // (100% hit). Unlike DeepSeek it is NOT required, and xAI returns it sporadically (a short summary, often
+          // empty) — so only non-empty reasoning is sent (no `reasoning_content: ''` field on turns that had none).
+          const reasoning = thinkingBlocks.map(b => b.thinking || '').join('\n\n');
+          if (reasoning.trim().length > 0) {
+            assistantMessage.reasoning_content = reasoning;
+          }
         } else if (thinkingBlocks.length > 0 && modelConfig.provider === 'openai') {
           const reasoning = thinkingBlocks.map(b => b.thinking || '').join('\n\n');
           if (reasoning.trim().length > 0) {

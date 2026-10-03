@@ -52,6 +52,13 @@ export const TRANSPORTS: TransportSpec[] = [
     { key: 'effort-anthropic-budget(sonnet-4.6)', modelId: 'claude-sonnet-4-6', wire: 'anthropic' as Wire },
     { key: 'effort-gemini3-rest(3.7-flash)', modelId: 'gemini-3.7-flash', wire: 'gemini-http' as Wire },
   ] : []),
+  // PREFIX_XAI_CHAT_ROWS=1 (opt-in, default matrix unchanged): the third xAI transport (apiMode 'chat' cards → /v1/chat/completions
+  // through the DeepSeek chat builder). Replies carry reasoning_content (xAI returns a summary) so the replay path is exercised.
+  // Prove Messages is untouched by diffing PREFIX_DUMP_DIR captures of the xai-messages rows before/after the change.
+  ...(process.env.PREFIX_XAI_CHAT_ROWS === '1' ? [
+    { key: 'xai-chat(grok-4.3-chat)', modelId: 'grok-4.3-chat', wire: 'chat' as Wire, reasoningContent: true },
+    { key: 'xai-chat(grok-build-0.1-chat)', modelId: 'grok-build-0.1-chat', wire: 'chat' as Wire, reasoningContent: true },
+  ] : []),
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -72,6 +72,7 @@ export class ModularModelRegistry implements ModelRegistry {
       xaiModels.grok46Responses,
       xaiModels.grok45,
       xaiModels.grok43,
+      xaiModels.grok43Chat,               // grok-4.3 via chat/completions (DARK third transport, 2026-10-03)
       xaiModels.grok420Reasoning,
       xaiModels.grok420NonReasoning,
       xaiModels.grok420MultiAgent,
@@ -82,6 +83,7 @@ export class ModularModelRegistry implements ModelRegistry {
       xaiModels.grokCodeFast1,           // grok-build-0.1 via Messages API (alias)
       xaiModels.grokBuild01,             // grok-build-0.1 via Messages API (canonical)
       xaiModels.grokBuild01Responses,    // grok-build-0.1 via Responses API
+      xaiModels.grokBuild01Chat,         // grok-build-0.1 via chat/completions (DARK third transport, 2026-10-03)
 
       // DeepSeek models. deepseek-chat and deepseek-reasoner removed 2026-06-10
       // (DeepSeek deprecating both 2026-07-24); deepseek-v4-flash supersedes chat and

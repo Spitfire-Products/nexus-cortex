@@ -41,6 +41,13 @@ import {
   anthropicOutputEffort,
   anthropicMaxEffortBudget,
 } from './transportEffortFixes.js';
+import {
+  GeminiExplicitCacheManager,
+  isGeminiExplicitCacheEnabled,
+  isCacheUseFailure,
+  geminiBaseFromEndpoint,
+} from './geminiExplicitCache.js';
+import { isXAIChatRoute, xaiChatReasoningEffort } from './xaiChatTransport.js';
 import type { ModelConfig } from '../models/ModelConfig.interface.js';
 import type { PreparedRequest } from '../adapters/GatewayTranslationLayer.js';
 import type { CanonicalToolUse } from '@nexus-cortex/types';
@@ -166,9 +173,18 @@ export class APIClient {
   private openaiClient?: OpenAI;
   private googleClient?: GoogleGenerativeAI;
   private googleGenAIClient?: GoogleGenAI;
+  /** HB-GEMINI-EXPLICIT-CACHE (DARK): per-client cachedContents snapshots, keyed by session + head. Inert when off. */
+  private geminiCache = new GeminiExplicitCacheManager({ fetchImpl: (url, init) => cortexProxyFetch(url, init) as any });
 
   constructor() {
     // Initialize clients lazily when needed
+  }
+
+  /** HB-GEMINI-EXPLICIT-CACHE: best-effort DELETE of every live Gemini cachedContents snapshot (session end). */
+  async disposeGeminiCaches(): Promise<void> {
+    try {
+      await this.geminiCache.disposeAll(process.env['GEMINI_API_KEY']);
+    } catch { /* best-effort */ }
   }
 
   /**
@@ -874,6 +890,13 @@ export class APIClient {
       .replace('/responses', '');
 
     const defaultHeaders: Record<string, string> = {};
+    // xAI chat/completions (third xAI transport, DARK — reachable only via an xAI 'chat' card / XAI_API_MODE=chat):
+    // `x-grok-conv-id` sticky routing, mirroring the xAI Messages path's header (xAI prompt-caching docs: the cached prefix
+    // lives on one backend instance). Header-only — the request body / cached prefix is unchanged.
+    const xaiChat = isXAIChatRoute(modelConfig);
+    if (xaiChat && request.conversationId) {
+      defaultHeaders['x-grok-conv-id'] = request.conversationId;
+    }
 
     // Reuse cached openai client when possible (matches the streaming path's
     // pre-refactor behavior; now applied uniformly).
@@ -910,6 +933,8 @@ export class APIClient {
     const reasoningEffort = (transformedParams as any).reasoningEffort
       || (modelConfig.reasoning as any)?.effort
       || 'medium';
+    // xAI chat: the REQUEST/action effort only (the card default is resolved by xaiChatReasoningEffort's capability gate).
+    const xaiRequestedEffort = (transformedParams as any).reasoningEffort;
     delete (transformedParams as any).reasoningEffort;
     if (process.env.DEBUG === 'true') {
       console.log(`[Effort] outbound reasoning_effort=${reasoningEffort} (source: ${ (request.parameters as any)?.reasoningEffort ? 'request/pulse' : ((modelConfig.reasoning as any)?.effort ? 'card' : 'default')})`);
@@ -940,6 +965,11 @@ export class APIClient {
       ...transformedParams,
       ...(opts.stream ? { stream: true } : {}),
     };
+    // xAI chat: the gateway's params.model (= registry id, e.g. 'grok-4.3-chat') is spread AFTER `model:` above and would
+    // send the registry id; the chat cards carry the wire name in `modelId` (resolved into request.modelId). Scoped to xAI
+    // chat so every other chat/completions provider keeps its existing bytes (pre-existing for any chat card whose id ≠
+    // modelId, e.g. gpt-5.1-reasoning — reported, not changed here).
+    if (xaiChat) chatRequest.model = request.modelId;
 
     // R19b: OpenAI chat/completions REJECTS `reasoning_effort` + tools for
     // some gpt-5 variants (`gpt-5.4`, possibly others) with
@@ -959,8 +989,17 @@ export class APIClient {
       (willAttachTools && isChatCompletionsRoute && modelConfig.provider === 'openai') ||
       (hasForcedToolChoice && isChatCompletionsRoute && modelConfig.provider === 'deepseek');
 
+    // xAI chat/completions: per-card capability gate — reasoning_effort only for cards that declare an effort
+    // (grok-4.3-class); grok-build-0.1 400s on it and never gets it. Sampling params are kept (xAI accepts temperature/top_p
+    // with reasoning; only presence/frequency penalties + stop are rejected, and this builder never adds those).
+    if (xaiChat) {
+      const xaiEffort = disableThinking ? undefined : xaiChatReasoningEffort(xaiRequestedEffort, modelConfig);
+      if (xaiEffort) chatRequest.reasoning_effort = xaiEffort;
+      if (process.env.DEBUG === 'true' || process.env.DEBUG_THINKING === 'true') {
+        console.log(`[DEBUG APIClient] xAI chat reasoning_effort=${xaiEffort ?? '(not sent)'} for ${modelConfig.id}`);
+      }
     // Enable reasoning for OpenAI models that support it (GPT-5 family, o-series)
-    if (
+    } else if (
       modelConfig.reasoning?.supported &&
       !disableThinking &&
       reasoningEffort !== 'none' &&
@@ -1545,15 +1584,28 @@ export class APIClient {
       }
     }
 
-    // Make HTTP request
-    const httpResponse = await cortexProxyFetch(url, {
+    const postBody = (body: unknown) => cortexProxyFetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         [modelConfig.api.authHeader]: apiKey
       },
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify(body)
     });
+
+    // HB-GEMINI-EXPLICIT-CACHE (DARK, CORTEX_GEMINI_EXPLICIT_CACHE): off → no plan → the original body, unchanged.
+    const cacheCtx = { sessionId: request.conversationId, modelId, apiKey, baseUrl: geminiBaseFromEndpoint(modelConfig.api.endpoint) };
+    const cached = isGeminiExplicitCacheEnabled() ? await this.geminiCache.prepare(cacheCtx, 'rest', requestBody) : null;
+
+    // Make HTTP request
+    let httpResponse = await postBody(cached ? cached.body : requestBody);
+    let usedCache = !!cached;
+    if (cached && !httpResponse.ok && isCacheUseFailure(httpResponse.status)) {
+      const errorText = await httpResponse.text();
+      this.geminiCache.invalidate(cached.plan, `use_${httpResponse.status} ${errorText.replace(/\s+/g, ' ').slice(0, 160)}`, cacheCtx);
+      usedCache = false;
+      httpResponse = await postBody(requestBody); // the normal full request, once
+    }
 
     if (!httpResponse.ok) {
       const errorText = await httpResponse.text();
@@ -1561,6 +1613,7 @@ export class APIClient {
     }
 
     const data: any = await httpResponse.json();
+    if (cached && usedCache) this.geminiCache.recordUsage(cached.plan, data?.usageMetadata);
 
     // Return full response (same structure as SDK)
     // The response has: candidates, usageMetadata, modelVersion, responseId
@@ -3047,14 +3100,34 @@ export class APIClient {
       import('fs').then(fs => fs.writeFileSync('/tmp/gemini-request-' + modelId + '.json', JSON.stringify(requestBody, null, 2)));
     }
 
-    // Start the fetch request
-    const fetchPromise = cortexProxyFetch(url, {
+    // HB-GEMINI-EXPLICIT-CACHE (DARK, CORTEX_GEMINI_EXPLICIT_CACHE): off → the original single fetch, unchanged.
+    const geminiCacheOn = isGeminiExplicitCacheEnabled();
+    const streamCache: { plan?: import('./geminiExplicitCache.js').GeminiCachePlan } = {};
+    let lastChunkUsage: any = undefined;
+    const postStream = (body: unknown) => cortexProxyFetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify(body)
     });
+
+    // Start the fetch request
+    const fetchPromise = !geminiCacheOn
+      ? postStream(requestBody)
+      : (async () => {
+          const cacheCtx = { sessionId: request.conversationId, modelId, apiKey, baseUrl: geminiBaseFromEndpoint(modelConfig.api.endpoint) };
+          const cached = await this.geminiCache.prepare(cacheCtx, 'rest', requestBody);
+          let res = await postStream(cached ? cached.body : requestBody);
+          if (cached && !res.ok && isCacheUseFailure(res.status)) {
+            const errorText = await res.text();
+            this.geminiCache.invalidate(cached.plan, `use_${res.status} ${errorText.replace(/\s+/g, ' ').slice(0, 160)}`, cacheCtx);
+            res = await postStream(requestBody); // the normal full request, once
+          } else if (cached) {
+            streamCache.plan = cached.plan;
+          }
+          return res;
+        })();
 
     // Shared state for collecting all chunks
     const allChunks: any[] = [];
@@ -3122,6 +3195,8 @@ export class APIClient {
                 if (chunk.candidates?.[0]) {
                   lastCandidate = chunk.candidates[0];
                 }
+                // Gemini reports usageMetadata on the CHUNK, not the candidate (captured only with the cache lever on).
+                if (geminiCacheOn && chunk.usageMetadata) lastChunkUsage = chunk.usageMetadata;
 
                 // Extract parts from candidates
                 const parts = chunk.candidates?.[0]?.content?.parts;
@@ -3209,11 +3284,13 @@ export class APIClient {
         throw streamingError;
       }
 
+      if (streamCache.plan) this.geminiCache.recordUsage(streamCache.plan, lastChunkUsage);
+
       // Return final response structure matching Google SDK format
       return {
         text: () => fullText,
         candidates: lastCandidate ? [lastCandidate] : [],
-        usageMetadata: lastCandidate?.usageMetadata
+        usageMetadata: lastCandidate?.usageMetadata ?? (geminiCacheOn ? lastChunkUsage : undefined)
       };
     })();
 
@@ -3372,6 +3449,23 @@ export class APIClient {
       console.log(`[DEBUG APIClient SDK] Non-streaming request for model: ${modelId}`);
     }
 
+    // HB-GEMINI-EXPLICIT-CACHE (DARK, CORTEX_GEMINI_EXPLICIT_CACHE): off → the original single call, unchanged.
+    if (isGeminiExplicitCacheEnabled()) {
+      const cacheCtx = { sessionId: request.conversationId, modelId, apiKey: process.env['GEMINI_API_KEY'] ?? '' };
+      const cached = await this.geminiCache.prepare(cacheCtx, 'sdk', sdkRequest);
+      if (cached) {
+        try {
+          const r = await this.googleGenAIClient.models.generateContent(cached.body as any);
+          this.geminiCache.recordUsage(cached.plan, (r as any)?.usageMetadata);
+          return { data: r, status: 200, headers: {} };
+        } catch (e: any) {
+          if (!isCacheUseFailure(e?.status)) throw e;
+          this.geminiCache.invalidate(cached.plan, `use_${e.status} ${String(e?.message ?? '').slice(0, 160)}`, cacheCtx);
+          // fall through: the normal full request, once
+        }
+      }
+    }
+
     const response = await this.googleGenAIClient.models.generateContent(sdkRequest);
 
     return {
@@ -3513,10 +3607,30 @@ export class APIClient {
       resolveComplete = resolve;
     });
 
+    // HB-GEMINI-EXPLICIT-CACHE (DARK, CORTEX_GEMINI_EXPLICIT_CACHE): off → the original single call, unchanged.
+    const sdkCacheOn = isGeminiExplicitCacheEnabled();
+    const sdkStream: { plan?: import('./geminiExplicitCache.js').GeminiCachePlan } = {};
+    const openSdkStream = async (client: GoogleGenAI) => {
+      if (!sdkCacheOn) return client.models.generateContentStream(sdkRequest);
+      const cacheCtx = { sessionId: request.conversationId, modelId, apiKey: process.env['GEMINI_API_KEY'] ?? '' };
+      const cached = await this.geminiCache.prepare(cacheCtx, 'sdk', sdkRequest);
+      if (cached) {
+        try {
+          const s = await client.models.generateContentStream(cached.body as any);
+          sdkStream.plan = cached.plan;
+          return s;
+        } catch (e: any) {
+          if (!isCacheUseFailure(e?.status)) throw e;
+          this.geminiCache.invalidate(cached.plan, `use_${e.status} ${String(e?.message ?? '').slice(0, 160)}`, cacheCtx);
+        }
+      }
+      return client.models.generateContentStream(sdkRequest); // the normal full request (once, on a cache failure)
+    };
+
     const chunks = async function* (client: GoogleGenAI) {
       try {
         // Stream using new SDK (SINGLE API call)
-        const stream = await client.models.generateContentStream(sdkRequest);
+        const stream = await openSdkStream(client);
 
         if (process.env.DEBUG === 'true') {
           console.log(`[DEBUG APIClient SDK] Stream started for model: ${modelId}`);
@@ -3688,6 +3802,8 @@ export class APIClient {
     const finalMessage = (async () => {
       // Wait for chunks generator to complete
       await streamCompletePromise;
+
+      if (sdkStream.plan) this.geminiCache.recordUsage(sdkStream.plan, lastChunk?.usageMetadata);
 
       // Return final response structure matching Google SDK format
       // This matches the structure expected by the orchestrator

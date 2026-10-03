@@ -7,6 +7,7 @@ export { grok46 } from './grok-4-6.js';
 export { grok46Responses } from './grok-4-6-responses.js';
 export { grok45 } from './grok-4-5.js';
 export { grok43 } from './grok-4-3.js';
+export { grok43Chat } from './grok-4-3-chat.js';
 export { grok420Reasoning } from './grok-4-20-reasoning.js';
 export { grok420NonReasoning } from './grok-4-20-non-reasoning.js';
 export { grok420MultiAgent } from './grok-4-20-multi-agent.js';
@@ -17,6 +18,7 @@ export { grok4FastNonReasoning } from './grok-4-fast-non-reasoning.js';
 export { grokCodeFast1 } from './grok-code-fast-1.js';
 export { grokBuild01 } from './grok-build-0-1.js';
 export { grokBuild01Responses } from './grok-build-0-1-responses.js';
+export { grokBuild01Chat } from './grok-build-0-1-chat.js';
 
 // Aliases for backward compatibility
 export { grok41FastReasoning as grok41 } from './grok-4-1.js';

@@ -46,6 +46,7 @@ import type { Message } from '../session/MessageTypes.js';
 
 // Phase 2.1: API Client and Model Registry
 import { APIClient, type StreamChunk } from './APIClient.js';
+import { isGeminiExplicitCacheEnabled } from './geminiExplicitCache.js';
 import { ModularModelRegistry } from '../models/registry/ModularModelRegistry.js';
 import { ModelAliasResolver } from '../models/registry/ModelAliasResolver.js';
 
@@ -7523,6 +7524,11 @@ export class CortexOrchestrator {
       } catch (error: any) {
         console.error('[Orchestrator Phase 2.9] Error cleaning up MCP:', error.message);
       }
+    }
+
+    // HB-GEMINI-EXPLICIT-CACHE (DARK): best-effort DELETE of this client's live cachedContents snapshots.
+    if (isGeminiExplicitCacheEnabled()) {
+      await this.apiClient.disposeGeminiCaches?.();
     }
 
     if (this.config.debug) {
