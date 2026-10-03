@@ -158,6 +158,7 @@ import { ContextBudgetManager } from '../conversation/ContextBudgetManager.js';
 import { pruneAgedToolResults } from '../conversation/ToolResultPruner.js';
 import { detectTailRepetition, tailLoopGuardEnabled } from './tailRepetitionDetector.js';
 import { resolveEffortRamp, rampEffortFor } from './effortRamp.js';
+import { firstRequestActionEffort } from './transportEffortFixes.js'; // CORTEX_ACTION_EFFORT_FIRST (dark)
 import { resolveWallCacheFix, resolvePersistInjected, resolveAppendOnlyTools, resolveKeepMentorMessages, resolveResponsesSliceAll, chainedSliceStart, tailUnitAfterLastAssistant, isPreviousResponseUnavailable } from './appendOnlyHistory.js'; // R221-R228 append-only history (dark)
 import { resolveWallDrop, resolveOutputCap, dropWalledTurn, resolveWallSummary, extractWalledReasoning, clipReasoning, formatWallSummary, type WallDropResult } from './wallGuard.js';
 import { resolvePid1Guard, detectPid1Note } from './pid1Guard.js'; // R209
@@ -2477,7 +2478,7 @@ export class CortexOrchestrator {
       temperature: options.parameters?.temperature,
       maxTokens: options.parameters?.maxTokens,
       topP: options.parameters?.topP,
-      reasoningEffort: this.nextRampEffort(true) ?? options.parameters?.reasoningEffort, // HB-EFFORT-RAMP (dark) > request param
+      reasoningEffort: this.nextRampEffort(true) ?? options.parameters?.reasoningEffort ?? firstRequestActionEffort(), // HB-EFFORT-RAMP (dark) > request param > CORTEX_ACTION_EFFORT on request 0 (CORTEX_ACTION_EFFORT_FIRST, dark)
       stream: options.streaming,
       staticSystemPrompt: this.currentStaticSystemPrompt, // R28
       conversationId: this.currentConversationId, // R28b
@@ -5096,7 +5097,7 @@ export class CortexOrchestrator {
         temperature: options.parameters?.temperature,
         maxTokens: options.parameters?.maxTokens,
         topP: options.parameters?.topP,
-        reasoningEffort: this.nextRampEffort(true) ?? options.parameters?.reasoningEffort, // HB-EFFORT-RAMP (dark) > request param
+        reasoningEffort: this.nextRampEffort(true) ?? options.parameters?.reasoningEffort ?? firstRequestActionEffort(), // HB-EFFORT-RAMP (dark) > request param > CORTEX_ACTION_EFFORT on request 0 (CORTEX_ACTION_EFFORT_FIRST, dark)
         stream: true, // Enable streaming!
         staticSystemPrompt: this.currentStaticSystemPrompt, // R28
         conversationId: this.currentConversationId, // R28b

@@ -76,5 +76,8 @@ export function isPreviousResponseUnavailable(err: unknown): boolean {
   const text = [e?.message, e?.error?.message, e?.error?.code, e?.code, e?.response?.data?.error?.message]
     .filter((x) => typeof x === 'string').join(' ');
   if (/previous[_ ]?response/i.test(text) && /not[_ ]?found|expired|invalid|does not exist|unavailable|no longer|not stored|unknown/i.test(text)) return true;
+  // xAI (live probe 2026-10-02): 404 {"code":"not-found","error":"Response with id=resp_… not found"}; APIClient throws it as plain text
+  // ("XAI Responses API error 404: …") with no status field, so match the body wording itself.
+  if (/response with id\s*=?\s*['"]?resp_\S*['"]? not[ _-]?found/i.test(text)) return true;
   return status === 404 && /\bresponse\b/i.test(text);
 }

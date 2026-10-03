@@ -19,6 +19,11 @@ import { noteServedModel, formatDriftWarning } from './servedModelDrift.js';
 import { translateToolChoice, type WireToolChoice, type NormalizedToolChoice } from '../orchestrator/toolChoiceTranslation.js';
 import { isResponsesStopReasonEnabled, mapResponsesStopReason, mapHFSpaceStopReason } from '../orchestrator/transportFixes.js';
 import { isForcedChoiceFullToolsEnabled } from '../orchestrator/transportCacheFixes.js';
+import {
+  isOpenAIToolsReasoningEnabled,
+  isGeminiToolsThinkingEnabled,
+  geminiThinkingConfigForEffort,
+} from '../orchestrator/transportEffortFixes.js';
 
 /**
  * Decode HTML entities in tool arguments (recursive).
@@ -735,6 +740,14 @@ export class GatewayTranslationLayer {
         && modelConfig.reasoning?.supported
         && modelConfig.reasoning?.toggleable) {
       params.reasoningEffort = options.reasoningEffort;
+    } else if (options?.reasoningEffort !== undefined
+        && modelConfig.reasoning?.supported
+        && modelConfig.provider === 'openai'
+        && isOpenAIToolsReasoningEnabled()) {
+      // DARK (CORTEX_OPENAI_TOOLS_REASONING): OpenAI reasoning cards never declare `toggleable`, so the
+      // request/action effort was withheld and only the builder default ('medium' / card) applied. Forward it
+      // (chat/completions → reasoning_effort, Responses → reasoning.effort).
+      params.reasoningEffort = options.reasoningEffort;
     }
 
     // Gemini tunable thinking (thinking_level, Gemini 3.6+/3.7): translate the
@@ -749,6 +762,22 @@ export class GatewayTranslationLayer {
         && modelConfig.reasoning?.supported
         && modelConfig.reasoning.defaultEffort) {
       this.setNestedParam(params, 'generationConfig.thinkingConfig.thinkingLevel', modelConfig.reasoning.defaultEffort);
+    }
+
+    // DARK (CORTEX_GEMINI_TOOLS_THINKING): map the request/action effort to generationConfig.thinkingConfig on BOTH
+    // Gemini patterns (REST generateContent + @google/genai SDK, which merges generationConfig into its config),
+    // with or without tools: thinkingLevel on Gemini 3.x, thinkingBudget on 2.5 and older. Replaces (never merges
+    // with) a card-level thinkingLevel — the request effort wins, and level + budget together is a 400.
+    if ((modelConfig.api.pattern === 'generateContent' || modelConfig.api.pattern === 'google-sdk')
+        && modelConfig.reasoning?.supported
+        && options?.reasoningEffort !== undefined
+        && options?.disableThinking !== true
+        && isGeminiToolsThinkingEnabled()) {
+      const thinkingConfig = geminiThinkingConfigForEffort(
+        (modelConfig as any).modelId || modelConfig.id,
+        options.reasoningEffort,
+      );
+      if (thinkingConfig) this.setNestedParam(params, 'generationConfig.thinkingConfig', thinkingConfig);
     }
 
     // Enable parallel tool calls for ChatCompletions API models that support tools

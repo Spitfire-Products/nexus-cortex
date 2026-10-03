@@ -98,4 +98,9 @@ describe('ClientSideToolFilter append-only (R222)', () => {
     f.getFilteredTools(all, { appendOnly: true });
     expect(f.getFilteredTools(all.filter((t) => t.name !== 'Beta'), { appendOnly: true }).map((t) => t.name)).toEqual(['Bash', 'Edit']);
   });
+  it('isPreviousResponseUnavailable matches the live xAI + OpenAI chain-miss errors (probe 2026-10-02)', () => {
+    expect(isPreviousResponseUnavailable(new Error('XAI Responses API error 404: {"code":"not-found","error":"Response with id=resp_doesnotexist000 not found"}'))).toBe(true);
+    expect(isPreviousResponseUnavailable({ status: 400, message: "Previous response with id 'resp_doesnotexist000' not found." })).toBe(true);
+    expect(isPreviousResponseUnavailable(new Error('XAI Responses API error 429: rate limited'))).toBe(false);
+  });
 });

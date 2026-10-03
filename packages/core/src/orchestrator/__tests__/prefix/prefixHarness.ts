@@ -40,6 +40,18 @@ export const TRANSPORTS: TransportSpec[] = [
   { key: 'gemini-generateContent', modelId: 'gemini-2.5-flash', wire: 'gemini-http' },
   { key: 'google-sdk', modelId: 'gemini-2.5-flash-sdk', wire: 'gemini-sdk' },
   { key: 'hf-space', modelId: 'hf-space', wire: 'hf-space', reasoningContent: true },
+  // PREFIX_EFFORT_ROWS=1 (opt-in, so the default matrix is unchanged): reasoning cards for the effort-transport flags
+  // (CORTEX_OPENAI_TOOLS_REASONING / CORTEX_ANTHROPIC_EFFORT / CORTEX_GEMINI_TOOLS_THINKING). Prove a flag with
+  // PREFIX_DUMP_DIR off vs on + PREFIX_HARNESS_ENV='{"CORTEX_ACTION_EFFORT":"max",...}'.
+  ...(process.env.PREFIX_EFFORT_ROWS === '1' ? [
+    // gpt-5.6 declares supportsServerSideTools: with the shipped ENABLE_SERVER_SIDE_TOOLS=true it rides /v1/responses;
+    // server-side tools off pins the chat/completions builder (the R19b drop site).
+    { key: 'effort-chat-openai(gpt-5.6, server-tools off)', modelId: 'gpt-5.6', wire: 'chat' as Wire, env: { ENABLE_SERVER_SIDE_TOOLS: 'false' } },
+    { key: 'effort-responses-openai(gpt-5.6 default)', modelId: 'gpt-5.6', wire: 'responses' as Wire },
+    { key: 'effort-anthropic-adaptive(sonnet-5)', modelId: 'claude-sonnet-5', wire: 'anthropic' as Wire },
+    { key: 'effort-anthropic-budget(sonnet-4.6)', modelId: 'claude-sonnet-4-6', wire: 'anthropic' as Wire },
+    { key: 'effort-gemini3-rest(3.7-flash)', modelId: 'gemini-3.7-flash', wire: 'gemini-http' as Wire },
+  ] : []),
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

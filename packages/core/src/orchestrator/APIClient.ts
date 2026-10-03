@@ -35,6 +35,12 @@ import {
   applyAnthropicCacheLevers,
   streamFinalUsage,
 } from './transportCacheFixes.js';
+import {
+  isAnthropicEffortEnabled,
+  isGeminiToolsThinkingEnabled,
+  anthropicOutputEffort,
+  anthropicMaxEffortBudget,
+} from './transportEffortFixes.js';
 import type { ModelConfig } from '../models/ModelConfig.interface.js';
 import type { PreparedRequest } from '../adapters/GatewayTranslationLayer.js';
 import type { CanonicalToolUse } from '@nexus-cortex/types';
@@ -528,6 +534,11 @@ export class APIClient {
           process.env.DEBUG_THINKING === 'true'
             ? { type: 'adaptive', display: 'summarized' }
             : { type: 'adaptive' };
+        // DARK (CORTEX_ANTHROPIC_EFFORT): the action/request effort reaches adaptive families as output_config.effort.
+        const outputEffort = isAnthropicEffortEnabled() ? anthropicOutputEffort(reasoningEffort) : undefined;
+        if (outputEffort) {
+          anthropicRequest.output_config = { ...(anthropicRequest.output_config || {}), effort: outputEffort };
+        }
       } else {
         const budgetMap: Record<string, number> = {
           none: 10000,
@@ -535,7 +546,11 @@ export class APIClient {
           medium: 10000,
           high: 50000,
         };
-        const budgetTokens = reasoningEffort ? (budgetMap[reasoningEffort] || 10000) : 10000;
+        // DARK (CORTEX_ANTHROPIC_EFFORT): 'max' gets a large budget clamped below max_tokens (was the 10000 fallback).
+        const maxBudget = isAnthropicEffortEnabled() && reasoningEffort === 'max'
+          ? anthropicMaxEffortBudget(anthropicRequest.max_tokens)
+          : undefined;
+        const budgetTokens = maxBudget ?? (reasoningEffort ? (budgetMap[reasoningEffort] || 10000) : 10000);
         anthropicRequest.thinking = {
           type: 'enabled',
           budget_tokens: budgetTokens
@@ -938,6 +953,8 @@ export class APIClient {
     // deepseek runs (reasoning + tools, no forced choice) are fine — so drop reasoning ONLY when a
     // tool_choice is actually forced. OpenAI's R19b case (tools alone) stays as-is.
     const hasForcedToolChoice = !!request.toolChoice;
+    // R19b STAYS (live probe 2026-10-03): gpt-5.4-nano AND gpt-5.6-luna still 400 "Function tools with reasoning_effort are not
+    // supported … in /v1/chat/completions. To use function tools, use /v1/responses" — CORTEX_OPENAI_TOOLS_REASONING is Responses-only.
     const dropReasoningForToolCompat =
       (willAttachTools && isChatCompletionsRoute && modelConfig.provider === 'openai') ||
       (hasForcedToolChoice && isChatCompletionsRoute && modelConfig.provider === 'deepseek');
@@ -1700,6 +1717,11 @@ export class APIClient {
             process.env.DEBUG_THINKING === 'true'
               ? { type: 'adaptive', display: 'summarized' }
               : { type: 'adaptive' };
+          // DARK (CORTEX_ANTHROPIC_EFFORT): parity with the non-streaming path.
+          const outputEffort = isAnthropicEffortEnabled() ? anthropicOutputEffort(reasoningEffort) : undefined;
+          if (outputEffort) {
+            anthropicRequest.output_config = { ...(anthropicRequest.output_config || {}), effort: outputEffort };
+          }
           if (process.env.DEBUG === 'true' || process.env.DEBUG_THINKING === 'true') {
             console.log(`[DEBUG APIClient] Adaptive thinking for ${modelConfig.id}${process.env.DEBUG_THINKING === 'true' ? ' (display: summarized)' : ''}`);
           }
@@ -1710,7 +1732,11 @@ export class APIClient {
           medium: 10000,
           high: 50000,
         };
-        const budgetTokens = reasoningEffort ? (budgetMap[reasoningEffort] || 10000) : 10000;
+        // DARK (CORTEX_ANTHROPIC_EFFORT): parity with the non-streaming path ('max' → clamped large budget).
+        const maxBudget = isAnthropicEffortEnabled() && reasoningEffort === 'max'
+          ? anthropicMaxEffortBudget(anthropicRequest.max_tokens)
+          : undefined;
+        const budgetTokens = maxBudget ?? (reasoningEffort ? (budgetMap[reasoningEffort] || 10000) : 10000);
 
         anthropicRequest.thinking = {
           type: 'enabled',
@@ -3297,12 +3323,21 @@ export class APIClient {
     }
 
     // CRITICAL: thinkingConfig and tools CANNOT coexist
+    // (DARK CORTEX_GEMINI_TOOLS_THINKING: a Gemini 2.0-era observation — on, thinking is sent WITH tools.)
     const hasTools = request.tools && request.tools.length > 0;
+    const geminiToolsThinking = isGeminiToolsThinkingEnabled();
     if (_modelConfig.reasoning?.supported && _modelConfig.reasoning?.pattern === 'interleaved' && !disableThinking && !hasTools) {
-      config.thinkingConfig = {
-        includeThoughts: true,
-        thinkingBudget: 10000
-      };
+      config.thinkingConfig = geminiToolsThinking && config.thinkingConfig
+        // effort-mapped thinkingLevel/thinkingBudget from the gateway; keep the thought summaries this path always asked for
+        ? { includeThoughts: true, ...config.thinkingConfig }
+        : {
+            includeThoughts: true,
+            thinkingBudget: 10000
+          };
+    } else if (_modelConfig.reasoning?.supported && _modelConfig.reasoning?.pattern === 'interleaved' && !disableThinking && hasTools && geminiToolsThinking) {
+      // Non-streaming: no includeThoughts — this response is converted by the message-level adapter, which would turn
+      // thought-summary parts into visible text. Effort-mapped config from the gateway, else the no-tools default budget.
+      config.thinkingConfig = config.thinkingConfig ?? { thinkingBudget: 10000 };
     }
 
     // Add tools to config if present
@@ -3404,7 +3439,13 @@ export class APIClient {
     // Following Claude/Grok pattern: Skip if disableThinking flag is set (used for continuation requests)
     // CRITICAL: thinkingConfig and tools CANNOT coexist — Google API returns empty responses when both present
     const hasTools = request.tools && request.tools.length > 0;
-    if (_modelConfig.reasoning?.supported && _modelConfig.reasoning?.pattern === 'interleaved' && !disableThinking && !hasTools) {
+    // DARK (CORTEX_GEMINI_TOOLS_THINKING): on, thinking is sent WITH tools (effort-mapped by the gateway).
+    const geminiToolsThinking = isGeminiToolsThinkingEnabled();
+    if (_modelConfig.reasoning?.supported && _modelConfig.reasoning?.pattern === 'interleaved' && !disableThinking && (!hasTools || geminiToolsThinking)) {
+      if (geminiToolsThinking && config.thinkingConfig) {
+        // effort-mapped thinkingLevel/thinkingBudget from the gateway (+ thought summaries; the stream parser filters part.thought)
+        config.thinkingConfig = { includeThoughts: true, ...config.thinkingConfig };
+      } else {
       config.thinkingConfig = {
         includeThoughts: true,  // Enable thought summaries in response
         // Gemini 2.5 Flash supports thinkingBudget (0-24576)
@@ -3412,9 +3453,10 @@ export class APIClient {
         // Set to 10000 tokens to encourage verbose reasoning like Claude
         thinkingBudget: 10000
       };
+      }
 
       if (process.env.DEBUG === 'true') {
-        console.log(`[DEBUG APIClient SDK] Extended thinking enabled for ${modelId} with budget: 10000`);
+        console.log(`[DEBUG APIClient SDK] Extended thinking enabled for ${modelId}: ${JSON.stringify(config.thinkingConfig)}`);
       }
     } else if (hasTools && process.env.DEBUG === 'true') {
       console.log(`[DEBUG APIClient SDK] Skipping thinkingConfig for ${modelId} — incompatible with tools`);
