@@ -5,9 +5,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const sdkResponsesCreate = vi.fn();
+const sdkChatCreate = vi.fn();
 vi.mock('openai', () => ({
   default: class MockOpenAI {
     responses = { create: sdkResponsesCreate };
+    chat = { completions: { create: sdkChatCreate } };
     constructor(_opts: unknown) {}
   },
 }));
@@ -17,6 +19,7 @@ import { GatewayTranslationLayer } from '../../adapters/GatewayTranslationLayer.
 import { classifyEmptyResponse, isReasoningExhaustion } from '../emptyResponseClassifier.js';
 import {
   inlineRemindersForResponses,
+  liftRemindersFromCanonical,
   mapResponsesStopReason,
   mapHFSpaceStopReason,
   applyAnthropicHistoryCache,
@@ -25,10 +28,11 @@ import {
 } from '../transportFixes.js';
 import type { ModelConfig } from '../../models/ModelConfig.interface.js';
 import type { PreparedRequest } from '../../adapters/GatewayTranslationLayer.js';
+import { deepseekFlash } from '../../models/cards/deepseek/deepseek-flash.js';
 
-const FLAGS = ['CORTEX_RESPONSES_INLINE_REMINDERS', 'CORTEX_RESPONSES_STOP_REASON', 'CORTEX_ANTHROPIC_HISTORY_CACHE'] as const;
+const FLAGS = ['CORTEX_RESPONSES_INLINE_REMINDERS', 'CORTEX_RESPONSES_STOP_REASON', 'CORTEX_ANTHROPIC_HISTORY_CACHE', 'CORTEX_CHAT_REMINDERS_TO_SYSTEM'] as const;
 const saved: Record<string, string | undefined> = {};
-const KEYS = ['OPENAI_API_KEY', 'XAI_API_KEY', 'ANTHROPIC_PROMPT_CACHING', 'CORTEX_DELIVER_SYSTEM_PROMPT'];
+const KEYS = ['OPENAI_API_KEY', 'XAI_API_KEY', 'DEEPSEEK_API_KEY', 'ANTHROPIC_PROMPT_CACHING', 'CORTEX_DELIVER_SYSTEM_PROMPT'];
 
 beforeEach(() => {
   for (const k of [...FLAGS, ...KEYS]) saved[k] = process.env[k];
@@ -300,5 +304,69 @@ describe('R218 CORTEX_ANTHROPIC_HISTORY_CACHE', () => {
     await (new APIClient() as any).sendRequest(anthReq(), xaiMessages);
     const sent = JSON.parse((fetchSpy.mock.calls.at(-1) as any)[1].body);
     expect(JSON.stringify(sent.messages)).not.toContain('cache_control');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------
+describe('R231 CORTEX_CHAT_REMINDERS_TO_SYSTEM (chat/completions mirror of the Responses-OFF delivery)', () => {
+  const canonical = (): any[] => [
+    { role: 'user', content: [{ type: 'text', text: 'Fix the bug.' }] },
+    { role: 'assistant', content: [{ type: 'text', text: '<system-reminder>\nassistant-side, not lifted\n</system-reminder>' },
+      { type: 'tool_use', toolUse: { id: 'call_1', name: 'bash', input: { command: 'ls' } } }] },
+    { role: 'user', content: [
+      { type: 'tool_result', toolResult: { toolUseId: 'call_1', content: '<system-reminder>\nin the tool result\n</system-reminder>\na.txt', isError: false } },
+      { type: 'text', text: REM + '\nplus user text' }] },
+    { role: 'user', content: [{ type: 'text', text: '<system-reminder>\nonly a reminder\n</system-reminder>' }] },
+    { role: 'user', content: [{ type: 'text', text: '<system-reminder>[CONTEXT COMPACTED] marker' }] },
+  ];
+
+  it('helper: lifts from user text blocks only; tool-result + assistant + compaction marker untouched; reminder-only message dropped', () => {
+    const r = liftRemindersFromCanonical(canonical());
+    expect(r.lifted).toEqual(['LIFT PLAN: run the tests next.', 'only a reminder']);
+    expect(r.messages).toHaveLength(4);
+    expect(r.messages[1].content[0].text).toContain('assistant-side');
+    expect(r.messages[2].content[0].toolResult.content).toContain('in the tool result');
+    expect(r.messages[2].content[1].text).toBe('plus user text');
+    expect(r.messages[3].content[0].text).toContain('[CONTEXT COMPACTED]');
+    expect(liftRemindersFromCanonical([])).toEqual({ messages: [], lifted: [] });
+  });
+
+  it('gateway: off = no liftedReminders and the reminder text stays in the user message (tags stripped); on = lifted', () => {
+    const gtl = new GatewayTranslationLayer();
+    const msgs = () => [{ role: 'system', content: [{ type: 'text', text: 'STATIC SYSTEM PROMPT' }] }, ...canonical()] as any[];
+    const off = gtl.prepareRequest(msgs(), undefined, deepseekFlash);
+    expect(off.liftedReminders).toBeUndefined();
+    const offWire = JSON.stringify(off.messages);
+    expect(offWire).toContain('LIFT PLAN: run the tests next.');
+    expect(offWire).not.toContain('<system-reminder>\nLIFT');
+    process.env.CORTEX_CHAT_REMINDERS_TO_SYSTEM = 'on';
+    const on = gtl.prepareRequest(msgs(), undefined, deepseekFlash);
+    expect(on.liftedReminders).toEqual(['LIFT PLAN: run the tests next.', 'only a reminder']);
+    const onWire = JSON.stringify(on.messages);
+    expect(onWire).not.toContain('LIFT PLAN');
+    expect(onWire).toContain('plus user text');
+    expect(onWire).toContain('in the tool result');
+    expect(on.systemMessage).toBe('STATIC SYSTEM PROMPT');
+  });
+
+  async function chatBody(req: PreparedRequest): Promise<any> {
+    process.env.DEEPSEEK_API_KEY = 'test-deepseek';
+    const okChat = { id: 'c1', object: 'chat.completion', choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } };
+    sdkChatCreate.mockReset();
+    sdkChatCreate.mockResolvedValueOnce(okChat);
+    try { await (new APIClient() as any).sendRequest(req, deepseekFlash); } catch { /* the builder ran before any parse failure */ }
+    expect(sdkChatCreate).toHaveBeenCalledTimes(1);
+    return sdkChatCreate.mock.calls.at(-1)![0];
+  }
+
+  it('chat builder: off = system message unchanged; lifted reminders are appended to the system message (R63 shape)', async () => {
+    const base: PreparedRequest = { messages: [{ role: 'user', content: 'Fix the bug.' }], headers: {}, parameters: {}, modelId: 'deepseek-chat',
+      systemMessage: 'STATIC SYSTEM PROMPT' } as PreparedRequest;
+    const off = await chatBody(base);
+    expect(off.messages[0]).toEqual({ role: 'system', content: 'STATIC SYSTEM PROMPT' });
+    const on = await chatBody({ ...base, liftedReminders: ['LIFT PLAN: run the tests next.', 'only a reminder'] });
+    expect(on.messages[0]).toEqual({ role: 'system', content: 'STATIC SYSTEM PROMPT\n\nLIFT PLAN: run the tests next.\n\nonly a reminder' });
+    expect(on.messages.slice(1)).toEqual(off.messages.slice(1));
   });
 });

@@ -959,8 +959,15 @@ export class APIClient {
     // deepseek-v4-pro prompt-composition sweep completes; flips to
     // default-ON in a later release. Messages/Gemini paths are unaffected
     // (they always delivered).
-    const outboundMessages = request.systemMessage && isR63SystemDeliveryEnabled()
-      ? [{ role: 'system', content: request.systemMessage }, ...request.messages as any[]]
+    // R231 (DARK, CORTEX_CHAT_REMINDERS_TO_SYSTEM): the gateway lifted the user-text <system-reminder> blocks into
+    // request.liftedReminders; append them to the system message (the Responses-OFF `instructions` shape). With the
+    // flag off liftedReminders is undefined and the outbound bytes are unchanged.
+    const systemParts = [
+      request.systemMessage && isR63SystemDeliveryEnabled() ? request.systemMessage : undefined,
+      ...(request.liftedReminders ?? []),
+    ].filter((p): p is string => !!p);
+    const outboundMessages = systemParts.length > 0
+      ? [{ role: 'system', content: systemParts.join('\n\n') }, ...request.messages as any[]]
       : request.messages;
 
     // Build the request body

@@ -17,7 +17,7 @@ import { AdapterRegistry } from '../adapters/AdapterRegistry.js';
 import { ToolNamingHandler } from '../adapters/ToolNamingHandler.js';
 import { noteServedModel, formatDriftWarning } from './servedModelDrift.js';
 import { translateToolChoice, type WireToolChoice, type NormalizedToolChoice } from '../orchestrator/toolChoiceTranslation.js';
-import { isResponsesStopReasonEnabled, mapResponsesStopReason, mapHFSpaceStopReason } from '../orchestrator/transportFixes.js';
+import { isChatRemindersToSystemEnabled, liftRemindersFromCanonical, isResponsesStopReasonEnabled, mapResponsesStopReason, mapHFSpaceStopReason } from '../orchestrator/transportFixes.js';
 import { isForcedChoiceFullToolsEnabled } from '../orchestrator/transportCacheFixes.js';
 import {
   isOpenAIToolsReasoningEnabled,
@@ -86,6 +86,12 @@ export interface PreparedRequest {
 
   /** System message (handled separately for some providers) */
   systemMessage?: string;
+
+  /**
+   * R231 CORTEX_CHAT_REMINDERS_TO_SYSTEM: `<system-reminder>` blocks lifted out of the user text blocks by the gateway
+   * (chat/completions adapter only, flag on); the APIClient chat builder appends them to the system message.
+   */
+  liftedReminders?: string[];
 
   /** Model ID to use */
   modelId: string;
@@ -352,8 +358,20 @@ export class GatewayTranslationLayer {
     const systemMessage = options?.staticSystemPrompt ?? this.extractSystemMessage(messages);
     const nonSystemMessages = messages.filter(msg => msg.role !== 'system');
 
+    // R231 (DARK, CORTEX_CHAT_REMINDERS_TO_SYSTEM): chat/completions mirror of the Responses-OFF reminder delivery —
+    // lift the <system-reminder> blocks out of the user text blocks BEFORE the adapter strips their tags, and carry
+    // them on the PreparedRequest for the APIClient chat builder to append to the system message. Scoped to the
+    // chat/completions adapter; every other transport (Messages, Responses, Gemini) is untouched.
+    let liftedReminders: string[] | undefined;
+    let messagesForAdapter = nonSystemMessages;
+    if (adapter.name === 'ChatCompletionsAPIAdapter' && isChatRemindersToSystemEnabled()) {
+      const lifted = liftRemindersFromCanonical(nonSystemMessages);
+      messagesForAdapter = lifted.messages;
+      if (lifted.lifted.length > 0) liftedReminders = lifted.lifted;
+    }
+
     // Convert messages to provider format
-    const providerMessages = adapter.toProviderMessages(nonSystemMessages, modelConfig);
+    const providerMessages = adapter.toProviderMessages(messagesForAdapter, modelConfig);
 
     // Convert tools to provider format (if provided)
     let providerTools: unknown[] | undefined;
@@ -421,6 +439,7 @@ export class GatewayTranslationLayer {
       headers,
       parameters,
       systemMessage,
+      ...(liftedReminders ? { liftedReminders } : {}),
       modelId: modelIdToSend,
       conversationId: options?.conversationId, // R28b: enables x-grok-conv-id sticky routing
       toolChoice: wireToolChoice

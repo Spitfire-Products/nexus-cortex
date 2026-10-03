@@ -23,6 +23,49 @@ export function isResponsesInlineRemindersEnabled(): boolean {
   return flagOn(process.env.CORTEX_RESPONSES_INLINE_REMINDERS);
 }
 
+/**
+ * R231 CORTEX_CHAT_REMINDERS_TO_SYSTEM (DARK, 2026-10-03): chat/completions mirror of the Responses-OFF reminder
+ * delivery — lift every `<system-reminder>` block out of the USER text blocks and carry it to the request's system
+ * message (APIClient chat builder). Same scope as APIClient.extractSystemRemindersForResponsesAPI: user text only,
+ * tool-result content untouched, a user message that was nothing but reminders is dropped, the compaction marker
+ * (`<system-reminder>[CONTEXT COMPACTED` — no newline after the tag) does not match and stays in place.
+ */
+export function isChatRemindersToSystemEnabled(): boolean {
+  return flagOn(process.env.CORTEX_CHAT_REMINDERS_TO_SYSTEM);
+}
+
+const REMINDER_BLOCK = /<system-reminder>\n([\s\S]*?)\n<\/system-reminder>/g;
+
+export function liftRemindersFromCanonical<M extends { role: string; content: any[] }>(
+  messages: M[]
+): { messages: M[]; lifted: string[] } {
+  const lifted: string[] = [];
+  const out: M[] = [];
+  for (const m of messages) {
+    if (m.role !== 'user' || !Array.isArray(m.content)) { out.push(m); continue; }
+    const content: any[] = [];
+    for (const b of m.content) {
+      if (b?.type === 'text' && typeof b.text === 'string') {
+        const found: string[] = [];
+        let x: RegExpExecArray | null;
+        REMINDER_BLOCK.lastIndex = 0;
+        while ((x = REMINDER_BLOCK.exec(b.text)) !== null) found.push(x[1] ?? '');
+        if (found.length) {
+          lifted.push(...found);
+          const rest = b.text.replace(REMINDER_BLOCK, '').trim();
+          if (rest) content.push({ ...b, text: rest });
+        } else {
+          content.push(b);
+        }
+      } else {
+        content.push(b);
+      }
+    }
+    if (content.length) out.push({ ...m, content });
+  }
+  return { messages: out, lifted };
+}
+
 export function isResponsesStopReasonEnabled(): boolean {
   return flagOn(process.env.CORTEX_RESPONSES_STOP_REASON);
 }
