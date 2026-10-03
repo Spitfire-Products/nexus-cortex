@@ -50,6 +50,7 @@ import {
 import { isXAIChatRoute, xaiChatReasoningEffort } from './xaiChatTransport.js';
 import type { ModelConfig } from '../models/ModelConfig.interface.js';
 import type { PreparedRequest } from '../adapters/GatewayTranslationLayer.js';
+import { translateReasoningEffort } from '../adapters/GatewayTranslationLayer.js';
 import type { CanonicalToolUse } from '@nexus-cortex/types';
 import {
   anthropicCredentialService,
@@ -1410,7 +1411,11 @@ export class APIClient {
       // R20: OpenAI Responses API rejects 'xhigh' (XAI-only effort level).
       // Cross-provider sessions where the prior turn was XAI at xhigh would
       // 400 on switch. Clamp at egress — standard cross-provider guard.
-      const effort = (!isXAI && effectiveReasoningEffort === 'xhigh' as any) ? 'high' : effectiveReasoningEffort;
+      // 2026-10-03: gateway-owned effort translation (translateReasoningEffort) replaces the blanket xhigh→high clamp (gpt-5.4-nano /
+      // gpt-5.6-* accept xhigh; nano rejects max → xhigh; unknown OpenAI models keep low|medium|high).
+      const effort = !isXAI
+        ? ((translateReasoningEffort(modelConfig as any, effectiveReasoningEffort) ?? effectiveReasoningEffort) as typeof effectiveReasoningEffort)
+        : effectiveReasoningEffort;
       responsesRequest.reasoning = { effort, summary: 'auto' };
     }
 
@@ -2723,7 +2728,10 @@ export class APIClient {
       // summary: 'auto' requests visible reasoning summaries for interleaved thinking
       if (supportsReasoning && !disableThinking && reasoningEffort && reasoningEffort !== 'none') {
         // R20: OpenAI Responses API rejects 'xhigh' (XAI-only effort level). Clamp at egress.
-        const effectiveEffort = (!isXAI && reasoningEffort === 'xhigh' as any) ? 'high' : reasoningEffort;
+        // 2026-10-03: per-model OpenAI vocabulary conversion (see the sendResponsesAPI twin above).
+        const effectiveEffort = !isXAI
+          ? ((translateReasoningEffort(modelConfig as any, reasoningEffort) ?? reasoningEffort) as typeof reasoningEffort)
+          : reasoningEffort;
         responsesRequest.reasoning = { effort: effectiveEffort, summary: 'auto' };
 
         if (process.env.DEBUG === 'true' || process.env.DEBUG_THINKING === 'true') {

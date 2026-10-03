@@ -59,6 +59,13 @@ export interface OpenAIModelOptions {
    * reasoning is on.)
    */
   samplingParams?: boolean;
+  /** Narrow-door lift architecture (same fields + semantics as DeepSeekModelOptions; env levers override).
+   *  anchorProfile: home-door first-turn anchor profile. promptPreset: card prompt-composition preset.
+   *  liftNudge: lift-boundary SearchTools/AskForAdvice signpost. headlessDropAskUser: drop AskUserQuestion headless. */
+  anchorProfile?: 'lean' | 'bash-only' | 'bash-plus' | 'bash-edit';
+  promptPreset?: 'boot-minimal';
+  liftNudge?: boolean;
+  headlessDropAskUser?: boolean;
 }
 
 export function createOpenAIModelConfig(options: OpenAIModelOptions): ModelConfig {
@@ -74,6 +81,10 @@ export function createOpenAIModelConfig(options: OpenAIModelOptions): ModelConfi
   const useResponsesAPI = options.supportsServerSideTools === true && apiMode === 'responses';
 
   return {
+    ...(options.anchorProfile ? { anchorProfile: options.anchorProfile } : {}),
+    ...(options.promptPreset ? { promptPreset: options.promptPreset } : {}),
+    ...(options.liftNudge !== undefined ? { liftNudge: options.liftNudge } : {}),
+    ...(options.headlessDropAskUser !== undefined ? { headlessDropAskUser: options.headlessDropAskUser } : {}),
     id: options.id,
     provider: 'openai',
     displayName: options.displayName,

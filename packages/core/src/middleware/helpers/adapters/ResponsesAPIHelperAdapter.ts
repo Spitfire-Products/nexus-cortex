@@ -18,6 +18,8 @@
  * - Handles stateful conversation continuity
  */
 import { cortexProxyFetch } from '../../../orchestrator/cortexProxyFetch.js';
+import { reasoningAllowanceTokens } from '../../../training/mentorRole.js';
+import { translateReasoningEffort } from '../../../adapters/GatewayTranslationLayer.js';
 
 import {
   BaseHelperAdapter,
@@ -193,7 +195,19 @@ export class ResponsesAPIHelperAdapter extends BaseHelperAdapter {
           text: typeof m.content === 'string' ? m.content : m.content.map((b: any) => b.text || '').join('\n')
         }]
       }));
-    const response = await this.makeAPICall(helperConfig, inputItems, maxTokens);
+    // MENTOR ROLE on Responses (2026-10-03): a mentor call carries `mentorRole` (thinking/effort) on the config, as on
+    // the chat helper. Thinking-on → reasoning.effort on the wire + the same per-effort reasoning allowance (reasoning
+    // shares max_output_tokens here too). An empty thinking-on result is re-issued ONCE without the effort param
+    // (the pre-fix wire), mirroring the chat helper's HB-MENTOR-BUDGET retry — never hand '' up as a plan/verdict.
+    const mentorRole = (helperConfig as unknown as { mentorRole?: { thinking: boolean; effort: string } }).mentorRole;
+    // Mentor effort speaks the DeepSeek ladder (low|high|max); the gateway translates it to this model's vocabulary.
+    const effort = mentorRole?.thinking && helperConfig.reasoning?.supported
+      ? translateReasoningEffort(helperConfig as any, mentorRole.effort)
+      : undefined;
+    const response = await this.makeAPICall(helperConfig, inputItems, maxTokens, effort);
+    if (effort && !response.text.trim()) {
+      return (await this.makeAPICall(helperConfig, inputItems, maxTokens)).text;
+    }
     return response.text;
   }
 
@@ -205,7 +219,8 @@ export class ResponsesAPIHelperAdapter extends BaseHelperAdapter {
   private async makeAPICall(
     config: ModelConfig,
     inputItems: ResponsesAPIInputItem[],
-    maxOutputTokens: number
+    maxOutputTokens: number,
+    reasoningEffort?: string
   ): Promise<{
     text: string;
     inputTokens: number;
@@ -230,7 +245,11 @@ export class ResponsesAPIHelperAdapter extends BaseHelperAdapter {
     const response = await client.responses.create({
       model: config.id,
       input: inputItems,
-      max_output_tokens: Math.min(maxOutputTokens, config.limits.outputTokens),
+      max_output_tokens: Math.min(
+        maxOutputTokens + (reasoningEffort ? reasoningAllowanceTokens(reasoningEffort) : 0),
+        config.limits.outputTokens,
+      ),
+      ...(reasoningEffort ? { reasoning: { effort: reasoningEffort as 'low' | 'medium' | 'high' } } : {}),
       // Note: We don't use store: true or previous_response_id for helper calls
       // These are single-shot summarization requests, not ongoing conversations
     });

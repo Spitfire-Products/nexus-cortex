@@ -19,5 +19,7 @@ export const gpt56Luna: ModelConfig = createOpenAIModelConfig({
   outputCost: 1.20,
   maxTokensParamName: 'max_completion_tokens',
   supportsServerSideTools: true,
+  // Live 2026-10-03: /v1/responses + reasoning.effort + top_p → 400 "Unsupported parameter: 'top_p'".
+  samplingParams: false,
   reasoning: { supported: true, format: 'reasoning_content', extractionMethod: 'separate_field', pattern: 'interleaved' }
 });

@@ -215,6 +215,61 @@ export interface SessionContext {
  *
  * Central orchestrator for format conversion between canonical and provider formats.
  */
+// ---------------------------------------------------------------------------------------------------------
+// Reasoning-effort vocabulary translation (gateway-owned: every transport + helper calls this)
+// ---------------------------------------------------------------------------------------------------------
+
+/**
+ * OpenAI reasoning.effort / reasoning_effort vocabularies differ per model, and our levers speak the DeepSeek ladder
+ * (low | high | max) plus medium/xhigh/none. Sending a value a model does not accept is a 400 ("Unsupported value:
+ * 'max' is not supported with the 'gpt-5.4-nano' model"). Accepted sets — live-probed on /v1/responses 2026-10-03
+ * where marked, otherwise from the card's cited docs. Unknown OpenAI models fall back to the conservative common set.
+ */
+const OPENAI_EFFORT_LADDER = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+const OPENAI_EFFORT_LEVELS: Array<[RegExp, string[]]> = [
+  [/^gpt-5\.4-nano/i, ['none', 'low', 'medium', 'high', 'xhigh']],            // live 2026-10-03: minimal + max rejected
+  [/^gpt-5\.6-luna/i, ['none', 'low', 'medium', 'high', 'xhigh', 'max']],     // live 2026-10-03: minimal rejected, max ok
+  [/^gpt-5\.6/i, ['none', 'low', 'medium', 'high', 'xhigh', 'max']],          // sol / terra / 5.6 docs
+  [/^gpt-5\.5-pro/i, ['medium', 'high', 'xhigh']],                             // docs: no none/low
+  [/^gpt-5\.3-codex/i, ['low', 'medium', 'high', 'xhigh']],                    // docs
+];
+const OPENAI_DEFAULT_EFFORT_LEVELS = ['low', 'medium', 'high'];
+
+/**
+ * The effort value to put on the wire for an OpenAI reasoning model: the requested level if the model accepts it,
+ * otherwise the highest accepted level BELOW it (max → xhigh on nano), otherwise the model's lowest accepted level.
+ * Unknown / empty input → undefined (send nothing; provider default applies).
+ */
+function openaiReasoningEffort(modelId: string, reasoningEffort: unknown): string | undefined {
+  const e = String(reasoningEffort ?? '').trim().toLowerCase();
+  const rank = (OPENAI_EFFORT_LADDER as readonly string[]).indexOf(e);
+  if (rank < 0) return undefined;
+  const id = String(modelId ?? '').trim();
+  const levels = OPENAI_EFFORT_LEVELS.find(([re]) => re.test(id))?.[1] ?? OPENAI_DEFAULT_EFFORT_LEVELS;
+  if (levels.includes(e)) return e;
+  for (let i = rank - 1; i >= 0; i--) {
+    const lvl = OPENAI_EFFORT_LADDER[i] as string;
+    if (levels.includes(lvl)) return lvl;
+  }
+  return levels[0];
+}
+
+/**
+ * GATEWAY-OWNED effort translation (operator 2026-10-03: "the gateway translator in the library should handle
+ * conversions"). Our levers speak one vocabulary (DeepSeek ladder low|high|max + medium/xhigh/none); each provider/model
+ * accepts its own. Every request builder and helper adapter sends `translateReasoningEffort(model, effort)`, never the
+ * raw lever value. OpenAI: per-model accepted set (above). Other providers: unchanged (their builders already gate).
+ * Returns undefined for an unknown/empty OpenAI value (send nothing → provider default).
+ */
+export function translateReasoningEffort(
+  modelConfig: { id: string; provider?: string; modelId?: string },
+  reasoningEffort: unknown,
+): string | undefined {
+  if (reasoningEffort === undefined || reasoningEffort === null || reasoningEffort === '') return undefined;
+  if (modelConfig.provider === 'openai') return openaiReasoningEffort(modelConfig.modelId || modelConfig.id, reasoningEffort);
+  return String(reasoningEffort);
+}
+
 export class GatewayTranslationLayer {
   private adapterRegistry: AdapterRegistry;
   private toolNamingHandler: ToolNamingHandler;
@@ -758,8 +813,9 @@ export class GatewayTranslationLayer {
         && isOpenAIToolsReasoningEnabled()) {
       // DARK (CORTEX_OPENAI_TOOLS_REASONING): OpenAI reasoning cards never declare `toggleable`, so the
       // request/action effort was withheld and only the builder default ('medium' / card) applied. Forward it
-      // (chat/completions → reasoning_effort, Responses → reasoning.effort).
-      params.reasoningEffort = options.reasoningEffort;
+      // (chat/completions → reasoning_effort, Responses → reasoning.effort). The value is converted to the model's own
+      // vocabulary (DeepSeek-ladder `max` → `xhigh` on gpt-5.4-nano, etc.) — an unaccepted value is a 400.
+      params.reasoningEffort = translateReasoningEffort(modelConfig as any, options.reasoningEffort) ?? options.reasoningEffort;
     } else if (options?.reasoningEffort !== undefined
         && modelConfig.reasoning?.supported
         && modelConfig.provider === 'xai'
