@@ -143,3 +143,30 @@ describe('resolveConsultBudgetTokens', () => {
     expect(cfg.outputBudgetTokens).toBe(1000);
   });
 });
+
+describe('R232 per-surface mentor model (CORTEX_<SURFACE>_MODEL)', () => {
+  const base = { MENTORSHIP_HELPER_MODEL: 'deepseek-v4-pro' } as any;
+  it('unset: model = caller inputs, else MENTORSHIP_HELPER_MODEL; modelSource says which', () => {
+    expect(resolveMentorRoleConfig('endturn-resolver', base, { modelId: 'gpt-6.1-sol' }).modelSource).toBe('inputs');
+    const c = resolveMentorRoleConfig('endturn-resolver', base, {});
+    expect(c.modelId).toBe('deepseek-v4-pro');
+    expect(c.modelSource).toBe('MENTORSHIP_HELPER_MODEL');
+    expect(resolveMentorRoleConfig('lift-plan', {} as any, {}).modelSource).toBe('code-default');
+  });
+  it('a per-surface id wins over the caller and the global, only for its own surface', () => {
+    const env = { ...base, CORTEX_ENDTURN_RESOLVER_MODEL: 'deepseek-v4-flash' };
+    const judge = resolveMentorRoleConfig('endturn-resolver', env, { modelId: 'deepseek-v4-pro' });
+    expect(judge.modelId).toBe('deepseek-v4-flash');
+    expect(judge.modelSource).toBe('CORTEX_ENDTURN_RESOLVER_MODEL');
+    expect(describeMentorWire(judge).model).toBe('deepseek-v4-flash');
+    const planner = resolveMentorRoleConfig('lift-plan', env, { modelId: 'deepseek-v4-pro' });
+    expect(planner.modelId).toBe('deepseek-v4-pro');
+    expect(planner.modelSource).toBe('inputs');
+    for (const [surface, v] of [['lift-plan', 'CORTEX_LIFT_PLAN_MODEL'], ['deadline-exit-mentor', 'CORTEX_DEADLINE_EXIT_MENTOR_MODEL'],
+      ['loop-exit-planner', 'CORTEX_LOOP_TOOL_BLOCK_MODEL'], ['mentor-consult', 'CORTEX_MENTOR_CONSULT_MODEL']] as const) {
+      expect(resolveMentorRoleConfig(surface, { ...base, [v]: 'x-model' }, { modelId: 'y' }).modelId).toBe('x-model');
+    }
+    // blank value = unset
+    expect(resolveMentorRoleConfig('endturn-resolver', { ...base, CORTEX_ENDTURN_RESOLVER_MODEL: '  ' }, { modelId: 'y' }).modelId).toBe('y');
+  });
+});

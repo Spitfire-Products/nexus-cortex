@@ -1365,7 +1365,9 @@ Produce the FULL updated CORTEX.md. Rules, in priority order:
     body: string,
     helperModelId?: string,
   ): Promise<string> {
-    const modelId = this.resolveRoleModelId(helperModelId || 'deepseek-flash'); // R217 (flag off = unchanged)
+    // R232: a per-surface *_MODEL override (spec.mentor.modelSource = the var name) wins over the caller's helperModelId.
+    const requested = spec.mentor?.modelSource?.startsWith('CORTEX_') ? spec.mentor.modelId : helperModelId;
+    const modelId = this.resolveRoleModelId(requested || 'deepseek-flash'); // R217 (flag off = unchanged)
     // R217: keep the banked mentor role honest — the ledger/wire model is the one actually called.
     if (spec.mentor && spec.mentor.modelId !== modelId && resolveHelperMatchProviderFlag(process.env)) {
       spec = { ...spec, mentor: { ...spec.mentor, modelId } };

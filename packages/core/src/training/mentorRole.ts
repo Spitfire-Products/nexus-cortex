@@ -28,6 +28,8 @@ export interface MentorRoleConfig {
   surface: MentorSurface;
   /** The mentor model (MENTORSHIP_HELPER_MODEL; caller override wins). */
   modelId: string;
+  /** R232: where the model came from — the surface's own *_MODEL var, the caller ('inputs'), MENTORSHIP_HELPER_MODEL, or 'code-default'. */
+  modelSource?: string;
   /** Whether this call sends its effort on the wire (thinking ON) or runs thinking-OFF like a helper call. */
   thinking: boolean;
   /** Effort sent when `thinking` (per-surface *_EFFORT, default max). */
@@ -90,6 +92,20 @@ export const SURFACE_EFFORT_VAR: Record<MentorSurface, string | null> = {
   'mentor-consult': null,
 };
 
+/**
+ * R232 HB-MENTOR-SURFACE-MODEL (DARK, 2026-10-03): per-surface MODEL override — the mentor model was one knob
+ * (MENTORSHIP_HELPER_MODEL fed every surface) while reasoning/effort were already per-surface. An explicit per-surface
+ * id wins over the caller's helperModelId and the global; unset = unchanged. Lets the lift planner and the EndTurn
+ * resolver run on different models (e.g. V4 Pro planner + V4 Flash judge).
+ */
+export const SURFACE_MODEL_VAR: Record<MentorSurface, string> = {
+  'lift-plan': 'CORTEX_LIFT_PLAN_MODEL',
+  'endturn-resolver': 'CORTEX_ENDTURN_RESOLVER_MODEL',
+  'deadline-exit-mentor': 'CORTEX_DEADLINE_EXIT_MENTOR_MODEL',
+  'loop-exit-planner': 'CORTEX_LOOP_TOOL_BLOCK_MODEL',
+  'mentor-consult': 'CORTEX_MENTOR_CONSULT_MODEL',
+};
+
 function normEffort(v: string | undefined, d: MentorEffort): MentorEffort {
   const s = (v ?? '').trim().toLowerCase();
   return s === 'low' || s === 'medium' || s === 'high' || s === 'max' ? s : d;
@@ -137,9 +153,13 @@ export function resolveMentorRoleConfig(
     return normEffort(inputs.effort, DEFAULT_EFFORT);
   })();
   const timeoutMs = thinking ? Math.max(baseTimeout, thinkingTimeoutMs(effortResolved, env)) : baseTimeout;
+  const perSurfaceModel = (env[SURFACE_MODEL_VAR[surface]] ?? '').trim(); // R232
   return {
     surface,
-    modelId: (inputs.modelId ?? '').trim() || (env.MENTORSHIP_HELPER_MODEL ?? '').trim() || DEFAULT_MENTOR_MODEL,
+    modelId: perSurfaceModel || (inputs.modelId ?? '').trim() || (env.MENTORSHIP_HELPER_MODEL ?? '').trim() || DEFAULT_MENTOR_MODEL,
+    modelSource: perSurfaceModel ? SURFACE_MODEL_VAR[surface]
+      : (inputs.modelId ?? '').trim() ? 'inputs'
+      : (env.MENTORSHIP_HELPER_MODEL ?? '').trim() ? 'MENTORSHIP_HELPER_MODEL' : 'code-default',
     thinking,
     // Effort precedence: the surface's own *_EFFORT (explicitly set) > CORTEX_MENTOR_EFFORT (one lever for every
     // planner surface — the low/high/max A/B) > what the surface resolver passed (its code default, max) > max.
