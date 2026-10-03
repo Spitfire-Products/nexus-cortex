@@ -46,7 +46,7 @@ describe('R219 lift-plan session gate (loop integration)', () => {
   afterEach(() => {
     for (const k of [...Object.keys(PINNED), ...LEVERS]) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
     if ('ANTHROPIC_API_KEY' in saved && saved.ANTHROPIC_API_KEY === undefined) delete process.env.ANTHROPIC_API_KEY;
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); // ENOTEMPTY race in CI (4.124.50 publish)
   });
 
   async function run(mode: 'sendMessage' | 'streamMessage', autoApproveActions: boolean) {
