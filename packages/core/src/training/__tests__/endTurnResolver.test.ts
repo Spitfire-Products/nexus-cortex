@@ -548,7 +548,7 @@ describe('endTurnResolver — R176 independent derivation config', () => {
   });
 });
 
-import { RESOLVER_SCALE_CLAUSE } from '../endTurnResolver.js';
+import { RESOLVER_SCALE_CLAUSE, RESOLVER_SCOPE_TASK_CLAUSE, resolveEndTurnResolverConfig as resolveEtrConfig } from '../endTurnResolver.js';
 describe('R208 HB-VERIFY-AT-SCALE — CORTEX_VERIFY_SCALE adds one scale item to the judge persona', () => {
   it('lever is off by default and on for on|true|1', () => {
     expect(resolveEndTurnResolverConfig({} as any).verifyScale).toBe(false);
@@ -579,5 +579,21 @@ describe('R208 HB-VERIFY-AT-SCALE — CORTEX_VERIFY_SCALE adds one scale item to
     expect(RESOLVER_SCALE_CLAUSE).toMatch(/smaller run, treat that as a GAP/);
     expect(RESOLVER_SCALE_CLAUSE).toMatch(/CHECK/);
     expect(RESOLVER_SCALE_CLAUSE.length).toBeLessThan(600); // short and concrete
+  });
+});
+
+describe('SCOPE RULE (CORTEX_LIFT_PLAN_SCOPE=task, 2026-10-03)', () => {
+  it('is absent by default and appended when scopeTask is on', () => {
+    expect(resolverSystemPrompt(false, false, undefined, false, [], false)).toBe(resolverSystemPrompt(false));
+    expect(resolverSystemPrompt(false, false, undefined, false, [], true)).toContain(RESOLVER_SCOPE_TASK_CLAUSE);
+  });
+  it('forbids vetoing on file count or dropping part of the fix', () => {
+    expect(RESOLVER_SCOPE_TASK_CLAUSE).toMatch(/never by how many files/);
+    expect(RESOLVER_SCOPE_TASK_CLAUSE).toMatch(/Never ask the junior to revert or drop a change that is part of the fix/);
+  });
+  it('config reads the scope mode from CORTEX_LIFT_PLAN_SCOPE', () => {
+    expect(resolveEtrConfig({ CORTEX_LIFT_PLAN_SCOPE: 'task' }).scopeTask).toBe(true);
+    expect(resolveEtrConfig({ CORTEX_LIFT_PLAN_SCOPE: 'true' }).scopeTask).toBe(false);
+    expect(resolveEtrConfig({}).scopeTask).toBe(false);
   });
 });

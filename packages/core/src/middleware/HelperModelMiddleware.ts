@@ -1672,7 +1672,7 @@ Give concise, actionable guidance in plain text with these labeled parts:
       {
         surface: 'endturn-resolver',
         mentor: resolveMentorRoleConfig('endturn-resolver', roleEnv, { modelId: context.helperModelId, effort: cfg.effort, outputBudgetTokens: cfg.outputBudgetTokens }),
-        persona: resolverSystemPrompt(cfg.abstain, cfg.meetsConfirm, context.investigate, cfg.verifyScale, cfg.taskRules), // R168 / R170 / R208 / R211–R214
+        persona: resolverSystemPrompt(cfg.abstain, cfg.meetsConfirm, context.investigate, cfg.verifyScale, cfg.taskRules, cfg.scopeTask), // R168 / R170 / R208 / R211–R214 / scope=task
         task: (context.investigate === 'offer' ? 'Adjudicate whether the work product meets the task requirements, investigating first if the evidence does not settle it. First line VERDICT: INVESTIGATE (with CHECK:/READ: lines)' : 'Adjudicate whether the work product meets the task requirements. First line VERDICT: ') +
           (context.investigate === 'offer' ? ' or ' : '') + (cfg.abstain ? 'MEETS|GAP|RETIRE; ' : 'MEETS|GAP; ') +
           'if GAP, a terse numbered fix plan' + (cfg.meetsConfirm ? '; if MEETS, the proving CHECK lines' : '') + (cfg.abstain ? '; if RETIRE, one line on why it is unclosable.' : '.'), // R170 fix 4.117.1

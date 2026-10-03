@@ -207,13 +207,32 @@ export const SCOPE_DOCTRINE_ADAPTIVE =
   'only when the task asks for work on them. Before finishing, list what changed since the start (the orient baseline command when ' +
   'orient printed one, else `git status`) and revert changes to EXISTING files the task did not require.\n';
 
+/**
+ * CORTEX_LIFT_PLAN_SCOPE=task (2026-10-03, dark): ONE scope rule for every grader and every surface, conditioned on what the model can
+ * SEE (the task text) instead of a per-grader flag. `true` scopes by file count ("smallest set … revert every change the task did not
+ * require"); on TB4.0 sglang-qwen-burst (v43b) the judge used that to veto a working 8-file fix twice, the agent stashed 7 detector files,
+ * and the 1-file patch failed all 10 hidden tests. Here the task decides scope: named files bind (MiMo: ~45/64 tasks name them),
+ * forbidden paths and vendored/third-party code, tests, runners, fixtures and data stay off-limits unless the task points there (MiMo's
+ * protected-file rejects were almost all vendor/), and otherwise the fix may span every file it needs. The revert step covers
+ * INCIDENTAL changes only, with a re-run-without-it check before any part of a working fix is removed.
+ */
+export const SCOPE_DOCTRINE_TASK =
+  '- EDIT SCOPE: in the plan, list the files the junior will MODIFY or CREATE. The TASK decides scope, not the number of files. If the ' +
+  'task names the files or modules to repair or change, modify only those existing files — never declare another existing file ' +
+  'mutable. If the task forbids paths or new dependencies, obey that. Never modify vendored or third-party code, tests, runner scripts, ' +
+  'fixtures or input data unless the task points there or asks for work on them. Otherwise modify every file the fix needs — a fix ' +
+  'that spans several modules is normal; never cut a needed change to make the diff smaller. Before finishing, list what changed since ' +
+  'the start (the orient baseline command when orient printed one, else `git status`) and revert only INCIDENTAL changes (debug output, ' +
+  "scratch files, edits unrelated to the task). Before removing any part of a working fix, re-run the task's own check (or the " +
+  'reproduction) without it; if that check then fails, the change is necessary — keep it.\n';
+
 /** Select the planner persona by CORTEX_LIFT_PLAN_DOCTRINE ('v2' → bullets on; anything else → v1 baseline); CORTEX_LIFT_PLAN_SCOPE and the
  *  R211–R214 CORTEX_RULE_* bullets (taskRules.ts) go just before the output instruction, scope first; R171 `investigate`
  *  = 'offer' while rounds remain, 'withdraw' on the last round of a multi-round plan, undefined for the single-shot default. */
 export function plannerSystem(env: NodeJS.ProcessEnv = process.env, investigate?: 'offer' | 'withdraw'): string {
   const doctrine = (env.CORTEX_LIFT_PLAN_DOCTRINE || '').trim().toLowerCase() === 'v2' ? PLANNER_SYSTEM : PLANNER_SYSTEM_V1;
   const scopeMode = (env.CORTEX_LIFT_PLAN_SCOPE || '').trim().toLowerCase();
-  const bullet = scopeMode === 'true' ? (resolveWorkspaceClean(env) ? SCOPE_DOCTRINE_CLEAN : SCOPE_DOCTRINE) : scopeMode === 'adaptive' ? SCOPE_DOCTRINE_ADAPTIVE : '';
+  const bullet = scopeMode === 'true' ? (resolveWorkspaceClean(env) ? SCOPE_DOCTRINE_CLEAN : SCOPE_DOCTRINE) : scopeMode === 'adaptive' ? SCOPE_DOCTRINE_ADAPTIVE : scopeMode === 'task' ? SCOPE_DOCTRINE_TASK : '';
   const block = bullet + taskRulesPlanBlock(resolveTaskRules(env)); // R211–R214: '' when every CORTEX_RULE_* is off → byte-identical
   const base = block ? doctrine.replace('Output ONLY the plan', block + 'Output ONLY the plan') : doctrine;
   return investigate === 'offer' ? base + PLANNER_INVESTIGATE_CLAUSE : investigate === 'withdraw' ? base + PLANNER_DECIDE_NOW_CLAUSE : base;

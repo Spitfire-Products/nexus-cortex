@@ -149,9 +149,12 @@ export interface EndTurnResolverConfig {
   /** R211–R214 HB-TASK-RULES (2026-10-02, tb4-never-passed requirement-miss pass): the active CORTEX_RULE_* rules (taskRules.ts); each
    *  appends one rubric clause to the judge persona after the R208 scale item. Default none (persona byte-identical). */
   taskRules: TaskRule[];
+  /** CORTEX_LIFT_PLAN_SCOPE=task (2026-10-03): the judge persona carries RESOLVER_SCOPE_TASK_CLAUSE — scope GAPs only for forbidden /
+   *  off-limits files or incidental changes, never for file count (v43b sglang: two scope vetoes on a needed 8-file fix). */
+  scopeTask: boolean;
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', specSamples: 3, specVetoFrac: 0.5, specText: 'shown', derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7, reqLedgerFailVeto: false, reqLedgerFailVetoMax: 2, reqLedgerFailVetoMinRemaining: 0.25, reqLedgerFailJev: 'shadow', reqLedgerFailJevMin: 0.7, verifyScale: false, taskRules: [] };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', specSamples: 3, specVetoFrac: 0.5, specText: 'shown', derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7, reqLedgerFailVeto: false, reqLedgerFailVetoMax: 2, reqLedgerFailVetoMinRemaining: 0.25, reqLedgerFailJev: 'shadow', reqLedgerFailJevMin: 0.7, verifyScale: false, taskRules: [], scopeTask: false };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
@@ -231,6 +234,7 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
     reqLedgerFailJevMin: (() => { const f = parseFloat((env.CORTEX_JUDGE_REQ_LEDGER_FAIL_JEV_MIN ?? '').trim()); return Number.isFinite(f) && f > 0 && f <= 1 ? f : DEFAULTS.reqLedgerFailJevMin; })(),
     verifyScale: /^(on|true|1)$/i.test((env.CORTEX_VERIFY_SCALE ?? '').trim()), // R208
     taskRules: resolveTaskRules(env), // R211–R214
+    scopeTask: (env.CORTEX_LIFT_PLAN_SCOPE ?? '').trim().toLowerCase() === 'task', // task-conditioned scope
   };
 }
 
@@ -300,9 +304,18 @@ export const RESOLVER_DECIDE_NOW_CLAUSE =
 /** The persona for the judge. With `abstain`, the RETIRE option is offered; with `meetsConfirm` (R168), a MEETS must name proving
  *  checks; `investigate` (R170) = 'offer' while rounds remain, 'withdraw' on the last round of a multi-round adjudication, undefined otherwise;
  *  `taskRules` (R211–R214) appends one rubric clause per active CORTEX_RULE_* rule after the R208 scale item. */
-export function resolverSystemPrompt(abstain = false, meetsConfirm = false, investigate?: 'offer' | 'withdraw', verifyScale = false, taskRules: readonly TaskRule[] = []): string {
+/** CORTEX_LIFT_PLAN_SCOPE=task: the judge's scope rubric (pairs with liftPlanner SCOPE_DOCTRINE_TASK). */
+export const RESOLVER_SCOPE_TASK_CLAUSE =
+  '\n\nSCOPE RULE (HB-SCOPE-TASK): judge edit scope by what the TASK allows, never by how many files changed. A scope GAP is only: a ' +
+  'modified file the task names as off-limits or forbids; a modified vendored or third-party file, test, runner script, fixture or input ' +
+  'data file the task did not point to; or an incidental change (debug output, scratch files, edits unrelated to the task). A fix that ' +
+  'spans several files is not a gap. Never ask the junior to revert or drop a change that is part of the fix; if you doubt a change is ' +
+  "needed, name a CHECK that re-runs the task's own check without it.";
+
+export function resolverSystemPrompt(abstain = false, meetsConfirm = false, investigate?: 'offer' | 'withdraw', verifyScale = false, taskRules: readonly TaskRule[] = [], scopeTask = false): string {
   const base0 = meetsConfirm ? RESOLVER_SYSTEM.replace(RESOLVER_MEETS_DEFAULT_LINE, RESOLVER_MEETS_CHECK_LINE) : RESOLVER_SYSTEM;
-  const base = (verifyScale ? base0 + RESOLVER_SCALE_CLAUSE : base0) + taskRulesJudgeClause(taskRules); // R208 / R211–R214 ('' when none)
+  const base = (verifyScale ? base0 + RESOLVER_SCALE_CLAUSE : base0) + taskRulesJudgeClause(taskRules) // R208 / R211–R214 ('' when none)
+    + (scopeTask ? RESOLVER_SCOPE_TASK_CLAUSE : ''); // CORTEX_LIFT_PLAN_SCOPE=task
   const withAbstain = abstain ? base + RESOLVER_ABSTAIN_CLAUSE : base;
   return investigate === 'offer' ? withAbstain + RESOLVER_INVESTIGATE_CLAUSE : investigate === 'withdraw' ? withAbstain + RESOLVER_DECIDE_NOW_CLAUSE : withAbstain;
 }

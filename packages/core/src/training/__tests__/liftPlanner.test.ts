@@ -7,6 +7,7 @@ import {
   DOCTRINE_V2,
   SCOPE_DOCTRINE,
   SCOPE_DOCTRINE_ADAPTIVE,
+  SCOPE_DOCTRINE_TASK,
   plannerSystem,
   buildPlannerUserPrompt,
   resolveLiftPlanConfig,
@@ -244,5 +245,29 @@ describe('liftPlanner — bankPlanText (decision-event plan banking, 2026-09-29)
   });
   it('tolerates an empty/undefined plan', () => {
     expect(bankPlanText(undefined)).toEqual({ planText: '', planTextTruncated: false });
+  });
+});
+
+describe('CORTEX_LIFT_PLAN_SCOPE=task (task-conditioned scope, 2026-10-03)', () => {
+  it('appends the task-scope bullet before the output instruction', () => {
+    const p = plannerSystem({ CORTEX_LIFT_PLAN_SCOPE: 'task' });
+    expect(p).toContain(SCOPE_DOCTRINE_TASK);
+    expect(p.indexOf(SCOPE_DOCTRINE_TASK)).toBeLessThan(p.indexOf('Output ONLY the plan'));
+    expect(p).not.toContain(SCOPE_DOCTRINE);
+    expect(p).not.toContain(SCOPE_DOCTRINE_ADAPTIVE);
+  });
+  it('scopes by what the task allows, not by file count', () => {
+    expect(SCOPE_DOCTRINE_TASK).not.toMatch(/smallest set/i);
+    expect(SCOPE_DOCTRINE_TASK).toMatch(/every file the fix needs/);
+    expect(SCOPE_DOCTRINE_TASK).toMatch(/vendored or third-party code/);
+  });
+  it('reverts only incidental changes, after re-running the check without them', () => {
+    expect(SCOPE_DOCTRINE_TASK).toMatch(/INCIDENTAL/);
+    expect(SCOPE_DOCTRINE_TASK).toMatch(/re-run the task's own check/);
+  });
+  it('true / adaptive / unset are unchanged', () => {
+    expect(plannerSystem({ CORTEX_LIFT_PLAN_SCOPE: 'true' })).toContain(SCOPE_DOCTRINE);
+    expect(plannerSystem({ CORTEX_LIFT_PLAN_SCOPE: 'adaptive' })).toContain(SCOPE_DOCTRINE_ADAPTIVE);
+    expect(plannerSystem({})).toBe(PLANNER_SYSTEM_V1);
   });
 });
