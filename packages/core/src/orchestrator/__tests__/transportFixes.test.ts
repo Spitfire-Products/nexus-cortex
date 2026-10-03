@@ -332,6 +332,7 @@ describe('R231 CORTEX_CHAT_REMINDERS_TO_SYSTEM (chat/completions mirror of the R
   });
 
   it('gateway: off = no liftedReminders and the reminder text stays in the user message (tags stripped); on = lifted', () => {
+    process.env.DEEPSEEK_API_KEY = 'test-deepseek'; // prepareHeaders reads the card's key env (CI runs with no keys)
     const gtl = new GatewayTranslationLayer();
     const msgs = () => [{ role: 'system', content: [{ type: 'text', text: 'STATIC SYSTEM PROMPT' }] }, ...canonical()] as any[];
     const off = gtl.prepareRequest(msgs(), undefined, deepseekFlash);
