@@ -21,5 +21,7 @@ export const gpt56Luna: ModelConfig = createOpenAIModelConfig({
   supportsServerSideTools: true,
   // Live 2026-10-03: /v1/responses + reasoning.effort + top_p → 400 "Unsupported parameter: 'top_p'".
   samplingParams: false,
+  // Function tools 400 on chat/completions unless effort is none (live 2026-10-03) → Responses by default.
+  responsesOnly: true,
   reasoning: { supported: true, format: 'reasoning_content', extractionMethod: 'separate_field', pattern: 'interleaved' }
 });

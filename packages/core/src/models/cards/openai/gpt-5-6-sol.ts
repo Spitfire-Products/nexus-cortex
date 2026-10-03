@@ -39,5 +39,7 @@ export const gpt56Sol: ModelConfig = createOpenAIModelConfig({
   maxTokensParamName: 'max_completion_tokens',
   supportsServerSideTools: true,
   samplingParams: false,
+  // Function tools 400 on chat/completions unless effort is none (live 2026-10-03) → Responses by default.
+  responsesOnly: true,
   reasoning: { supported: true, format: 'reasoning_content', extractionMethod: 'separate_field', pattern: 'interleaved' }
 });

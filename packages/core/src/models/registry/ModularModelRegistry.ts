@@ -140,6 +140,10 @@ export class ModularModelRegistry implements ModelRegistry {
       // OpenAI models
       openaiModels.gpt4o,
       openaiModels.gpt4oMini,
+      openaiModels.gpt6Luna,            // added 2026-10-03 (GPT-6 family)
+      openaiModels.gpt6Sol,
+      openaiModels.gpt61Sol,
+      openaiModels.gpt6Astra,
       openaiModels.gpt55,
       openaiModels.gpt55Pro,            // Responses-only, added 2026-10-03
       openaiModels.gpt53Codex,          // Responses-only, added 2026-10-03

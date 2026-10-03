@@ -66,6 +66,10 @@ export interface OpenAIModelOptions {
   promptPreset?: 'boot-minimal';
   liftNudge?: boolean;
   headlessDropAskUser?: boolean;
+  /** Pin the card to /v1/responses regardless of OPENAI_API_MODE (2026-10-03). For reasoning models whose function
+   *  tools 400 on chat/completions unless reasoning_effort is 'none' (live: gpt-5.4-nano, gpt-5.6-*, gpt-6-*), so the
+   *  library routes them correctly by default and no surface needs an env lever. Implies supportsServerSideTools. */
+  responsesOnly?: boolean;
 }
 
 export function createOpenAIModelConfig(options: OpenAIModelOptions): ModelConfig {
@@ -78,7 +82,8 @@ export function createOpenAIModelConfig(options: OpenAIModelOptions): ModelConfi
   // `supportsServerSideTools: true` to be eligible — otherwise the env flag
   // is a no-op (e.g. older GPT-4o cards stay on chat/completions).
   const apiMode = process.env.OPENAI_API_MODE || DEFAULT_SETTINGS.OPENAI_API_MODE;
-  const useResponsesAPI = options.supportsServerSideTools === true && apiMode === 'responses';
+  const useResponsesAPI = options.responsesOnly === true
+    || (options.supportsServerSideTools === true && apiMode === 'responses');
 
   return {
     ...(options.anchorProfile ? { anchorProfile: options.anchorProfile } : {}),
@@ -113,7 +118,7 @@ export function createOpenAIModelConfig(options: OpenAIModelOptions): ModelConfi
     // R20: declare server-side tool support so ServerSideToolDetection can
     // route to /v1/responses dynamically when ENABLE_SERVER_SIDE_TOOLS=true
     // and a hosted tool is present in the request.
-    ...(options.supportsServerSideTools && {
+    ...((options.supportsServerSideTools || options.responsesOnly) && {
       serverSideTools: {
         supported: true,
         supportedEndpoints: ['responses'],

@@ -35,3 +35,14 @@ describe('translateReasoningEffort (gateway-owned effort vocabulary)', () => {
     expect(translateReasoningEffort({ id: 'grok-4.7', provider: 'xai' }, 'xhigh')).toBe('xhigh');
   });
 });
+
+describe('translateReasoningEffort — GPT-6 family (live 2026-10-03)', () => {
+  it('gpt-6-luna / gpt-6-sol accept none..max', () => {
+    expect(translateReasoningEffort({ id: 'gpt-6-luna', provider: 'openai' }, 'max')).toBe('max');
+    expect(translateReasoningEffort({ id: 'gpt-6-sol', provider: 'openai' }, 'none')).toBe('none');
+  });
+  it('gpt-6.1-sol has no none: none → its lowest level (low)', () => {
+    expect(translateReasoningEffort({ id: 'gpt-6.1-sol', provider: 'openai' }, 'none')).toBe('low');
+    expect(translateReasoningEffort({ id: 'gpt-6.1-sol', provider: 'openai' }, 'max')).toBe('max');
+  });
+});

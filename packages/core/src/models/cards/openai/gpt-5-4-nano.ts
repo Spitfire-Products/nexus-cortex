@@ -29,6 +29,8 @@ export const gpt54Nano: ModelConfig = createOpenAIModelConfig({
   maxTokensParamName: 'max_completion_tokens',
   supportsServerSideTools: true,
   samplingParams: false,
+  // Function tools 400 on chat/completions unless effort is none (live 2026-10-03) → Responses by default.
+  responsesOnly: true,
   anchorProfile: 'bash-edit',
   promptPreset: 'boot-minimal',
   liftNudge: true,

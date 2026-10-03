@@ -227,6 +227,9 @@ export interface SessionContext {
  */
 const OPENAI_EFFORT_LADDER = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 const OPENAI_EFFORT_LEVELS: Array<[RegExp, string[]]> = [
+  [/^gpt-6\.1-sol/i, ['low', 'medium', 'high', 'xhigh', 'max']],              // live 2026-10-03: none + minimal rejected
+  [/^gpt-6-astra/i, ['low', 'medium', 'high', 'xhigh', 'max']],                // docs (premium: only low probed)
+  [/^gpt-6/i, ['none', 'low', 'medium', 'high', 'xhigh', 'max']],              // live 2026-10-03: luna + sol, minimal rejected
   [/^gpt-5\.4-nano/i, ['none', 'low', 'medium', 'high', 'xhigh']],            // live 2026-10-03: minimal + max rejected
   [/^gpt-5\.6-luna/i, ['none', 'low', 'medium', 'high', 'xhigh', 'max']],     // live 2026-10-03: minimal rejected, max ok
   [/^gpt-5\.6/i, ['none', 'low', 'medium', 'high', 'xhigh', 'max']],          // sol / terra / 5.6 docs
