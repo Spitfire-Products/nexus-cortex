@@ -45,6 +45,9 @@ export interface EndTurnResolverConfig {
   vetoMode: 'evidence' | 'opinion' | 'never';
   /** R166: max evidence-backed vetoes per session (CORTEX_JUDGE_EVIDENCE_MAX_VETOES, default 1, 0..20). */
   evidenceCap: number;
+  /** R233 HB-BUDGET-FLOOR (DARK, 2026-10-05): absolute-seconds floor under which every budget-aware verdict rule behaves as "below
+   *  budget" (liveness reject cap, no gap hold, veto floor, evidence cap clamped to 1). 0 = off. CORTEX_BUDGET_FLOOR_S. */
+  budgetFloorS: number;
   /** R167 HB-FINISH-CONFIRM (2026-09-17, pilot-12): Terminus-2's "are you sure" made informative. When the judge accepts a
    *  finish WITH a recorded gap (accept-with-gap / accept-low-confidence) and >= finishConfirmMinRemaining of the wall budget
    *  remains, the finish is HELD once (finishConfirmMax) with a zero-model-call message carrying the budget left, the judge's
@@ -154,7 +157,7 @@ export interface EndTurnResolverConfig {
   scopeTask: boolean;
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', specSamples: 3, specVetoFrac: 0.5, specText: 'shown', derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7, reqLedgerFailVeto: false, reqLedgerFailVetoMax: 2, reqLedgerFailVetoMinRemaining: 0.25, reqLedgerFailJev: 'shadow', reqLedgerFailJevMin: 0.7, verifyScale: false, taskRules: [], scopeTask: false };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, budgetFloorS: 0, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', specSamples: 3, specVetoFrac: 0.5, specText: 'shown', derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7, reqLedgerFailVeto: false, reqLedgerFailVetoMax: 2, reqLedgerFailVetoMinRemaining: 0.25, reqLedgerFailJev: 'shadow', reqLedgerFailJevMin: 0.7, verifyScale: false, taskRules: [], scopeTask: false };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
@@ -166,6 +169,7 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
   const esc = (env.CORTEX_JUDGE_ESCALATE_REASONING ?? '').trim().toLowerCase();
   const vm = (env.CORTEX_JUDGE_VETO ?? '').trim().toLowerCase();
   const ec = parseInt((env.CORTEX_JUDGE_EVIDENCE_MAX_VETOES ?? '').trim(), 10);
+  const bf = parseInt((env.CORTEX_BUDGET_FLOOR_S ?? '').trim(), 10); // R233
   const fc = (env.CORTEX_FINISH_CONFIRM ?? '').trim().toLowerCase();
   const fmin = parseFloat((env.CORTEX_FINISH_CONFIRM_MIN_REMAINING ?? '').trim());
   const fmax = parseInt((env.CORTEX_FINISH_CONFIRM_MAX ?? '').trim(), 10);
@@ -198,6 +202,7 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
     escalateReasoning: esc === '' ? DEFAULTS.escalateReasoning : !(esc === 'false' || esc === '0' || esc === 'off'),
     vetoMode: vm === 'opinion' || vm === 'never' || vm === 'evidence' ? vm : DEFAULTS.vetoMode,
     evidenceCap: Number.isInteger(ec) && ec >= 0 ? Math.min(20, ec) : DEFAULTS.evidenceCap,
+    budgetFloorS: Number.isInteger(bf) && bf >= 0 ? Math.min(86_400, bf) : DEFAULTS.budgetFloorS, // R233
     finishConfirm: fc === '' ? DEFAULTS.finishConfirm : !(fc === 'false' || fc === '0' || fc === 'off'),
     finishConfirmMinRemaining: Number.isFinite(fmin) && fmin >= 0 && fmin <= 1 ? fmin : DEFAULTS.finishConfirmMinRemaining,
     finishConfirmMax: Number.isInteger(fmax) && fmax >= 0 ? Math.min(5, fmax) : DEFAULTS.finishConfirmMax,
@@ -499,6 +504,23 @@ export function effectiveMaxRejects(cfg: EndTurnResolverConfig, remainingFrac: n
   if (remainingFrac === null || !(minRemaining > 0)) return cfg.maxRejects;
   if (cfg.maxRejectsBudgeted <= cfg.maxRejects) return cfg.maxRejects;
   return remainingFrac >= minRemaining ? cfg.maxRejectsBudgeted : cfg.maxRejects;
+}
+
+/**
+ * R233 HB-BUDGET-FLOOR (DARK). Every budget-aware rule above keys off a FRACTION of the wall budget (CORTEX_BUDGET_CONTINUE_MIN_REMAINING,
+ * 0.5): on a 900-s MiMo task "half the budget" is 7.5 min, inside which up to 6 budgeted + 3 evidence vetoes could each cost minutes of
+ * re-work (10-05: bundle 17/40 vs bundle-minus-veto-cap 25/40). The second-attempt chain uses an ABSOLUTE floor (>= 20 min) and was safe for
+ * the same reason it was inert. This is that floor for the resolver: when fewer than `floorS` seconds remain, the fraction is reported as
+ * 0 (→ liveness cap, no gap hold, veto floor) and the evidence cap collapses to 1. Pure; `floorS <= 0` or no deadline = unchanged.
+ */
+export function budgetFloorActive(remainingMs: number | null, floorS: number): boolean {
+  return remainingMs !== null && floorS > 0 && remainingMs < floorS * 1000;
+}
+export function applyBudgetFloor(remainingFrac: number | null, remainingMs: number | null, floorS: number): number | null {
+  return budgetFloorActive(remainingMs, floorS) ? 0 : remainingFrac;
+}
+export function flooredEvidenceCap(evidenceCap: number, floorActive: boolean): number {
+  return floorActive ? Math.min(evidenceCap, 1) : evidenceCap;
 }
 
 /** R173: may an unevidenced GAP hold the finish right now? Pure. Requires the lever, a live deadline with at least `minRemaining`

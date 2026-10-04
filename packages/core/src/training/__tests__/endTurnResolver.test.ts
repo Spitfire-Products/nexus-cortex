@@ -118,7 +118,7 @@ describe('4.107.0 — the resolver receives the lift plan as an ADVISORY anchor'
 });
 
 // R160 HB-RESOLVER-BUDGET-CAP (2026-09-16): the reject cap follows the wall budget.
-import { effectiveMaxRejects, budgetedVetoEscalation } from '../endTurnResolver.js';
+import { effectiveMaxRejects, budgetedVetoEscalation, budgetFloorActive, applyBudgetFloor, flooredEvidenceCap } from '../endTurnResolver.js';
 describe('endTurnResolver — R160 budget-aware reject cap', () => {
   const cfg = resolveEndTurnResolverConfig({} as NodeJS.ProcessEnv);
   it('defaults the budgeted cap to 6 and clamps overrides to 0..20', () => {
@@ -595,5 +595,33 @@ describe('SCOPE RULE (CORTEX_LIFT_PLAN_SCOPE=task, 2026-10-03)', () => {
     expect(resolveEtrConfig({ CORTEX_LIFT_PLAN_SCOPE: 'task' }).scopeTask).toBe(true);
     expect(resolveEtrConfig({ CORTEX_LIFT_PLAN_SCOPE: 'true' }).scopeTask).toBe(false);
     expect(resolveEtrConfig({}).scopeTask).toBe(false);
+  });
+});
+
+describe('endTurnResolver — R233 absolute budget floor (CORTEX_BUDGET_FLOOR_S)', () => {
+  const cfg = resolveEndTurnResolverConfig({} as NodeJS.ProcessEnv);
+  it('defaults off (0) and clamps the env value', () => {
+    expect(cfg.budgetFloorS).toBe(0);
+    expect(resolveEndTurnResolverConfig({ CORTEX_BUDGET_FLOOR_S: '1200' } as any).budgetFloorS).toBe(1200);
+    expect(resolveEndTurnResolverConfig({ CORTEX_BUDGET_FLOOR_S: '-5' } as any).budgetFloorS).toBe(0);
+    expect(resolveEndTurnResolverConfig({ CORTEX_BUDGET_FLOOR_S: '999999' } as any).budgetFloorS).toBe(86_400);
+  });
+  it('off / no deadline = unchanged', () => {
+    expect(budgetFloorActive(500_000, 0)).toBe(false);
+    expect(budgetFloorActive(null, 1200)).toBe(false);
+    expect(applyBudgetFloor(0.7, 500_000, 0)).toBe(0.7);
+    expect(applyBudgetFloor(null, null, 1200)).toBeNull();
+    expect(flooredEvidenceCap(3, false)).toBe(3);
+  });
+  it('on: below the floor every fraction-based rule sees 0 and the evidence cap collapses to 1', () => {
+    // a 900-s task with 70% left = 630 s remaining: fraction says "above half", the floor (1200 s) says below budget
+    expect(budgetFloorActive(630_000, 1200)).toBe(true);
+    expect(applyBudgetFloor(0.7, 630_000, 1200)).toBe(0);
+    expect(effectiveMaxRejects(cfg, applyBudgetFloor(0.7, 630_000, 1200), 0.5)).toBe(2); // liveness cap, not 6
+    expect(flooredEvidenceCap(3, true)).toBe(1);
+    expect(flooredEvidenceCap(0, true)).toBe(0);
+    // an 8-h task with 70% left = 5.6 h remaining: untouched
+    expect(applyBudgetFloor(0.7, 20_160_000, 1200)).toBe(0.7);
+    expect(effectiveMaxRejects(cfg, 0.7, 0.5)).toBe(6);
   });
 });

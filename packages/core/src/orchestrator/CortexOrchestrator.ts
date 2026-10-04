@@ -30,7 +30,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'node:child_process';
 import { ENV_RECON_COMMAND, resolveLiftPlanConfig, parsePlannerResponse, bankPlanText } from '../training/liftPlanner.js';
 import { clipIn, FULL_CAPS, HINTS, resolveInventory, resolveInventoryPath } from '../training/steerInputs.js';
-import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage, gapHoldable, parseSpecChecks, groundSpecCheck, specFailFraction, applyVetoFloor, holdProgressed, planSimilarity, specCheckEvidence, specBlockForJudge, dropSpecEchoes, specBlockForWriter, vetoMessageLead, RESOLVER_SCALE_CLAUSE } from '../training/endTurnResolver.js';
+import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetFloorActive, applyBudgetFloor, flooredEvidenceCap, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage, gapHoldable, parseSpecChecks, groundSpecCheck, specFailFraction, applyVetoFloor, holdProgressed, planSimilarity, specCheckEvidence, specBlockForJudge, dropSpecEchoes, specBlockForWriter, vetoMessageLead, RESOLVER_SCALE_CLAUSE } from '../training/endTurnResolver.js';
 import { jevAvailable, jevNoul, buildGapHoldState, GAP_HOLD_QUESTIONS } from '../training/jevGate.js'; // R173b
 import { resolveFrameConfig, FRAME_CONTRACT, FRAME_TOOL_NAME } from '../frames/frameConfig.js'; // R179
 import { FrameRunner } from '../frames/frameRunner.js'; // R179
@@ -1346,7 +1346,12 @@ export class CortexOrchestrator {
     // R160 HB-RESOLVER-BUDGET-CAP: the cap is budget-aware — while >= CORTEX_BUDGET_CONTINUE_MIN_REMAINING of the wall
     // budget remains the judge may veto up to maxRejectsBudgeted times; below that (or with no deadline) the liveness cap.
     const resolverRemainingMs = this.turnDeadlineMsActive > 0 && this.turnLoopStartMs > 0 ? Math.max(0, this.turnDeadlineMsActive - (Date.now() - this.turnLoopStartMs)) : null;
-    const resolverRemainingFrac = resolverRemainingMs === null ? null : resolverRemainingMs / this.turnDeadlineMsActive;
+    const resolverRemainingFracRaw = resolverRemainingMs === null ? null : resolverRemainingMs / this.turnDeadlineMsActive;
+    // R233 HB-BUDGET-FLOOR (DARK, CORTEX_BUDGET_FLOOR_S): under the absolute floor every fraction-based rule below (R160 cap, R173 gap
+    // hold, R173c veto floor, ledger holds) sees "below budget" and the R166 evidence cap collapses to 1. Off = byte-identical.
+    const budgetFloor = budgetFloorActive(resolverRemainingMs, cfg.budgetFloorS);
+    const resolverRemainingFrac = applyBudgetFloor(resolverRemainingFracRaw, resolverRemainingMs, cfg.budgetFloorS);
+    const evidenceCapNow = flooredEvidenceCap(cfg.evidenceCap, budgetFloor);
     const resolverCap = effectiveMaxRejects(cfg, resolverRemainingFrac, resolveBudgetContinueMinRemaining());
     if (this.endTurnResolverRejects >= resolverCap) return; // fallback-accept: liveness beats loops
     const et = toolResults.find((tr) => tr.tool_name === 'EndTurn');
@@ -1526,7 +1531,7 @@ export class CortexOrchestrator {
       const holdProg = holdProgressed({ rejects: this.endTurnResolverRejects, msSinceLastHold, priorPlan: this.judgePriorPlan, plan: verdict.plan, minIntervalMs: cfg.gapHoldMinIntervalMs, maxSimilarity: cfg.gapHoldPlanMaxSimilarity });
       const progressedForHold = holdable ? (progressed && holdProg) : progressed;
       let action: VetoAction = cfg.semantic
-        ? decideVetoAction({ meets: verdict.meets, blank: verdict.blank, retire: verdict.retire && cfg.abstain, confidence: verdict.confidence, rejects: this.endTurnResolverRejects, cap: resolverCap, progressed: progressedForHold, escalated: this.judgeEscalated, checksFailed, vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap, gapHoldable: holdable, specOverride: specVetoHit })
+        ? decideVetoAction({ meets: verdict.meets, blank: verdict.blank, retire: verdict.retire && cfg.abstain, confidence: verdict.confidence, rejects: this.endTurnResolverRejects, cap: resolverCap, progressed: progressedForHold, escalated: this.judgeEscalated, checksFailed, vetoMode: cfg.vetoMode, evidenceCap: evidenceCapNow, gapHoldable: holdable, specOverride: specVetoHit })
         : (verdict.blank || (verdict.retire && cfg.abstain) || verdict.meets || !verdict.plan ? 'accept' : 'veto');
       if (action === 'escalate') {
         // R165: the junior re-attested without working the plan — one thinking-on adjudication before we accept with the gap recorded.
@@ -1537,7 +1542,7 @@ export class CortexOrchestrator {
           const v2 = parseResolverVerdict(text2 ?? '');
           if (!v2.blank) { text = text2; verdict = v2; }
         }
-        action = decideVetoAction({ meets: verdict.meets, blank: verdict.blank, retire: verdict.retire && cfg.abstain, confidence: verdict.confidence, rejects: this.endTurnResolverRejects, cap: resolverCap, progressed: progressedForHold, escalated: true, checksFailed, vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap, gapHoldable: holdable, specOverride: specVetoHit });
+        action = decideVetoAction({ meets: verdict.meets, blank: verdict.blank, retire: verdict.retire && cfg.abstain, confidence: verdict.confidence, rejects: this.endTurnResolverRejects, cap: resolverCap, progressed: progressedForHold, escalated: true, checksFailed, vetoMode: cfg.vetoMode, evidenceCap: evidenceCapNow, gapHoldable: holdable, specOverride: specVetoHit });
         if (action === 'escalate') action = 'accept-with-gap';
       }
       // R173c: the budget floor — below CORTEX_JUDGE_VETO_MIN_REMAINING nothing holds the finish (the gap is recorded).
@@ -1613,7 +1618,7 @@ export class CortexOrchestrator {
           planChars: verdict.plan.length, rejects: this.endTurnResolverRejects, parsed: verdict.parsed,
           cap: resolverCap, capLiveness: cfg.maxRejects, capBudgeted: cfg.maxRejectsBudgeted, remainingFrac: resolverRemainingFrac === null ? null : Number(resolverRemainingFrac.toFixed(3)), // R160
           semantic: cfg.semantic, action, confidence: verdict.confidence, namedChecks: verdict.checks.length, namedRan, namedPassed, namedFailed, callsSince, progressed, escalated: this.judgeEscalated, // R165
-          vetoMode: cfg.vetoMode, evidenceCap: cfg.evidenceCap, namedRanNow, namedInconclusive, // R166 / R166b
+          vetoMode: cfg.vetoMode, evidenceCap: evidenceCapNow, budgetFloor, budgetFloorS: cfg.budgetFloorS, namedRanNow, namedInconclusive, // R166 / R166b / R233
           toolRounds: cfg.toolRounds, roundsUsed, investigateChecks, investigateReads, investigateRefused, autoLooped, toolAutoLoop: cfg.toolAutoLoop, roundLatencyMs, evidenceChars: evidenceRounds.join('').length, // R170 / R170b
           gapHold: cfg.gapHold, gapHoldable: holdable, jevMode: cfg.gapHoldJev, jevFixable, jevLatencyMs, // R173 / R173b
           specTests: cfg.specTests, specChecks: this.specChecks?.length ?? 0, specRan, specPassed, specFailed, specInconclusive, specSuspect, specFrac: specFrac === null ? null : Number(specFrac.toFixed(3)), specSets: this.specCheckSets.length, specVetoFrac: cfg.specVetoFrac, specText: cfg.specText, specGenLatencyMs: this.specChecksMeta.genLatencyMs, specTestsAt: cfg.specTestsAt, // R174 / R174b
