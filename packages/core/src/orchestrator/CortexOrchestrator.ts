@@ -1350,7 +1350,10 @@ export class CortexOrchestrator {
     // R233 HB-BUDGET-FLOOR (DARK, CORTEX_BUDGET_FLOOR_S): under the absolute floor every fraction-based rule below (R160 cap, R173 gap
     // hold, R173c veto floor, ledger holds) sees "below budget" and the R166 evidence cap collapses to 1. Off = byte-identical.
     const budgetFloor = budgetFloorActive(resolverRemainingMs, cfg.budgetFloorS);
-    const resolverRemainingFrac = applyBudgetFloor(resolverRemainingFracRaw, resolverRemainingMs, cfg.budgetFloorS);
+    // v2 (default mode 'evidence'): the floor clamps ONLY the evidence cap; the fraction rules keep their own logic. 'all' = v1.
+    const resolverRemainingFrac = cfg.budgetFloorMode === 'all'
+      ? applyBudgetFloor(resolverRemainingFracRaw, resolverRemainingMs, cfg.budgetFloorS)
+      : resolverRemainingFracRaw;
     const evidenceCapNow = flooredEvidenceCap(cfg.evidenceCap, budgetFloor);
     const resolverCap = effectiveMaxRejects(cfg, resolverRemainingFrac, resolveBudgetContinueMinRemaining());
     if (this.endTurnResolverRejects >= resolverCap) return; // fallback-accept: liveness beats loops
@@ -1618,7 +1621,7 @@ export class CortexOrchestrator {
           planChars: verdict.plan.length, rejects: this.endTurnResolverRejects, parsed: verdict.parsed,
           cap: resolverCap, capLiveness: cfg.maxRejects, capBudgeted: cfg.maxRejectsBudgeted, remainingFrac: resolverRemainingFrac === null ? null : Number(resolverRemainingFrac.toFixed(3)), // R160
           semantic: cfg.semantic, action, confidence: verdict.confidence, namedChecks: verdict.checks.length, namedRan, namedPassed, namedFailed, callsSince, progressed, escalated: this.judgeEscalated, // R165
-          vetoMode: cfg.vetoMode, evidenceCap: evidenceCapNow, budgetFloor, budgetFloorS: cfg.budgetFloorS, namedRanNow, namedInconclusive, // R166 / R166b / R233
+          vetoMode: cfg.vetoMode, evidenceCap: evidenceCapNow, budgetFloor, budgetFloorS: cfg.budgetFloorS, budgetFloorMode: cfg.budgetFloorMode, namedRanNow, namedInconclusive, // R166 / R166b / R233
           toolRounds: cfg.toolRounds, roundsUsed, investigateChecks, investigateReads, investigateRefused, autoLooped, toolAutoLoop: cfg.toolAutoLoop, roundLatencyMs, evidenceChars: evidenceRounds.join('').length, // R170 / R170b
           gapHold: cfg.gapHold, gapHoldable: holdable, jevMode: cfg.gapHoldJev, jevFixable, jevLatencyMs, // R173 / R173b
           specTests: cfg.specTests, specChecks: this.specChecks?.length ?? 0, specRan, specPassed, specFailed, specInconclusive, specSuspect, specFrac: specFrac === null ? null : Number(specFrac.toFixed(3)), specSets: this.specCheckSets.length, specVetoFrac: cfg.specVetoFrac, specText: cfg.specText, specGenLatencyMs: this.specChecksMeta.genLatencyMs, specTestsAt: cfg.specTestsAt, // R174 / R174b

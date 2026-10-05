@@ -625,3 +625,20 @@ describe('endTurnResolver — R233 absolute budget floor (CORTEX_BUDGET_FLOOR_S)
     expect(effectiveMaxRejects(cfg, 0.7, 0.5)).toBe(6);
   });
 });
+
+describe('endTurnResolver — R233 v2 floor mode', () => {
+  it('defaults to evidence; only "all" selects the v1 behaviour', () => {
+    expect(resolveEndTurnResolverConfig({} as any).budgetFloorMode).toBe('evidence');
+    expect(resolveEndTurnResolverConfig({ CORTEX_BUDGET_FLOOR_MODE: 'all' } as any).budgetFloorMode).toBe('all');
+    expect(resolveEndTurnResolverConfig({ CORTEX_BUDGET_FLOOR_MODE: 'bogus' } as any).budgetFloorMode).toBe('evidence');
+  });
+  it('evidence mode: the fraction rules are untouched while the evidence cap still collapses under the floor', () => {
+    const cfg = resolveEndTurnResolverConfig({ CORTEX_BUDGET_FLOOR_S: '1200', CORTEX_JUDGE_EVIDENCE_MAX_VETOES: '3' } as any);
+    const active = budgetFloorActive(630_000, cfg.budgetFloorS);
+    const frac = cfg.budgetFloorMode === 'all' ? applyBudgetFloor(0.7, 630_000, cfg.budgetFloorS) : 0.7;
+    expect(active).toBe(true);
+    expect(frac).toBe(0.7);
+    expect(effectiveMaxRejects(cfg, frac, 0.5)).toBe(6);        // R160 cap intact
+    expect(flooredEvidenceCap(cfg.evidenceCap, active)).toBe(1); // evidence cap clamped
+  });
+});

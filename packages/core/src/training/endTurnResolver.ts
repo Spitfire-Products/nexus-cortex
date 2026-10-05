@@ -48,6 +48,9 @@ export interface EndTurnResolverConfig {
   /** R233 HB-BUDGET-FLOOR (DARK, 2026-10-05): absolute-seconds floor under which every budget-aware verdict rule behaves as "below
    *  budget" (liveness reject cap, no gap hold, veto floor, evidence cap clamped to 1). 0 = off. CORTEX_BUDGET_FLOOR_S. */
   budgetFloorS: number;
+  /** R233 v2: what the floor clamps. 'evidence' (default) = only the R166 evidence cap collapses to 1 under the floor — the R160 budgeted
+   *  cap and the R173 gap rules keep their fraction logic (measured 10-04: collapsing them too cost 5 passes). 'all' = the v1 behaviour. */
+  budgetFloorMode: 'evidence' | 'all';
   /** R167 HB-FINISH-CONFIRM (2026-09-17, pilot-12): Terminus-2's "are you sure" made informative. When the judge accepts a
    *  finish WITH a recorded gap (accept-with-gap / accept-low-confidence) and >= finishConfirmMinRemaining of the wall budget
    *  remains, the finish is HELD once (finishConfirmMax) with a zero-model-call message carrying the budget left, the judge's
@@ -157,7 +160,7 @@ export interface EndTurnResolverConfig {
   scopeTask: boolean;
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, budgetFloorS: 0, finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', specSamples: 3, specVetoFrac: 0.5, specText: 'shown', derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7, reqLedgerFailVeto: false, reqLedgerFailVetoMax: 2, reqLedgerFailVetoMinRemaining: 0.25, reqLedgerFailJev: 'shadow', reqLedgerFailJevMin: 0.7, verifyScale: false, taskRules: [], scopeTask: false };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, budgetFloorS: 0, budgetFloorMode: 'evidence', finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', specSamples: 3, specVetoFrac: 0.5, specText: 'shown', derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7, reqLedgerFailVeto: false, reqLedgerFailVetoMax: 2, reqLedgerFailVetoMinRemaining: 0.25, reqLedgerFailJev: 'shadow', reqLedgerFailJevMin: 0.7, verifyScale: false, taskRules: [], scopeTask: false };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
@@ -170,6 +173,7 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
   const vm = (env.CORTEX_JUDGE_VETO ?? '').trim().toLowerCase();
   const ec = parseInt((env.CORTEX_JUDGE_EVIDENCE_MAX_VETOES ?? '').trim(), 10);
   const bf = parseInt((env.CORTEX_BUDGET_FLOOR_S ?? '').trim(), 10); // R233
+  const bfm = (env.CORTEX_BUDGET_FLOOR_MODE ?? '').trim().toLowerCase(); // R233 v2
   const fc = (env.CORTEX_FINISH_CONFIRM ?? '').trim().toLowerCase();
   const fmin = parseFloat((env.CORTEX_FINISH_CONFIRM_MIN_REMAINING ?? '').trim());
   const fmax = parseInt((env.CORTEX_FINISH_CONFIRM_MAX ?? '').trim(), 10);
@@ -203,6 +207,7 @@ export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.en
     vetoMode: vm === 'opinion' || vm === 'never' || vm === 'evidence' ? vm : DEFAULTS.vetoMode,
     evidenceCap: Number.isInteger(ec) && ec >= 0 ? Math.min(20, ec) : DEFAULTS.evidenceCap,
     budgetFloorS: Number.isInteger(bf) && bf >= 0 ? Math.min(86_400, bf) : DEFAULTS.budgetFloorS, // R233
+    budgetFloorMode: bfm === 'all' ? 'all' : DEFAULTS.budgetFloorMode, // R233 v2
     finishConfirm: fc === '' ? DEFAULTS.finishConfirm : !(fc === 'false' || fc === '0' || fc === 'off'),
     finishConfirmMinRemaining: Number.isFinite(fmin) && fmin >= 0 && fmin <= 1 ? fmin : DEFAULTS.finishConfirmMinRemaining,
     finishConfirmMax: Number.isInteger(fmax) && fmax >= 0 ? Math.min(5, fmax) : DEFAULTS.finishConfirmMax,
