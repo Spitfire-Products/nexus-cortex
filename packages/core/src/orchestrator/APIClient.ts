@@ -173,6 +173,16 @@ function isR63SystemDeliveryEnabled(): boolean {
   return (process.env.CORTEX_DELIVER_SYSTEM_PROMPT ?? '').trim().toLowerCase() !== 'false';
 }
 
+/** HTTP timeout for a non-streaming chat call. The openai SDK default (600 s) bounds the whole body; derive from the output cap at a
+ *  conservative 50 tokens/s (DeepSeek Pro decodes ~94 tok/s, Flash faster), floor = the SDK default. CORTEX_HTTP_TIMEOUT_MS (integer ms) wins. */
+export function resolveHttpTimeoutMs(maxTokens: number | undefined, env: NodeJS.ProcessEnv = process.env): number {
+  const o = parseInt((env.CORTEX_HTTP_TIMEOUT_MS ?? '').trim(), 10);
+  if (Number.isInteger(o) && o >= 1000) return o;
+  const SDK_DEFAULT = 600_000;
+  if (!maxTokens || !Number.isFinite(maxTokens) || maxTokens <= 0) return SDK_DEFAULT;
+  return Math.max(SDK_DEFAULT, Math.round(maxTokens * 20)); // 20 ms/token = 50 tok/s
+}
+
 export class APIClient {
   private anthropicClient?: Anthropic;
   private openaiClient?: OpenAI;
@@ -911,6 +921,10 @@ export class APIClient {
           apiKey,
           baseURL,
           fetch: cortexProxyFetch,
+          // 2026-10-05: the SDK default is 600 s for the WHOLE non-streaming body with 2 retries — a 384K-token thinking turn (DeepSeek
+          // max_tokens up to 393216) decodes for 20–70 min, so the default would abort it and retry at double cost. Derived from the
+          // request's max_tokens (50 tok/s floor, never below the SDK default); CORTEX_HTTP_TIMEOUT_MS overrides.
+          timeout: resolveHttpTimeoutMs(Number((request.parameters as any)?.max_tokens ?? (request.parameters as any)?.maxTokens ?? modelConfig.limits?.outputTokens) || undefined),
           ...(Object.keys(defaultHeaders).length > 0 && { defaultHeaders })
         });
 

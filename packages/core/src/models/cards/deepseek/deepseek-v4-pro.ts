@@ -38,7 +38,7 @@ export const deepseekV4Pro: ModelConfig = createDeepSeekModelConfig({
   // (8-10 pass-candidates + n=2). To run pro in the B config, uncomment the next line (deferred-off):
   // deferredToolLoading: false,
   contextWindow: 1000000,
-  outputTokens: 65536,
+  outputTokens: 393216, // DeepSeek API max_tokens range 1..393216 (384K); provider defaults when unset: 64K thinking / 128K at effort max. Was 65536 (the old thinking default) until 2026-10-05.
   inputCost: 0.50,
   outputCost: 2.0,
   reasoning: {

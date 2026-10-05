@@ -30,7 +30,7 @@ export const deepseekFlash: ModelConfig = createDeepSeekModelConfig({
   liftNudge: true,
   headlessDropAskUser: true,
   contextWindow: 1000000,
-  outputTokens: 65536,
+  outputTokens: 393216, // DeepSeek API max_tokens range 1..393216 (384K); provider defaults when unset: 64K thinking / 128K at effort max. Was 65536 (the old thinking default) until 2026-10-05.
   inputCost: 0.15,   // cache-miss off-peak (pricing page 2026-09-10); benches reconcile from verified provider pricing
   outputCost: 0.6,   // off-peak
   reasoning: {
