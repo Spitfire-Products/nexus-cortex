@@ -37,8 +37,9 @@ export function resolveTaskRules(env: NodeJS.ProcessEnv = process.env): TaskRule
 export const TASK_RULE_PLAN_LINES: Record<TaskRule, string> = {
   inputs:
     '- INPUT COVERAGE: include a step that lists every field, column and parameter of the provided inputs and where the solution uses ' +
-    'each one. Never change a given constant or input to make the problem feasible; if it looks infeasible with the given data, ' +
-    're-read the task and the inputs — something was misread.\n',
+    'each one. Never alter a given value to make the problem feasible. If two provided sources disagree, or a given value is internally ' +
+    'inconsistent, re-read once; if the conflict is real, use the source the task names as authoritative (else the task text itself), ' +
+    'record the discrepancy in the deliverable\'s notes, and proceed — do not keep re-reading.\n',
   interp:
     '- INTERPRETATIONS: when the task or the work names alternative readings, conventions or candidates, include a step that computes ' +
     'each one and keeps the one consistent with every explicit hint and all of the data, stating why.\n',
@@ -61,7 +62,8 @@ export const TASK_RULE_JUDGE_CLAUSES: Record<TaskRule, string> = {
   inputs:
     '\n\nINPUTS RULE (HB-RULE-INPUTS): when the task provides input data, parameters or constants, does the work use them and leave the ' +
     'given values unchanged? If a provided field is ignored or a given value was altered to make the problem feasible, treat that as a GAP ' +
-    'and name a CHECK that shows where that input is used. Tasks with no provided inputs are not affected by this rule.',
+    'and name a CHECK that shows where that input is used. Tasks with no provided inputs are not affected by this rule. A recorded, ' +
+    'justified discrepancy between provided sources, resolved in favour of the task\'s authoritative source, is not a gap.',
   interp:
     '\n\nINTERPRETATION RULE (HB-RULE-INTERP): where the task or the work names alternative readings, conventions or candidates, does ' +
     'the evidence show each one was computed and the chosen one is consistent with every explicit hint and all the data? If an ' +

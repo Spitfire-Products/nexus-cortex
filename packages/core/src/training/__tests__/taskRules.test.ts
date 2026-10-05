@@ -40,7 +40,11 @@ describe('R211–R214 carrier text', () => {
   });
   it('each line carries its rule', () => {
     expect(TASK_RULE_PLAN_LINES.inputs).toMatch(/every field, column and parameter/);
-    expect(TASK_RULE_PLAN_LINES.inputs).toMatch(/Never change a given constant or input to make the problem feasible/);
+    expect(TASK_RULE_PLAN_LINES.inputs).toMatch(/Never alter a given value to make the problem feasible/);
+    // 2026-10-05: the rule has an EXIT — one re-read, then decide and proceed (atrx-vep-crispr looped forever on a real input typo)
+    expect(TASK_RULE_PLAN_LINES.inputs).toMatch(/re-read once/);
+    expect(TASK_RULE_PLAN_LINES.inputs).toMatch(/do not keep re-reading/);
+    expect(TASK_RULE_JUDGE_CLAUSES.inputs).toMatch(/is not a gap/);
     expect(TASK_RULE_PLAN_LINES.interp).toMatch(/consistent with every explicit hint and all of the data/);
     expect(TASK_RULE_PLAN_LINES.holdout).toMatch(/held-out split or constructed variants/);
     expect(TASK_RULE_PLAN_LINES.indep).toMatch(/does not reuse the producing logic/);
