@@ -1614,7 +1614,10 @@ Give concise, actionable guidance in plain text with these labeled parts:
     return this.generateGuidance(
       {
         surface: 'lift-plan',
-        mentor: resolveMentorRoleConfig('lift-plan', process.env, { modelId: context.helperModelId, effort: cfg.effort, outputBudgetTokens: cfg.outputBudgetTokens }),
+        // 2026-10-06: pass the planner's OWN timeout lever (CORTEX_LIFT_PLAN_TIMEOUT_MS, base 90 s) into the mentor resolve so the helper's
+        // first-call abort (0.6 × max(base, thinking table)) follows it — until now the lever governed only the orchestrator's outer wait and
+        // every long plan was aborted at 180 s regardless (10-05 cap cell: firstCallTimeoutMs 180,000 with the lever at 1,000,000).
+        mentor: resolveMentorRoleConfig('lift-plan', process.env, { modelId: context.helperModelId, effort: cfg.effort, outputBudgetTokens: cfg.outputBudgetTokens, timeoutMs: parseInt(process.env.CORTEX_LIFT_PLAN_TIMEOUT_MS ?? '90000', 10) || 90000 }),
         persona: plannerSystem(process.env, context.investigate), // R171
         task: context.investigate === 'offer'
           ? 'Either investigate first (first line INVESTIGATE, then CHECK:/READ: lines) or produce the criteria-anchored numbered plan (or a RETIRE plan). Do not write the full solution.'

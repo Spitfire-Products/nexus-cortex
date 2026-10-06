@@ -170,3 +170,17 @@ describe('R232 per-surface mentor model (CORTEX_<SURFACE>_MODEL)', () => {
     expect(resolveMentorRoleConfig('endturn-resolver', { ...base, CORTEX_ENDTURN_RESOLVER_MODEL: '  ' }, { modelId: 'y' }).modelId).toBe('y');
   });
 });
+
+describe('lift-plan first-call clock follows CORTEX_LIFT_PLAN_TIMEOUT_MS (2026-10-06)', () => {
+  it('a thinking-on lift-plan resolve with timeoutMs 1,000,000 yields a 600 s first call (0.6 × max(base, table))', async () => {
+    const { resolveMentorRoleConfig } = await import('../mentorRole');
+    const cfg = resolveMentorRoleConfig('lift-plan', { CORTEX_MENTOR_REASONING: 'on' } as any, { effort: 'max', outputBudgetTokens: 4000, timeoutMs: 1_000_000 });
+    expect(cfg.timeoutMs).toBe(1_000_000);
+    expect(cfg.firstCallTimeoutMs).toBe(600_000);
+  });
+  it('without timeoutMs the table rules: max → 300 s surface, 180 s first call (the pre-fix behaviour)', async () => {
+    const { resolveMentorRoleConfig } = await import('../mentorRole');
+    const cfg = resolveMentorRoleConfig('lift-plan', { CORTEX_MENTOR_REASONING: 'on' } as any, { effort: 'max', outputBudgetTokens: 4000 });
+    expect(cfg.firstCallTimeoutMs).toBe(180_000);
+  });
+});

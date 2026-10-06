@@ -13,12 +13,15 @@ class ScriptedRounds extends APIClient {
   public outTokens = 5;
   public params: any[] = [];
   public wallAt = 0;
+  public secondWallAt = 0; // HB-WALL-RETRY-LADDER: a second wall in the same turn
+  public toolChoices: any[] = [];
   private n = 0;
   constructor(private readonly root: string) { super(); }
   private data(): any {
     this.n++;
     const tu = (id: string) => ({ type: 'tool_use', id, name: TOOL, input: { pattern: `zzz${id}`, path: this.root } });
     const usage = { input_tokens: 1000 * this.n, output_tokens: this.outTokens };
+    if (this.secondWallAt && this.n === this.secondWallAt) return { id: 'mw2', type: 'message', role: 'assistant', content: [{ type: 'thinking', thinking: 'loop '.repeat(4000), signature: 'sig' }], stop_reason: 'max_tokens', usage: { input_tokens: 1000, output_tokens: 65536 } };
     if (this.wallAt && this.n === this.wallAt) return { id: 'mw', type: 'message', role: 'assistant', content: [{ type: 'thinking', thinking: 'spiral '.repeat(4000), signature: 'sig' }], stop_reason: 'max_tokens', usage: { input_tokens: 1000 * this.n, output_tokens: 65536 } };
     if (this.wallAt && this.n > this.wallAt) this.n = this.n; // continue the script after the wall
     if (this.n === 1) return { id: 'm1', type: 'message', role: 'assistant', content: [tu('t1')], stop_reason: 'tool_use', usage };
@@ -26,7 +29,7 @@ class ScriptedRounds extends APIClient {
     if (this.n === 3) return { id: 'm3', type: 'message', role: 'assistant', content: [tu('t3')], stop_reason: 'tool_use', usage };
     return { id: `m${this.n}`, type: 'message', role: 'assistant', content: [{ type: 'text', text: 'FINAL: nothing found.' }], stop_reason: 'end_turn', usage };
   }
-  override async sendRequest(req: any): Promise<APIResponse> { this.requests.push(JSON.parse(JSON.stringify(req.messages))); this.efforts.push(req.parameters?.reasoningEffort); this.params.push(JSON.parse(JSON.stringify(req.parameters ?? {}))); return { data: this.data(), status: 200, headers: {} }; }
+  override async sendRequest(req: any): Promise<APIResponse> { this.requests.push(JSON.parse(JSON.stringify(req.messages))); this.efforts.push(req.parameters?.reasoningEffort); this.params.push(JSON.parse(JSON.stringify(req.parameters ?? {}))); this.toolChoices.push(req.toolChoice ?? null); return { data: this.data(), status: 200, headers: {} }; }
   override streamRequest(req: any): any {
     this.requests.push(JSON.parse(JSON.stringify(req.messages))); this.efforts.push(req.parameters?.reasoningEffort); this.params.push(JSON.parse(JSON.stringify(req.parameters ?? {})));
     const d = this.data();
@@ -59,14 +62,14 @@ describe('wall levers loop integration', () => {
     if (!process.env.ANTHROPIC_API_KEY) { saved.ANTHROPIC_API_KEY = undefined; process.env.ANTHROPIC_API_KEY = 'test-placeholder-not-used'; }
   });
   afterEach(() => {
-    for (const k of ['CORTEX_WALL_DROP', 'CORTEX_OUTPUT_CAP_TOKENS', 'CORTEX_WALL_SUMMARY']) delete process.env[k];
+    for (const k of ['CORTEX_WALL_DROP', 'CORTEX_OUTPUT_CAP_TOKENS', 'CORTEX_WALL_SUMMARY', 'CORTEX_WALL_RETRY_LADDER', 'CORTEX_WALL_FORCE_ACTION_AT', 'CORTEX_EMPTY_TURN_CONTINUE']) delete process.env[k];
     for (const k of Object.keys(PINNED)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
     if ('ANTHROPIC_API_KEY' in saved && saved.ANTHROPIC_API_KEY === undefined) delete process.env.ANTHROPIC_API_KEY;
     fs.rmSync(dir, { recursive: true, force: true });
   });
-  async function run(mode: 'sendMessage' | 'streamMessage', patch?: (orch: any) => void) {
+  async function run(mode: 'sendMessage' | 'streamMessage', patch?: (orch: any) => void, secondWallAt = 0) {
     const api = new ScriptedRounds(dir);
-    api.wallAt = 2; // call 1 = tool round, call 2 = the wall, call 3 = the retry
+    api.wallAt = 2; api.secondWallAt = secondWallAt; // call 1 = tool round, call 2 = the wall, call 3 = the retry
     const orch = await createOrchestrator({
       defaultModelId: 'claude-haiku-4-5', projectPath: dir, storageDir: path.join(dir, '.cortex/sessions'), debug: !!process.env.TS_DEBUG,
       loopControl: { maxConsecutiveErrors: 999, maxToolIterations: 50, maxLoopRepetitions: 999 },
@@ -122,6 +125,27 @@ describe('wall levers loop integration', () => {
       const tail = lastToolResultText(api.requests[2]);
       expect(tail).toMatch(/ENTIRE output budget/);
       expect(tail).not.toMatch(/summary written by the harness/i);
+    });
+    (mode === 'sendMessage' ? it : it.skip)(`${mode}: HB-WALL-RETRY-LADDER → retry after wall 1 carries rung 1; retry after wall 2 carries rung 2 + tool_choice required`, async () => {
+      process.env.CORTEX_WALL_DROP = 'on'; process.env.CORTEX_WALL_RETRY_LADDER = '65536,16384'; process.env.CORTEX_WALL_FORCE_ACTION_AT = '2';
+      process.env.CORTEX_EMPTY_TURN_CONTINUE = 'true'; // the bench's setting: more than one empty-response retry per turn (a second wall reaches the retry path)
+      const api = await run(mode, undefined, 4); // call 1 tool round, 2 = wall 1, 3 = retry (tool round), 4 = wall 2, 5 = retry 2
+      expect(api.requests.length).toBeGreaterThanOrEqual(5);
+      const cap = (p: any) => p?.max_tokens ?? p?.maxTokens ?? p?.max_completion_tokens; // the gateway writes the provider's key, clamped to the card
+      const base = cap(api.params[0]);
+      expect(base).toBeGreaterThan(16384);
+      expect(cap(api.params[2])).toBe(Math.min(base, 65536));   // retry after wall 1 = rung 1 (never above the card cap)
+      expect(api.toolChoices[2]).toBeNull();                     // no forced action yet
+      expect(cap(api.params[4])).toBe(16384);                    // retry after wall 2 = rung 2
+      expect(api.toolChoices[4]).not.toBeNull();                 // forced action: tool_choice carried on the prepared request
+      expect(cap(api.params[1])).toBe(base);                     // the walled request itself was untouched by the ladder
+    });
+    (mode === 'sendMessage' ? it : it.skip)(`${mode}: ladder unset → retries carry the request's own cap and no forced choice (byte-identical)`, async () => {
+      process.env.CORTEX_WALL_DROP = 'on'; process.env.CORTEX_EMPTY_TURN_CONTINUE = 'true';
+      const api = await run(mode, undefined, 4);
+      const cap = (p: any) => p?.max_tokens ?? p?.maxTokens ?? p?.max_completion_tokens;
+      expect(cap(api.params[2])).toBe(cap(api.params[0]));
+      expect(api.toolChoices.filter(Boolean)).toEqual([]);
     });
     it(`${mode}: CORTEX_OUTPUT_CAP_TOKENS=48000 → every action request carries the cap`, async () => {
       process.env.CORTEX_OUTPUT_CAP_TOKENS = '48000';

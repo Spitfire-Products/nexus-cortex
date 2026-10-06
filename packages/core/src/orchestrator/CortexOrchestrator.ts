@@ -162,6 +162,7 @@ import { resolveEffortRamp, rampEffortFor } from './effortRamp.js';
 import { firstRequestActionEffort } from './transportEffortFixes.js'; // CORTEX_ACTION_EFFORT_FIRST (dark)
 import { resolveWallCacheFix, resolvePersistInjected, resolveAppendOnlyTools, resolveKeepMentorMessages, resolveResponsesSliceAll, chainedSliceStart, tailUnitAfterLastAssistant, isPreviousResponseUnavailable } from './appendOnlyHistory.js'; // R221-R228 append-only history (dark)
 import { resolveWallDrop, resolveOutputCap, dropWalledTurn, resolveWallSummary, extractWalledReasoning, clipReasoning, formatWallSummary, type WallDropResult } from './wallGuard.js';
+import { resolveWallRetryLadder, ladderCapFor, shouldForceAction } from './wallRetryLadder.js'; // HB-WALL-RETRY-LADDER (dark)
 import { resolvePid1Guard, detectPid1Note } from './pid1Guard.js'; // R209
 import { PlateauStopTracker, plateauBootInstruction, plateauStatusSegment } from './plateauStop.js'; // R210
 import { resolveTaskRules, taskRulesPlanBlock, taskRulesJudgeClause } from '../training/taskRules.js'; // R211–R214
@@ -2864,6 +2865,7 @@ export class CortexOrchestrator {
     let budgetContinueNudges = 0; // R151/R157: continue-with-budget nudges this turn (bounded by CORTEX_BUDGET_CONTINUE_MAX_NUDGES)
     const BUDGET_CONTINUE_MAX_NUDGES = resolveBudgetContinueMaxNudges();
     this.reasoningBackoffRemaining = 0; this.reasoningBackoffLastLevel = undefined; // R153: backoff is per turn
+    this.wallsThisTurn = 0; // HB-WALL-RETRY-LADDER: wall index is per turn
     const END_TURN_MAX_NUDGES = 2;
     // EndTurn gate / Stages 1-3 are OPT-IN (default OFF). The line-number
     // fabrication they targeted is fully resolved at the root cause:
@@ -2995,6 +2997,16 @@ export class CortexOrchestrator {
               `[Orchestrator] Empty response detected (${emptyClass.kind}, hadReasoning=${emptyClass.hadReasoning}, iteration=${toolCallIteration}). ` +
               `Retrying once with explicit completion prompt.`,
             );
+            // HB-WALL-RETRY-LADDER (CORTEX_WALL_RETRY_LADDER, dark): the n-th exhaustion wall of the turn bounds the RETRY's max_tokens and,
+            // from CORTEX_WALL_FORCE_ACTION_AT on, forces an action (tool_choice required → thinking off on DeepSeek). Off = untouched.
+            const ladderCfg = resolveWallRetryLadder();
+            if (ladderCfg.enabled && isReasoningExhaustion(emptyClass)) this.wallsThisTurn += 1;
+            const ladderCap = ladderCfg.enabled && isReasoningExhaustion(emptyClass) ? ladderCapFor(ladderCfg, this.wallsThisTurn, options.parameters?.maxTokens) : options.parameters?.maxTokens;
+            const ladderForce = shouldForceAction(ladderCfg, this.wallsThisTurn, emptyClass);
+            if (ladderCfg.enabled && isReasoningExhaustion(emptyClass)) {
+              const st = this.decisionStore;
+              if (st) void st.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'wall_retry_ladder' as any, detail: { wallIndex: this.wallsThisTurn, cap: ladderCap ?? null, forceAction: ladderForce, iteration: toolCallIteration } }).catch(() => {});
+            }
             const exhaustionLevel = this.armReasoningBackoffIfExhausted(emptyClass, options.parameters?.reasoningEffort ?? (effectiveModel as any)?.reasoning?.effort, toolCallIteration, (currentAssistantMessage as any)?.usage?.outputTokens, effectiveModel.provider);
             // HB-WALL-DROP (CORTEX_WALL_DROP, dark): drop the walled turn + carry the nudge on the newest tool_result (cache-preserving retry).
             const wallSummary = await this.summarizeWall(emptyClass, toolCallIteration, false); // HB-WALL-SUMMARY (dark); '' when off/failed
@@ -3073,12 +3085,13 @@ export class CortexOrchestrator {
                 effectiveModel,
                 {
                   temperature: options.parameters?.temperature,
-                  maxTokens: options.parameters?.maxTokens,
+                  maxTokens: ladderCap, // HB-WALL-RETRY-LADDER (off = options.parameters?.maxTokens)
                   topP: options.parameters?.topP,
                   reasoningEffort: retryEffort,
                   stream: options.streaming,
                   staticSystemPrompt: this.currentStaticSystemPrompt, // R28
                   conversationId: this.currentConversationId, // R28b
+                  ...(ladderForce ? { toolChoice: { type: 'required' as const } } : {}), // HB-WALL-RETRY-LADDER: forced action (thinking off on DeepSeek)
                 },
               );
               if (this.lastResponseId && effectiveModel.api.pattern === 'responses') {
@@ -3103,6 +3116,12 @@ export class CortexOrchestrator {
             if (effectiveModel.api.pattern === 'responses' && retryApiResponse.data?.id) {
               this.lastResponseId = retryApiResponse.data.id;
               this.lastResponseIdProvider = effectiveModel.provider; // R20a
+            }
+            // R240 (2026-10-06): the empty-response retry was never added to the session ledger — the bench's usage.session under-reported
+            // exactly the retries that walls add. Same accounting as the initial request (CO ~2713-2715).
+            if (retryConverted.usage) {
+              this.cacheMetricsAccumulator.addUsage(retryConverted.usage, effectiveModel.provider);
+              this.noteRequestUsage(retryConverted.usage);
             }
 
             if (retryConverted.messages && retryConverted.messages.length > 0) {
@@ -10383,6 +10402,7 @@ export class CortexOrchestrator {
   /** R153 HB-REASONING-EXHAUSTION: continuations left at a LOWERED reasoning effort after a truncated
    *  reasoning-only turn (output cap hit, nothing delivered). Takes precedence over the effort pulse. */
   private reasoningBackoffRemaining = 0;
+  private wallsThisTurn = 0; // HB-WALL-RETRY-LADDER (dark): reasoning-exhaustion walls seen in the current turn
   private reasoningBackoffLevel: ReasoningEffortLevel | undefined;
   /** R153b (4.111.1, tb4-p foodstuff): the level the LAST exhaustion in this turn stepped to — a repeat exhaustion steps down
    *  from here even after the counter expired (the empty-retry call consumed one of the lowered turns, so iteration 10 went
