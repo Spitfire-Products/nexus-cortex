@@ -352,20 +352,27 @@ describe('R224a CORTEX_STREAM_USAGE', () => {
   ];
   function streamOf(list: any[]) { return { async *[Symbol.asyncIterator]() { for (const c of list) yield c; } }; }
 
-  it('off = no stream_options and zero usage (pre-existing); on = include_usage requested + provider usage carried', async () => {
+  it('R236: unset = include_usage requested for deepseek (default on); explicit on = same; explicit off = no stream_options and zero usage', async () => {
     chatCreate.mockImplementation(async () => streamOf(chunks));
     let s = (new APIClient() as any).streamRequest(chatReq(), deepseekChat);
     for await (const _c of s.chunks) { /* drain */ }
     let fin = await s.finalMessage;
-    expect(chatCreate.mock.calls[0][0].stream_options).toBeUndefined();
-    expect(fin.usage).toEqual({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+    expect(chatCreate.mock.calls[0][0].stream_options).toEqual({ include_usage: true }); // R236 default on for deepseek
+    expect(fin.usage.prompt_tokens).toBe(100); // the provider usage is carried by default now
     expect(fin.choices[0].message.content).toBe('hello');
+
+    process.env.CORTEX_STREAM_USAGE = 'off'; // explicit off = the pre-R236 behaviour
+    s = (new APIClient() as any).streamRequest(chatReq(), deepseekChat);
+    for await (const _c of s.chunks) { /* drain */ }
+    fin = await s.finalMessage;
+    expect(chatCreate.mock.calls[1][0].stream_options).toBeUndefined();
+    expect(fin.usage).toEqual({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
 
     process.env.CORTEX_STREAM_USAGE = 'on';
     s = (new APIClient() as any).streamRequest(chatReq(), deepseekChat);
     for await (const _c of s.chunks) { /* drain */ }
     fin = await s.finalMessage;
-    expect(chatCreate.mock.calls[1][0].stream_options).toEqual({ include_usage: true });
+    expect(chatCreate.mock.calls[2][0].stream_options).toEqual({ include_usage: true });
     expect(fin.usage.prompt_cache_hit_tokens).toBe(64);
     expect(fin.usage.prompt_tokens).toBe(100);
     expect(fin.choices[0].message.content).toBe('hello');

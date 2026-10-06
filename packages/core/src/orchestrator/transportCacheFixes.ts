@@ -50,8 +50,16 @@ export function isAnthropicAutoCacheEnabled(): boolean {
 export function isForcedChoiceFullToolsEnabled(): boolean {
   return flagOn(process.env.CORTEX_FORCED_CHOICE_FULL_TOOLS);
 }
-export function isStreamUsageEnabled(): boolean {
-  return flagOn(process.env.CORTEX_STREAM_USAGE);
+/** Providers whose chat/completions endpoint accepts `stream_options.include_usage` (OpenAI; DeepSeek live-probed 2026-10-02; Groq). */
+export const STREAM_USAGE_DEFAULT_PROVIDERS: ReadonlySet<string> = new Set(['openai', 'deepseek', 'groq']);
+/** R236 (2026-10-06): default ON for the providers above (streaming usage was zeros by default — the session ledger, lastUsageAnchor and
+ *  the exhaustion token counts were wrong on every stream); explicit CORTEX_STREAM_USAGE=on forces it for any provider, explicit off
+ *  disables it everywhere. Unknown providers stay off unless forced (they may reject the field). */
+export function isStreamUsageEnabled(provider?: string): boolean {
+  const raw = String(process.env.CORTEX_STREAM_USAGE ?? '').trim().toLowerCase();
+  if (raw === 'on' || raw === 'true' || raw === '1') return true;
+  if (raw === 'off' || raw === 'false' || raw === '0') return false;
+  return !!provider && STREAM_USAGE_DEFAULT_PROVIDERS.has(provider.toLowerCase());
 }
 /** '1h' when CORTEX_ANTHROPIC_CACHE_TTL=1h; undefined = provider default (5 minutes, no ttl field sent). */
 export function anthropicCacheTtl(): '1h' | undefined {

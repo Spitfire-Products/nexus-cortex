@@ -1074,7 +1074,7 @@ export class APIClient {
     }
     // R224a (DARK, CORTEX_STREAM_USAGE): ask for the final usage chunk on streaming requests (otherwise the
     // reassembled message reports zeros). Body-level, after the prefix — cache-neutral.
-    if (opts.stream && isStreamUsageEnabled()) {
+    if (opts.stream && isStreamUsageEnabled(modelConfig.provider)) {
       chatRequest.stream_options = { include_usage: true };
     }
 
@@ -2454,7 +2454,7 @@ export class APIClient {
     // (the empty-response classifier keys `truncated` on it; the old hardcode reported every text turn as `stop`).
     let lastFinishReason: string | null = null;
     // R224a (DARK, CORTEX_STREAM_USAGE): the provider's final usage chunk (choices: []) when requested.
-    const captureStreamUsage = isStreamUsageEnabled();
+    const captureStreamUsage = isStreamUsageEnabled(modelConfig.provider);
     let streamUsage: any = null;
 
     // Capture this context before entering generator
