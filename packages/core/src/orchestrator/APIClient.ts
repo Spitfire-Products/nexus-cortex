@@ -2461,7 +2461,39 @@ export class APIClient {
     const self = this;
 
     // Create async generator that both yields chunks AND accumulates final message
+    // R238 (2026-10-06): `finalMessage` used to resolve ONLY at the natural end of the stream — a consumer that broke out of `chunks`
+    // (abort, tail-loop guard, ESC) or a stream that threw left the promise pending forever. Any early exit now settles it with the
+    // PARTIAL message (finish_reason 'aborted', content/reasoning/tool_calls accumulated so far, x_partial: true, an estimated output-token
+    // count for accounting since the provider's usage chunk never arrives). The natural-end path is byte-identical.
+    let streamCompletedNaturally = false;
+    let streamError: unknown = undefined;
+    const resolvePartial = () => {
+      const partialToolCalls = Array.from(accumulatedToolCalls.values())
+        .filter((tc) => tc.id && tc.name)
+        .map((tc) => ({ id: tc.id!, type: 'function' as const, function: { name: tc.name!, arguments: tc.arguments } }));
+      finalMessageResolve({
+        id: firstChunk?.id || 'chatcmpl-' + Date.now(),
+        object: 'chat.completion',
+        created: firstChunk?.created || Math.floor(Date.now() / 1000),
+        model: firstChunk?.model || request.modelId,
+        choices: [{
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: fullContent || null,
+            ...(fullReasoningContent && { reasoning_content: fullReasoningContent }),
+            ...(partialToolCalls.length > 0 && { tool_calls: partialToolCalls })
+          },
+          finish_reason: 'aborted'
+        }],
+        usage: streamFinalUsage(streamUsage),
+        x_partial: true,
+        x_estimated_output_tokens: Math.round((fullContent.length + fullReasoningContent.length) / 4),
+        ...(streamError !== undefined ? { x_error: String((streamError as any)?.message ?? streamError).slice(0, 300) } : {}),
+      });
+    };
     const chunks = async function* () {
+      try {
       if (process.env.DEBUG === 'true' || process.env.DEBUG_THINKING === 'true') {
         console.log(`[DEBUG APIClient] OpenAI request:`, JSON.stringify(openaiRequest, null, 2));
       }
@@ -2605,6 +2637,13 @@ export class APIClient {
         }],
         usage: streamFinalUsage(streamUsage)
       });
+      streamCompletedNaturally = true;
+      } catch (err) {
+        streamError = err;
+        throw err; // the chunk consumer still sees the error, as before
+      } finally {
+        if (!streamCompletedNaturally) resolvePartial(); // R238: abort / early return / throw → settle with the partial message
+      }
     }();
 
     return {
