@@ -45,3 +45,21 @@ describe('subagents bucket (2026-10-01)', () => {
     expect(c.helperEst).toBeCloseTo((100 * 10 + 10 * 20) / 1e6, 12);
   });
 });
+
+
+import { sumSessionUsage, emptySessionUsage as _e2 } from '../usageAccounting.js';
+describe('R239 sumSessionUsage (second-attempt chain)', () => {
+  it('adds every numeric counter, merges helper.bySurface by key, sums subagents, keeps the later non-numeric value', () => {
+    const a = { ..._e2(), requests: 3, inputTokens: 100, outputTokens: 10, reasoningTokens: 5, helper: { calls: 1, inputTokensEst: 50, outputTokensEst: 5, bySurface: { 'lift-plan': 55, judge: 1 } }, subagents: { ..._e2().subagents, calls: 1, inputTokens: 20 } } as any;
+    const b = { ..._e2(), requests: 2, inputTokens: 200, outputTokens: 20, costUsd: 0.01, model: 'm2', helper: { calls: 2, inputTokensEst: 70, outputTokensEst: 7, bySurface: { judge: 2, author: 3 } }, subagents: { ..._e2().subagents, calls: 2, inputTokens: 30 } } as any;
+    const s = sumSessionUsage(a, b) as any;
+    expect(s).toMatchObject({ requests: 5, inputTokens: 300, outputTokens: 30, reasoningTokens: 5, costUsd: 0.01, model: 'm2' });
+    expect(s.helper).toEqual({ calls: 3, inputTokensEst: 120, outputTokensEst: 12, bySurface: { 'lift-plan': 55, judge: 3, author: 3 } });
+    expect(s.subagents).toMatchObject({ calls: 3, inputTokens: 50, outputTokens: 0 });
+  });
+  it('tolerates null, undefined and partial ledgers', () => {
+    expect(sumSessionUsage(null, undefined)).toEqual(_e2());
+    expect(sumSessionUsage({ inputTokens: 5 } as any, null).inputTokens).toBe(5);
+    expect(sumSessionUsage({ inputTokens: 5 } as any, { inputTokens: 7 } as any).helper.calls).toBe(0);
+  });
+});

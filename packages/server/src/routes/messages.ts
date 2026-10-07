@@ -3,7 +3,7 @@
  * Thin wrapper around CortexOrchestrator
  */
 import { Router, Request, Response } from 'express';
-import { createOrchestrator, DEFAULT_SETTINGS, type OrchestratorConfig, type CortexOrchestrator, toolFactory } from '@nexus-cortex/core';
+import { createOrchestrator, DEFAULT_SETTINGS, type OrchestratorConfig, type CortexOrchestrator, toolFactory, resolveSecondAttemptConfig, runWithAttempts } from '@nexus-cortex/core';
 
 // Read lazily — ESM hoists imports before index.ts sets process.env.PROJECT_ROOT
 function getProjectRoot(): string {
@@ -151,6 +151,29 @@ messagesRouter.post('/v1/messages', async (req: Request, res: Response, next) =>
         })}\n\n`);
         res.end();
       }
+    } else if (resolveSecondAttemptConfig(process.env).enabled) {
+      // R239 / P4 (2026-10-07): the R194 SECOND-ATTEMPT CHAIN, in the library. One POST = one task; the AttemptController runs
+      // attempt 1 on this orchestrator, then (while the last resolver verdict is in the trigger set and enough of the ORIGINAL
+      // deadline remains) restores the workspace snapshot and runs a fresh orchestrator per extra attempt — its own state dir
+      // (decisions.jsonl), sessions dir and reduced deadline — selects, restores the pick and returns the merged response.
+      // Attempt orchestrators mirror the server's: same project path + model + permission mode (index.ts:588 headless rule).
+      const projectPath = process.env.PROJECT_PATH || getProjectRoot();
+      const headlessAutoApprove = !process.stdout.isTTY && process.env.CORTEX_HEADLESS_APPROVE !== 'false';
+      const autoApprove = process.env.YOLO === 'true' || process.argv.includes('--yolo') || headlessAutoApprove;
+      const permissionMode = autoApprove ? 'auto' : (serverOrchestrator ? 'interactive' : 'disabled');
+      const response = await runWithAttempts({
+        orchestrator, turnContent, messageOptions, projectPath,
+        createAttemptOrchestrator: async (_k, spec) => {
+          const attempt = await createOrchestrator({
+            defaultModelId: model, projectPath, workingDirectory: projectPath, enableTimeline: true, debug: process.env.DEBUG === 'true',
+            ...(process.env.CORTEX_SYSTEM_PROMPT_FILE ? { systemPromptFile: process.env.CORTEX_SYSTEM_PROMPT_FILE } : {}),
+            storageDir: spec.storageDir, stateDir: spec.stateDir, loopControl: { turnDeadlineMs: spec.turnDeadlineMs },
+          }, { permissionMode });
+          await attempt.createSession(projectPath, model);
+          return attempt;
+        },
+      });
+      res.json(response);
     } else {
       // Non-streaming request
       const response = await orchestrator.sendMessage(turnContent, messageOptions);

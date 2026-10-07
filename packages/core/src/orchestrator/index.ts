@@ -9,6 +9,9 @@ export * from './herdrReporter.js';
 export * from './HerdrSubAgentRunner.js';
 export * from './APIClient.js';
 
+// R239 / P4 (2026-10-07): the second-attempt chain (decision / selection / merge / runner) — the library owns it, the adapter only launches + banks
+export * from './attemptController.js';
+
 // StructuredOutput (grok-build port): schema-constrained JSON output via a
 // request-scoped synthetic tool (pure module — no registry, no wire changes)
 export * from './structuredOutput.js';

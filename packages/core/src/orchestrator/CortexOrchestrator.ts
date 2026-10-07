@@ -91,6 +91,7 @@ import { resolveSubAgentTimeoutMs } from './subAgentTimeout.js';
 import { resolveHerdrReporting, HerdrReporter, sanitizeHerdrAgentName, type HerdrState } from './herdrReporter.js';
 import { runDelegateInHerdr, readSubAgentRuntimeLever, resolveSubAgentRuntime, type SubAgentRuntime } from './HerdrSubAgentRunner.js';
 import { randomBytes } from 'crypto';
+import type { LastResolverDecision } from './attemptController.js';
 import { resolveTurnDeadlineMs, timeBudgetState, timeBudgetWarnNudge, resolveBudgetVisibility, resolveBudgetContinueMinRemaining, resolveBudgetContinueMaxNudges, budgetBand, budgetVisibilityLine } from './timeBudget.js';
 import { readStagedDoctrine, applyCuratedDoctrine, runOrientForStaging, withTimeout } from './doctrineCuration.js';
 import { ExactRepeatTracker, notePollResults } from '../training/loopLadder.js';
@@ -102,7 +103,7 @@ import { McpConfigManager } from '../mcp/McpConfigManager.js';
 import { McpServerRegistry, type McpServerDefinition } from '../mcp/McpServerRegistry.js';
 import type { McpServerConfig, McpTransportType } from '../mcp/McpClient.js';
 import { prefixMcpToolName, parseMcpToolName } from '../mcp/mcpToolNamespacing.js';
-import { DecisionStore } from '../training/DecisionStore.js';
+import { DecisionStore, type SteeringEventKind } from '../training/DecisionStore.js';
 import { formatPriorReminder, formatFamilyReminder, formatApproachReminder } from '../training/DecisionPriorInjector.js';
 import {
   resolveConsultRung,
@@ -241,6 +242,11 @@ export interface OrchestratorConfig {
 
   /** Storage directory for sessions */
   storageDir?: string;
+
+  /** R239 / P4 (2026-10-07): per-INSTANCE runtime-state root (decisions.jsonl, …). Unset = the process-wide state dir
+   *  (CORTEX_STATE_DIR / <project>/.cortex via resolveCortexStateDir, memoized per project path). The second-attempt chain
+   *  gives every extra attempt its own root so its decision trail never mixes with attempt 1's. */
+  stateDir?: string;
 
   /** Enable debug logging */
   debug?: boolean;
@@ -693,6 +699,7 @@ export class CortexOrchestrator {
   private reqLedger: LedgerEntry[] | null = null; // R187: the stated-requirement ledger for this turn (null = not yet authored)
   private reqLedgerPromise: Promise<LedgerEntry[]> | null = null; // R187: authored at lift in the background
   private sessionUsage: SessionUsage = emptySessionUsage(); // R190: every main-model request this session (exact) + helper calls (estimated)
+  private lastResolverDecision: LastResolverDecision | null = null; // R239: the LAST endturn_resolver adjudication of the current turn (null = no verdict)
   private reqLedgerHolds = 0; // R187: ledger holds used this turn
   private reqLedgerRetried = false; // R187c: one re-author at the first finish after an empty lift-time result
   private reqLedgerMeta = { genLatencyMs: 0, raw: 0, refused: 0 }; // R187
@@ -1612,6 +1619,7 @@ export class CortexOrchestrator {
       if (store && cfg.verifyScale) void store.recordEvent({ sessionId, kind: 'verify_scale_item', toolName: 'EndTurn', detail: { surface: 'endturn-resolver', clauseChars: RESOLVER_SCALE_CLAUSE.length, roundsUsed, meets: verdict.meets, parsed: verdict.parsed, confidence: verdict.confidence } }).catch(() => {});
       // R211–R214 HB-TASK-RULES (CORTEX_RULE_*, dark): the judge persona carried the active rule clauses on this adjudication.
       if (store && cfg.taskRules.length) void store.recordEvent({ sessionId, kind: 'task_rule_judge', toolName: 'EndTurn', detail: { surface: 'endturn-resolver', rules: cfg.taskRules, clauseChars: taskRulesJudgeClause(cfg.taskRules).length, roundsUsed, meets: verdict.meets, parsed: verdict.parsed, confidence: verdict.confidence } }).catch(() => {});
+      this.lastResolverDecision = { action, confidence: verdict.confidence, namedPassed, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null, remainingFrac: resolverRemainingFrac === null ? null : Number(resolverRemainingFrac.toFixed(4)), ts: Date.now() }; // R239
       if (store) void store.recordEvent({
         sessionId,
         kind: 'endturn_resolver',
@@ -1739,6 +1747,7 @@ export class CortexOrchestrator {
         console.log(`[EndTurnResolver] MEETS — finish confirmed (parsed=${verdict.parsed})`);
       }
     } catch (e: any) {
+      this.lastResolverDecision = { action: null, error: String(e?.message ?? e).slice(0, 120), ts: Date.now() }; // R239: an errored adjudication is no verdict
       if (store) void store.recordEvent({ sessionId, kind: 'endturn_resolver', detail: { error: String(e?.message ?? e).slice(0, 120), mentor: this.mentorWire('endturn-resolver') } }).catch(() => {});
       // fail-open: leave the finish accepted
     }
@@ -2798,7 +2807,7 @@ export class CortexOrchestrator {
     // R153: the stop reason of the LATEST response (continuation/retry/gate/synth refresh it) — the empty-response
     // classifier used to read the turn's FIRST response, so a `length` cutoff on a continuation was never seen.
     let lastStopReason: string | undefined = convertedResponse.stopReason;
-    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; this.specChecks = null; this.specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; this.specChecksPromise = null; this.specFailHistory.clear(); this.reqLedger = null; this.reqLedgerPromise = null; this.reqLedgerHolds = 0; this.reqLedgerMeta = { genLatencyMs: 0, raw: 0, refused: 0 }; this.reqLedgerDelivered = false; this.reqLedgerRetried = false; this.lastHoldMs = 0; this.derivationHolds = 0; // R165 per-turn / R174 / R173c / R176
+    this.lastResolverDecision = null; this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; this.specChecks = null; this.specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; this.specChecksPromise = null; this.specFailHistory.clear(); this.reqLedger = null; this.reqLedgerPromise = null; this.reqLedgerHolds = 0; this.reqLedgerMeta = { genLatencyMs: 0, raw: 0, refused: 0 }; this.reqLedgerDelivered = false; this.reqLedgerRetried = false; this.lastHoldMs = 0; this.derivationHolds = 0; // R165 per-turn / R174 / R173c / R176
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     let toolCallIteration = 0;
     // R137 HB-POLL-REPEAT-BREAKER: the exact-repeat breaker used to force-exit by overwriting
@@ -5272,7 +5281,7 @@ export class CortexOrchestrator {
 
     let currentAssistantCanonicalMessage = convertedResponse.messages[0]!;
     let lastStopReason: string | undefined = convertedResponse.stopReason; // R153 (see non-streaming loop)
-    this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; this.specChecks = null; this.specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; this.specChecksPromise = null; this.specFailHistory.clear(); this.reqLedger = null; this.reqLedgerPromise = null; this.reqLedgerHolds = 0; this.reqLedgerMeta = { genLatencyMs: 0, raw: 0, refused: 0 }; this.reqLedgerDelivered = false; this.reqLedgerRetried = false; this.lastHoldMs = 0; this.derivationHolds = 0; // R165 per-turn / R174 / R173c / R176
+    this.lastResolverDecision = null; this.turnToolCallTotal = 0; this.toolCallsAtLastVeto = 0; this.judgePriorNamedPassed = 0; this.finishConfirms = 0; this.judgeAcceptedWithGap = false; this.judgeMeetsUnevidenced = false; this.turnFormatRejects = 0; this.pendingFormatReject = null; this.actionPlanRejects = 0; this.pendingPlanFieldRejects.clear(); this.judgeNamedChecks = []; this.judgePriorPlan = ''; this.judgeEscalated = false; this.judgeAdjudicatedThisFinish = false; this.specChecks = null; this.specChecksMeta = { genLatencyMs: 0, refused: 0, raw: 0 }; this.specChecksPromise = null; this.specFailHistory.clear(); this.reqLedger = null; this.reqLedgerPromise = null; this.reqLedgerHolds = 0; this.reqLedgerMeta = { genLatencyMs: 0, raw: 0, refused: 0 }; this.reqLedgerDelivered = false; this.reqLedgerRetried = false; this.lastHoldMs = 0; this.derivationHolds = 0; // R165 per-turn / R174 / R173c / R176
     this.recordDsmlRecovery(currentAssistantCanonicalMessage);
     const assistantMessageId = currentAssistantCanonicalMessage.uuid;
 
@@ -10282,12 +10291,33 @@ export class CortexOrchestrator {
       return undefined;
     }
     if (!this.decisionStore) {
-      const root = this.config.projectPath || process.cwd();
-      // 4.108.6 (R131): state root resolves to a WRITABLE location (read-only workdirs fall back; never fatal)
-      const storePath = cortexStatePath(root, 'decisions.jsonl');
-      this.decisionStore = new DecisionStore(storePath);
+      this.decisionStore = new DecisionStore(this.decisionsStorePath());
     }
     return this.decisionStore;
+  }
+
+  /** R239: where this instance's decision store lives — config.stateDir (per instance) or the process-wide state root
+   *  (4.108.6 R131: resolves to a WRITABLE location, read-only workdirs fall back; never fatal). */
+  private decisionsStorePath(): string {
+    const root = this.config.projectPath || process.cwd();
+    return this.config.stateDir ? pathJoin(this.config.stateDir, 'decisions.jsonl') : cortexStatePath(root, 'decisions.jsonl');
+  }
+
+  /** R239 / P4: the last endturn_resolver adjudication of the current turn (null = the turn ended without a verdict = a give-up).
+   *  Read by the AttemptController after sendMessage returns; reset at every turn start. */
+  getLastResolverDecision(): LastResolverDecision | null { return this.lastResolverDecision ? { ...this.lastResolverDecision } : null; }
+
+  /** R239 / P4: this instance's decision-store path + current session record path, for banking per-attempt artifacts. */
+  getAttemptArtifactPaths(): { decisionsPath?: string; sessionPath?: string } {
+    let decisionsPath: string | undefined; try { decisionsPath = this.decisionsStorePath(); } catch { decisionsPath = undefined; }
+    let sessionPath: string | undefined; try { sessionPath = this.currentSessionId ? this.historyStore.getSessionPath(this.currentSessionId) : undefined; } catch { sessionPath = undefined; }
+    return { decisionsPath, sessionPath };
+  }
+
+  /** R239 / P4: bank one steering event into this instance's decision store (best-effort; mechanism-engagement evidence). */
+  async bankSteeringEvent(kind: SteeringEventKind, detail: Record<string, unknown>): Promise<void> {
+    const store = this.getDecisionStore();
+    if (store) await store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind, detail }).catch(() => {});
   }
 
   /** HB-DSML-PARSE observability (2026-09-09): if the DeepSeek DSML tool-call recovery fired on this

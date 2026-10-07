@@ -62,6 +62,7 @@ export interface Decision {
 export type SteeringEventKind =
   | 'steering_injected'
   | 'loop_escalation'
+  | 'second_attempt' // R239 / P4 (2026-10-07): the AttemptController's decision after each attempt {phase:'decision', k, action, remainingFrac, go, why, …} and its selection {phase:'selection', pick, why, attempts}
   | 'endturn_gate_fallback'
   | 'turn_contract_reject' // HB-TURN-CONTRACT-ENFORCE: a tool-calling response lacking ANALYSIS/PLAN was rejected unexecuted — detail {iteration, rejects, max, missing, tools}
   | 'turn_contract_fallback' // HB-TURN-CONTRACT-ENFORCE: rejections exhausted, batch executed as-is — detail {iteration, rejects, missing, tools}

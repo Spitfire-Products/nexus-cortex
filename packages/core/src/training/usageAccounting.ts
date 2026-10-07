@@ -79,3 +79,30 @@ export function usageCost(acc: SessionUsage, p: UsagePrices): { main: number; he
   const denom = acc.cacheReadTokens + acc.uncachedInputTokens;
   return { main, helperEst, total: main + helperEst, cacheHitRate: denom > 0 ? acc.cacheReadTokens / denom : 0 };
 }
+
+/** R239 / P4 (2026-10-07): the sum of two whole-session ledgers — for the second-attempt chain, whose response carries usage.session
+ *  SUMMED over every attempt. Every numeric counter is added (known and unknown top-level keys alike), `helper` is summed field-wise with
+ *  `bySurface` merged by key, `subagents` is summed field-wise; any other non-numeric key keeps the LATER ledger's non-null value (the
+ *  bench adapter's sa_merge kept the latest non-null, too). Deep-summing helper/subagents is a deliberate parity difference from the
+ *  adapter, which summed top-level numbers only. Pure. */
+export function sumSessionUsage(a: Partial<SessionUsage> | undefined | null, b: Partial<SessionUsage> | undefined | null): SessionUsage {
+  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const e = emptySessionUsage();
+  const A = (a ?? {}) as Record<string, unknown>; const B = (b ?? {}) as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...e };
+  for (const k of new Set([...Object.keys(A), ...Object.keys(B)])) {
+    if (k === 'helper' || k === 'subagents') continue;
+    const va = A[k], vb = B[k];
+    if (typeof va === 'number' || typeof vb === 'number') out[k] = n(va) + n(vb);
+    else out[k] = vb ?? va ?? out[k];
+  }
+  const ha = (A.helper ?? {}) as Partial<SessionUsage['helper']>, hb = (B.helper ?? {}) as Partial<SessionUsage['helper']>;
+  const bySurface: Record<string, number> = { ...(ha.bySurface ?? {}) };
+  for (const [k, v] of Object.entries(hb.bySurface ?? {})) bySurface[k] = n(bySurface[k]) + n(v);
+  out.helper = { calls: n(ha.calls) + n(hb.calls), inputTokensEst: n(ha.inputTokensEst) + n(hb.inputTokensEst), outputTokensEst: n(ha.outputTokensEst) + n(hb.outputTokensEst), bySurface };
+  const sa = (A.subagents ?? {}) as Partial<SessionUsage['subagents']>, sb = (B.subagents ?? {}) as Partial<SessionUsage['subagents']>;
+  const sub: Record<string, number> = {};
+  for (const k of Object.keys(e.subagents)) sub[k] = n((sa as Record<string, unknown>)[k]) + n((sb as Record<string, unknown>)[k]);
+  out.subagents = sub;
+  return out as unknown as SessionUsage;
+}

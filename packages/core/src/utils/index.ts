@@ -13,3 +13,4 @@ export * from './ErrorDetector.js';
 export * from './ContextResolver.js';
 export * from './DiffParser.js';
 export * from './stateDir.js';
+export * from './workspaceSnapshot.js';

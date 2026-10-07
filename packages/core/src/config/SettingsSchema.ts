@@ -195,6 +195,13 @@ export interface EnvironmentVariables {
   CORTEX_COMPACTION_HANDOFF_QA?: string; // 'true' | 'false' — Terminus-style gap-question round appended to the resume memory as a GAPS (Q/A) section (R143; default false)
   CORTEX_COMPACTION_HANDOFF_QA_MAX_QUESTIONS?: string; // cap on gap questions per handoff QA round (R143; default 6, 1-20)
   CORTEX_STATE_DIR?: string; // explicit runtime-state root (4.108.6); empty = <project>/.cortex with writable-probe fallback
+  CORTEX_SECOND_ATTEMPT?: string; // 1 = the R194 second-attempt chain in the library (R239 / P4; default off)
+  CORTEX_SECOND_ATTEMPT_MAX?: string; // max EXTRA attempts (default 1)
+  CORTEX_SECOND_ATTEMPT_MIN_REMAINING?: string; // fraction of the original deadline that must remain (default 0.5)
+  CORTEX_SECOND_ATTEMPT_TRIGGER?: string; // resolver actions that open another attempt; none = a give-up (default accept-with-gap,accept-low-confidence)
+  CORTEX_SECOND_ATTEMPT_RESERVE_MS?: string; // reserve (ms) subtracted from the next deadline (default 300000)
+  CORTEX_SECOND_ATTEMPT_FLOOR_MS?: string; // minimum (ms) left after the reserve (default 900000)
+  CORTEX_SECOND_ATTEMPT_OUT_DIR?: string; // where per-attempt artifacts + second-attempt.json are banked (default <state dir>/attempts)
   CORTEX_COMPACTION_CHECKPOINT_PCT?: string; // fraction of the compaction threshold at which the first pre-compaction checkpoint is written (4.108.2; default 0.75)
   CORTEX_COMPACTION_CHECKPOINT_STEP?: string; // checkpoint refresh band width as a fraction of the threshold (4.108.2; default 0.10)
   CORTEX_COMPACTION_RESUME?: string; // 'true' | 'false' — resume memory + task pin injected after proactive compaction (4.108.0)
@@ -511,6 +518,13 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_COMPACTION_HANDOFF_QA: '',
   CORTEX_COMPACTION_HANDOFF_QA_MAX_QUESTIONS: '',
   CORTEX_STATE_DIR: '',
+  CORTEX_SECOND_ATTEMPT: '',
+  CORTEX_SECOND_ATTEMPT_MAX: '',
+  CORTEX_SECOND_ATTEMPT_MIN_REMAINING: '',
+  CORTEX_SECOND_ATTEMPT_TRIGGER: '',
+  CORTEX_SECOND_ATTEMPT_RESERVE_MS: '',
+  CORTEX_SECOND_ATTEMPT_FLOOR_MS: '',
+  CORTEX_SECOND_ATTEMPT_OUT_DIR: '',
   CORTEX_COMPACTION_CHECKPOINT_STEP: '',
   CORTEX_DELEGATION_HINT: '',
   CORTEX_TURN_CONTRACT: '',
@@ -1460,6 +1474,62 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_STATE_DIR',
     displayName: 'Cortex state directory override',
     description: 'Explicit runtime-state root for sessions/artifacts/tmux/decisions (4.108.6); empty = <project>/.cortex, falling back to ~/.cortex/projects/<hash> then tmpdir when the project dir is not writable',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_SECOND_ATTEMPT',
+    displayName: 'Second attempt: enable',
+    description: '1 = the R194 second-attempt chain in the library (R239 / P4; default off)',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_SECOND_ATTEMPT_MAX',
+    displayName: 'Second attempt: max',
+    description: 'max EXTRA attempts (default 1)',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_SECOND_ATTEMPT_MIN_REMAINING',
+    displayName: 'Second attempt: min_remaining',
+    description: 'fraction of the original deadline that must remain (default 0.5)',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_SECOND_ATTEMPT_TRIGGER',
+    displayName: 'Second attempt: trigger',
+    description: 'resolver actions that open another attempt; none = a give-up (default accept-with-gap,accept-low-confidence)',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_SECOND_ATTEMPT_RESERVE_MS',
+    displayName: 'Second attempt: reserve_ms',
+    description: 'reserve (ms) subtracted from the next deadline (default 300000)',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_SECOND_ATTEMPT_FLOOR_MS',
+    displayName: 'Second attempt: floor_ms',
+    description: 'minimum (ms) left after the reserve (default 900000)',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_SECOND_ATTEMPT_OUT_DIR',
+    displayName: 'Second attempt: out_dir',
+    description: 'where per-attempt artifacts + second-attempt.json are banked (default <state dir>/attempts)',
     type: 'string',
     category: 'training',
     default: ''
