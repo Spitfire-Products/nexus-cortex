@@ -59,6 +59,10 @@ async function trace(mode: 'sendMessage' | 'streamMessage', script: Script, dir:
   if (mode === 'sendMessage') await orch.sendMessage('find zzz');
   else for await (const _c of orch.streamMessage('find zzz')) { /* drain */ }
   const events: Record<string, number> = {};
+  // The loops bank their last events (endturn_gate_fallback, session_usage) with `void store.recordEvent(...)` — async appends that can
+  // land AFTER the turn returns. Read the store only once it has stopped growing (CI 2026-10-07: the race read 2 events short on one loop
+  // and reported a phantom one-loop divergence).
+  await settleDecisions(orch);
   try {
     const rows = await orch.decisionStore?.readEvents?.();
     for (const r of rows ?? []) { const k = String((r as any).kind ?? (r as any).eventKind ?? 'unknown'); events[k] = (events[k] ?? 0) + 1; }
@@ -66,6 +70,22 @@ async function trace(mode: 'sendMessage' | 'streamMessage', script: Script, dir:
   const historyLen = (await orch.getHistory?.())?.length ?? (orch.history?.length ?? -1);
   await orch.cleanup().catch(() => {});
   return { requests: api.requests.length, messageCounts: api.requests.map((m: any[]) => m.length), historyLen, events };
+}
+
+/** Wait until the orchestrator's decision store stops growing (quiet for 250 ms; at most 5 s). */
+async function settleDecisions(orch: any): Promise<void> {
+  let storePath: string | undefined;
+  try { storePath = orch.decisionStore?.storePath ?? orch.decisionsStorePath?.(); } catch { storePath = undefined; }
+  const size = () => { try { return storePath ? fs.statSync(storePath).size : -1; } catch { return -1; } };
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const t0 = Date.now();
+  let last = size(); let quietSince = Date.now();
+  while (Date.now() - t0 < 5000) {
+    await sleep(50);
+    const now = size();
+    if (now !== last) { last = now; quietSince = Date.now(); }
+    else if (Date.now() - quietSince >= 250) return;
+  }
 }
 
 function diverge(a: Trace, b: Trace): string[] {
@@ -83,7 +103,10 @@ const KNOWN_GAPS: Record<Script, string[]> = {
   // R234 (discovery run 2026-10-06): after a max_tokens wall the non-streaming loop classifies it (reasoning_exhaustion), drops the walled
   // turn (wall_drop), nudges and retries (6 requests); the streaming loop's `while (hasToolUse && …)` (CortexOrchestrator ~5381) exits on
   // the no-tool turn and the empty-continue fallback classifies with an undefined stop reason (~6401): 3 requests, no wall events, turn over.
-  'wall-mid-turn': ['event:reasoning_exhaustion', 'event:wall_drop', 'messageCounts', 'requests'],
+  // + endturn_gate_fallback (2026-10-07, same R234 root): the non-streaming loop reaches the end-turn gate after its retry and banks the
+  // fallback; the streaming loop never gets there because it already exited at the wall. (Pinned once the ratchet's store read waited
+  // for the async event appends to land — the race had hidden it.)
+  'wall-mid-turn': ['event:reasoning_exhaustion', 'event:wall_drop', 'event:endturn_gate_fallback', 'messageCounts', 'requests'],
 };
 
 describe('turn-loop parity ratchet (sendMessage vs streamMessage, identical scripted provider)', () => {

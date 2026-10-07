@@ -4700,14 +4700,17 @@ export class CortexOrchestrator {
     // Include all executed tool uses from all iterations (not just final message)
     this.herdrReport('idle', this.herdrTurnLabel); // R145: turn returned
     this.bankTurnStatusEvent(false); // HB-TURN-STATUS
+    // R190: the whole session's tokens — every main request (exact) + helper/mentor calls (estimated) — not the last request's.
+    // Snapshotted ONCE for both usage.session and metadata.sessionUsage (parity: the streaming loop banks one session_usage event per
+    // turn; the second snapshot here banked a duplicate row — surfaced by the P0 ratchet once its read waited for the store, 2026-10-07).
+    const sessionUsageSnapshot = this.snapshotSessionUsage();
     return {
       messageId: currentAssistantMessage.uuid,
       content: currentAssistantCanonicalMessage.content,
       toolUses: allExecutedToolUses,
       usage: {
         ...(convertedResponse.usage || { inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
-        // R190: the whole session's tokens — every main request (exact) + helper/mentor calls (estimated) — not the last request's
-        session: this.snapshotSessionUsage(),
+        session: sessionUsageSnapshot,
       },
       model: {
         id: model.id,
@@ -4715,7 +4718,7 @@ export class CortexOrchestrator {
       },
       metadata: {
         conversationId: this.currentConversationId,
-        sessionUsage: this.snapshotSessionUsage(), // R190
+        sessionUsage: sessionUsageSnapshot, // R190
         usedHelperModel,
         compactionTriggered: usedHelperModel,
         serverSideTools: serverSideMetadata || undefined,
