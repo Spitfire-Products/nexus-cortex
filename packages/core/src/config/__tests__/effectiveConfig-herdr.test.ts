@@ -38,9 +38,9 @@ describe('R145 herdr lifecycle levers are registered the canonical way', () => {
   it('the resolved-binary inputs (CORTEX_HERDR_BIN override, HERDR_BIN_PATH pane export) are visible in the dump', () => {
     expect(find({}, 'CORTEX_HERDR_BIN')!.source).toBe('code-default');
     expect(find({ CORTEX_HERDR_BIN: '/opt/herdr' }, 'CORTEX_HERDR_BIN')!.effective).toBe('/opt/herdr');
-    const exported = find({ HERDR_BIN_PATH: '/home/runner/workspace/.local/bin/herdr' }, 'HERDR_BIN_PATH');
+    const exported = find({ HERDR_BIN_PATH: '/opt/herdr/bin/herdr' }, 'HERDR_BIN_PATH');
     expect(exported!.source).toBe('env');
-    expect(exported!.effective).toBe('/home/runner/workspace/.local/bin/herdr');
+    expect(exported!.effective).toBe('/opt/herdr/bin/herdr');
   });
 
   it('SettingsSchema declares an empty default + a schema entry, and the runtime registry tiers them as env', () => {

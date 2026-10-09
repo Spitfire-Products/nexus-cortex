@@ -7,7 +7,7 @@ STDB row); nothing here is a projection.
 
 | arm | pass@1 | evidence |
 |---|---|---|
-| nexus-cortex + DeepSeek V4.1 Flash, k=5 sequential full passes (89 tasks) | **77.3% ± 2.7** (pooled 344/445) | `docs/RESULTS_2026-09_TERMINAL_BENCH.md` §1; stores `tinkersnot/tb2-k5-n*-flash` |
+| nexus-cortex + DeepSeek V4.1 Flash, k=5 sequential full passes (89 tasks) | **77.3% ± 2.7** (pooled 344/445) | `docs/RESULTS_2026-09_TERMINAL_BENCH.md` §1; stores `tb2-k5-n*-flash` |
 | nexus-cortex + DeepSeek V4 Pro, action effort high (n=1) | **80.9%** (72/89) | same |
 | DeepSeek's own harness (installed, sdk-minimal), Flash, same substrate (n=1) | 79.8% (71/89) | same |
 | Artificial Analysis, Terminus 2 + V4 Pro, 3 repeats | 78.7% | independent reference |
@@ -68,7 +68,7 @@ A typed distill of the 100 failing f1 sessions (TypeSafe Jev, $0.011 for the who
 
 ## 5. Decision-model results (the reusable asset)
 
-Paired evaluation on 262 real graded sessions (`jev-assessment-2026-09-18.md` §7; records public at `tinkersnot/jev-eval-2026-09-18`):
+Paired evaluation on 262 real graded sessions (`jev-assessment-2026-09-18.md` §7; records in the `jev-eval-2026-09-18` bench store, available on request):
 
 | model | done AUC | ECE | note |
 |---|---|---|---|

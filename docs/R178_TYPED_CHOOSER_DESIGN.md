@@ -90,7 +90,7 @@ Leg C: uninformative (2 loops in 396). The raw-PANE hypothesis is untested until
 
 ## 8. Dependencies
 TmuxSession tool + R138–R143 tmux levers (built); R172 action plan fields (built; Terminus shape); jevGate.ts (built; noul, fail-open);
-turn-prediction store + reducer (built, dark in the harness); Terminus trajectories `tinkersnot/tb2-t4pt-ctl` (banked); decision traces in
+turn-prediction store + reducer (built, dark in the harness); Terminus trajectories `tb2-t4pt-ctl` (banked); decision traces in
 the lake (`decision_trace` rows, 09-20 backfill). Not built: the frame port, the candidate author, the chooser call, the sender, the E0 scripts.
 
 ## 9. Jev in the autoresearch architecture (operator question, 09-21)

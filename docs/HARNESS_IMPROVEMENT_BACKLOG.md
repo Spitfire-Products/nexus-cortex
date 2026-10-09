@@ -912,7 +912,7 @@ if (now < lease.expiresAt) {
   existing `/admin/bench/sweep` route) PLUS refreshes 2 now-contradicting comments (the line-834 "NOT probe" note + the `scheduled()`
   docstring). **Preferred** — an observable keepalive is easier to trust in prod. Wall 467s.
 - **pro (+4 lines):** the minimal touch only (no counter, no type change). Tightest diff. Wall 418s.
-- Local work products (regeneratable, NOT committed — `.bench` is local): `/home/runner/workspace/.bench/local-ab/arm-{flash,pro}/nexus-cortex/src/index.ts` + each `FIX_NOTES.md`.
+- Local work products (regeneratable, NOT committed — `.bench` is local): `.bench/local-ab/arm-{flash,pro}/nexus-cortex/src/index.ts` (workspace-relative) + each `FIX_NOTES.md`.
 - **2 deficiency datapoints from the run:** (i) **deepseek-v4-pro fetch-failed 1 of 2 runs** (flash 0/1) — a pro-path transport reliability wobble in the local harness; (ii) the harness agents **could not run their own `tsc`** (git/npm in the nested monorepo copy timed out) → they fell back to inspection — a self-verification friction worth smoothing.
 - NOT applied/deployed (worker deploy is owner-gated). To ship: apply flash's version to the real `nexus-terminal/workers/nexus-cortex/src/index.ts`, review, deploy via `.github/workflows/deploy-workers.yml`.
 
@@ -1459,7 +1459,7 @@ result with `[WARN] tmux not available: ... downgraded to a detached background 
 with BashOutput`; parameter descriptions state the degradation. Error only if the fallback itself fails. Tests mock tmux unavailable.
 
 ## HB-SUBAGENT-TIMEOUT — Task sub-agents die at a hardcoded 300 s regardless of the parent's budget (2026-09-13, TB4.0) — BUILT 2026-09-13 → 4.108.8, validation cell pending (R133)
-Evidence (store `tinkersnot/tb2-t4y-ctl`, 4.108.5; `.bench/distill-tb4-flash-v1/SUMMARY.md`): 6 Task dispatches in the run, 3 ended
+Evidence (store `tb2-t4y-ctl`, 4.108.5; `.bench/distill-tb4-flash-v1/SUMMARY.md`): 6 Task dispatches in the run, 3 ended
 `Status: TIMEOUT, Duration: 300.0s` — mp-checkpoint-consolidation (Turns 0: the delegate's first bash call ran the full 300 s),
 retro-console-soc (24 turns, 1 file modified), vllm-deepseek-streaming (62 turns, 6 files modified, cut off mid-work; the parent received a
 truncated summary). `CortexOrchestrator.ts:7879` and `:8171` hardcode `timeoutMs: 300000` on dispatch; `SubAgentOrchestrator.ts:174`,
@@ -1483,7 +1483,7 @@ confirm the helper adapter's own truncation keeps that call bounded (the VM run 
 still measures raw sizes when choosing what to keep — the kept set is now sized against the scaled budget only via the threshold comparison.
 
 ## HB-COMPACTION-ESTIMATE — the compaction/checkpoint token estimator over-reads the request ~5–7× (2026-09-13, TB4.0 heat-pump-warranty) — BUILT 2026-09-13 → 4.108.8, validation cell pending (R132)
-Evidence (store `tinkersnot/tb2-t4y-ctl`, 4.108.5): `decisions.jsonl` kind=compaction rows carry `tokens=760218 / 1004072 / 1008073` against
+Evidence (store `tb2-t4y-ctl`, 4.108.5): `decisions.jsonl` kind=compaction rows carry `tokens=760218 / 1004072 / 1008073` against
 `threshold=732836` (70% of the flash window), yet the same session's `session.jsonl` usage blocks report a maximum prompt of 151,763 tokens.
 layout-config-recreation (est. 818K–827K, 6+2 messages dropped) and vba-userform-port (815K) show the same shape. R129 (4.108.5) switched the
 estimate to the pruned request view, but the chars-based count still runs ~5–7× over DeepSeek's tokenizer on tool-output-heavy history, so the

@@ -3,7 +3,7 @@
 Harness: `nexus-cortex` 4.107.2 (npm; 4.107.3 = same config as default). Action model: DeepSeek V4.1-Flash (`deepseek-flash`, GA 2026-09-10)
 unless stated; helper/mentor model `deepseek-flash` at reasoning `none`. Executor: Harbor (`harbor` CLI) on our own substrate, one fresh task
 container per task, per-task `test.sh` graders from the dataset (no LLM judge). Every row, trajectory and grader artifact is banked to a public
-HF dataset per run (`tinkersnot/tb2-*`); config is banked with every row (`effective_config`, source-attributed).
+HF dataset per run (`tb2-*`, private bench stores — rows, trajectories and grader output available on request); config is banked with every row (`effective_config`, source-attributed).
 
 ## 1. Terminal-Bench 2.1 (89 tasks, `terminal-bench/terminal-bench-2-1`)
 
@@ -66,9 +66,9 @@ Compaction-resume field read (4.108.5): 11 compaction events in 3 of 62 sessions
 covering checkpoint memory and the workspace-state block. Grounded defect found: the token estimator that triggers it over-reads the request
 by ~5–7× (fired at "760K–1.0M" where the API reported ≤152K prompt tokens), so it engages far earlier than needed (R132, open).
 
-Store: `tinkersnot/tb2-t4y-ctl` (rows, trajectories, grader output, the adapter + supervisor). Ledger: `.cortex/bench/r-tb4-flash-v1-2026-09-12.md`.
+Store: `tb2-t4y-ctl` (rows, trajectories, grader output, the adapter + supervisor). Ledger: `.cortex/bench/r-tb4-flash-v1-2026-09-12.md`.
 
-Rerun (09-13/14, `tinkersnot/tb2-t4z-ctl`, ledger `.cortex/bench/r-tb4-flash-v2-2026-09-14.md`): same population and rig on
+Rerun (09-13/14, `tb2-t4z-ctl`, ledger `.cortex/bench/r-tb4-flash-v2-2026-09-14.md`): same population and rig on
 nexus-cortex 4.108.19 with the action model at effort high and a 600 s outer tool-timeout floor: **14/66 = 21.2%**, 0 errored rows.
 Paired against the 4.108.5/low run on the same 63 tasks: 7 pass both, 7 pass only at high, 4 pass only at low (exact binomial p ≈ 0.55 —
 not significant at n=1). Tokens $24.83 (+26% at equal rate tier: output +32%, thinking +38%), host $2.42, 9.9 h wall on 8 lanes. The
@@ -77,11 +77,11 @@ attributable to effort alone; the next spend should be repeats of this configura
 
 Post-run fixes (4.108.20, same day): the rerun's log sweep found two harness defects — a transport-fault class (`Connection error.` /
 `terminated`) that was not retried and ended three lanes during one two-minute API blip (R150), and a compaction estimator that counted base64
-images as text and fired three false compactions (R149). Both fixed and released; a 7-task retest on 4.108.20 (`tinkersnot/tb2-t4r-ctl`)
+images as text and fired three false compactions (R149). Both fixed and released; a 7-task retest on 4.108.20 (`tb2-t4r-ctl`)
 confirmed zero false compactions on the three image sessions and clean full-budget agent phases on every lane the blip had killed. Ledger:
 `.cortex/bench/r-tb4-flash-v2-2026-09-14.md` §10.
 
-Second repeat (09-15, `tinkersnot/tb2-t4z2-ctl`, ledger `.cortex/bench/r-tb4-flash-v3-2026-09-15.md`): same configuration on nexus-cortex
+Second repeat (09-15, `tb2-t4z2-ctl`, ledger `.cortex/bench/r-tb4-flash-v3-2026-09-15.md`): same configuration on nexus-cortex
 4.108.21 (R149–R151 + Bash doctrine edits): **11/66 = 16.7%** (Wilson 9.6–27.4), 0 errored rows. Paired against the 4.108.19 run: 4 pass
 both, 7 only here, 10 only there (p = 0.63). Two repeats of the high configuration give a mean of 18.9% pass@1, 4/66 stable, 21/66 ever
 passed. Tokens $26 as billed (+29% at equal rate for the same pass count), host ~$1.30. Seven sessions were ended by a 27-minute provider
@@ -90,7 +90,7 @@ at 11–13/66. The budget-visibility line (R151) fired in every session and the 
 ended at 40 minutes of an 8-hour budget: the mechanism is live and does not change early finishing. The harness changes since the
 first high run did not move the score; the next spend is a third repeat plus a 7-task patch cell on 4.108.22, not another lever.
 
-Patch cell (09-16, `tinkersnot/tb2-t4p-ctl`, ledger `.cortex/bench/r-tb4-patch-2026-09-16.md`): the seven sessions the provider incident
+Patch cell (09-16, `tb2-t4p-ctl`, ledger `.cortex/bench/r-tb4-patch-2026-09-16.md`): the seven sessions the provider incident
 had cut were re-run on nexus-cortex 4.111.0 (R152 null-body retry plus the 4.109–4.111 fixes). 1 of 7 recovered (lake-temp-glm), so the
 clean second repeat is **12/66 = 18.2%** (Wilson 10.7–29.0) with the disclosure that those seven rows ran on a later harness than the
 other 56; the single-version number remains 11/66. Two repeats of the high configuration now average 19.7%. No null-body errors

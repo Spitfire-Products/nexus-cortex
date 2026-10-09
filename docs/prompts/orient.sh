@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # P6c arm B: boot-observation orient script. Output = orientation as
 # observation-mass (BASH_PLUS_SPEC P6 refinement). Compact, fast, read-only.
-R=/home/runner/workspace/omniclaude-v4
+R="${CORTEX_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"  # the nexus-cortex checkout (was a hard-coded dev path)
 echo "=== REPO ORIENTATION: omniclaude-v4 (nexus-cortex harness monorepo) ==="
 echo "Root: $R  (npm workspaces; TypeScript ES modules; built output in each package's dist/)"
 echo
