@@ -45,7 +45,7 @@ export interface CanonPullOptions extends CanonStoreOptions {
   session: string;
   /** Target harness for the tool-compatibility report (default nexus-cortex — where pull lands). */
   target?: HarnessName;
-  /** Destination directory (default {home}/omniclaude-v4/.cortex/sessions). */
+  /** Destination directory (default <cwd>/.cortex/sessions — the current project's sessions dir). */
   to?: string;
   /** Overwrite an existing local session file (default false — pull is a branch, never a clobber). */
   force?: boolean;
@@ -672,7 +672,7 @@ export async function canonPull(o: CanonPullOptions): Promise<CanonPullResult> {
   }
 }
 
-async function pullOne(o: CanonPullOptions, matches: CanonSession[], home: string): Promise<CanonPullResult> {
+async function pullOne(o: CanonPullOptions, matches: CanonSession[], _home: string): Promise<CanonPullResult> {
   if (matches.length === 0) {
     console.error(`[canon-pull] no canon session matches '${o.session}' (live or archived)`);
     return { code: 1 };
@@ -699,7 +699,7 @@ async function pullOne(o: CanonPullOptions, matches: CanonSession[], home: strin
     matches = [r.pick];
   }
   const s = matches[0]!;
-  const destDir = o.to ?? path.join(home, 'omniclaude-v4', '.cortex', 'sessions');
+  const destDir = o.to ?? path.join(process.cwd(), '.cortex', 'sessions'); // the CURRENT project's sessions dir (1.11.10 defaulted to the author's monorepo)
   const dest = path.join(destDir, `${s.uuid}.jsonl`);
   if (fs.existsSync(dest) && !o.force) {
     console.error(`[canon-pull] ${dest} already exists — resuming elsewhere is a BRANCH; use --force to overwrite the local copy`);

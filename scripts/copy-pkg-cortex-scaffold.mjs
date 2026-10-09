@@ -97,7 +97,7 @@ if (existsSync(rootEnvExample)) {
 // LEAK GATE (2026-10-09): the published 4.124.64 tarballs carried the author's machine paths in bench task prompts and the cortex-bench
 // skill. Nothing under the vendored scaffold may name a developer machine, a private bench store, or a private host. Sample task sets
 // that do are DROPPED (they reference fixtures that exist only on that machine); any other hit FAILS the pack so it can never ship silently.
-const LEAK_PATTERNS = [/\/home\/runner\//, /tinkersnot/i, /spitfire-products\.com/i, /\/logs\/agent\b/];
+const LEAK_PATTERNS = [/\/home\/runner\//, /-home-runner-/, /tinkersnot/i, /spitfire-products\.com/i, /\/logs\/agent\b/];
 const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]));
 const leaks = [];
 const vendoredEnv = join(pkgDir, '.env.defaults');

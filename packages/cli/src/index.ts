@@ -917,7 +917,7 @@ canon
   .command('pull <session>')
   .description('Materialize a canon session into a native session dir (pull = rehydrate; branch, never clobber)')
   .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
-  .option('--to <dir>', 'destination dir (default ~/omniclaude-v4/.cortex/sessions)')
+  .option('--to <dir>', 'destination dir (default ./.cortex/sessions)')
   .option('--force', 'overwrite an existing local session file')
   .option('--target <harness>', 'harness for the tool-compatibility report (default nexus-cortex)')
   .option('--strip-signatures', 'G1: strip provider thinking signatures from the materialized copy (foreign-account replay safety); thinking → <prior_reasoning> text')

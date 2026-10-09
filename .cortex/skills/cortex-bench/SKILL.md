@@ -397,7 +397,7 @@ Then compare all 4 answers side-by-side and report discrepancies.
 - **Cortex skill (load it — full tool/subsystem reference incl. `TmuxSession`, `WorkspaceManager`):** `.agents/skills/cortex/SKILL.md`
 - **Worktree/team proven pattern:** `WorkspaceManagerTool` (core: `tools/definitions/`, executor: `executors/.../execution/`) + memory `agent-team-workspace`
 - **TUI capture proven pattern:** `TmuxSession` tool, `TmuxCapture.ts` / `TmuxManager.ts`, sessions in `.cortex/tmux-sessions/`
-- Harness deficiency trail (the running ledger): `.claude/projects/-home-runner-workspace/memory/omniclaude-v4-harness-deficiencies.md`
+- Harness deficiency trail (the running ledger): the `omniclaude-v4-harness-deficiencies` memory in the agent's auto-memory directory
 - Auto-research source/inspiration: `github.com/karpathy/autoresearch` — `program.md` is the "lightweight skill" analog of THIS file; `prepare.py` (fixed eval) ≙ our ground-truth control; `train.py` (mutable) ≙ the harness code (worktree-isolated).
 
 ## DELTA 2026-07-28 — env-flag benchmarking, zombie definitive check, receipt promotion

@@ -1,6 +1,6 @@
 {
   "name": "nexus-canon",
-  "version": "1.11.10",
+  "version": "1.11.11",
   "description": "Portable agent memory in a git repo you own — the canonical agent history & memory store (canon): sync, translate, pull, capability artifacts, and project knowledge graphs across AI coding harnesses.",
   "type": "module",
   "main": "./dist/index.js",
@@ -19,7 +19,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@nexus-cortex/types": "^4.124.66"
+    "@nexus-cortex/types": "^4.124.67"
   },
   "files": [
     "dist",
