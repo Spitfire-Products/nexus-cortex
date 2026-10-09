@@ -312,7 +312,7 @@ export async function canonPullNative(o: CanonPullNativeOptions): Promise<CanonP
 }
 
 async function pullNativeFrom(o: CanonPullNativeOptions, nativeRoot: string): Promise<CanonPullNativeResult & { noMatch?: boolean }> {
-  const home = o.home ?? process.env.HOME ?? '/home/runner/workspace';
+  const home = o.home ?? process.env.HOME ?? os.homedir();
 
   // Discover logical native files (part-aware) whose path references the uuid.
   const groups = new Map<string, string[]>();
@@ -598,7 +598,7 @@ export async function canonPullNativeAll(o: CanonPullNativeAllOptions = {}): Pro
   // same memories — not just the transcripts.
   const firstDest = (() => {
     if (o.to) return o.to;
-    const home2 = o.home ?? process.env.HOME ?? '/home/runner/workspace';
+    const home2 = o.home ?? process.env.HOME ?? os.homedir();
     const slug = claudeProjectSlug(path.resolve(o.project ?? process.cwd()));
     return path.join(home2, '.claude', 'projects', slug);
   })();
@@ -653,7 +653,7 @@ export function resolveCopies<T>(
 /** Materialize one canon session into a native session directory. */
 export async function canonPull(o: CanonPullOptions): Promise<CanonPullResult> {
   const store = o.store ?? '/tmp/canon-store';
-  const home = o.home ?? process.env.HOME ?? '/home/runner/workspace';
+  const home = o.home ?? process.env.HOME ?? os.homedir();
   ensureFreshStore(store, o.repoUrl);
   let sessions = discoverCanonSessions(store);
   let matches = sessions.filter((s) => s.uuid === o.session || s.uuid.startsWith(o.session));

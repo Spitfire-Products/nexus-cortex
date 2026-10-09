@@ -18,7 +18,7 @@
  * The vendored <pkg>/.cortex/ is a build artifact: gitignored in the dev repo,
  * regenerated on every pack.
  */
-import { cpSync, existsSync, mkdirSync, rmSync, copyFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, rmSync, copyFileSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const pkgDir = process.cwd();                       // npm runs lifecycle scripts from the package dir
@@ -92,6 +92,25 @@ if (existsSync(rootEnvExample)) {
   copyFileSync(rootEnvExample, join(pkgDir, '.env.defaults'));
   copied++;
   console.log(`[copy-pkg-cortex-scaffold] vendored .env.defaults into ${pkgDir}`);
+}
+
+// LEAK GATE (2026-10-09): the published 4.124.64 tarballs carried the author's machine paths in bench task prompts and the cortex-bench
+// skill. Nothing under the vendored scaffold may name a developer machine, a private bench store, or a private host. Sample task sets
+// that do are DROPPED (they reference fixtures that exist only on that machine); any other hit FAILS the pack so it can never ship silently.
+const LEAK_PATTERNS = [/\/home\/runner\//, /tinkersnot/i, /spitfire-products\.com/i, /\/logs\/agent\b/];
+const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]));
+const leaks = [];
+const vendoredEnv = join(pkgDir, '.env.defaults');
+for (const f of [...walk(dest), ...(existsSync(vendoredEnv) ? [vendoredEnv] : [])]) {
+  let text; try { text = readFileSync(f, 'utf8'); } catch { continue; }
+  const hit = LEAK_PATTERNS.find((re) => re.test(text));
+  if (!hit) continue;
+  if (f.startsWith(join(dest, 'bench', 'tasks'))) { rmSync(f, { force: true }); console.log(`[copy-pkg-cortex-scaffold] dropped machine-specific task set ${f} (${hit})`); continue; }
+  leaks.push(`${f} (${hit})`);
+}
+if (leaks.length) {
+  console.error('[copy-pkg-cortex-scaffold] REFUSING to pack: developer-machine or private references in the scaffold:\n  ' + leaks.join('\n  '));
+  process.exit(1);
 }
 
 if (copied === 0) {

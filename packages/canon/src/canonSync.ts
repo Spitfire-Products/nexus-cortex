@@ -16,6 +16,7 @@
  * @module canon/canonSync
  */
 import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush, isScopedStore, sparseAdd, withStoreLock } from './canonRepo.js';
+import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { dropArchivedDuplicates, dropEchoedSessions } from './canonArchive.js';
@@ -195,7 +196,7 @@ export function scrubSecrets(s: string): string {
 }
 
 async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncResult> {
-  const HOME = o.home ?? process.env.HOME ?? '/home/runner/workspace';
+  const HOME = o.home ?? process.env.HOME ?? os.homedir();
   const DRY = o.dryRun ?? false;
   const STORE = o.store ?? '/tmp/canon-store';
   const MANIFEST_PATH = path.join(HOME, '.canon', 'manifest.json');

@@ -17,6 +17,7 @@
  * @module canonTouched
  */
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import type { CanonSession } from './canonPull.js';
 import { sessionLines, sidecarLines } from './canonArchiveRead.js';
@@ -168,7 +169,7 @@ export async function buildTouchedIndex(
   sessions: CanonSession[],
   opts: { home?: string } = {},
 ): Promise<TouchedIndex> {
-  const home = opts.home ?? process.env.HOME ?? '/home/runner/workspace';
+  const home = opts.home ?? process.env.HOME ?? os.homedir();
   const cachePath = path.join(home, '.canon', 'touched-cache.json');
   let cache: Record<string, CacheEntry> = {};
   try { cache = JSON.parse(fs.readFileSync(cachePath, 'utf8')); } catch { /* fresh */ }

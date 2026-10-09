@@ -16,6 +16,7 @@
  * @module canonArchiveRead
  */
 import { execFileSync, spawn } from 'node:child_process';
+import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
@@ -183,7 +184,7 @@ function titleFromEvents(store: string, sha: string): string | undefined {
 
 // Titles of archived sessions, keyed by the sidecar's blob id (immutable → never stale). Derived + disposable.
 function titleCachePath(home?: string): string {
-  return path.join(home ?? process.env.HOME ?? '/home/runner/workspace', '.canon', 'archived-titles.json');
+  return path.join(home ?? process.env.HOME ?? os.homedir(), '.canon', 'archived-titles.json');
 }
 function loadTitleCache(home?: string): { file: string; map: Record<string, string | null> } {
   const file = titleCachePath(home);

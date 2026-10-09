@@ -85,7 +85,7 @@ pkill -9 -f "node dist/index.js" 2>/dev/null; sleep 2
 ps -eo pid,args | grep "[d]ist/index.js" && echo "ZOMBIE — kill -9" || echo "clean"
 
 # Start stateless (CRITICAL — persistent mode leaks context across probes)
-cd /home/runner/workspace/omniclaude-v4/packages/server && \
+cd "$CORTEX_ROOT/packages/server" && \   # CORTEX_ROOT = the nexus-cortex checkout
   DEBUG=true \
   MENTORSHIP_ENABLED=false \
   ENABLE_SERVER_SIDE_TOOLS=true \
@@ -358,7 +358,7 @@ Most benchmarks compare JSON from `/v1/messages` — but that **cannot see what 
 **Use the native `TmuxSession` tool** (proven method — same one used during the earlier active-improvement rounds; it wraps `TmuxCapture.ts`/`TmuxManager.ts`, stores metadata in `.cortex/tmux-sessions/`, binary via `TMUX_BIN`). The tool exposes **create → send commands → capture output → list → kill**. The agentic flow:
 
 1. `TmuxSession create` — a persistent session sized like a real terminal (e.g. 200×50; also test 80×24 — different widths expose different wrapping/overflow bugs).
-2. `TmuxSession send` → `cd /home/runner/workspace/omniclaude-v4 && neoncortex` (Ink UI; or `cortex-cli`). Wait for boot.
+2. `TmuxSession send` → `cd "$CORTEX_ROOT" && neoncortex` (Ink UI; or `cortex-cli`). Wait for boot.
 3. `TmuxSession send` → the prompt that exercises the rendering under test (e.g. *"Show a markdown table of the 5 cheapest models with a fenced code example"*). Wait for the stream to finish.
 4. `TmuxSession capture` — **this captured pane IS the metric.** It's the human-visible truth; the raw model text is NOT (a model can emit perfect markdown the TUI then mangles — only the capture shows it).
 5. Evaluate the capture for **frontend-design deficiencies**, treating the render as a real UI surface (hierarchy, alignment, contrast, density — not just "did text appear"):
@@ -390,10 +390,10 @@ Then compare all 4 answers side-by-side and report discrepancies.
 
 ## Location Reference
 
-- Server: `/home/runner/workspace/omniclaude-v4/packages/server/dist/index.js`
+- Server: `$CORTEX_ROOT/packages/server/dist/index.js`
 - Server log: `/tmp/omniclaude-server.log`
-- Bench results / deficiency ledgers: `/home/runner/workspace/omniclaude-v4/.cortex/bench/`
-- Routing matrix (the metric store): `/home/runner/workspace/omniclaude-v4/.cortex/router-matrix.jsonl`
+- Bench results / deficiency ledgers: `$CORTEX_ROOT/.cortex/bench/`
+- Routing matrix (the metric store): `$CORTEX_ROOT/.cortex/router-matrix.jsonl`
 - **Cortex skill (load it — full tool/subsystem reference incl. `TmuxSession`, `WorkspaceManager`):** `.agents/skills/cortex/SKILL.md`
 - **Worktree/team proven pattern:** `WorkspaceManagerTool` (core: `tools/definitions/`, executor: `executors/.../execution/`) + memory `agent-team-workspace`
 - **TUI capture proven pattern:** `TmuxSession` tool, `TmuxCapture.ts` / `TmuxManager.ts`, sessions in `.cortex/tmux-sessions/`

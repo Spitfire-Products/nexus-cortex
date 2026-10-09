@@ -19,6 +19,7 @@
  * @module canon/canonArtifacts
  */
 import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush, requireFullSurfaceStore } from './canonRepo.js';
+import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -77,8 +78,20 @@ const walkFiles = (dir: string): string[] => {
   return out.sort();
 };
 
+/** Project roots under HOME: every non-hidden HOME/<dir> that carries a `.cortex/` dir or an `.mcp.json` (sorted). Discovered, never
+ *  hard-coded — the published package must not know the author's workspace layout. */
+export function discoverProjectDirs(HOME: string): string[] {
+  try {
+    return fs.readdirSync(HOME, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules')
+      .map((e) => path.join(HOME, e.name))
+      .filter((d) => fs.existsSync(path.join(d, '.cortex')) || fs.existsSync(path.join(d, '.mcp.json')))
+      .sort();
+  } catch { return []; }
+}
+
 export async function canonArtifacts(o: CanonArtifactsOptions = {}): Promise<CanonArtifactsResult> {
-  const HOME = o.home ?? process.env.HOME ?? '/home/runner/workspace';
+  const HOME = o.home ?? process.env.HOME ?? os.homedir();
   const DRY = o.dryRun ?? false;
   const STORE = o.store ?? '/tmp/canon-store';
   const MANIFEST_PATH = path.join(HOME, '.canon', 'artifacts-manifest.json');
@@ -168,11 +181,11 @@ export async function canonArtifacts(o: CanonArtifactsOptions = {}): Promise<Can
   }
 
   // ── mcp: config registries (normalized json) ───────────────────────────────
-  const mcpSources = [
+  // Project dirs are DISCOVERED (every HOME/<dir> carrying .cortex/ or .mcp.json) — 1.11.8 shipped the author's own project names.
+  const mcpSources: Array<[string, string]> = [
     ['workspace', path.join(HOME, '.mcp.json')],
-    ['nexus-terminal', path.join(HOME, 'nexus-terminal', '.mcp.json')],
-    ['omniclaude-v4', path.join(HOME, 'omniclaude-v4', '.mcp.json')],
-  ] as const;
+    ...discoverProjectDirs(HOME).map((d): [string, string] => [path.basename(d), path.join(d, '.mcp.json')]),
+  ];
   for (const [label, p] of mcpSources) {
     if (!fs.existsSync(p)) { absences.push(`mcp config absent (${p})`); continue; }
     const bytes = fs.readFileSync(p);
@@ -212,8 +225,7 @@ export async function canonArtifacts(o: CanonArtifactsOptions = {}): Promise<Can
   // ── projects: manifests for known roots (roots + per-harness session dirs) ─
   const projects: [string, string][] = [
     ['workspace', HOME],
-    ['omniclaude-v4', path.join(HOME, 'omniclaude-v4')],
-    ['nexus-terminal', path.join(HOME, 'nexus-terminal')],
+    ...discoverProjectDirs(HOME).map((d): [string, string] => [path.basename(d), d]),
   ];
   for (const [id, root] of projects) {
     if (!fs.existsSync(root)) continue;

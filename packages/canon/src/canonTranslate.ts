@@ -18,6 +18,7 @@
  * @module canon/canonTranslate
  */
 import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, guardedPush, atomicClone, requireFullSurfaceStore, withStoreLock } from './canonRepo.js';
+import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
@@ -42,7 +43,7 @@ export interface CanonTranslateResult {
 }
 
 async function canonTranslateUnlocked(o: CanonTranslateOptions = {}): Promise<CanonTranslateResult> {
-  const HOME = o.home ?? process.env.HOME ?? '/home/runner/workspace';
+  const HOME = o.home ?? process.env.HOME ?? os.homedir();
   const DRY = o.dryRun ?? false;
   const STORE = o.store ?? '/tmp/canon-store';
 const MANIFEST_PATH = path.join(HOME, '.canon', 'translate-manifest.json');

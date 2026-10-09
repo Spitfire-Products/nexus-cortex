@@ -18,6 +18,7 @@
  * @module canon/canonWatch
  */
 import * as fsp from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { setMaxListeners } from 'node:events';
 import { loadHarnessSources, type CanonSyncOptions, type CanonSyncResult } from './canonSync.js';
@@ -42,7 +43,7 @@ const DEFAULT_DEBOUNCE_MS = 60_000;
  * startup so anything accumulated while the watcher was down is captured.
  */
 export async function canonWatch(options: CanonWatchOptions = {}): Promise<void> {
-  const HOME = options.home ?? process.env.HOME ?? '/home/runner/workspace';
+  const HOME = options.home ?? process.env.HOME ?? os.homedir();
   const STORE = options.store ?? '/tmp/canon-store';
   const debounceMs = options.debounceMs && options.debounceMs > 0 ? options.debounceMs : DEFAULT_DEBOUNCE_MS;
 

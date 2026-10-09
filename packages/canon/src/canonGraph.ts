@@ -4,8 +4,8 @@
  *
  * PROJECT MAP (the prerequisite): project identity in the store is implicit
  * and split across two conventions — Claude Code's normalized-path dirs
- * (`-home-runner-workspace-nexus-terminal`) and canonSync's CORTEX_ROOTS
- * labels (`nexus-terminal`). `deriveProjectSessionMap` joins them, DERIVED
+ * (`-home-<user>-<project>`) and canonSync's CORTEX_ROOTS
+ * labels (the project dir basename). `deriveProjectSessionMap` joins them, DERIVED
  * entirely from store paths (never hand-maintained — §27l's rule): known
  * roots match exactly by their encoded form; UNKNOWN claude-code dirs become
  * their own project (closing the hand-listed-roots blind spot: new roots
