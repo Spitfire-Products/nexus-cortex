@@ -74,6 +74,34 @@ export function isBinaryFile(file: string): boolean {
   } catch { return false; }
 }
 
+/** Every nexus-cortex state root under HOME, as labelled roots for one leaf (`sessions` dir or `decisions.jsonl`): HOME itself
+ *  ('workspace'), each HOME/<project> and each HOME/<project>/packages/<pkg> that carries a `.cortex/` dir. Labels are the dir
+ *  basenames (a repeated basename is prefixed with its parent). Discovered, never hard-coded: the published package must not know
+ *  the author's workspace layout. Hidden dirs and node_modules are skipped; an unreadable HOME yields the workspace root only. */
+export function discoverCortexRoots(H: string, leaf: string): Array<{ label: string; path: string }> {
+  const out: Array<{ label: string; path: string }> = [{ label: 'workspace', path: path.join(H, '.cortex', leaf) }];
+  const seen = new Set<string>(['workspace']);
+  const subdirs = (dir: string): string[] => {
+    try {
+      return fs.readdirSync(dir, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules')
+        .map((e) => e.name).sort();
+    } catch { return []; }
+  };
+  const push = (name: string, dir: string, parent: string) => {
+    if (!fs.existsSync(path.join(dir, '.cortex'))) return;
+    const label = seen.has(name) ? `${parent}/${name}` : name;
+    seen.add(label);
+    out.push({ label, path: path.join(dir, '.cortex', leaf) });
+  };
+  for (const p of subdirs(H)) {
+    const dir = path.join(H, p);
+    push(p, dir, path.basename(H));
+    for (const q of subdirs(path.join(dir, 'packages'))) push(q, path.join(dir, 'packages', q), p);
+  }
+  return out;
+}
+
 function defaultHarnessSources(H: string): Record<string, HarnessSource> {
   return {
     // .md rides too: the per-project auto-memory (memory/MEMORY.md + topic
@@ -94,17 +122,10 @@ function defaultHarnessSources(H: string): Record<string, HarnessSource> {
     'claude-code-file-history': { exts: ['*'], roots: [path.join(H, '.claude', 'file-history')] },
     'nexus-cortex': {
       exts: ['.jsonl', '.json'],
-      roots: [
-        // workspace-root sessions: cortex CLI runs launched from $HOME itself
-        // (coverage gap found 2026-07-28 — sessions there were invisible).
-        { label: 'workspace', path: path.join(H, '.cortex', 'sessions') },
-        { label: 'omniclaude-v4', path: path.join(H, 'omniclaude-v4', '.cortex', 'sessions') },
-        { label: 'server', path: path.join(H, 'omniclaude-v4', 'packages', 'server', '.cortex', 'sessions') },
-        { label: 'nexus-terminal', path: path.join(H, 'nexus-terminal', '.cortex', 'sessions') },
-        // CLI/TUI runs launched from their package dirs (2026-09-26 coverage audit: 9 sessions sat uncaptured).
-        { label: 'cli', path: path.join(H, 'omniclaude-v4', 'packages', 'cli', '.cortex', 'sessions') },
-        { label: 'tui', path: path.join(H, 'omniclaude-v4', 'packages', 'tui', '.cortex', 'sessions') },
-      ],
+      // Roots are DISCOVERED: $HOME itself (cortex runs launched from HOME — coverage gap 2026-07-28), every $HOME/<project> and every
+      // $HOME/<project>/packages/<pkg> that carries a .cortex/ dir (CLI/TUI runs launched from their package dirs — 2026-09-26 audit).
+      // 1.11.8 hard-coded the author's project names here; a store's HARNESSES.json still overrides (loadHarnessSources).
+      roots: discoverCortexRoots(H, 'sessions'),
     },
     // Decision stores ride canon BY DEFAULT (data-lake rule, 2026-08-25):
     // sessions alone mislabel exit-masked failures as successes (wire is_error
@@ -113,12 +134,7 @@ function defaultHarnessSources(H: string): Record<string, HarnessSource> {
     // File roots — the sync loop handles single-file roots directly.
     'nexus-cortex-decisions': {
       exts: ['.jsonl'],
-      roots: [
-        { label: 'workspace', path: path.join(H, '.cortex', 'decisions.jsonl') },
-        { label: 'omniclaude-v4', path: path.join(H, 'omniclaude-v4', '.cortex', 'decisions.jsonl') },
-        { label: 'server', path: path.join(H, 'omniclaude-v4', 'packages', 'server', '.cortex', 'decisions.jsonl') },
-        { label: 'nexus-terminal', path: path.join(H, 'nexus-terminal', '.cortex', 'decisions.jsonl') },
-      ],
+      roots: discoverCortexRoots(H, 'decisions.jsonl'),
     },
     // Autoresearch campaign transcripts (2026-09-26): the nexus-autoresearch executor stages each finished job's agent
     // sessions + decision stores under ~/.cortex/autoresearch-stage/<jobId>/ and syncs with --scope autoresearch, so a

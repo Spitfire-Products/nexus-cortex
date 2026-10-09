@@ -11,7 +11,7 @@
  * INERT unless the env var is set — zero behavior change otherwise. Covers every
  * provider SDK (Anthropic, OpenAI, Google) AND the raw `fetch` paths, because
  * they all dispatch through `globalThis.fetch`. Mirrors the browser CORTEX
- * `createProxyFetch` pattern (which routes through ai.spitfire-products.com).
+ * `createProxyFetch` pattern (which routes through the deployment's AI proxy host).
  *
  * This module self-installs on import; import it FIRST (before the provider SDKs)
  * so the wrapper is in place before any SDK captures `globalThis.fetch`.
