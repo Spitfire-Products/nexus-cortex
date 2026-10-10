@@ -198,7 +198,7 @@ export interface EnvironmentVariables {
   CORTEX_SECOND_ATTEMPT?: string; // 1 = the R194 second-attempt chain in the library (R239 / P4; default off)
   CORTEX_SECOND_ATTEMPT_MAX?: string; // max EXTRA attempts (default 1)
   CORTEX_SECOND_ATTEMPT_MIN_REMAINING?: string; // fraction of the original deadline that must remain (default 0.5)
-  CORTEX_SECOND_ATTEMPT_TRIGGER?: string; // resolver actions that open another attempt; none = a give-up (default accept-with-gap,accept-low-confidence)
+  CORTEX_SECOND_ATTEMPT_TRIGGER?: string; // resolver actions that open another attempt; none = a give-up (default accept-with-gap,accept-low-confidence,accept,none — the widened set, promoted 2026-10-10)
   CORTEX_SECOND_ATTEMPT_RESERVE_MS?: string; // reserve (ms) subtracted from the next deadline (default 300000)
   CORTEX_SECOND_ATTEMPT_FLOOR_MS?: string; // minimum (ms) left after the reserve (default 900000)
   CORTEX_SECOND_ATTEMPT_OUT_DIR?: string; // where per-attempt artifacts + second-attempt.json are banked (default <state dir>/attempts)
@@ -1505,7 +1505,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
   {
     key: 'CORTEX_SECOND_ATTEMPT_TRIGGER',
     displayName: 'Second attempt: trigger',
-    description: 'resolver actions that open another attempt; none = a give-up (default accept-with-gap,accept-low-confidence)',
+    description: 'resolver actions that open another attempt; none = a give-up (default accept-with-gap,accept-low-confidence,accept,none — the widened set, promoted 2026-10-10)',
     type: 'string',
     category: 'training',
     default: ''

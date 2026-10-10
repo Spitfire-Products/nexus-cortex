@@ -14,7 +14,7 @@ describe('R239 / P4 second-attempt levers are registered everywhere a lever must
     for (const k of KEYS) expect(find({}, k), k).toBeDefined();
     expect(find({}, 'CORTEX_SECOND_ATTEMPT')!.codeDefault).toContain('off');
     expect(find({}, 'CORTEX_SECOND_ATTEMPT_MAX')!.codeDefault).toBe('1');
-    expect(find({}, 'CORTEX_SECOND_ATTEMPT_TRIGGER')!.codeDefault).toBe('accept-with-gap,accept-low-confidence');
+    expect(find({}, 'CORTEX_SECOND_ATTEMPT_TRIGGER')!.codeDefault).toBe('accept-with-gap,accept-low-confidence,accept,none');
     const on = find({ CORTEX_SECOND_ATTEMPT: '1', CORTEX_SECOND_ATTEMPT_TRIGGER: 'accept,none' }, 'CORTEX_SECOND_ATTEMPT_TRIGGER')!;
     expect(on.effective).toBe('accept,none'); expect(on.source).toBe('env');
   });

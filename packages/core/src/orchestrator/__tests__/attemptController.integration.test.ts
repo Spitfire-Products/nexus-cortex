@@ -61,7 +61,8 @@ describe.skipIf(!hasGit)('R239 runWithAttempts through the turn loop', () => {
   }
 
   it('opens a second attempt on a gap-accept, resets the tree between attempts, picks by the shipped check, restores + merges', async () => {
-    const env = { ...process.env, CORTEX_SECOND_ATTEMPT: '1', CORTEX_SECOND_ATTEMPT_MAX: '2', CORTEX_TURN_DEADLINE_MS: String(4 * 3600 * 1000) } as NodeJS.ProcessEnv;
+    const outDir = path.join(stateRoot, 'attempts');
+    const env = { ...process.env, CORTEX_SECOND_ATTEMPT: '1', CORTEX_SECOND_ATTEMPT_MAX: '2', CORTEX_SECOND_ATTEMPT_OUT_DIR: outDir, CORTEX_TURN_DEADLINE_MS: String(4 * 3600 * 1000) } as NodeJS.ProcessEnv;
     const a1 = await orch(new ScriptedWriter(ws, 'bad1', 300));
     (a1 as any).getLastResolverDecision = () => ({ action: 'accept-with-gap', namedPassed: 1, remainingFrac: 0.9, ts: Date.now() });
     const made: Array<{ k: number; stateDir: string; storageDir: string; turnDeadlineMs: number }> = [];
@@ -97,6 +98,11 @@ describe.skipIf(!hasGit)('R239 runWithAttempts through the turn loop', () => {
       expect(fs.existsSync(path.join(stateRoot, 'attempts', `a${k}.json`)), `decision ${k}`).toBe(true);
     }
     expect(fs.existsSync(path.join(stateRoot, 'attempts', 'state-2', 'sessions'))).toBe(true);
+    // R245: with an OUT_DIR the canonical trajectory files are the PICK's (pick 2 ≠ 1) — byte-equal to the attempt-2 copies
+    for (const f of ['session', 'decisions']) {
+      const a2 = path.join(outDir, `${f}.attempt2.jsonl`);
+      if (fs.existsSync(a2)) expect(fs.readFileSync(path.join(outDir, `${f}.jsonl`), 'utf-8')).toBe(fs.readFileSync(a2, 'utf-8'));
+    }
     expect(lines.some((l) => l.includes('workspace snapshot lift'))).toBe(true);
     expect(lines.some((l) => l.includes('tree reset to lift; starting attempt 2'))).toBe(true);
     // the decision events landed in attempt 1's decision store
@@ -107,11 +113,11 @@ describe.skipIf(!hasGit)('R239 runWithAttempts through the turn loop', () => {
     await a1.cleanup().catch(() => {});
   }, 120_000);
 
-  it('does nothing beyond attempt 1 when the verdict is a confident accept (default trigger) or the lever is off', async () => {
+  it('does nothing beyond attempt 1 when the verdict is a confident accept under the NARROW trigger, or the lever is off', async () => {
     const a1 = await orch(new ScriptedWriter(ws, 'bad1', 300));
     (a1 as any).getLastResolverDecision = () => ({ action: 'accept', namedPassed: 2, remainingFrac: 0.9, ts: Date.now() });
     let made = 0;
-    const env = { ...process.env, CORTEX_SECOND_ATTEMPT: '1', CORTEX_TURN_DEADLINE_MS: String(4 * 3600 * 1000) } as NodeJS.ProcessEnv;
+    const env = { ...process.env, CORTEX_SECOND_ATTEMPT: '1', CORTEX_SECOND_ATTEMPT_TRIGGER: 'accept-with-gap,accept-low-confidence', CORTEX_TURN_DEADLINE_MS: String(4 * 3600 * 1000) } as NodeJS.ProcessEnv;
     const r = await runWithAttempts({ orchestrator: a1, turnContent: 'write', messageOptions: {}, projectPath: ws, env, log: () => {}, createAttemptOrchestrator: async () => { made++; throw new Error('must not be called'); } });
     expect(made).toBe(0); expect(fs.readFileSync(path.join(ws, 'answer.txt'), 'utf-8')).toBe('bad1');
     expect((r.metadata as any).secondAttempt).toBeUndefined();

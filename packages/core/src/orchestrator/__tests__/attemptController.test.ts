@@ -30,7 +30,7 @@ describe('resolveSecondAttemptConfig (lever parsing, adapter parity)', () => {
     expect(resolveSecondAttemptConfig({} as any).enabled).toBe(false);
     const c = cfg({ CORTEX_SECOND_ATTEMPT_MAX: '3', CORTEX_SECOND_ATTEMPT_MIN_REMAINING: '0.8', CORTEX_SECOND_ATTEMPT_TRIGGER: ' accept , none ' });
     expect(c).toMatchObject({ enabled: true, max: 3, minRemaining: 0.8, trigger: ['accept', 'none'], reserveMs: 300_000, floorMs: 900_000, outDir: null });
-    expect(cfg().trigger).toEqual(['accept-with-gap', 'accept-low-confidence']);
+    expect(cfg().trigger).toEqual(['accept-with-gap', 'accept-low-confidence', 'accept', 'none']); // the widened set is the default since 2026-10-10
     // 0 = no extra attempts; junk = 1; junk min = 0.5
     expect(cfg({ CORTEX_SECOND_ATTEMPT_MAX: '0' }).max).toBe(0);
     expect(cfg({ CORTEX_SECOND_ATTEMPT_MAX: 'x' }).max).toBe(1);
@@ -46,19 +46,23 @@ describe('decideNextAttempt (sa_go parity)', () => {
     const o2 = go(2, 'accept-with-gap', 60);
     expect(o2.go).toBe(false); expect(o2.why).toBe('extra-attempt cap reached');
   });
-  it('default trigger: a confident accept does not continue; accept-low-confidence does; custom trigger adds accept', () => {
-    expect(go(1, 'accept', 10).go).toBe(false);
+  it('default (widened) trigger: accept, accept-low-confidence and a give-up continue; the NARROW set (env) stops on a confident accept and on no verdict', () => {
+    const narrow = { CORTEX_SECOND_ATTEMPT_TRIGGER: 'accept-with-gap,accept-low-confidence' };
+    expect(go(1, 'accept', 10).go).toBe(true);
     expect(go(1, 'accept-low-confidence', 10).go).toBe(true);
-    expect(go(1, 'accept', 10, { env: { CORTEX_SECOND_ATTEMPT_TRIGGER: 'accept,accept-with-gap' } }).go).toBe(true);
-    expect(go(1, null, 10).go).toBe(false); // no resolver event → no further attempt (default set)
+    expect(go(1, null, 10).go).toBe(true); // a give-up reopens under the widened default
+    expect(go(1, 'accept', 10, { env: narrow }).go).toBe(false);
+    expect(go(1, null, 10, { env: narrow }).go).toBe(false); // no resolver event → no further attempt (narrow set)
+    expect(go(1, 'veto', 10).go).toBe(false); // a veto never reopens
   });
   it("widening: the trigger token 'none' opens an attempt after a give-up (no verdict)", () => {
     const wide = { CORTEX_SECOND_ATTEMPT_TRIGGER: 'accept-with-gap,accept-low-confidence,accept,none' };
     const o = go(1, null, 30, { env: wide });
     expect(o.go).toBe(true); expect(o.action).toBeNull();
-    expect(go(1, null, 30).why).toBe('action not in trigger set');
+    const narrow = { CORTEX_SECOND_ATTEMPT_TRIGGER: 'accept-with-gap,accept-low-confidence' };
+    expect(go(1, null, 30, { env: narrow }).why).toBe('action not in trigger set');
     expect(go(1, 'accept', 30, { env: { CORTEX_SECOND_ATTEMPT_TRIGGER: 'accept-with-gap,accept-low-confidence,accept' } }).go).toBe(true);
-    expect(go(1, 'accept', 30).go).toBe(false);
+    expect(go(1, 'accept', 30, { env: narrow }).go).toBe(false);
   });
   it('MAX=3: continues at k=2,3, stops at the cap (k=4), on a non-trigger action, and when time runs out', () => {
     expect(go(2, 'accept-with-gap', 40, { mx: '3' }).go).toBe(true);
@@ -91,7 +95,7 @@ describe('decideNextAttempt (sa_go parity)', () => {
   });
   it('records the inputs the adapter banked (a<k>.json shape)', () => {
     const o = go(1, 'accept-with-gap', 30);
-    expect(o).toMatchObject({ k: 1, action: 'accept-with-gap', deadlineMs: DL, elapsedMs: 30 * MIN, extraSoFar: 0, trigger: ['accept-with-gap', 'accept-low-confidence'], minRemaining: 0.5, why: 'continue' });
+    expect(o).toMatchObject({ k: 1, action: 'accept-with-gap', deadlineMs: DL, elapsedMs: 30 * MIN, extraSoFar: 0, trigger: ['accept-with-gap', 'accept-low-confidence', 'accept', 'none'], minRemaining: 0.5, why: 'continue' });
   });
 });
 

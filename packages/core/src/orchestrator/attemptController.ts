@@ -28,8 +28,13 @@ import { sumSessionUsage, type SessionUsage } from '../training/usageAccounting.
 // Levers
 // ---------------------------------------------------------------------------------------------------------------------------------
 
-/** The adapter's default trigger set: a finish the judge accepted WITH a recorded gap or at low confidence. */
-export const SECOND_ATTEMPT_DEFAULT_TRIGGER = ['accept-with-gap', 'accept-low-confidence'] as const;
+/** Default trigger set — PROMOTED 2026-10-10 (operator): the WIDENED set. A confident `accept` and a give-up (`none`) reopen too, while
+ *  ≥ MIN_REMAINING of the clock is left. Evidence: TB4 cells 3+4 on the 14 c23 tasks — adapter chain 9 + 10 /14 (two-repeat best of the
+ *  arc; the narrow set's bundle scored 8 + 8), library chain 8 + 7 /14 with identical decisions. The narrow set (`accept-with-gap,
+ *  accept-low-confidence`) stays available through CORTEX_SECOND_ATTEMPT_TRIGGER. */
+export const SECOND_ATTEMPT_DEFAULT_TRIGGER = ['accept-with-gap', 'accept-low-confidence', 'accept', 'none'] as const;
+/** The pre-promotion default (cells before 2026-10-10 that set no trigger ran this). */
+export const SECOND_ATTEMPT_NARROW_TRIGGER = ['accept-with-gap', 'accept-low-confidence'] as const;
 /** Verdicts that rank between a confident accept and no finish (sa_pick's SA_GAP). */
 export const SECOND_ATTEMPT_GAP_ACTIONS = new Set<string>(['accept-with-gap', 'accept-low-confidence']);
 
@@ -446,6 +451,15 @@ export async function runWithAttempts(opts: RunWithAttemptsOptions): Promise<Orc
     const sel = selectAttempt(records.sort((a, b) => a.k - b.k), chk);
     if (!snap.restore(`attempt${sel.pick}`)) { log(`[AttemptController] R194 restore of attempt ${sel.pick} FAILED — restoring attempt 1`); snap.restore('attempt1'); }
     writeJson(join(artifactsDir, 'second-attempt.json'), sel);
+    // R245 (2026-10-10): the supervisor banks <OUT_DIR>/session.jsonl + decisions.jsonl as THE trajectory, and attempt 1's orchestrator
+    // owns those files — so a pick ≠ 1 left attempt 1's trajectory in the lake (distill/curation/doctrine read the wrong attempt on every
+    // library arm). Mirror the adapter chain: when an OUT_DIR is set and the pick is a later attempt, its copies become the canonical files.
+    if (cfg.outDir && sel.pick !== 1) {
+      for (const f of ['session', 'decisions']) {
+        const src = join(artifactsDir, `${f}.attempt${sel.pick}.jsonl`);
+        if (copyIf(src, join(artifactsDir, `${f}.jsonl`))) log(`[AttemptController] R194 ${f}.jsonl ← attempt ${sel.pick} (the pick)`);
+      }
+    }
     log(`[AttemptController] R194 selection: ${JSON.stringify(sel).slice(0, 600)}`);
     await event({ phase: 'selection', pick: sel.pick, why: sel.why, turnsSource: sel.turnsSource, shippedCheck: sel.shippedCheck, attempts: sel.attempts.map((a) => ({ k: a.k, action: a.action, check: a.check, turns: a.turns, namedPassed: a.namedPassed, finished: a.finished })) });
     const merged = mergeAttemptResponses(responses, sel);
