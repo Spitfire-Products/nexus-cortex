@@ -773,7 +773,8 @@ This covers lines ${stringLocation.offset + 1}-${stringLocation.offset + stringL
 
 ${excerpt}
 
-Call Edit again with old_string copied EXACTLY from these lines (whitespace included).`;
+Call Edit again with old_string copied EXACTLY from these lines (whitespace included). To see more, read through bash (bash reads register as reads):
+  Bash: sed -n '${from},${to}p' "${relativePath}"`;
           }
           return `You must read the file before editing it.
 
@@ -791,7 +792,8 @@ Then call Edit again with the exact current text.`;
 
 ${excerpt2}
 
-Call Edit again with old_string copied EXACTLY from these lines (whitespace included).`;
+Call Edit again with old_string copied EXACTLY from these lines (whitespace included). To see more:
+  Read(file_path: "${relativePath}", offset: ${stringLocation.offset}, limit: ${stringLocation.limit})`;
           }
         }
         return `You must read the file before editing it.
