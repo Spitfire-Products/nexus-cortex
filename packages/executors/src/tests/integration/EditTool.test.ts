@@ -150,6 +150,27 @@ Line 3`;
     expect(result.error).toContain('could not find the string to replace');
   });
 
+  it('R249: a not-found old_string points at the closest current lines', async () => {
+    fs.writeFileSync(testFile, 'alpha line one\nconst total = compute(items, taxRate);\nomega\n');
+    FileReadTracker.markAsRead(testFile);
+    const result = await tool.execute({ file_path: testFile, old_string: 'const total = compute(items, rate);', new_string: 'x' }, new AbortController().signal);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Closest current lines');
+    expect(result.error).toContain('const total = compute(items, taxRate);');
+  });
+
+  it('R248: an unread file whose target is located returns the region and registers it as read, so the retry succeeds', async () => {
+    fs.writeFileSync(testFile, Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join('\n') + '\nconst target = 1;\nend\n');
+    FileReadTracker.clearSession();
+    const first = await tool.execute({ file_path: testFile, old_string: 'const target = 1;', new_string: 'const target = 2;' }, new AbortController().signal);
+    expect(first.success).toBe(false);
+    expect(first.error).toContain('registered as read');
+    expect(first.error).toContain('const target = 1;');
+    const second = await tool.execute({ file_path: testFile, old_string: 'const target = 1;', new_string: 'const target = 2;' }, new AbortController().signal);
+    expect(second.success).toBe(true);
+    expect(fs.readFileSync(testFile, 'utf-8')).toContain('const target = 2;');
+  });
+
   it('should handle multiline replacements', async () => {
     const initialContent = `function hello() {
   console.log("Hello");

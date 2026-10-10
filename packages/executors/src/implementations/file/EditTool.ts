@@ -54,6 +54,35 @@ export interface SectionFingerprint {
  * - Content fingerprinting allows detecting if unrelated edits affect your target section
  * - This ensures LLM always has current file state in evolving codebases
  */
+/** R248: a bounded excerpt (1-based inclusive lines, ≤ maxBytes) so a read-guard error already shows the region the edit targets. */
+export function fileExcerpt(filePath: string, from: number, to: number, maxBytes = 4000): string {
+  try {
+    const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
+    const a = Math.max(1, from); const b = Math.min(lines.length, to);
+    let out = ''; let n = a;
+    for (; n <= b; n++) { const l = `${String(n).padStart(5)}\t${lines[n - 1]}\n`; if (out.length + l.length > maxBytes) break; out += l; }
+    return out.trimEnd() + (n <= b ? `\n    … (${b - n + 1} more line(s) not shown)` : '');
+  } catch { return ''; }
+}
+
+/** R249: when old_string is not found, the lines that best match its first non-empty line (so a stale old_string after the model's own
+ *  edit is corrected in one step instead of a blind re-read). Returns up to `limit` numbered lines. */
+export function nearestLines(content: string, oldString: string, limit = 3): string {
+  const first = (oldString.split('\n').map((l) => l.trim()).find((l) => l.length > 0) ?? '').slice(0, 80);
+  if (!first) return '';
+  const probe = first.slice(0, Math.max(12, Math.min(40, first.length))).toLowerCase();
+  const lines = content.split('\n'); const hits: Array<{ n: number; score: number; text: string }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i]!.trim().toLowerCase(); if (!t) continue;
+    let score = 0;
+    if (t.includes(probe)) score = 3; else if (probe.length >= 16 && t.includes(probe.slice(0, 16))) score = 2;
+    else { const w = probe.split(/\W+/).filter((x) => x.length >= 4); if (w.length && w.filter((x) => t.includes(x)).length >= Math.max(2, Math.ceil(w.length / 2))) score = 1; }
+    if (score) hits.push({ n: i + 1, score, text: lines[i]! });
+  }
+  hits.sort((x, y) => y.score - x.score || x.n - y.n);
+  return hits.slice(0, limit).map((h) => `${String(h.n).padStart(5)}\t${h.text.slice(0, 160)}`).join('\n');
+}
+
 export class FileReadTracker {
   private static fileReadTimestamps = new Map<string, number>();
   private static fileEditTimestamps = new Map<string, number>();
@@ -736,12 +765,34 @@ This covers lines ${stringLocation.offset + 1}-${stringLocation.offset + stringL
         if (readless) {
           const from = stringLocation.offset + 1;
           const to = stringLocation.offset + stringLocation.limit;
+          // R248: show the region now and register it as read — the retry does not need a read turn (cells 3+4: 4 tasks/arm lost a turn here)
+          const excerpt = fileExcerpt(filePath, from, to);
+          if (excerpt) {
+            FileReadTracker.markAsRead(filePath, from, to);
+            return `You must read the file before editing it — here is the region around your edit target (lines ${from}-${to} of "${relativePath}", now registered as read):
+
+${excerpt}
+
+Call Edit again with old_string copied EXACTLY from these lines (whitespace included).`;
+          }
           return `You must read the file before editing it.
 
 Your edit target appears around line ${stringLocation.lineNumber}. Read it through bash (bash reads register as reads):
   Bash: sed -n '${from},${to}p' "${relativePath}"
 
 Then call Edit again with the exact current text.`;
+        }
+        {
+          const from2 = stringLocation.offset + 1; const to2 = stringLocation.offset + stringLocation.limit;
+          const excerpt2 = fileExcerpt(filePath, from2, to2);
+          if (excerpt2) { // R248 (same as the readless branch): the region is shown and registered as read
+            FileReadTracker.markAsRead(filePath, from2, to2);
+            return `You must read the file before editing it — here is the region around your edit target (lines ${from2}-${to2} of "${relativePath}", now registered as read):
+
+${excerpt2}
+
+Call Edit again with old_string copied EXACTLY from these lines (whitespace included).`;
+          }
         }
         return `You must read the file before editing it.
 
@@ -833,10 +884,12 @@ This covers lines ${stringLocation.offset + 1}-${stringLocation.offset + stringL
 
       // Validate occurrence count
       if (occurrences === 0) {
+        const near = nearestLines(currentContent, params.old_string); // R249: the stale-old_string trap (own edit changed it) — point at the current text
         return this.createErrorResult(
           `Failed to edit: could not find the string to replace in ${params.file_path}. ` +
             `The exact text in old_string was not found. ` +
-            `Ensure you're matching whitespace and indentation precisely.`,
+            `Ensure you're matching whitespace and indentation precisely.` +
+            (near ? `\n\nClosest current lines (the file may have changed since you read it — copy old_string from here):\n${near}` : ''),
         );
       }
 

@@ -39,6 +39,32 @@ describe('resolveSecondAttemptConfig (lever parsing, adapter parity)', () => {
   });
 });
 
+describe('R246/R247 levers: select mode + until-budget', () => {
+  it('CORTEX_SECOND_ATTEMPT_UNTIL_BUDGET ignores the count cap while the clock allows; floor/reserve/min still gate', () => {
+    const ub = { CORTEX_SECOND_ATTEMPT_UNTIL_BUDGET: '1' };
+    expect(go(3, 'accept-with-gap', 60, { env: ub }).go).toBe(true);           // k=3 > MAX(1) but budget remains
+    expect(go(5, 'accept-with-gap', 100, { env: ub }).go).toBe(true);
+    expect(go(3, 'accept-with-gap', 125, { env: ub }).go).toBe(false);         // below MIN_REMAINING
+    expect(go(2, 'accept-with-gap', 60).go).toBe(false);                       // lever off: cap holds
+    expect(cfg(ub).untilBudget).toBe(true); expect(cfg().untilBudget).toBe(false);
+  });
+  it('CORTEX_SECOND_ATTEMPT_SELECT=evidence: any accept beats a veto, fewest turns beats a confident accept; verdict mode unchanged', () => {
+    expect(cfg({ CORTEX_SECOND_ATTEMPT_SELECT: 'evidence' }).select).toBe('evidence'); expect(cfg().select).toBe('verdict');
+    const rec = (k: number, action: string | null, turns: number): AttemptRecord => ({ k, action, remainingFrac: 0.8, namedPassed: 0, check: 'none', iterations: turns, sessionTurns: turns, finished: true, rc: '0' });
+    // confident accept with more turns vs a gap-accept with fewer turns
+    const a = [rec(1, 'accept', 120), rec(2, 'accept-with-gap', 60)];
+    expect(selectAttempt(a.map((x) => ({ ...x })), null).pick).toBe(1);               // verdict mode: accept wins
+    expect(selectAttempt(a.map((x) => ({ ...x })), null, 'evidence').pick).toBe(2);   // evidence mode: fewer turns wins
+    // a veto with fewer turns never beats an accepted attempt in evidence mode
+    const b = [rec(1, 'accept-with-gap', 99), rec(2, 'veto', 50)];
+    expect(selectAttempt(b.map((x) => ({ ...x })), null, 'evidence').pick).toBe(1);
+    // the shipped check still decides first in both modes
+    const c = [{ ...rec(1, 'accept', 10), check: 'fail' as const }, { ...rec(2, 'accept-with-gap', 90), check: 'pass' as const }];
+    expect(selectAttempt(c.map((x) => ({ ...x })), 'make test', 'evidence').pick).toBe(2);
+    expect(selectAttempt(c.map((x) => ({ ...x })), 'make test').pick).toBe(2);
+  });
+});
+
 describe('decideNextAttempt (sa_go parity)', () => {
   it('MAX unset (= 1): exactly one extra attempt — attempt 1 continues, attempt 2 never does (cap)', () => {
     const o = go(1, 'accept-with-gap', 30);

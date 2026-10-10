@@ -55,6 +55,13 @@ export interface SecondAttemptConfig {
   outDir: string | null;
   /** Wall-clock cap for one shipped-check run (the adapter's `timeout 300`). */
   checkTimeoutMs: number;
+  /** CORTEX_SECOND_ATTEMPT_SELECT — `verdict` (default; the adapter's order: verdict rank → fewest turns → judge checks → earliest) or
+   *  `evidence` (R246: shipped check → ACCEPTED-class first (any accept beats veto/none) → fewest turns → verdict rank → checks → earliest —
+   *  demotes the accept-vs-gap distinction, which cells 3+4 showed to be judge noise: last-verdict accuracy 0.31–0.77). */
+  select: 'verdict' | 'evidence';
+  /** CORTEX_SECOND_ATTEMPT_UNTIL_BUDGET = 1|true|on — R247: ignore the extra-attempt COUNT cap while ≥ MIN_REMAINING of the clock is left
+   *  (reserve + floor still apply). Cells 3+4: 18/19 fails ended with ≥ 50 % unused while MAX=2 had closed the chain. */
+  untilBudget: boolean;
 }
 
 export function resolveSecondAttemptConfig(env: NodeJS.ProcessEnv = process.env): SecondAttemptConfig {
@@ -71,6 +78,8 @@ export function resolveSecondAttemptConfig(env: NodeJS.ProcessEnv = process.env)
     floorMs: Math.max(0, intOr(env.CORTEX_SECOND_ATTEMPT_FLOOR_MS || 900_000, 900_000)),
     outDir: String(env.CORTEX_SECOND_ATTEMPT_OUT_DIR ?? '').trim() || null,
     checkTimeoutMs: 300_000,
+    select: /^evidence$/i.test(String(env.CORTEX_SECOND_ATTEMPT_SELECT ?? '').trim()) ? 'evidence' : 'verdict',
+    untilBudget: /^(1|true|on)$/i.test(String(env.CORTEX_SECOND_ATTEMPT_UNTIL_BUDGET ?? '').trim()),
   };
 }
 
@@ -143,13 +152,13 @@ export function decideNextAttempt(i: AttemptDecisionInput): AttemptDecision {
   if (!cfg.trigger.includes(actKey)) why = 'action not in trigger set';
   else if (frac === null || frac < cfg.minRemaining) why = 'remaining fraction of the original deadline below minimum';
   else if (rem - cfg.reserveMs < cfg.floorMs) why = `less than ${Math.round(cfg.floorMs / 60_000)} min would remain after the ${Math.round(cfg.reserveMs / 60_000)} min reserve`;
-  else if (i.k - 1 >= cfg.max) why = 'extra-attempt cap reached';
+  else if (!cfg.untilBudget && i.k - 1 >= cfg.max) why = 'extra-attempt cap reached';
   else why = 'continue';
   return {
     k: i.k, action, remainingFrac: frac === null ? null : Math.round(frac * 10_000) / 10_000, eventRemainingFrac: ev, deadlineMs: dl,
     elapsedMs: elapsed, remainingMs: rem, nextDeadlineMs: Math.max(600_000, rem - cfg.reserveMs),
     namedPassed: typeof i.namedPassed === 'number' ? i.namedPassed : 0, checkPassed: i.checkPassed ?? null,
-    trigger: [...cfg.trigger], minRemaining: cfg.minRemaining, max: cfg.max, extraSoFar: i.k - 1, go: why === 'continue', why,
+    trigger: [...cfg.trigger], minRemaining: cfg.minRemaining, max: cfg.untilBudget ? Number.POSITIVE_INFINITY : cfg.max, extraSoFar: i.k - 1, go: why === 'continue', why,
   };
 }
 
@@ -178,6 +187,8 @@ export interface AttemptRecord {
 }
 
 export interface AttemptSelection {
+  /** R246: which selection order produced the pick */
+  selectMode?: 'verdict' | 'evidence';
   pick: number;
   why: string;
   attempts: AttemptRecord[];
@@ -195,7 +206,7 @@ export function rankVerdict(action: string | null | undefined): number {
 /** sa_pick, verbatim: (a) shipped check — when some candidates pass and others do not, keep the passing ones; (b) verdict rank;
  *  (c) FEWEST tool-call turns (r-selector 2026-09-28; promoted above namedPassed 2026-10-07); (d) more judge checks passed; (e) earliest.
  *  Candidates = attempt 1 always + every finished later attempt. Pure (mutates `turns` on the records it is given). */
-export function selectAttempt(att: AttemptRecord[], shippedCheck: string | null): AttemptSelection {
+export function selectAttempt(att: AttemptRecord[], shippedCheck: string | null, mode: 'verdict' | 'evidence' = 'verdict'): AttemptSelection {
   let cands = att.filter((x) => x.finished);
   // one turn measure for every candidate: toolCallIterations when all have it, else session tool-call turns
   const src: AttemptSelection['turnsSource'] = cands.every((x) => x.iterations !== null) ? 'toolCallIterations' : 'session';
@@ -209,12 +220,20 @@ export function selectAttempt(att: AttemptRecord[], shippedCheck: string | null)
     why.push('shipped check passes only on attempt ' + passing.map((x) => x.k).join(','));
   }
   const BIG = 1e9;
-  const steps: Array<[string, (x: AttemptRecord) => number]> = [
-    ['verdict', (x) => -rankVerdict(x.action)],
-    ['fewest tool-call turns', (x) => (typeof x.turns === 'number' ? x.turns : BIG)],
-    ['more judge checks passed', (x) => -x.namedPassed],
-    ['earliest attempt', (x) => x.k],
-  ];
+  const steps: Array<[string, (x: AttemptRecord) => number]> = mode === 'evidence'
+    ? [ // R246: an accepted finish (any accept) beats a veto/give-up, then evidence (fewest turns) before the judge's confidence
+        ['accepted', (x) => (rankVerdict(x.action) > 0 ? 0 : 1)],
+        ['fewest tool-call turns', (x) => (typeof x.turns === 'number' ? x.turns : BIG)],
+        ['verdict', (x) => -rankVerdict(x.action)],
+        ['more judge checks passed', (x) => -x.namedPassed],
+        ['earliest attempt', (x) => x.k],
+      ]
+    : [
+        ['verdict', (x) => -rankVerdict(x.action)],
+        ['fewest tool-call turns', (x) => (typeof x.turns === 'number' ? x.turns : BIG)],
+        ['more judge checks passed', (x) => -x.namedPassed],
+        ['earliest attempt', (x) => x.k],
+      ];
   let decided = why.length > 0 && why[why.length - 1]!.startsWith('shipped check');
   for (const [label, key] of steps) {
     if (cands.length <= 1) break;
@@ -229,7 +248,7 @@ export function selectAttempt(att: AttemptRecord[], shippedCheck: string | null)
   }
   const pick = cands.length ? cands[0]!.k : 1;
   if (!decided) why.push('only candidate');
-  const out: AttemptSelection = { pick, why: why.join('; '), attempts: att, turnsSource: src, shippedCheck: shippedCheck || null };
+  const out: AttemptSelection = { pick, why: why.join('; '), attempts: att, turnsSource: src, shippedCheck: shippedCheck || null, selectMode: mode };
   for (const x of att) out[`attempt${x.k}`] = { action: x.action, remainingFrac: x.remainingFrac, namedPassed: x.namedPassed, check: x.check, rc: x.rc, turns: x.turns };
   return out;
 }
@@ -448,7 +467,7 @@ export async function runWithAttempts(opts: RunWithAttemptsOptions): Promise<Orc
     }
 
     // 5. select, restore, merge
-    const sel = selectAttempt(records.sort((a, b) => a.k - b.k), chk);
+    const sel = selectAttempt(records.sort((a, b) => a.k - b.k), chk, cfg.select);
     if (!snap.restore(`attempt${sel.pick}`)) { log(`[AttemptController] R194 restore of attempt ${sel.pick} FAILED — restoring attempt 1`); snap.restore('attempt1'); }
     writeJson(join(artifactsDir, 'second-attempt.json'), sel);
     // R245 (2026-10-10): the supervisor banks <OUT_DIR>/session.jsonl + decisions.jsonl as THE trajectory, and attempt 1's orchestrator
