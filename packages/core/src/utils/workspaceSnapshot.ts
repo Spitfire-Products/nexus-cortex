@@ -125,6 +125,21 @@ export class WorkspaceSnapshot {
     return this.ok(this.git(['clean', '-fdq'], this.commitTimeoutMs), `clean (${tag})`);
   }
 
+  /** R250 (sibling grading): write every ref of the shadow repository (lift + attempt<k> tags) to a git bundle at `path`, so a
+   *  restore-only grader trial can check out any attempt later. false on failure (banking is best-effort). */
+  bundle(path: string): boolean {
+    if (!this.ready) return false;
+    try { mkdirSync(join(path, '..'), { recursive: true }); } catch { /* best-effort */ }
+    return this.ok(this.git(['bundle', 'create', path, '--all', '--tags'], this.commitTimeoutMs), `bundle (${path})`);
+  }
+
+  /** `git diff --stat <a> <b>` between two tags (R246 judge selector evidence); '' on failure. */
+  diffStat(a: string, b: string, maxChars = 4000): string {
+    if (!this.ready) return '';
+    const r = this.git(['diff', '--stat=120', a, b], this.commitTimeoutMs);
+    return r.status === 0 ? String(r.stdout ?? '').slice(0, maxChars) : '';
+  }
+
   /** Tags present in the shadow repository. */
   tags(): string[] {
     if (!this.ready) return [];

@@ -50,6 +50,23 @@ describe.skipIf(!hasGit)('WorkspaceSnapshot (shadow git outside the tree)', () =
       expect(fs.readFileSync(path.join(ws, 'answer.txt'), 'utf-8')).toBe('good2\n');
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
+  it('R250: bundle() carries every tag; a bare clone of the bundle lists lift + attempt tags; diffStat reports the change', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wsnap-b-'));
+    try {
+      const ws = path.join(root, 'ws'); fs.mkdirSync(ws); fs.writeFileSync(path.join(ws, 'a.txt'), 'lift\n');
+      const snap = new WorkspaceSnapshot({ workspace: ws, gitDir: path.join(root, 'g') });
+      expect(snap.init()).toBe(true); expect(snap.commit('lift')).toBe(true);
+      fs.writeFileSync(path.join(ws, 'a.txt'), 'attempt1\n'); expect(snap.commit('attempt1')).toBe(true);
+      const b = path.join(root, 'out', 'attempts.bundle');
+      expect(snap.bundle(b)).toBe(true); expect(fs.existsSync(b)).toBe(true);
+      const { spawnSync } = require('child_process');
+      const clone = path.join(root, 'clone.git');
+      expect(spawnSync('git', ['clone', '-q', '--bare', b, clone], { encoding: 'utf-8' }).status).toBe(0);
+      const tags = spawnSync('git', ['--git-dir=' + clone, 'tag', '--list'], { encoding: 'utf-8' }).stdout.split('\n').filter(Boolean).sort();
+      expect(tags).toEqual(['attempt1', 'lift']);
+      expect(snap.diffStat('lift', 'attempt1')).toContain('a.txt');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
   it('reports failure instead of throwing: unknown tag, missing workspace, verbs before init', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wsnap-'));
     try {

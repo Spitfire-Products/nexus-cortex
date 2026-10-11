@@ -473,6 +473,15 @@ export async function runWithAttempts(opts: RunWithAttemptsOptions): Promise<Orc
     // R245 (2026-10-10): the supervisor banks <OUT_DIR>/session.jsonl + decisions.jsonl as THE trajectory, and attempt 1's orchestrator
     // owns those files — so a pick ≠ 1 left attempt 1's trajectory in the lake (distill/curation/doctrine read the wrong attempt on every
     // library arm). Mirror the adapter chain: when an OUT_DIR is set and the pick is a later attempt, its copies become the canonical files.
+    // R250 (sibling grading, 2026-10-11): bank every attempt's tree as a git bundle beside the selection record, so the supervisor can
+    // grade the NON-picked attempts in restore-only trials after this task banks (the oracle ceiling for the selector). Bench mode only.
+    if (cfg.outDir) {
+      const bundlePath = join(artifactsDir, 'attempts.bundle');
+      if (snap.bundle(bundlePath)) {
+        writeJson(join(artifactsDir, 'attempts.json'), { tags: snap.tags(), pick: sel.pick, attempts: records.map((r) => r.k), bundle: 'attempts.bundle' });
+        log(`[AttemptController] R250 attempts bundle written (${snap.tags().length} tags) → ${bundlePath}`);
+      }
+    }
     if (cfg.outDir && sel.pick !== 1) {
       for (const f of ['session', 'decisions']) {
         const src = join(artifactsDir, `${f}.attempt${sel.pick}.jsonl`);
