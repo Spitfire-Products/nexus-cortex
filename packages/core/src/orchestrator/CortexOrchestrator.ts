@@ -1619,7 +1619,7 @@ export class CortexOrchestrator {
       if (store && cfg.verifyScale) void store.recordEvent({ sessionId, kind: 'verify_scale_item', toolName: 'EndTurn', detail: { surface: 'endturn-resolver', clauseChars: RESOLVER_SCALE_CLAUSE.length, roundsUsed, meets: verdict.meets, parsed: verdict.parsed, confidence: verdict.confidence } }).catch(() => {});
       // R211–R214 HB-TASK-RULES (CORTEX_RULE_*, dark): the judge persona carried the active rule clauses on this adjudication.
       if (store && cfg.taskRules.length) void store.recordEvent({ sessionId, kind: 'task_rule_judge', toolName: 'EndTurn', detail: { surface: 'endturn-resolver', rules: cfg.taskRules, clauseChars: taskRulesJudgeClause(cfg.taskRules).length, roundsUsed, meets: verdict.meets, parsed: verdict.parsed, confidence: verdict.confidence } }).catch(() => {});
-      this.lastResolverDecision = { action, confidence: verdict.confidence, namedPassed, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null, remainingFrac: resolverRemainingFrac === null ? null : Number(resolverRemainingFrac.toFixed(4)), ts: Date.now() }; // R239
+      this.lastResolverDecision = { action, confidence: verdict.confidence, namedPassed, checkPassed: checkResult ? /→ PASSED/.test(checkResult) : null, remainingFrac: resolverRemainingFrac === null ? null : Number(resolverRemainingFrac.toFixed(4)), plan: (verdict.plan || '').slice(0, 2000), ts: Date.now() }; // R239 (+R251 plan)
       if (store) void store.recordEvent({
         sessionId,
         kind: 'endturn_resolver',
@@ -10309,6 +10309,16 @@ export class CortexOrchestrator {
   /** R239 / P4: the last endturn_resolver adjudication of the current turn (null = the turn ended without a verdict = a give-up).
    *  Read by the AttemptController after sendMessage returns; reset at every turn start. */
   getLastResolverDecision(): LastResolverDecision | null { return this.lastResolverDecision ? { ...this.lastResolverDecision } : null; }
+
+  /** R251: the lift planner's PLAN OF ATTACK for the current task ('' when none) — read by the attempt judge. */
+  getLiftPlanText(): string { return this.liftPlanText; }
+
+  /** R251: one comparative judge call over a chain's attempts (prompt from training/attemptJudge.ts); null when no helper middleware. */
+  async compareAttempts(body: string, nAttempts: number): Promise<string | null> {
+    const hm = this.helperMiddleware as unknown as { compareAttempts?: (c: { body: string; nAttempts: number; helperModelId?: string }) => Promise<string> } | undefined;
+    if (!hm?.compareAttempts) return null;
+    return hm.compareAttempts({ body, nAttempts, helperModelId: this.config.reactiveMentorship?.helperModelId });
+  }
 
   /** R239 / P4: this instance's decision-store path + current session record path, for banking per-attempt artifacts. */
   getAttemptArtifactPaths(): { decisionsPath?: string; sessionPath?: string } {

@@ -22,6 +22,7 @@ import type { CortexOrchestrator, OrchestratorResponse, SendMessageOptions } fro
 import { resolveTurnDeadlineMs } from './timeBudget.js';
 import { resolveCortexStateDir } from '../utils/stateDir.js';
 import { WorkspaceSnapshot } from '../utils/workspaceSnapshot.js';
+import { buildAttemptJudgePrompt, parseAttemptJudgeRanking, applyJudgeRanking, type AttemptPacket } from '../training/attemptJudge.js'; // R251
 import { sumSessionUsage, type SessionUsage } from '../training/usageAccounting.js';
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -58,7 +59,7 @@ export interface SecondAttemptConfig {
   /** CORTEX_SECOND_ATTEMPT_SELECT — `verdict` (default; the adapter's order: verdict rank → fewest turns → judge checks → earliest) or
    *  `evidence` (R246: shipped check → ACCEPTED-class first (any accept beats veto/none) → fewest turns → verdict rank → checks → earliest —
    *  demotes the accept-vs-gap distinction, which cells 3+4 showed to be judge noise: last-verdict accuracy 0.31–0.77). */
-  select: 'verdict' | 'evidence';
+  select: 'verdict' | 'evidence' | 'judge';
   /** CORTEX_SECOND_ATTEMPT_UNTIL_BUDGET = 1|true|on — R247: ignore the extra-attempt COUNT cap while ≥ MIN_REMAINING of the clock is left
    *  (reserve + floor still apply). Cells 3+4: 18/19 fails ended with ≥ 50 % unused while MAX=2 had closed the chain. */
   untilBudget: boolean;
@@ -78,7 +79,7 @@ export function resolveSecondAttemptConfig(env: NodeJS.ProcessEnv = process.env)
     floorMs: Math.max(0, intOr(env.CORTEX_SECOND_ATTEMPT_FLOOR_MS || 900_000, 900_000)),
     outDir: String(env.CORTEX_SECOND_ATTEMPT_OUT_DIR ?? '').trim() || null,
     checkTimeoutMs: 300_000,
-    select: /^evidence$/i.test(String(env.CORTEX_SECOND_ATTEMPT_SELECT ?? '').trim()) ? 'evidence' : 'verdict',
+    select: /^judge$/i.test(String(env.CORTEX_SECOND_ATTEMPT_SELECT ?? '').trim()) ? 'judge' : /^evidence$/i.test(String(env.CORTEX_SECOND_ATTEMPT_SELECT ?? '').trim()) ? 'evidence' : 'verdict',
     untilBudget: /^(1|true|on)$/i.test(String(env.CORTEX_SECOND_ATTEMPT_UNTIL_BUDGET ?? '').trim()),
   };
 }
@@ -94,6 +95,8 @@ export interface LastResolverDecision {
   namedPassed?: number;
   checkPassed?: boolean | null;
   remainingFrac?: number | null;
+  /** R251: the resolver's GAP notes / fix plan ('' when MEETS) — read by the attempt judge */
+  plan?: string;
   error?: string;
   ts: number;
 }
@@ -188,7 +191,12 @@ export interface AttemptRecord {
 
 export interface AttemptSelection {
   /** R246: which selection order produced the pick */
-  selectMode?: 'verdict' | 'evidence';
+  selectMode?: 'verdict' | 'evidence' | 'judge';
+  /** R251 (judge mode): the judge's order (best first), its one-line reason, whether a RANKING line parsed, and the evidence-order pick it overrode */
+  judgeRanking?: number[];
+  judgeReason?: string;
+  judgeParsed?: boolean;
+  evidencePick?: number;
   pick: number;
   why: string;
   attempts: AttemptRecord[];
@@ -342,6 +350,8 @@ export interface RunWithAttemptsOptions {
   projectPath: string;
   /** builds a FRESH orchestrator for attempt k ≥ 2 (createOrchestrator + createSession); the runner calls cleanup() on it */
   createAttemptOrchestrator: (k: number, spec: AttemptOrchestratorSpec) => Promise<CortexOrchestrator>;
+  /** R251: the comparative judge call (default: the caller orchestrator's helper middleware); tests inject a scripted one */
+  compareAttempts?: (body: string, nAttempts: number) => Promise<string | null>;
   env?: NodeJS.ProcessEnv;
   /** task-start epoch (ms); default = now at entry */
   t0Ms?: number;
@@ -404,6 +414,9 @@ export async function runWithAttempts(opts: RunWithAttemptsOptions): Promise<Orc
   const records: AttemptRecord[] = [];
   const tagged = new Set<number>();
   const extraOrchs: CortexOrchestrator[] = [];
+  const judgeInputs = new Map<number, { liftPlan: string; gapNotes: string; confidence?: string; finalText: string }>(); // R251
+  const liftPlanOf = (o: CortexOrchestrator): string => { try { return String((o as any).getLiftPlanText?.() ?? ''); } catch { return ''; } };
+  const finalTextOf = (r: OrchestratorResponse | null): string => { const c = r?.content; if (typeof c === 'string') return c; if (Array.isArray(c)) return c.map((b: any) => (b && typeof b === 'object' && typeof b.text === 'string' ? b.text : '')).filter(Boolean).join('\n'); return ''; };
   let k = 1;
   let lastOrch: CortexOrchestrator = opts.orchestrator;
   try {
@@ -412,6 +425,7 @@ export async function runWithAttempts(opts: RunWithAttemptsOptions): Promise<Orc
       const v = verdictOf(lastOrch);
       const resp = responses[k - 1] ?? null;
       const paths = bank(lastOrch, k, resp);
+      judgeInputs.set(k, { liftPlan: liftPlanOf(lastOrch), gapNotes: v?.plan ?? '', confidence: v?.confidence, finalText: finalTextOf(resp) }); // R251
       const d = decideNextAttempt({ k, action: v?.action ?? null, eventRemainingFrac: v?.remainingFrac ?? null, namedPassed: v?.namedPassed ?? 0, checkPassed: v?.checkPassed ?? null, t0Ms: t0, deadlineMs: dl0, nowMs: now(), cfg });
       writeJson(join(attemptsDir, `a${k}.json`), d);
       log(`[AttemptController] R194 attempt-${k} verdict: ${JSON.stringify(d)}`);
@@ -467,7 +481,34 @@ export async function runWithAttempts(opts: RunWithAttemptsOptions): Promise<Orc
     }
 
     // 5. select, restore, merge
-    const sel = selectAttempt(records.sort((a, b) => a.k - b.k), chk, cfg.select);
+    const sel = selectAttempt(records.sort((a, b) => a.k - b.k), chk, cfg.select === 'judge' ? 'evidence' : cfg.select);
+    // R251 (CORTEX_SECOND_ATTEMPT_SELECT=judge): one comparative judge call over every finished attempt — plan, verdict + open items,
+    // shipped-check output, files changed vs lift, final message, turns — ranks them; the shipped-check gate stays hard; a blank or
+    // unparseable reply keeps the evidence-order pick. Packets + reply are banked beside the selection record for curation.
+    if (cfg.select === 'judge' && records.filter((r) => r.finished).length >= 2) {
+      try {
+        const packets: AttemptPacket[] = records.filter((r) => r.finished).map((r) => {
+          const ji = judgeInputs.get(r.k);
+          let checkOutput = ''; try { checkOutput = readFileSync(join(attemptsDir, `chk${r.k}.txt`), 'utf-8'); } catch { /* none */ }
+          return { k: r.k, liftPlan: ji?.liftPlan ?? '', action: r.action, confidence: ji?.confidence, namedPassed: r.namedPassed, gapNotes: ji?.gapNotes ?? '', check: r.check, checkOutput, diffStat: tagged.has(r.k) ? snap.diffStat('lift', `attempt${r.k}`) : '', finalText: ji?.finalText ?? '', turns: r.turns ?? null };
+        });
+        const task = typeof opts.turnContent === 'string' ? opts.turnContent : finalTextOf({ content: opts.turnContent } as OrchestratorResponse);
+        const body = buildAttemptJudgePrompt(task, packets);
+        const call = opts.compareAttempts ?? ((b: string, n: number) => (opts.orchestrator as any).compareAttempts?.(b, n) ?? Promise.resolve(null));
+        const tj = Date.now();
+        const reply = await call(body, packets.length);
+        const parsed = parseAttemptJudgeRanking(reply ?? '', packets.map((p) => p.k));
+        const evidencePick = sel.pick;
+        const applied = applyJudgeRanking({ candidates: packets.map((p) => ({ k: p.k, check: p.check })), ranking: parsed.parsed ? parsed.ranking : [], fallbackPick: evidencePick });
+        sel.selectMode = 'judge'; sel.evidencePick = evidencePick; sel.judgeRanking = parsed.ranking; sel.judgeReason = parsed.reason; sel.judgeParsed = parsed.parsed;
+        sel.pick = applied.pick; sel.why = parsed.parsed ? applied.why : `judge reply ${reply ? 'unparseable' : 'blank'}; evidence order: ${sel.why}`;
+        writeJson(join(artifactsDir, 'judge-packets.json'), { packets, reply: reply ?? null, ranking: parsed.ranking, reason: parsed.reason, parsed: parsed.parsed, evidencePick, pick: sel.pick, latencyMs: Date.now() - tj });
+        log(`[AttemptController] R251 judge selector: ranking ${parsed.ranking.join('>')} parsed=${parsed.parsed} pick ${sel.pick} (evidence pick ${evidencePick}) in ${Date.now() - tj} ms`);
+        await event({ phase: 'judge', ranking: parsed.ranking, parsed: parsed.parsed, reason: parsed.reason, pick: sel.pick, evidencePick, latencyMs: Date.now() - tj, replyChars: (reply ?? '').length });
+      } catch (e) {
+        log(`[AttemptController] R251 judge selector failed: ${String((e as Error)?.message ?? e).slice(0, 200)} — evidence order kept`);
+      }
+    }
     if (!snap.restore(`attempt${sel.pick}`)) { log(`[AttemptController] R194 restore of attempt ${sel.pick} FAILED — restoring attempt 1`); snap.restore('attempt1'); }
     writeJson(join(artifactsDir, 'second-attempt.json'), sel);
     // R245 (2026-10-10): the supervisor banks <OUT_DIR>/session.jsonl + decisions.jsonl as THE trajectory, and attempt 1's orchestrator
@@ -489,7 +530,7 @@ export async function runWithAttempts(opts: RunWithAttemptsOptions): Promise<Orc
       }
     }
     log(`[AttemptController] R194 selection: ${JSON.stringify(sel).slice(0, 600)}`);
-    await event({ phase: 'selection', pick: sel.pick, why: sel.why, turnsSource: sel.turnsSource, shippedCheck: sel.shippedCheck, attempts: sel.attempts.map((a) => ({ k: a.k, action: a.action, check: a.check, turns: a.turns, namedPassed: a.namedPassed, finished: a.finished })) });
+    await event({ phase: 'selection', pick: sel.pick, why: sel.why, selectMode: sel.selectMode, evidencePick: sel.evidencePick, judgeParsed: sel.judgeParsed, turnsSource: sel.turnsSource, shippedCheck: sel.shippedCheck, attempts: sel.attempts.map((a) => ({ k: a.k, action: a.action, check: a.check, turns: a.turns, namedPassed: a.namedPassed, finished: a.finished })) });
     const merged = mergeAttemptResponses(responses, sel);
     writeJson(join(artifactsDir, 'response.json'), merged ?? r1);
     return merged ?? r1;

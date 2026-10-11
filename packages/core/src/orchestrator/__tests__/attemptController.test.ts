@@ -50,6 +50,7 @@ describe('R246/R247 levers: select mode + until-budget', () => {
   });
   it('CORTEX_SECOND_ATTEMPT_SELECT=evidence: any accept beats a veto, fewest turns beats a confident accept; verdict mode unchanged', () => {
     expect(cfg({ CORTEX_SECOND_ATTEMPT_SELECT: 'evidence' }).select).toBe('evidence'); expect(cfg().select).toBe('verdict');
+    expect(cfg({ CORTEX_SECOND_ATTEMPT_SELECT: 'judge' }).select).toBe('judge'); expect(cfg({ CORTEX_SECOND_ATTEMPT_SELECT: 'JUDGE' }).select).toBe('judge'); // R251
     const rec = (k: number, action: string | null, turns: number): AttemptRecord => ({ k, action, remainingFrac: 0.8, namedPassed: 0, check: 'none', iterations: turns, sessionTurns: turns, finished: true, rc: '0' });
     // confident accept with more turns vs a gap-accept with fewer turns
     const a = [rec(1, 'accept', 120), rec(2, 'accept-with-gap', 60)];

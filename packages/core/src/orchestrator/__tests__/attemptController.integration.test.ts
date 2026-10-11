@@ -113,6 +113,58 @@ describe.skipIf(!hasGit)('R239 runWithAttempts through the turn loop', () => {
     await a1.cleanup().catch(() => {});
   }, 120_000);
 
+  it('R251 judge mode: one comparative call ranks the attempts; the shipped-check gate stays hard; packets + reply are banked', async () => {
+    const outDir = path.join(stateRoot, 'attempts');
+    const env = { ...process.env, CORTEX_SECOND_ATTEMPT: '1', CORTEX_SECOND_ATTEMPT_MAX: '2', CORTEX_SECOND_ATTEMPT_SELECT: 'judge', CORTEX_SECOND_ATTEMPT_OUT_DIR: outDir, CORTEX_TURN_DEADLINE_MS: String(4 * 3600 * 1000) } as NodeJS.ProcessEnv;
+    const a1 = await orch(new ScriptedWriter(ws, 'bad1', 300));
+    (a1 as any).getLastResolverDecision = () => ({ action: 'accept-with-gap', confidence: 'low', namedPassed: 1, remainingFrac: 0.9, plan: '1. the answer is wrong', ts: Date.now() });
+    (a1 as any).getLiftPlanText = () => 'PLAN: write good';
+    const calls: Array<{ body: string; n: number }> = [];
+    const r = await runWithAttempts({
+      orchestrator: a1, turnContent: 'write the answer', messageOptions: {}, projectPath: ws, env, t0Ms: Date.now(), log: () => {},
+      compareAttempts: async (body, n) => { calls.push({ body, n }); return 'RANKING: 1, 3, 2\nREASON: attempt 3 changed the most'; },
+      createAttemptOrchestrator: async (k, spec) => {
+        const o = await orch(new ScriptedWriter(ws, 'good2', 100), spec);
+        (o as any).getLastResolverDecision = () => ({ action: 'accept-with-gap', confidence: 'medium', namedPassed: 0, remainingFrac: 0.9, plan: `open item ${k}`, ts: Date.now() });
+        return o;
+      },
+    });
+    expect(calls.length).toBe(1); expect(calls[0]!.n).toBe(3);
+    expect(calls[0]!.body).toContain('TASK:\nwrite the answer');
+    expect(calls[0]!.body).toContain('PLAN OF ATTACK (advisory; the TASK wins where they disagree):\nPLAN: write good');
+    expect(calls[0]!.body).toContain('RESOLVER OPEN ITEMS (its fix plan — grade whether they are real):\n1. the answer is wrong');
+    expect(calls[0]!.body).toContain('FILES CHANGED vs the task start (git diff --stat):');
+    expect(calls[0]!.body).toContain('FINAL MESSAGE:\nFINAL: wrote good2.');
+    // attempt 1 fails the shipped check → ineligible even though ranked first; among {2,3} the judge's order puts 3 first
+    const sel = JSON.parse(fs.readFileSync(path.join(outDir, 'second-attempt.json'), 'utf-8'));
+    expect(sel.selectMode).toBe('judge'); expect(sel.pick).toBe(3); expect(sel.evidencePick).toBe(2);
+    expect(sel.judgeRanking).toEqual([1, 3, 2]); expect(sel.judgeParsed).toBe(true); expect(sel.judgeReason).toBe('attempt 3 changed the most');
+    expect(sel.why).toBe('shipped check passes only on attempt 2,3; judge ranking 1 > 3 > 2 (attempt 3)');
+    expect((r.metadata as any).secondAttempt.pick).toBe(3);
+    const jp = JSON.parse(fs.readFileSync(path.join(outDir, 'judge-packets.json'), 'utf-8'));
+    expect(jp.packets.map((p: any) => p.k)).toEqual([1, 2, 3]); expect(jp.packets[0].check).toBe('fail'); expect(jp.packets[2].check).toBe('pass'); expect(jp.reply).toContain('RANKING');
+    const dec = fs.readFileSync(path.join(stateRoot, 'decisions.jsonl'), 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((d) => d.kind === 'second_attempt');
+    const j = dec.find((d) => d.detail.phase === 'judge'); expect(j.detail.pick).toBe(3); expect(j.detail.evidencePick).toBe(2);
+    expect(dec.find((d) => d.detail.phase === 'selection')!.detail.selectMode).toBe('judge');
+    await a1.cleanup().catch(() => {});
+  }, 120_000);
+
+  it('R251 judge mode: a blank reply keeps the evidence-order pick and says so', async () => {
+    const outDir = path.join(stateRoot, 'attempts');
+    const env = { ...process.env, CORTEX_SECOND_ATTEMPT: '1', CORTEX_SECOND_ATTEMPT_MAX: '1', CORTEX_SECOND_ATTEMPT_SELECT: 'judge', CORTEX_SECOND_ATTEMPT_OUT_DIR: outDir, CORTEX_TURN_DEADLINE_MS: String(4 * 3600 * 1000) } as NodeJS.ProcessEnv;
+    const a1 = await orch(new ScriptedWriter(ws, 'bad1', 300));
+    (a1 as any).getLastResolverDecision = () => ({ action: 'accept-with-gap', namedPassed: 1, remainingFrac: 0.9, ts: Date.now() });
+    await runWithAttempts({
+      orchestrator: a1, turnContent: 'write', messageOptions: {}, projectPath: ws, env, t0Ms: Date.now(), log: () => {},
+      compareAttempts: async () => '',
+      createAttemptOrchestrator: async (_k, spec) => { const o = await orch(new ScriptedWriter(ws, 'good2', 100), spec); (o as any).getLastResolverDecision = () => ({ action: 'accept-with-gap', namedPassed: 0, remainingFrac: 0.9, ts: Date.now() }); return o; },
+    });
+    const sel = JSON.parse(fs.readFileSync(path.join(outDir, 'second-attempt.json'), 'utf-8'));
+    expect(sel.selectMode).toBe('judge'); expect(sel.judgeParsed).toBe(false); expect(sel.pick).toBe(2); expect(sel.evidencePick).toBe(2);
+    expect(sel.why).toMatch(/^judge reply blank; evidence order: /);
+    await a1.cleanup().catch(() => {});
+  }, 120_000);
+
   it('does nothing beyond attempt 1 when the verdict is a confident accept under the NARROW trigger, or the lever is off', async () => {
     const a1 = await orch(new ScriptedWriter(ws, 'bad1', 300));
     (a1 as any).getLastResolverDecision = () => ({ action: 'accept', namedPassed: 2, remainingFrac: 0.9, ts: Date.now() });

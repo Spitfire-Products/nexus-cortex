@@ -36,6 +36,7 @@ import {
   resolveLiftPlanConfig,
   type LiftPlanContext,
 } from '../training/liftPlanner.js';
+import { ATTEMPT_JUDGE_SYSTEM } from '../training/attemptJudge.js'; // R251
 import {
   resolverSystemPrompt,
   buildResolverUserPrompt,
@@ -1685,6 +1686,28 @@ Give concise, actionable guidance in plain text with these labeled parts:
         effort: cfg.effort,
       },
       buildResolverUserPrompt(ctx, cfg.abstain, cfg.meetsConfirm, context.investigate), // R168 / R170
+      context.helperModelId,
+    );
+  }
+
+  /**
+   * compareAttempts (R251, CORTEX_SECOND_ATTEMPT_SELECT=judge, 2026-10-11) — ONE comparative judge call over every finished attempt of a
+   * second-attempt chain (packets built by attemptController; prompt/parse in training/attemptJudge.ts). Same wire and role config as
+   * the EndTurn judge (`endturn-resolver`); returns the raw reply — the controller parses the RANKING line and applies the hard
+   * shipped-check gate.
+   */
+  async compareAttempts(context: { body: string; nAttempts: number; helperModelId?: string }): Promise<string> {
+    const cfg = resolveEndTurnResolverConfig();
+    return this.generateGuidance(
+      {
+        surface: 'endturn-resolver',
+        mentor: resolveMentorRoleConfig('endturn-resolver', process.env, { modelId: context.helperModelId, effort: cfg.effort, outputBudgetTokens: 600 }),
+        persona: ATTEMPT_JUDGE_SYSTEM,
+        task: `Rank the ${context.nAttempts} independent attempts by the likelihood that the hidden grader accepts the tree as left on disk. First line RANKING: (every attempt, best first); second line REASON:.`,
+        outputBudgetTokens: 600,
+        effort: cfg.effort,
+      },
+      context.body,
       context.helperModelId,
     );
   }
