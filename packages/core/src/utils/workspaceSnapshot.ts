@@ -130,7 +130,9 @@ export class WorkspaceSnapshot {
   bundle(path: string): boolean {
     if (!this.ready) return false;
     try { mkdirSync(join(path, '..'), { recursive: true }); } catch { /* best-effort */ }
-    return this.ok(this.git(['bundle', 'create', path, '--all', '--tags'], this.commitTimeoutMs), `bundle (${path})`);
+    // `--all` already includes refs/tags; adding `--tags` lists every tag TWICE and `git clone` refuses the bundle ("multiple updates for ref
+    // refs/tags/attempt1 not allowed") — every t4j2/t4jf sibling restore failed on it (2026-10-12).
+    return this.ok(this.git(['bundle', 'create', path, '--all'], this.commitTimeoutMs), `bundle (${path})`);
   }
 
   /** `git diff --stat <a> <b>` between two tags (R246 judge selector evidence); '' on failure. */

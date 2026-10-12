@@ -61,6 +61,10 @@ describe.skipIf(!hasGit)('WorkspaceSnapshot (shadow git outside the tree)', () =
       expect(snap.bundle(b)).toBe(true); expect(fs.existsSync(b)).toBe(true);
       const { spawnSync } = require('child_process');
       const clone = path.join(root, 'clone.git');
+      // the bundle must list every ref ONCE (a duplicate tag makes `git clone` refuse it — the t4jf sibling-grade zeros)
+      const heads = spawnSync('git', ['bundle', 'list-heads', b], { encoding: 'utf-8' }).stdout.split('\n').filter(Boolean).map((l) => l.split(' ')[1]);
+      expect(new Set(heads).size).toBe(heads.length);
+      expect(heads).toContain('refs/tags/attempt1');
       expect(spawnSync('git', ['clone', '-q', '--bare', b, clone], { encoding: 'utf-8' }).status).toBe(0);
       const tags = spawnSync('git', ['--git-dir=' + clone, 'tag', '--list'], { encoding: 'utf-8' }).stdout.split('\n').filter(Boolean).sort();
       expect(tags).toEqual(['attempt1', 'lift']);
