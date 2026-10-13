@@ -23,6 +23,7 @@ import { resolveTurnDeadlineMs } from './timeBudget.js';
 import { resolveCortexStateDir } from '../utils/stateDir.js';
 import { WorkspaceSnapshot } from '../utils/workspaceSnapshot.js';
 import { buildAttemptJudgePrompt, parseAttemptJudgeRanking, applyJudgeRanking, type AttemptPacket } from '../training/attemptJudge.js'; // R251
+import { buildPriorAttemptsBlock, appendTurnText } from '../training/informedRetry.js'; // R254
 import { sumSessionUsage, type SessionUsage } from '../training/usageAccounting.js';
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -63,6 +64,10 @@ export interface SecondAttemptConfig {
   /** CORTEX_SECOND_ATTEMPT_UNTIL_BUDGET = 1|true|on — R247: ignore the extra-attempt COUNT cap while ≥ MIN_REMAINING of the clock is left
    *  (reserve + floor still apply). Cells 3+4: 18/19 fails ended with ≥ 50 % unused while MAX=2 had closed the chain. */
   untilBudget: boolean;
+  /** CORTEX_SECOND_ATTEMPT_INFORMED = 1|true|on — R254 (dark): attempts >= 2 receive a PRIOR ATTEMPTS block (each earlier attempt's
+   *  verdict, open items, plan = its reading of the task, final message) appended to the task content. The sibling oracle (t4jf/t4jg)
+   *  showed no-pass chains share one misreading across independent attempts; an informed attempt can question it. */
+  informed: boolean;
 }
 
 export function resolveSecondAttemptConfig(env: NodeJS.ProcessEnv = process.env): SecondAttemptConfig {
@@ -81,6 +86,7 @@ export function resolveSecondAttemptConfig(env: NodeJS.ProcessEnv = process.env)
     checkTimeoutMs: 300_000,
     select: /^judge$/i.test(String(env.CORTEX_SECOND_ATTEMPT_SELECT ?? '').trim()) ? 'judge' : /^evidence$/i.test(String(env.CORTEX_SECOND_ATTEMPT_SELECT ?? '').trim()) ? 'evidence' : 'verdict',
     untilBudget: /^(1|true|on)$/i.test(String(env.CORTEX_SECOND_ATTEMPT_UNTIL_BUDGET ?? '').trim()),
+    informed: /^(1|true|on)$/i.test(String(env.CORTEX_SECOND_ATTEMPT_INFORMED ?? '').trim()),
   };
 }
 
@@ -190,6 +196,10 @@ export interface AttemptRecord {
 }
 
 export interface AttemptSelection {
+  /** R252: excluded-path entries newer than the pick's stamp removed at the pick restore (-1 = no stamp) */
+  restorePruned?: number;
+  /** R254: attempts >= 2 carried the prior-attempts block */
+  informed?: boolean;
   /** R246: which selection order produced the pick */
   selectMode?: 'verdict' | 'evidence' | 'judge';
   /** R251 (judge mode): the judge's order (best first), its one-line reason, whether a RANKING line parsed, and the evidence-order pick it overrode */
@@ -450,7 +460,16 @@ export async function runWithAttempts(opts: RunWithAttemptsOptions): Promise<Orc
       try {
         orch = await opts.createAttemptOrchestrator(kn, { stateDir, storageDir: join(stateDir, 'sessions'), turnDeadlineMs: d.nextDeadlineMs });
         extraOrchs.push(orch);
-        rn = await orch.sendMessage(opts.turnContent, opts.messageOptions);
+        let content = opts.turnContent;
+        if (cfg.informed) { // R254: the earlier attempts' verdicts, open items, readings and final messages ride along
+          const priors = records.map((r) => { const ji = judgeInputs.get(r.k); return { k: r.k, action: r.action, confidence: ji?.confidence, gapNotes: ji?.gapNotes ?? '', liftPlan: ji?.liftPlan ?? '', finalText: ji?.finalText ?? '', turns: r.iterations ?? r.sessionTurns ?? null }; });
+          const block = buildPriorAttemptsBlock(priors);
+          content = appendTurnText(opts.turnContent, block);
+          try { writeFileSync(join(artifactsDir, `informed.attempt${kn}.txt`), block, 'utf-8'); } catch { /* best-effort */ }
+          log(`[AttemptController] R254 informed retry: attempt ${kn} carries ${records.length} prior attempt(s) (${block.length} chars)`);
+          await event({ phase: 'informed', k: kn, priors: records.map((r) => r.k), chars: block.length });
+        }
+        rn = await orch.sendMessage(content, opts.messageOptions);
       } catch (e) {
         log(`[AttemptController] R194 attempt ${kn} failed: ${String((e as Error)?.message ?? e).slice(0, 300)}`);
       }
@@ -473,7 +492,7 @@ export async function runWithAttempts(opts: RunWithAttemptsOptions): Promise<Orc
         const rec = records.find((r) => r.k === j);
         if (!rec || !tagged.has(j)) continue;
         if (j !== k && j !== 1 && now() >= t0 + dl0) { rec.check = 'skipped'; continue; }
-        if (j !== k && !snap.restore(`attempt${j}`)) continue;
+        if (j !== k) { if (!snap.restore(`attempt${j}`)) continue; snap.pruneExcludedAfter(`attempt${j}`); } // R252: the check sees the attempt's own tree
         const { result, output } = runShippedCheck(chk, opts.projectPath, cfg.checkTimeoutMs);
         rec.check = result;
         try { writeFileSync(join(attemptsDir, `chk${j}.txt`), output, 'utf-8'); writeFileSync(join(attemptsDir, `check${j}`), result + '\n', 'utf-8'); } catch { /* best-effort */ }
@@ -493,7 +512,7 @@ export async function runWithAttempts(opts: RunWithAttemptsOptions): Promise<Orc
           return { k: r.k, liftPlan: ji?.liftPlan ?? '', action: r.action, confidence: ji?.confidence, namedPassed: r.namedPassed, gapNotes: ji?.gapNotes ?? '', check: r.check, checkOutput, diffStat: tagged.has(r.k) ? snap.diffStat('lift', `attempt${r.k}`) : '', finalText: ji?.finalText ?? '', turns: r.turns ?? null };
         });
         const task = typeof opts.turnContent === 'string' ? opts.turnContent : finalTextOf({ content: opts.turnContent } as OrchestratorResponse);
-        const body = buildAttemptJudgePrompt(task, packets);
+        const body = buildAttemptJudgePrompt(task, packets, { priorPick: sel.pick }); // R253: the label order is the stated prior
         const call = opts.compareAttempts ?? ((b: string, n: number) => (opts.orchestrator as any).compareAttempts?.(b, n) ?? Promise.resolve(null));
         const tj = Date.now();
         const reply = await call(body, packets.length);
@@ -509,7 +528,14 @@ export async function runWithAttempts(opts: RunWithAttemptsOptions): Promise<Orc
         log(`[AttemptController] R251 judge selector failed: ${String((e as Error)?.message ?? e).slice(0, 200)} — evidence order kept`);
       }
     }
-    if (!snap.restore(`attempt${sel.pick}`)) { log(`[AttemptController] R194 restore of attempt ${sel.pick} FAILED — restoring attempt 1`); snap.restore('attempt1'); }
+    if (!snap.restore(`attempt${sel.pick}`)) { log(`[AttemptController] R194 restore of attempt ${sel.pick} FAILED — restoring attempt 1`); if (snap.restore('attempt1')) snap.pruneExcludedAfter('attempt1'); }
+    else {
+      // R252: drop excluded-path content a LATER attempt left behind (build output, caches, *.pyc, big files) so the graded tree is the
+      // one the pick produced — photonic (t4jf) failed live on attempt 2's leftovers and passed 14/14 from a clean restore.
+      sel.restorePruned = snap.pruneExcludedAfter(`attempt${sel.pick}`);
+      if (sel.restorePruned > 0) log(`[AttemptController] R252 pick restore: pruned ${sel.restorePruned} excluded-path entries newer than attempt ${sel.pick}`);
+    }
+    sel.informed = cfg.informed;
     writeJson(join(artifactsDir, 'second-attempt.json'), sel);
     // R245 (2026-10-10): the supervisor banks <OUT_DIR>/session.jsonl + decisions.jsonl as THE trajectory, and attempt 1's orchestrator
     // owns those files — so a pick ≠ 1 left attempt 1's trajectory in the lake (distill/curation/doctrine read the wrong attempt on every
@@ -530,7 +556,7 @@ export async function runWithAttempts(opts: RunWithAttemptsOptions): Promise<Orc
       }
     }
     log(`[AttemptController] R194 selection: ${JSON.stringify(sel).slice(0, 600)}`);
-    await event({ phase: 'selection', pick: sel.pick, why: sel.why, selectMode: sel.selectMode, evidencePick: sel.evidencePick, judgeParsed: sel.judgeParsed, turnsSource: sel.turnsSource, shippedCheck: sel.shippedCheck, attempts: sel.attempts.map((a) => ({ k: a.k, action: a.action, check: a.check, turns: a.turns, namedPassed: a.namedPassed, finished: a.finished })) });
+    await event({ phase: 'selection', pick: sel.pick, why: sel.why, selectMode: sel.selectMode, restorePruned: sel.restorePruned, informed: sel.informed, evidencePick: sel.evidencePick, judgeParsed: sel.judgeParsed, turnsSource: sel.turnsSource, shippedCheck: sel.shippedCheck, attempts: sel.attempts.map((a) => ({ k: a.k, action: a.action, check: a.check, turns: a.turns, namedPassed: a.namedPassed, finished: a.finished })) });
     const merged = mergeAttemptResponses(responses, sel);
     writeJson(join(artifactsDir, 'response.json'), merged ?? r1);
     return merged ?? r1;

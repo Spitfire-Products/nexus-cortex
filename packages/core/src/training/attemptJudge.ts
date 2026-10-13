@@ -7,6 +7,11 @@
  * the likelihood that the HIDDEN grader accepts the tree as left on disk. The TASK's requirements decide, never plan quality:
  * a better plan with a weaker artifact loses. Pure builders/parsers here; the model call lives in HelperModelMiddleware.compareAttempts.
  *
+ * R253 (2026-10-13, after the t4jf/t4jg sibling oracle): the judge over-weighted its own prior-check metadata (`judge checks passed`,
+ * "harness-observed" vs "self-reported") and chose the failing gap-accept over the clean accept on the one discriminating chain.
+ * The prompt now states the evidence-order pick as the prior, never renders the named-check count, and forbids hold-history as a
+ * criterion. Findings: .cortex/bench/findings-tb4-sibling-curation-2026-10-13.md §1.
+ *
  * Output contract: line 1 `RANKING: k, k, k` (every attempt, best first), line 2 `REASON: <one line>`. A blank/unparseable reply
  * falls back to the evidence order (never a hidden pick change). The shipped-check gate stays HARD: when some attempts pass the
  * workspace's own check and others do not, only the passing ones are eligible regardless of the ranking.
@@ -19,6 +24,7 @@ export interface AttemptPacket {
   /** the resolver's last action on this attempt (accept | accept-with-gap | accept-low-confidence | veto | … | null = no verdict) */
   action: string | null;
   confidence?: string;
+  /** banked for curation only — NOT rendered to the judge since R253 (2026-10-13) */
   namedPassed?: number;
   /** the resolver's GAP notes / fix plan ('' when MEETS or none) */
   gapNotes: string;
@@ -46,19 +52,30 @@ export const ATTEMPT_JUDGE_SYSTEM =
   '(verdict, confidence, open items), the workspace\'s own check result, the files it changed, its final message and how many ' +
   'tool-call turns it took. Exactly ONE attempt\'s tree will be graded.\n' +
   'Decide by the TASK\'s real requirements — the criteria the hidden grader checks — never by plan quality: a better plan with a ' +
-  'weaker artifact LOSES. Evidence precedence: a shipped check result > concrete changed files and verifiable claims in the final ' +
-  'message > the resolver\'s verdict and confidence > the plan. Be adversarial: hunt for the exact constraint a nearly-done attempt ' +
-  'misses (wrong artifact, path/format mismatch, numeric threshold, unhandled edge case, "passed my own test but not the task\'s"). ' +
-  'Fewer turns is NOT evidence of correctness on its own.\n' +
+  'weaker artifact LOSES. Evidence precedence: the shipped check result (when it ran) > concrete, specific artifact facts (paths, ' +
+  'formats, values, outputs) in the files changed and the final message > the verdict class (a clean accept > accept-with-gap > ' +
+  'veto) > fewer turns > the plan.\n' +
+  'Each attempt was adjudicated in ISOLATION. A clean verdict (accepted on its first adjudication) has NO hold-cycle history by ' +
+  'construction, so it shows no prior check runs — that absence is NOT weak evidence and NOT "self-reported": an attempt\'s own ' +
+  'claims and an attempt\'s hold-cycle check runs are the same kind of evidence (the agent\'s). NEVER rank by how much adjudication ' +
+  'history an attempt has, by "self-reported vs harness-observed", or by the resolver\'s confidence word alone. Measured on graded ' +
+  'chains: the clean accept finished in fewer turns was the attempt that passed; the gap-accept with more open items was not. ' +
+  'The EVIDENCE-ORDER PRIOR names that attempt — keep it unless a SPECIFIC artifact fact (a missing required file, a wrong ' +
+  'path/format/value, a failing output) shows another attempt meets the task better. Be adversarial about the ARTIFACTS: hunt for ' +
+  'the exact constraint a nearly-done attempt misses (wrong artifact, path/format mismatch, numeric threshold, unhandled edge case, ' +
+  '"passed my own test but not the task\'s").\n' +
   'FORMAT — your FIRST line MUST be exactly `RANKING: k, k, …` listing EVERY attempt number, best first. ' +
   'Second line MUST be `REASON: <one line naming the deciding evidence>`. Nothing else.';
 
-export function buildAttemptJudgePrompt(task: string, packets: AttemptPacket[]): string {
+export function buildAttemptJudgePrompt(task: string, packets: AttemptPacket[], opts: { priorPick?: number } = {}): string {
   const parts: string[] = [`TASK:\n${clip(task, CAPS.task, 'the task text')}`];
+  // R253: the label order's pick is the measured prior; namedPassed is NOT rendered (a clean accept has none by construction — the
+  // judge read that absence as weakness and chose the failing gap-accept on the one discriminating chain of the 10-12 cells)
+  if (typeof opts.priorPick === 'number') parts.push(`EVIDENCE-ORDER PRIOR: attempt ${opts.priorPick} (accepted class first, then fewest turns). Keep it unless a specific artifact fact shows another attempt meets the task better.`);
   for (const p of [...packets].sort((a, b) => a.k - b.k)) {
     const lines: string[] = [`=== ATTEMPT ${p.k} ===`];
     lines.push(`TOOL-CALL TURNS: ${p.turns ?? 'unknown'}`);
-    lines.push(`RESOLVER VERDICT: ${p.action ?? 'none (no finish adjudicated)'}` + (p.confidence ? ` | confidence ${p.confidence}` : '') + (typeof p.namedPassed === 'number' ? ` | judge checks passed ${p.namedPassed}` : ''));
+    lines.push(`RESOLVER VERDICT: ${p.action ?? 'none (no finish adjudicated)'}` + (p.confidence ? ` | confidence ${p.confidence}` : ''));
     if (p.gapNotes.trim()) lines.push(`RESOLVER OPEN ITEMS (its fix plan — grade whether they are real):\n${clip(p.gapNotes, CAPS.gap, 'the open items')}`);
     lines.push(`SHIPPED CHECK (the workspace's own test entry point, run by the harness on this attempt's tree): ${p.check}` + (p.checkOutput.trim() ? `\n${clip(p.checkOutput, CAPS.check, 'the check output')}` : ''));
     if (p.diffStat.trim()) lines.push(`FILES CHANGED vs the task start (git diff --stat):\n${clip(p.diffStat, CAPS.diff, 'the diff stat')}`);

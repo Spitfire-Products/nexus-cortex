@@ -201,6 +201,7 @@ export interface EnvironmentVariables {
   CORTEX_SECOND_ATTEMPT_TRIGGER?: string; // resolver actions that open another attempt; none = a give-up (default accept-with-gap,accept-low-confidence,accept,none — the widened set, promoted 2026-10-10)
   CORTEX_SECOND_ATTEMPT_SELECT?: string; // R246/R251: selection order — verdict (default) | evidence | judge (comparative judge call)
   CORTEX_SECOND_ATTEMPT_UNTIL_BUDGET?: string; // R247: 1 = reopen while >= MIN_REMAINING of the clock remains (count cap ignored)
+  CORTEX_SECOND_ATTEMPT_INFORMED?: string; // R254: 1 = attempts >= 2 receive the prior attempts' verdicts/open items/readings/final messages
   CORTEX_SECOND_ATTEMPT_RESERVE_MS?: string; // reserve (ms) subtracted from the next deadline (default 300000)
   CORTEX_SECOND_ATTEMPT_FLOOR_MS?: string; // minimum (ms) left after the reserve (default 900000)
   CORTEX_SECOND_ATTEMPT_OUT_DIR?: string; // where per-attempt artifacts + second-attempt.json are banked (default <state dir>/attempts)
@@ -528,6 +529,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_SECOND_ATTEMPT_FLOOR_MS: '',
   CORTEX_SECOND_ATTEMPT_SELECT: '',
   CORTEX_SECOND_ATTEMPT_UNTIL_BUDGET: '',
+  CORTEX_SECOND_ATTEMPT_INFORMED: '',
   CORTEX_SECOND_ATTEMPT_OUT_DIR: '',
   CORTEX_COMPACTION_CHECKPOINT_STEP: '',
   CORTEX_DELEGATION_HINT: '',
@@ -1510,6 +1512,13 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_SECOND_ATTEMPT_SELECT',
     displayName: 'Second attempt: selection order',
     description: 'R246/R251: verdict (default; judge rank first) | evidence (accepted-class, then fewest turns, then judge rank) | judge (one comparative judge call ranks every finished attempt; shipped-check gate stays hard)',
+    type: 'string',
+    category: 'training',
+  },
+  {
+    key: 'CORTEX_SECOND_ATTEMPT_INFORMED',
+    displayName: 'Second attempt: informed retry',
+    description: 'R254 (dark): 1 = every attempt after the first receives a PRIOR ATTEMPTS block (each earlier attempt\'s verdict, open items, plan = its reading of the task, final message) appended to the task content, so it can question the shared reading instead of re-deriving it',
     type: 'string',
     category: 'training',
   },

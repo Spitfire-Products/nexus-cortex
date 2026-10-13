@@ -82,4 +82,36 @@ describe.skipIf(!hasGit)('WorkspaceSnapshot (shadow git outside the tree)', () =
       expect(new WorkspaceSnapshot({ workspace: path.join(root, 'missing'), gitDir: path.join(root, 'g2') }).init()).toBe(false);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
+  it('R252: pruneExcludedAfter(tag) removes excluded-path content created AFTER that attempt; older excluded content and the tree stay', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wsnap-'));
+    const ws = path.join(root, 'ws'); const gitDir = path.join(root, 'state', 'shadow.git');
+    try {
+      fs.mkdirSync(path.join(ws, 'node_modules', 'dep'), { recursive: true }); fs.mkdirSync(path.join(ws, '.cortex'), { recursive: true });
+      fs.writeFileSync(path.join(ws, 'node_modules', 'dep', 'index.js'), 'image'); fs.writeFileSync(path.join(ws, 'answer.txt'), 'lift\n');
+      const snap = new WorkspaceSnapshot({ workspace: ws, gitDir, bigFileBytes: 2 * 1024 * 1024 });
+      expect(snap.init()).toBe(true); expect(snap.commit('lift')).toBe(true);
+      // attempt 1: a tracked edit + its own build output (older than its stamp)
+      fs.mkdirSync(path.join(ws, 'build'), { recursive: true }); fs.writeFileSync(path.join(ws, 'build', 'one.o'), 'a1'); fs.writeFileSync(path.join(ws, 'answer.txt'), 'a1\n');
+      expect(snap.commit('attempt1')).toBe(true);
+      expect(fs.existsSync(path.join(gitDir, 'stamps', 'attempt1'))).toBe(true);
+      // attempt 2 (after the stamp): build output in a new sub-dir, a pyc, a vendor file, state-dir content — all stamped later
+      const later = new Date(Date.now() + 30_000);
+      fs.mkdirSync(path.join(ws, 'build', 'sub'), { recursive: true }); fs.mkdirSync(path.join(ws, '__pycache__'), { recursive: true });
+      const after = [path.join(ws, 'build', 'two.o'), path.join(ws, 'build', 'sub', 'three.o'), path.join(ws, '__pycache__', 'm.pyc'), path.join(ws, 'node_modules', 'dep', 'extra.js'), path.join(ws, '.cortex', 'keep')];
+      for (const f of after) { fs.writeFileSync(f, 'a2'); fs.utimesSync(f, later, later); }
+      fs.utimesSync(path.join(ws, 'build', 'sub'), later, later);
+      fs.writeFileSync(path.join(ws, 'answer.txt'), 'a2\n'); expect(snap.commit('attempt2')).toBe(true);
+      // the pick is attempt 1
+      expect(snap.restore('attempt1')).toBe(true);
+      expect(snap.pruneExcludedAfter('attempt1')).toBeGreaterThanOrEqual(4);
+      expect(fs.readFileSync(path.join(ws, 'answer.txt'), 'utf-8')).toBe('a1\n');
+      expect(fs.existsSync(path.join(ws, 'build', 'one.o'))).toBe(true); // attempt 1's own output stays
+      expect(fs.existsSync(path.join(ws, 'node_modules', 'dep', 'index.js'))).toBe(true); // the image's vendor file stays
+      for (const f of after.filter((x) => !x.includes('.cortex'))) expect(fs.existsSync(f)).toBe(false);
+      expect(fs.existsSync(path.join(ws, 'build', 'sub'))).toBe(false); // an emptied dir created after the stamp goes too
+      expect(fs.existsSync(path.join(ws, '.cortex', 'keep'))).toBe(true); // the harness state dir is never pruned
+      expect(snap.pruneExcludedAfter('attempt1')).toBe(0); // idempotent
+      expect(snap.pruneExcludedAfter('nope')).toBe(-1);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
 });

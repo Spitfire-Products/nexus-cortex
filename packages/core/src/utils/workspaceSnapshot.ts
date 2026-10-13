@@ -115,7 +115,10 @@ export class WorkspaceSnapshot {
     if (!this.ready) return false;
     if (!this.ok(this.git(['add', '-A', '.'], this.addTimeoutMs), `add (${tag})`)) return false;
     if (!this.ok(this.git(['commit', '-q', '-m', tag, '--allow-empty'], this.commitTimeoutMs), `commit (${tag})`)) return false;
-    return this.ok(this.git(['tag', '-f', tag]), `tag (${tag})`);
+    if (!this.ok(this.git(['tag', '-f', tag]), `tag (${tag})`)) return false;
+    // R252: a stamp per tag — `pruneExcludedAfter(tag)` removes excluded-path content newer than it at a later restore
+    try { mkdirSync(join(this.gitDir, 'stamps'), { recursive: true }); writeFileSync(join(this.gitDir, 'stamps', tag), `${Date.now()}\n`, 'utf-8'); } catch { /* best-effort */ }
+    return true;
   }
 
   /** `reset --hard <tag>` + `clean -fdq` (excluded paths untouched). Returns false on any failure. */
@@ -123,6 +126,35 @@ export class WorkspaceSnapshot {
     if (!this.ready) return false;
     if (!this.ok(this.git(['reset', '-q', '--hard', tag], this.commitTimeoutMs), `reset (${tag})`)) return false;
     return this.ok(this.git(['clean', '-fdq'], this.commitTimeoutMs), `clean (${tag})`);
+  }
+
+  /** R252 (2026-10-13): `restore(tag)` puts the TRACKED tree back, but every snapshot-EXCLUDED path (vendor dirs, build output, caches,
+   *  *.pyc, files over `bigFileBytes`) stays as the LAST attempt left it — so the main trial graded a tree the pick never produced
+   *  (photonic, t4jf: the pick failed live on leftovers from attempt 2, the same tag restored into a fresh container passed 14/14).
+   *  This removes excluded-path content whose mtime is newer than `tag`'s stamp (= created or rewritten by a LATER attempt), leaving
+   *  the task image's own vendor/build content and everything the picked attempt produced itself. `.git/` and `.cortex/` (the harness
+   *  state dir, which holds this shadow repository) are never touched. Returns the number of entries removed, -1 when no stamp exists
+   *  or `find` is unavailable. Deletions of excluded content by a later attempt cannot be undone (never snapshotted). */
+  pruneExcludedAfter(tag: string): number {
+    const stamp = join(this.gitDir, 'stamps', tag);
+    if (!this.ready || !existsSync(stamp)) return -1;
+    const run = (args: string[]): string[] => {
+      try {
+        const r = spawnSync('find', args, { cwd: this.workspace, encoding: 'utf-8', timeout: 120_000, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 });
+        return r.status === 0 && r.stdout ? r.stdout.split('\n').map((x) => x.trim()).filter(Boolean) : [];
+      } catch { return []; }
+    };
+    const never = ['(', '-name', '.git', '-o', '-name', '.cortex', ')', '-prune'];
+    const dirNames = SNAPSHOT_EXCLUDES.filter((p) => p.endsWith('/') && p !== '.git/' && p !== '.cortex/').map((p) => p.slice(0, -1));
+    const dirs = run(['.', ...never, '-o', '-type', 'd', '(', ...dirNames.flatMap((d, i) => (i ? ['-o', '-name', d] : ['-name', d])), ')', '-print', '-prune']);
+    let n = 0;
+    for (const d of dirs) {
+      n += run([d, '-type', 'f', '-newer', stamp, '-print', '-delete']).length;
+      n += run([d, '-depth', '-mindepth', '1', '-type', 'd', '-empty', '-newer', stamp, '-print', '-delete']).length;
+    }
+    n += run(['.', ...never, '-o', '-type', 'f', '(', '-name', '*.pyc', '-o', '-size', `+${Math.max(1, Math.floor(this.bigFileBytes / 1024))}k`, ')', '-newer', stamp, '-print', '-delete']).length;
+    if (n > 0) this.log(`[WorkspaceSnapshot] R252 pruned ${n} excluded-path entries newer than ${tag}`);
+    return n;
   }
 
   /** R250 (sibling grading): write every ref of the shadow repository (lift + attempt<k> tags) to a git bundle at `path`, so a

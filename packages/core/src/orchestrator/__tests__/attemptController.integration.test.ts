@@ -183,4 +183,32 @@ describe.skipIf(!hasGit)('R239 runWithAttempts through the turn loop', () => {
     expect(fs.readFileSync(path.join(ws, 'answer.txt'), 'utf-8')).toBe('plain');
     await a2.cleanup().catch(() => {});
   }, 120_000);
+
+  it('R254 informed retry: attempt 2 receives the prior attempts block (verdict, open items, reading, final message); block banked + event; R252 prune count recorded', async () => {
+    const outDir = path.join(stateRoot, 'attempts');
+    const env = { ...process.env, CORTEX_SECOND_ATTEMPT: '1', CORTEX_SECOND_ATTEMPT_MAX: '1', CORTEX_SECOND_ATTEMPT_INFORMED: '1', CORTEX_SECOND_ATTEMPT_OUT_DIR: outDir, CORTEX_TURN_DEADLINE_MS: String(4 * 3600 * 1000) } as NodeJS.ProcessEnv;
+    const a1 = await orch(new ScriptedWriter(ws, 'bad1', 300));
+    (a1 as any).getLastResolverDecision = () => ({ action: 'accept-with-gap', confidence: 'low', namedPassed: 1, remainingFrac: 0.9, plan: '1. the answer is wrong', ts: Date.now() });
+    (a1 as any).getLiftPlanText = () => 'PLAN: write bad';
+    const seen: unknown[] = [];
+    await runWithAttempts({
+      orchestrator: a1, turnContent: 'write the answer', messageOptions: {}, projectPath: ws, env, t0Ms: Date.now(), log: () => {},
+      createAttemptOrchestrator: async (_k, spec) => {
+        const o = await orch(new ScriptedWriter(ws, 'good2', 100), spec);
+        const orig = o.sendMessage.bind(o); (o as any).sendMessage = (c: unknown, m: unknown) => { seen.push(c); return orig(c as any, m as any); };
+        (o as any).getLastResolverDecision = () => ({ action: 'accept', namedPassed: 0, remainingFrac: 0.9, ts: Date.now() });
+        return o;
+      },
+    });
+    expect(seen.length).toBe(1); const c = String(seen[0]);
+    expect(c.startsWith('write the answer\n\n=== PRIOR INDEPENDENT ATTEMPTS AT THIS TASK (1) ===')).toBe(true);
+    expect(c).toContain('--- prior attempt 1 ---\nverdict: accept-with-gap (confidence low)'); expect(c).toContain('1. the answer is wrong'); expect(c).toContain('PLAN: write bad'); expect(c).toContain('FINAL: wrote bad1.');
+    expect(fs.readFileSync(path.join(outDir, 'informed.attempt2.txt'), 'utf-8')).toContain('PRIOR INDEPENDENT ATTEMPTS');
+    const sel = JSON.parse(fs.readFileSync(path.join(outDir, 'second-attempt.json'), 'utf-8'));
+    expect(sel.pick).toBe(2); expect(sel.informed).toBe(true); expect(typeof sel.restorePruned).toBe('number'); expect(sel.restorePruned).toBeGreaterThanOrEqual(0);
+    const dec = fs.readFileSync(path.join(stateRoot, 'decisions.jsonl'), 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((d) => d.kind === 'second_attempt');
+    const inf = dec.find((d) => d.detail.phase === 'informed'); expect(inf.detail.k).toBe(2); expect(inf.detail.priors).toEqual([1]);
+    expect(dec.find((d) => d.detail.phase === 'selection')!.detail.informed).toBe(true);
+    await a1.cleanup().catch(() => {});
+  }, 120_000);
 });

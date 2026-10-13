@@ -13,6 +13,7 @@ describe('R251 attempt judge (comparative selector)', () => {
     expect(p).toContain('a2.txt | 1 +');
     expect(p).toContain('Rank attempts 1, 2');
     expect(ATTEMPT_JUDGE_SYSTEM).toContain('RANKING:');
+    expect(p).not.toContain('judge checks passed'); // R253
     // attempt 1 had no plan / no gap notes → those sections are absent for it
     const a1 = p.slice(p.indexOf('=== ATTEMPT 1 ==='), p.indexOf('=== ATTEMPT 2 ==='));
     expect(a1).not.toContain('PLAN OF ATTACK'); expect(a1).not.toContain('OPEN ITEMS');
@@ -33,5 +34,13 @@ describe('R251 attempt judge (comparative selector)', () => {
     expect(applyJudgeRanking({ candidates: c, ranking: [1, 3, 2], fallbackPick: 2 })).toEqual({ pick: 3, why: 'shipped check passes only on attempt 2,3; judge ranking 1 > 3 > 2 (attempt 3)' });
     expect(applyJudgeRanking({ candidates: c.map((x) => ({ ...x, check: 'none' as const })), ranking: [1, 3, 2], fallbackPick: 2 }).pick).toBe(1);
     expect(applyJudgeRanking({ candidates: c, ranking: [], fallbackPick: 2 })).toEqual({ pick: 2, why: 'judge ranking named no eligible attempt; evidence order' });
+  });
+  it('R253: the evidence-order prior is stated, the named-check count is never rendered, the system prompt forbids hold-history as a criterion', () => {
+    const p = buildAttemptJudgePrompt('t', [pk(1, { namedPassed: 5 }), pk(2, { action: 'accept', namedPassed: 0 })], { priorPick: 2 });
+    expect(p).toContain('EVIDENCE-ORDER PRIOR: attempt 2');
+    expect(p).not.toContain('judge checks passed'); expect(p).not.toContain('5');
+    expect(buildAttemptJudgePrompt('t', [pk(1)])).not.toContain('EVIDENCE-ORDER PRIOR');
+    expect(ATTEMPT_JUDGE_SYSTEM).toContain('by construction'); expect(ATTEMPT_JUDGE_SYSTEM).toContain('EVIDENCE-ORDER PRIOR');
+    expect(ATTEMPT_JUDGE_SYSTEM).toMatch(/NEVER rank by how much adjudication history/);
   });
 });
