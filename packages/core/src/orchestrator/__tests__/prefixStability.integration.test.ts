@@ -238,7 +238,9 @@ async function runCell(scenario: Scenario, spec: TransportSpec, mode: Mode): Pro
   } finally {
     net.uninstall();
     restore();
-    fs.rmSync(dir, { recursive: true, force: true });
+    // CI 2026-10-14 (v4.124.79 publish run): ENOTEMPTY on the recursive rm — a late async write (decision-store event / resume-memory file)
+    // landed in the dir mid-delete. Cleanup must never fail the measurement: retry, then give up quietly.
+    try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 }); } catch { /* best-effort cleanup */ }
   }
   const mains = net.mains;
   if (process.env.PREFIX_DUMP_DIR) {
