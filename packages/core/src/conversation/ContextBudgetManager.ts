@@ -118,10 +118,14 @@ export class ContextBudgetManager {
    */
   public calculateBudget(
     modelConfig: ModelConfig,
-    overrides?: { actualToolTokens?: number; actualSystemTokens?: number }
+    overrides?: { actualToolTokens?: number; actualSystemTokens?: number; outputTokensCap?: number }
   ): ContextBudget {
     const total = modelConfig.limits.contextWindow;
-    const outputReserve = Math.min(modelConfig.limits.outputTokens, total * 0.5);
+    // R257 (4.124.78): the output reserve is the EFFECTIVE per-call cap, not the card's absolute maximum. Since the DeepSeek cards went
+    // to 393,216 (10-05) this reserve ate 39 % of a 1 M window and silently cut the compaction threshold from ~730 K to ~470 K; with
+    // CORTEX_OUTPUT_CAP_TOKENS=65536 the lever now restores that headroom (the orchestrator passes it as outputTokensCap).
+    const outputMax = overrides?.outputTokensCap && overrides.outputTokensCap > 0 ? Math.min(modelConfig.limits.outputTokens, overrides.outputTokensCap) : modelConfig.limits.outputTokens;
+    const outputReserve = Math.min(outputMax, total * 0.5);
 
     // For very small contexts, reduce reserves proportionally
     const scaleFactor = total < 5000 ? (total / 5000) : 1.0;
@@ -268,7 +272,7 @@ export class ContextBudgetManager {
    */
   public getCompactionThreshold(
     modelConfig: ModelConfig,
-    overrides?: { actualToolTokens?: number; actualSystemTokens?: number }
+    overrides?: { actualToolTokens?: number; actualSystemTokens?: number; outputTokensCap?: number }
   ): number {
     const { thresholdCalculation } = modelConfig.compaction;
     const budget = this.calculateBudget(modelConfig, overrides);

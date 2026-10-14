@@ -81,6 +81,8 @@ import { sliceReadFile, decideSliceBlock, sliceReadStep } from './sliceBlock.js'
 import type { ChunkRead } from '../training/chunkReadProgression.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
 import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage, memoryIndexLine, upsertMemoryIndex, scaleEstimateToRequestView, approxCharsOf, anchoredRequestEstimate, resolveCompactionHandoffQA, resolveHandoffQAMaxQuestions, runHandoffQA, type HandoffQAResult } from './compactionResume.js';
+import { resolveCompactionTargetTokens } from './compactionTarget.js'; // R256
+import { resolveToolResultPruneGate, pruneGateTokens, CompactionThrashTracker } from './contextPressure.js'; // R258
 import { renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBand, resolveRearmBand } from './compactionResumeTemplate.js';
 import { resolveTurnStatusMode, turnStatusActive, buildTurnStatusLine, appendStatusToNewestToolResult, type StatusShell } from './turnStatus.js';
 import { resolveCortexStateDir, cortexStatePath, resolveWorkspaceClean, cortexProjectDir } from '../utils/stateDir.js';
@@ -581,6 +583,10 @@ export class CortexOrchestrator {
   /** Active model's context window, captured by ensureHistoryFitsModel for
    *  the request-build pruning gate (pruneAgedForRequest). */
   private lastKnownContextWindow: number | undefined;
+  /** R258: the compaction threshold of the last manageContext pass — the base of the tool-result prune gate */
+  private lastCompactionThreshold: number | undefined;
+  private lastPruneEventTurn = -1;
+  private readonly compactionThrash = new CompactionThrashTracker(); // R258
   // R132 HB-COMPACTION-ESTIMATE: the last REAL prompt_tokens the provider reported + the request-view char size at that moment.
   // ensureHistoryFitsModel anchors its estimate here (anchor + grown chars/4) instead of the ~5-7x over-reading heuristic.
   private lastUsageAnchor: { promptTokens: number; requestChars: number } | null = null;
@@ -7875,7 +7881,8 @@ export class CortexOrchestrator {
     //   tags in user message content, already counted by estimateTotalTokens(messageHistory)
     const budgetOverrides = {
       actualToolTokens: this.currentToolTokens,
-      actualSystemTokens: 0
+      actualSystemTokens: 0,
+      outputTokensCap: resolveOutputCap(), // R257: the effective per-call cap sizes the output reserve (not the card's 393 K maximum)
     };
 
     // Calculate compaction threshold using model's configuration (with accurate overrides).
@@ -7885,6 +7892,7 @@ export class CortexOrchestrator {
     const threshold = thresholdOverride > 0
       ? thresholdOverride
       : this.contextBudgetManager.getCompactionThreshold(model, budgetOverrides);
+    this.lastCompactionThreshold = threshold; // R258: the prune gate keys off this, not the raw window
 
     if (this.config.debug) {
       console.log(`[Orchestrator Context] Current tokens: ${currentTokens}, Threshold: ${threshold} (tool reserve: ${this.currentToolTokens})`);
@@ -7936,7 +7944,10 @@ export class CortexOrchestrator {
     try {
       // Calculate available budget for history (with accurate overrides)
       const budget = this.contextBudgetManager.calculateBudget(model, budgetOverrides);
-      if (thresholdOverride > 0) budget.availableForHistory = Math.floor(thresholdOverride * 0.5); // override: keep ~half the forced window
+      // R256 (4.124.77): hysteresis — compact down to CORTEX_COMPACTION_TARGET_PCT (default 0.5) of the THRESHOLD, never to
+      // availableForHistory (which sits above the trigger), so one compaction buys real headroom instead of re-firing every turn
+      // (payments, t4in 10-13: 57 compactions in 60 min, 30 M uncached input tokens). The THRESHOLD_TOKENS override path kept 0.5 already.
+      budget.availableForHistory = resolveCompactionTargetTokens(threshold, budget.availableForHistory);
 
       // Determine selection strategy based on model configuration
       const strategy = model.compaction?.behavior?.compactOlder ? 'preserve-critical' : 'sliding-window';
@@ -8036,11 +8047,15 @@ export class CortexOrchestrator {
         this.messageHistory = [reminder, ...this.messageHistory];
         try { await this.historyStore.appendMessage(this.currentSessionId, reminder); } catch { /* best-effort */ }
         this.writeResumeMemoryFile(text, `compaction at turn ${this.turnNumber}, ${dropped.length} messages dropped, memory=${memorySource}`);
+        if (this.compactionThrash.record(this.turnNumber)) { // R258: Claude Code's rule — refilled within 3 turns, 3 times in a row
+          console.warn(`[Orchestrator Context] COMPACTION THRASH: the context refilled to the threshold within 3 turns of the previous compaction, 3 times in a row (turn ${this.turnNumber}, ${currentTokens} → ${newTokenCount} tokens). A tool output or file read is probably too large for the window.`);
+          try { const st = this.getDecisionStore(); if (st) void st.recordEvent({ kind: 'compaction_thrash', toolName: '', inputHash: '', inputSummary: '', success: true, detail: { turn: this.turnNumber, tokensBefore: currentTokens, tokensAfter: newTokenCount, threshold, targetTokens: budget.availableForHistory } } as any); } catch { /* best-effort */ }
+        }
         const store = this.getDecisionStore();
         if (store) void store.recordEvent({
           sessionId: this.currentSessionId ?? 'unknown',
           kind: 'compaction',
-          detail: { mode: 'proactive', turn: this.turnNumber, tokensBefore: currentTokens, tokensAfter: newTokenCount, estimateSource, anchorTokens,
+          detail: { mode: 'proactive', turn: this.turnNumber, tokensBefore: currentTokens, tokensAfter: newTokenCount, targetTokens: budget.availableForHistory, threshold, estimateSource, anchorTokens,
                     dropped: dropped.length, kept: selectedMessages.length, resumeChars: resumeText.length,
                     helperModelId: resumeHelper ?? null, cost: resumeCost, taskPinned: taskText.length > 0, memorySource,
                     workspaceStateChars: workspaceState.length, sessionPath: sessionPath ?? null, ...(handoffQA ? { handoffQA } : {}) },
@@ -11722,9 +11737,16 @@ export class CortexOrchestrator {
       }
     }
     const approxTokens = Math.ceil(approxChars / 4) + (this.currentToolTokens || 0);
-    if (approxTokens / window <= 0.5) return messages;
+    // R258: gate on a fraction of the COMPACTION THRESHOLD (default 0.5), not 50 % of the raw window — on the 393 K-output DeepSeek card
+    // the old gate (500 K) sat above the 470 K threshold, so the pruner never ran before compaction (payments, t4in).
+    const gate = resolveToolResultPruneGate();
+    if (approxTokens < pruneGateTokens(gate, this.lastCompactionThreshold, window)) return messages;
 
-    const pruned = pruneAgedToolResults(messages);
+    const pruned = pruneAgedToolResults(messages, { keepLastNTurns: gate.keepLastNTurns, hardClearAgeTurns: gate.hardClearAgeTurns });
+    if (pruned.prunedCount > 0 && this.lastPruneEventTurn !== this.turnNumber) { // one event per turn: engagement evidence for the bench
+      this.lastPruneEventTurn = this.turnNumber;
+      try { const st = this.getDecisionStore(); if (st) void st.recordEvent({ kind: 'tool_result_prune', toolName: '', inputHash: '', inputSummary: '', success: true, detail: { turn: this.turnNumber, prunedCount: pruned.prunedCount, savedChars: pruned.savedChars, approxTokens, gateTokens: pruneGateTokens(gate, this.lastCompactionThreshold, window), threshold: this.lastCompactionThreshold ?? null, keepLastNTurns: gate.keepLastNTurns, hardClearAgeTurns: gate.hardClearAgeTurns } } as any); } catch { /* best-effort */ }
+    }
     if (pruned.prunedCount > 0 && this.config.debug) {
       console.log(
         `[Orchestrator Context] Aged tool-result pruning: ${pruned.prunedCount} results, ` +

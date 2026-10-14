@@ -106,6 +106,7 @@ export type SteeringEventKind =
   // into assistant TEXT was recovered into a real tool_use (detail carries {count, tools}).
   | 'task_spawn' // HB-DELEGATION-DOCTRINE (4.108.1): the model dispatched Task subagent(s) — detail {count, subagentTypes, models, parallel}; mechanism-engagement evidence for delegation
   | 'delegate_pane' // R147 HB-HERDR-DELEGATES: a Task sub-agent ran as a herdr pane — detail {paneId, agentName, status, durationMs, toolUseId}; one row per herdr delegate
+  | 'tool_result_prune' | 'compaction_thrash' // R258 (4.124.79): aged tool results pruned from a request copy (one event per turn); the Claude Code thrash rule tripped
   | 'compaction' // HB-COMPACTION-RESUME (4.108.0): proactive compaction fired — detail {mode, turn, tokensBefore, tokensAfter, dropped, kept, resumeChars, helperModelId, cost}
   //   R132 HB-COMPACTION-ESTIMATE: checkpoint + proactive rows also carry {estimateSource: 'usage-anchored'|'heuristic', anchorTokens} —
   //   the last real prompt_tokens the estimate was anchored on (0 = heuristic fallback)

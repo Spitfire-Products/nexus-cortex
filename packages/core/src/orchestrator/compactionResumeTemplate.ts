@@ -26,12 +26,15 @@ tests/verifications that passed, sub-goals satisfied. Mark anything only partial
 Ordered list of what remains. For each: the concrete next action (a command line, a file to edit and how, a check to run).
 The first item is what the agent should do immediately after reading this.
 
-## 3. DECISIONS and REJECTED APPROACHES
-Choices made and why; approaches tried that FAILED, with the error text, so they are not repeated.
+## 3. DECISIONS, REJECTED APPROACHES, ERRORS and FIXES
+Choices made and why; approaches tried that FAILED, with the error text, so they are not repeated. Every error hit and
+exactly how it was fixed (the command/edit that fixed it). Any instruction the user gave to do something differently, verbatim.
 
 ## 4. ARTIFACTS and POINTERS
 Every path that matters (source files, outputs, logs, temp dirs), key line numbers, environment facts (installed tools,
 versions, ports, credentials locations — never the secret values), and any external state (services started, containers).
+For files examined, created or edited: the function signatures and the exact code snippets that matter (the lines changed,
+the interface being implemented) — the agent cannot re-read what was dropped without spending tool calls.
 
 ## 5. TRAPS
 Gotchas discovered (environment quirks, flaky commands, wrong assumptions corrected). One line each.

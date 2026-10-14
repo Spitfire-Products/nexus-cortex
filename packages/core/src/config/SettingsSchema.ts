@@ -206,6 +206,10 @@ export interface EnvironmentVariables {
   CORTEX_SECOND_ATTEMPT_FLOOR_MS?: string; // minimum (ms) left after the reserve (default 900000)
   CORTEX_SECOND_ATTEMPT_OUT_DIR?: string; // where per-attempt artifacts + second-attempt.json are banked (default <state dir>/attempts)
   CORTEX_COMPACTION_CHECKPOINT_PCT?: string; // fraction of the compaction threshold at which the first pre-compaction checkpoint is written (4.108.2; default 0.75)
+  CORTEX_COMPACTION_TARGET_PCT?: string; // R256: fraction of the threshold a proactive compaction keeps (default 0.5; hysteresis against per-turn re-compaction)
+  CORTEX_TOOL_RESULT_PRUNE_AT?: string; // R258: fraction of the compaction threshold above which aged tool results are pruned from the request copy (default 0.5)
+  CORTEX_TOOL_RESULT_PRUNE_KEEP_TURNS?: string; // R258: turns whose tool results are never pruned, newest first (default 3)
+  CORTEX_TOOL_RESULT_PRUNE_HARD_AGE?: string; // R258: turn age at which an aged tool result is fully elided (default 10)
   CORTEX_COMPACTION_CHECKPOINT_STEP?: string; // checkpoint refresh band width as a fraction of the threshold (4.108.2; default 0.10)
   CORTEX_COMPACTION_RESUME?: string; // 'true' | 'false' — resume memory + task pin injected after proactive compaction (4.108.0)
   CORTEX_ENDTURN_RESOLVER_REASONING?: string; // 'on' | 'none' — per-surface, wins over CORTEX_MENTOR_REASONING
@@ -517,6 +521,10 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_ENDTURN_TIER: '',
   CORTEX_COMPACTION_RESUME: '',
   CORTEX_COMPACTION_CHECKPOINT_PCT: '',
+  CORTEX_COMPACTION_TARGET_PCT: '',
+  CORTEX_TOOL_RESULT_PRUNE_AT: '',
+  CORTEX_TOOL_RESULT_PRUNE_KEEP_TURNS: '',
+  CORTEX_TOOL_RESULT_PRUNE_HARD_AGE: '',
   CORTEX_COMPACTION_THRESHOLD_TOKENS: '',
   CORTEX_COMPACTION_HANDOFF_QA: '',
   CORTEX_COMPACTION_HANDOFF_QA_MAX_QUESTIONS: '',
@@ -1560,6 +1568,34 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     type: 'string',
     category: 'training',
     default: ''
+  },
+  {
+    key: 'CORTEX_TOOL_RESULT_PRUNE_AT',
+    displayName: 'Tool-result pruning: start fraction',
+    description: 'R258: aged tool results are middle-trimmed / elided from the OUTGOING request copy (history untouched) once the estimated context exceeds this fraction of the compaction threshold (default 0.5). Ported from Claude Code keep-recent microcompaction: clear old tool results long before compacting.',
+    type: 'string',
+    category: 'training',
+  },
+  {
+    key: 'CORTEX_TOOL_RESULT_PRUNE_KEEP_TURNS',
+    displayName: 'Tool-result pruning: keep turns',
+    description: 'R258: the newest N turns whose tool results are never pruned (default 3).',
+    type: 'string',
+    category: 'training',
+  },
+  {
+    key: 'CORTEX_TOOL_RESULT_PRUNE_HARD_AGE',
+    displayName: 'Tool-result pruning: hard-clear age',
+    description: 'R258: tool results older than this many turns are fully elided (default 10); younger aged results are middle-trimmed.',
+    type: 'string',
+    category: 'training',
+  },
+  {
+    key: 'CORTEX_COMPACTION_TARGET_PCT',
+    displayName: 'Compaction: post-compaction target',
+    description: 'R256: a proactive compaction keeps this fraction of the compaction THRESHOLD (default 0.5, clamp 0.1–1). Before 4.124.77 the kept set was sized to the history budget, which sits above the threshold, so compaction re-fired every turn with a full cache bust (57 compactions in 60 min on one bench task).',
+    type: 'string',
+    category: 'training',
   },
   {
     key: 'CORTEX_COMPACTION_CHECKPOINT_PCT',
