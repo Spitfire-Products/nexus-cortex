@@ -60,7 +60,10 @@ export interface SecondAttemptConfig {
   /** CORTEX_SECOND_ATTEMPT_SELECT — `verdict` (default; the adapter's order: verdict rank → fewest turns → judge checks → earliest) or
    *  `evidence` (R246: shipped check → ACCEPTED-class first (any accept beats veto/none) → fewest turns → verdict rank → checks → earliest —
    *  demotes the accept-vs-gap distinction, which cells 3+4 showed to be judge noise: last-verdict accuracy 0.31–0.77). */
-  select: 'verdict' | 'evidence' | 'judge';
+  /** `turns` (R255, the DEFAULT since 2026-10-14): shipped check → fewest tool-call turns → earliest — NO resolver labels. Replay over the
+   *  22 sibling-graded chains of the 10-12/10-13 cells: fewest-turns alone reaches the ceiling (17/22) and picks right on every
+   *  discriminating chain; the resolver's labels added nothing (verdict-first 16, judge 15). */
+  select: 'verdict' | 'evidence' | 'judge' | 'turns';
   /** CORTEX_SECOND_ATTEMPT_UNTIL_BUDGET = 1|true|on — R247: ignore the extra-attempt COUNT cap while ≥ MIN_REMAINING of the clock is left
    *  (reserve + floor still apply). Cells 3+4: 18/19 fails ended with ≥ 50 % unused while MAX=2 had closed the chain. */
   untilBudget: boolean;
@@ -84,7 +87,7 @@ export function resolveSecondAttemptConfig(env: NodeJS.ProcessEnv = process.env)
     floorMs: Math.max(0, intOr(env.CORTEX_SECOND_ATTEMPT_FLOOR_MS || 900_000, 900_000)),
     outDir: String(env.CORTEX_SECOND_ATTEMPT_OUT_DIR ?? '').trim() || null,
     checkTimeoutMs: 300_000,
-    select: /^judge$/i.test(String(env.CORTEX_SECOND_ATTEMPT_SELECT ?? '').trim()) ? 'judge' : /^evidence$/i.test(String(env.CORTEX_SECOND_ATTEMPT_SELECT ?? '').trim()) ? 'evidence' : 'verdict',
+    select: ((s) => (/^judge$/i.test(s) ? 'judge' : /^evidence$/i.test(s) ? 'evidence' : /^verdict$/i.test(s) ? 'verdict' : 'turns'))(String(env.CORTEX_SECOND_ATTEMPT_SELECT ?? '').trim()),
     untilBudget: /^(1|true|on)$/i.test(String(env.CORTEX_SECOND_ATTEMPT_UNTIL_BUDGET ?? '').trim()),
     informed: /^(1|true|on)$/i.test(String(env.CORTEX_SECOND_ATTEMPT_INFORMED ?? '').trim()),
   };
@@ -201,7 +204,7 @@ export interface AttemptSelection {
   /** R254: attempts >= 2 carried the prior-attempts block */
   informed?: boolean;
   /** R246: which selection order produced the pick */
-  selectMode?: 'verdict' | 'evidence' | 'judge';
+  selectMode?: 'verdict' | 'evidence' | 'judge' | 'turns';
   /** R251 (judge mode): the judge's order (best first), its one-line reason, whether a RANKING line parsed, and the evidence-order pick it overrode */
   judgeRanking?: number[];
   judgeReason?: string;
@@ -224,7 +227,7 @@ export function rankVerdict(action: string | null | undefined): number {
 /** sa_pick, verbatim: (a) shipped check — when some candidates pass and others do not, keep the passing ones; (b) verdict rank;
  *  (c) FEWEST tool-call turns (r-selector 2026-09-28; promoted above namedPassed 2026-10-07); (d) more judge checks passed; (e) earliest.
  *  Candidates = attempt 1 always + every finished later attempt. Pure (mutates `turns` on the records it is given). */
-export function selectAttempt(att: AttemptRecord[], shippedCheck: string | null, mode: 'verdict' | 'evidence' = 'verdict'): AttemptSelection {
+export function selectAttempt(att: AttemptRecord[], shippedCheck: string | null, mode: 'verdict' | 'evidence' | 'turns' = 'turns'): AttemptSelection {
   let cands = att.filter((x) => x.finished);
   // one turn measure for every candidate: toolCallIterations when all have it, else session tool-call turns
   const src: AttemptSelection['turnsSource'] = cands.every((x) => x.iterations !== null) ? 'toolCallIterations' : 'session';
@@ -238,7 +241,12 @@ export function selectAttempt(att: AttemptRecord[], shippedCheck: string | null,
     why.push('shipped check passes only on attempt ' + passing.map((x) => x.k).join(','));
   }
   const BIG = 1e9;
-  const steps: Array<[string, (x: AttemptRecord) => number]> = mode === 'evidence'
+  const steps: Array<[string, (x: AttemptRecord) => number]> = mode === 'turns'
+    ? [ // R255: no labels — the shipped-check gate above, then fewest turns, then earliest
+        ['fewest tool-call turns', (x) => (typeof x.turns === 'number' ? x.turns : BIG)],
+        ['earliest attempt', (x) => x.k],
+      ]
+    : mode === 'evidence'
     ? [ // R246: an accepted finish (any accept) beats a veto/give-up, then evidence (fewest turns) before the judge's confidence
         ['accepted', (x) => (rankVerdict(x.action) > 0 ? 0 : 1)],
         ['fewest tool-call turns', (x) => (typeof x.turns === 'number' ? x.turns : BIG)],
@@ -500,7 +508,7 @@ export async function runWithAttempts(opts: RunWithAttemptsOptions): Promise<Orc
     }
 
     // 5. select, restore, merge
-    const sel = selectAttempt(records.sort((a, b) => a.k - b.k), chk, cfg.select === 'judge' ? 'evidence' : cfg.select);
+    const sel = selectAttempt(records.sort((a, b) => a.k - b.k), chk, cfg.select === 'judge' ? 'turns' : cfg.select); // R255: the judge's prior/fallback is the turns order
     // R251 (CORTEX_SECOND_ATTEMPT_SELECT=judge): one comparative judge call over every finished attempt — plan, verdict + open items,
     // shipped-check output, files changed vs lift, final message, turns — ranks them; the shipped-check gate stays hard; a blank or
     // unparseable reply keeps the evidence-order pick. Packets + reply are banked beside the selection record for curation.

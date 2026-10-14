@@ -199,7 +199,7 @@ export interface EnvironmentVariables {
   CORTEX_SECOND_ATTEMPT_MAX?: string; // max EXTRA attempts (default 1)
   CORTEX_SECOND_ATTEMPT_MIN_REMAINING?: string; // fraction of the original deadline that must remain (default 0.5)
   CORTEX_SECOND_ATTEMPT_TRIGGER?: string; // resolver actions that open another attempt; none = a give-up (default accept-with-gap,accept-low-confidence,accept,none — the widened set, promoted 2026-10-10)
-  CORTEX_SECOND_ATTEMPT_SELECT?: string; // R246/R251: selection order — verdict (default) | evidence | judge (comparative judge call)
+  CORTEX_SECOND_ATTEMPT_SELECT?: string; // R246/R251/R255: selection order — turns (default since 4.124.76: shipped check → fewest turns, no labels) | evidence | verdict | judge
   CORTEX_SECOND_ATTEMPT_UNTIL_BUDGET?: string; // R247: 1 = reopen while >= MIN_REMAINING of the clock remains (count cap ignored)
   CORTEX_SECOND_ATTEMPT_INFORMED?: string; // R254: 1 = attempts >= 2 receive the prior attempts' verdicts/open items/readings/final messages
   CORTEX_SECOND_ATTEMPT_RESERVE_MS?: string; // reserve (ms) subtracted from the next deadline (default 300000)
@@ -1511,7 +1511,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
   {
     key: 'CORTEX_SECOND_ATTEMPT_SELECT',
     displayName: 'Second attempt: selection order',
-    description: 'R246/R251: verdict (default; judge rank first) | evidence (accepted-class, then fewest turns, then judge rank) | judge (one comparative judge call ranks every finished attempt; shipped-check gate stays hard)',
+    description: 'R255 (default since 4.124.76): turns = shipped check → fewest tool-call turns → earliest, NO resolver labels (reached the sibling-oracle ceiling on 22/22 graded chains) | evidence (accepted-class first, then fewest turns) | verdict (judge rank first) | judge (one comparative judge call ranks every finished attempt; shipped-check gate stays hard)',
     type: 'string',
     category: 'training',
   },

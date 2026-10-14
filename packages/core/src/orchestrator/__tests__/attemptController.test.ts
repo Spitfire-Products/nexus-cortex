@@ -49,12 +49,13 @@ describe('R246/R247 levers: select mode + until-budget', () => {
     expect(cfg(ub).untilBudget).toBe(true); expect(cfg().untilBudget).toBe(false);
   });
   it('CORTEX_SECOND_ATTEMPT_SELECT=evidence: any accept beats a veto, fewest turns beats a confident accept; verdict mode unchanged', () => {
-    expect(cfg({ CORTEX_SECOND_ATTEMPT_SELECT: 'evidence' }).select).toBe('evidence'); expect(cfg().select).toBe('verdict');
+    expect(cfg({ CORTEX_SECOND_ATTEMPT_SELECT: 'evidence' }).select).toBe('evidence'); expect(cfg().select).toBe('turns'); expect(cfg({ CORTEX_SECOND_ATTEMPT_SELECT: 'verdict' }).select).toBe('verdict'); // R255: turns is the default
     expect(cfg({ CORTEX_SECOND_ATTEMPT_SELECT: 'judge' }).select).toBe('judge'); expect(cfg({ CORTEX_SECOND_ATTEMPT_SELECT: 'JUDGE' }).select).toBe('judge'); // R251
     const rec = (k: number, action: string | null, turns: number): AttemptRecord => ({ k, action, remainingFrac: 0.8, namedPassed: 0, check: 'none', iterations: turns, sessionTurns: turns, finished: true, rc: '0' });
     // confident accept with more turns vs a gap-accept with fewer turns
     const a = [rec(1, 'accept', 120), rec(2, 'accept-with-gap', 60)];
-    expect(selectAttempt(a.map((x) => ({ ...x })), null).pick).toBe(1);               // verdict mode: accept wins
+    expect(selectAttempt(a.map((x) => ({ ...x })), null, 'verdict').pick).toBe(1);    // verdict mode: accept wins
+    expect(selectAttempt(a.map((x) => ({ ...x })), null).pick).toBe(2);               // R255 default (turns): fewer turns wins, labels ignored
     expect(selectAttempt(a.map((x) => ({ ...x })), null, 'evidence').pick).toBe(2);   // evidence mode: fewer turns wins
     // a veto with fewer turns never beats an accepted attempt in evidence mode
     const b = [rec(1, 'accept-with-gap', 99), rec(2, 'veto', 50)];
@@ -63,6 +64,10 @@ describe('R246/R247 levers: select mode + until-budget', () => {
     const c = [{ ...rec(1, 'accept', 10), check: 'fail' as const }, { ...rec(2, 'accept-with-gap', 90), check: 'pass' as const }];
     expect(selectAttempt(c.map((x) => ({ ...x })), 'make test', 'evidence').pick).toBe(2);
     expect(selectAttempt(c.map((x) => ({ ...x })), 'make test').pick).toBe(2);
+    expect(selectAttempt(c.map((x) => ({ ...x })), 'make test', 'verdict').pick).toBe(2);
+    // R255 turns mode ignores labels entirely: a veto with fewer turns beats an accept (the oracle says turns, not labels, predict the pass)
+    expect(selectAttempt(b.map((x) => ({ ...x })), null, 'turns').pick).toBe(2);
+    expect(selectAttempt(b.map((x) => ({ ...x })), null, 'turns').why).toContain('fewest tool-call turns (attempt 2)');
   });
 });
 
@@ -132,7 +137,7 @@ function att(k: number, action: string | null, o: AttOpts = {}): AttemptRecord {
   const finished = k === 1 || ((o.finished ?? true) && action !== null);
   return { k, action, remainingFrac: o.rem ?? null, namedPassed: o.np ?? 0, check: o.check ?? 'none', iterations: o.iters === undefined ? null : o.iters, sessionTurns: o.sessTurns ?? null, finished, rc: o.rc ?? null };
 }
-const pick = (...a: AttemptRecord[]) => selectAttempt(a, 'make test');
+const pick = (...a: AttemptRecord[]) => selectAttempt(a, 'make test', 'verdict'); // these cases pin the ADAPTER's verdict order
 
 describe('selectAttempt (sa_pick parity; verdict → FEWEST TURNS → named checks → earliest)', () => {
   it('rankVerdict', () => { expect([rankVerdict('accept'), rankVerdict('accept-with-gap'), rankVerdict('accept-low-confidence'), rankVerdict('veto'), rankVerdict(null)]).toEqual([2, 1, 1, 0, 0]); });
