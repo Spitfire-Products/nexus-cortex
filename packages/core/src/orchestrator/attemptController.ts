@@ -20,6 +20,7 @@ import { join } from 'path';
 import { spawnSync } from 'child_process';
 import type { CortexOrchestrator, OrchestratorResponse, SendMessageOptions } from './CortexOrchestrator.js';
 import { resolveTurnDeadlineMs } from './timeBudget.js';
+import { resolveEndTurnResolver } from '../tools/ToolProfile.js'; // R259
 import { resolveCortexStateDir } from '../utils/stateDir.js';
 import { WorkspaceSnapshot } from '../utils/workspaceSnapshot.js';
 import { buildAttemptJudgePrompt, parseAttemptJudgeRanking, applyJudgeRanking, type AttemptPacket } from '../training/attemptJudge.js'; // R251
@@ -71,6 +72,10 @@ export interface SecondAttemptConfig {
    *  verdict, open items, plan = its reading of the task, final message) appended to the task content. The sibling oracle (t4jf/t4jg)
    *  showed no-pass chains share one misreading across independent attempts; an informed attempt can question it. */
   informed: boolean;
+  /** R259: whether the EndTurn resolver RUNS in this process (CORTEX_ENDTURN_RESOLVER env baseline; a per-model card can still override it
+   *  inside the orchestrator). When it does not run, a null verdict is NOT a give-up and must not disqualify an attempt from selection —
+   *  the rsb2 cell (10-15) ran 3 attempts per task with the resolver off and picked attempt 1 on every chain (`no finish: attempt 2,3`). */
+  resolverOn: boolean;
 }
 
 export function resolveSecondAttemptConfig(env: NodeJS.ProcessEnv = process.env): SecondAttemptConfig {
@@ -90,6 +95,7 @@ export function resolveSecondAttemptConfig(env: NodeJS.ProcessEnv = process.env)
     select: ((s) => (/^judge$/i.test(s) ? 'judge' : /^evidence$/i.test(s) ? 'evidence' : /^verdict$/i.test(s) ? 'verdict' : 'turns'))(String(env.CORTEX_SECOND_ATTEMPT_SELECT ?? '').trim()),
     untilBudget: /^(1|true|on)$/i.test(String(env.CORTEX_SECOND_ATTEMPT_UNTIL_BUDGET ?? '').trim()),
     informed: /^(1|true|on)$/i.test(String(env.CORTEX_SECOND_ATTEMPT_INFORMED ?? '').trim()),
+    resolverOn: resolveEndTurnResolver(env), // R259
   };
 }
 
@@ -190,7 +196,8 @@ export interface AttemptRecord {
   iterations: number | null;
   /** tool-call assistant records in the attempt's session file (null when absent) */
   sessionTurns: number | null;
-  /** attempt 1 always; k ≥ 2 only with a response, a verdict and a committed tree */
+  /** attempt 1 always; k ≥ 2 only with a response and a committed tree, plus a verdict when the resolver runs (R259: with the resolver off
+   *  a null action is not a give-up) — see attemptFinished() */
   finished: boolean;
   /** the attempt's request exit code as a string (null = unknown) */
   rc: string | null;
@@ -222,6 +229,15 @@ export interface AttemptSelection {
 /** accept 2 > accept-with-gap / accept-low-confidence 1 > anything else 0 */
 export function rankVerdict(action: string | null | undefined): number {
   return action === 'accept' ? 2 : action && SECOND_ATTEMPT_GAP_ACTIONS.has(action) ? 1 : 0;
+}
+
+/** R259: is attempt k a selection CANDIDATE? Attempt 1 always. A later attempt needs a response and a committed tree; a resolver verdict
+ *  is required only when the resolver actually runs (null action = give-up). With CORTEX_ENDTURN_RESOLVER off every verdict is null, and
+ *  before this fix every attempt ≥ 2 was unfinished → the selector picked attempt 1 on every chain while paying for the retries. */
+export function attemptFinished(k: number, hasResponse: boolean, action: string | null | undefined, tagged: boolean, resolverOn: boolean): boolean {
+  if (k === 1) return true;
+  if (!hasResponse || !tagged) return false;
+  return resolverOn ? (action ?? null) !== null : true;
 }
 
 /** sa_pick, verbatim: (a) shipped check — when some candidates pass and others do not, keep the passing ones; (b) verdict rank;
@@ -452,7 +468,7 @@ export async function runWithAttempts(opts: RunWithAttemptsOptions): Promise<Orc
         k, action: v?.action ?? null, remainingFrac: d.remainingFrac, namedPassed: d.namedPassed, check: 'none',
         iterations: toolCallIterationsOf(resp),
         sessionTurns: countSessionToolTurns(paths.sessionPath),
-        finished: k === 1 || (!!resp && (v?.action ?? null) !== null && tagged.has(k)), rc: resp ? '0' : '1',
+        finished: attemptFinished(k, !!resp, v?.action ?? null, tagged.has(k), cfg.resolverOn), rc: resp ? '0' : '1',
       });
       if (!d.go) break;
       if (k === 1) {

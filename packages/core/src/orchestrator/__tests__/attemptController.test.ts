@@ -9,7 +9,7 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   resolveSecondAttemptConfig, decideNextAttempt, selectAttempt, mergeAttemptResponses, detectShippedCheck, runShippedCheck,
-  countSessionToolTurns, rankVerdict, type AttemptRecord, type SecondAttemptConfig,
+  countSessionToolTurns, rankVerdict, attemptFinished, type AttemptRecord, type SecondAttemptConfig,
 } from '../attemptController.js';
 
 const MIN = 60_000;
@@ -231,5 +231,35 @@ describe('shipped check + session turns', () => {
       expect(countSessionToolTurns(path.join(d, 'missing.jsonl'))).toBeNull();
       expect(countSessionToolTurns(undefined)).toBeNull();
     } finally { fs.rmSync(d, { recursive: true, force: true }); }
+  });
+});
+
+describe('R259: resolver-off attempts are selection candidates', () => {
+  it('cfg.resolverOn mirrors CORTEX_ENDTURN_RESOLVER (card-less env baseline; dark by default)', () => {
+    expect(cfg().resolverOn).toBe(false);
+    expect(cfg({ CORTEX_ENDTURN_RESOLVER: 'true' }).resolverOn).toBe(true);
+    expect(cfg({ CORTEX_ENDTURN_RESOLVER: 'false' }).resolverOn).toBe(false);
+    expect(cfg({ CORTEX_ENDTURN_RESOLVER: '0' }).resolverOn).toBe(false);
+  });
+  it('attemptFinished: attempt 1 always; k>=2 needs response + tag; a verdict only while the resolver runs', () => {
+    expect(attemptFinished(1, false, null, false, true)).toBe(true);
+    // resolver ON: a null verdict is a give-up (unchanged behaviour)
+    expect(attemptFinished(2, true, null, true, true)).toBe(false);
+    expect(attemptFinished(2, true, 'accept-with-gap', true, true)).toBe(true);
+    expect(attemptFinished(2, true, 'accept', false, true)).toBe(false);  // commit failed → not a candidate
+    expect(attemptFinished(2, false, 'accept', true, true)).toBe(false);  // no response → not a candidate
+    // resolver OFF (rsb2): every verdict is null — the attempt is still a candidate
+    expect(attemptFinished(2, true, null, true, false)).toBe(true);
+    expect(attemptFinished(3, true, undefined, true, false)).toBe(true);
+    expect(attemptFinished(2, true, null, false, false)).toBe(false);
+    expect(attemptFinished(2, false, null, true, false)).toBe(false);
+  });
+  it('with every attempt a candidate, SELECT=turns picks the fewest-turns attempt instead of attempt 1 (rsb2 freecad: 140/113/141 → 2)', () => {
+    const rec = (k: number, turns: number): AttemptRecord => ({ k, action: null, remainingFrac: 0.8, namedPassed: 0, check: 'none', iterations: turns, sessionTurns: turns, finished: attemptFinished(k, true, null, true, false), rc: '0' });
+    const sel = selectAttempt([rec(1, 140), rec(2, 113), rec(3, 141)], null);
+    expect(sel.pick).toBe(2);
+    expect(sel.why).not.toMatch(/no finish/);
+    const old = (k: number, turns: number): AttemptRecord => ({ ...rec(k, turns), finished: attemptFinished(k, true, null, true, true) });
+    expect(selectAttempt([old(1, 140), old(2, 113), old(3, 141)], null).pick).toBe(1); // the pre-fix (resolver-on semantics) outcome
   });
 });
