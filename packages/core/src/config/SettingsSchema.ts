@@ -116,6 +116,11 @@ export interface EnvironmentVariables {
   CORTEX_LIFT_PLAN_REASONING?: string; // 'on' | 'none' — per-surface, wins over CORTEX_MENTOR_REASONING
   CORTEX_LIFT_PLAN_DOCTRINE?: string; // 'v1' | 'v2' — planner doctrine
   CORTEX_INTERACTIVE_PROFILE?: string; // 'off' | 'bench-lite' — R219 lever profile for interactive (TTY) sessions; fills unset levers only
+  CORTEX_FEATURES?: string; // 'on' | 'off' — R262 feature payload layer master switch (default on; inert without a payload)
+  CORTEX_FEATURES_FILE?: string; // path to a GrowthBook-format feature payload (R262; wins over CORTEX_FEATURES_JSON)
+  CORTEX_FEATURES_JSON?: string; // inline GrowthBook-format feature payload (R262)
+  CORTEX_FEATURE_ATTRS?: string; // JSON object of targeting attributes merged over the auto attributes (R262)
+  CORTEX_FEATURES_HASH?: string; // REPORTED (read-only): sha256 of the canonical payload, set by the layer (R262)
   CORTEX_LIFT_PLAN_TOOL_ROUNDS?: string; // max planner calls at the lift; >1 lets the planner INVESTIGATE (harness runs its read-only CHECK/READ lines between rounds) — R171 HB-LIFT-PLAN-TOOL-LOOP (default 1 = single-shot)
   CORTEX_LIFT_PLAN_TOOL_ROUND_BUDGET_MS?: string; // aggregate wall clock for the planner's investigation rounds (default 240000; 10000..1800000) — R171 bullets (4.107.2 lever)
   CORTEX_ENDTURN_TIER?: string; // 'standard' | 'essential' — EndTurn discovery tier (4.107.2 lever)
@@ -516,6 +521,11 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_LIFT_PLAN_REASONING: '',
   CORTEX_LIFT_PLAN_DOCTRINE: '',
   CORTEX_INTERACTIVE_PROFILE: '',
+  CORTEX_FEATURES: '',
+  CORTEX_FEATURES_FILE: '',
+  CORTEX_FEATURES_JSON: '',
+  CORTEX_FEATURE_ATTRS: '',
+  CORTEX_FEATURES_HASH: '',
   CORTEX_LIFT_PLAN_TOOL_ROUNDS: '',
   CORTEX_LIFT_PLAN_TOOL_ROUND_BUDGET_MS: '',
   CORTEX_ENDTURN_TIER: '',
@@ -1034,6 +1044,46 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     description: 'Aggregate wall clock (ms) the planner\'s investigation rounds may use before it must plan (default 240000). (R171)',
     type: 'string',
     category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_FEATURES',
+    displayName: 'Feature payload layer',
+    description: "R262: on (default) | off. off disables the GrowthBook-format feature payload layer entirely (= Claude Code's DISABLE_GROWTHBOOK). Inert unless CORTEX_FEATURES_FILE or CORTEX_FEATURES_JSON is set. Applied at launch.",
+    type: 'string',
+    category: 'system',
+    default: ''
+  },
+  {
+    key: 'CORTEX_FEATURES_FILE',
+    displayName: 'Feature payload file',
+    description: 'R262: path to a GrowthBook-format payload {features: {KEY: {defaultValue, rules}}}. Evaluated offline at launch; a rule that fires (force / experiment) fills a lever only when no user layer set it (source shows `feature`). Wins over CORTEX_FEATURES_JSON. Template: config/features.json (generated).',
+    type: 'string',
+    category: 'system',
+    default: ''
+  },
+  {
+    key: 'CORTEX_FEATURES_JSON',
+    displayName: 'Inline feature payload',
+    description: 'R262: the same payload as CORTEX_FEATURES_FILE, inline JSON. Ignored when the file lever is set.',
+    type: 'string',
+    category: 'system',
+    default: ''
+  },
+  {
+    key: 'CORTEX_FEATURE_ATTRS',
+    displayName: 'Feature targeting attributes',
+    description: 'R262: JSON object of targeting attributes merged over the auto attributes {surface, model, run, arm, task, id} that rule conditions and experiment hashing read.',
+    type: 'string',
+    category: 'system',
+    default: ''
+  },
+  {
+    key: 'CORTEX_FEATURES_HASH',
+    displayName: 'Feature payload hash (reported)',
+    description: 'R262: REPORTED, read-only — sha256 of the canonical (sorted-keys) payload, set by the layer at launch; shown at /health/config and in the feature_exposure decision event. Do not set.',
+    type: 'string',
+    category: 'system',
     default: ''
   },
   {

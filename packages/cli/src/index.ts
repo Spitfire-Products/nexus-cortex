@@ -38,6 +38,7 @@ import { permissionsTools } from './commands/permissions/tools.js';
 import { permissionsGrant } from './commands/permissions/grant.js';
 import { permissionsRevoke } from './commands/permissions/revoke.js';
 import { configGet } from './commands/config/get.js';
+import { featuresShow } from './commands/features/show.js';
 import { configSet } from './commands/config/set.js';
 import { configCategories } from './commands/config/categories.js';
 import { configCategory } from './commands/config/category.js';
@@ -574,6 +575,17 @@ config
     await configReset({
       includeKeys: opts.includeKeys,
     });
+  });
+
+// R262 feature payload layer (GrowthBook-format rules, evaluated offline at bootstrap)
+const features = program.command('features').description('Feature payload layer (R262)');
+
+features
+  .command('show')
+  .description('Show the payload hash and the levers set by feature rules (with rule ids)')
+  .action(async () => {
+    const globalOpts = program.opts();
+    await featuresShow({ json: globalOpts.json });
   });
 
 // Auto-research keep/discard gate (recursive self-improvement decision layer)

@@ -3,7 +3,7 @@
  * HTML dashboard, holographic preset
  */
 import { Router, Request, Response } from 'express';
-import { ModularModelRegistry, collectEffectiveConfig } from '@nexus-cortex/core';
+import { ModularModelRegistry, collectEffectiveConfig, collectEffectiveConfigMeta } from '@nexus-cortex/core';
 
 export const healthRouter = Router();
 
@@ -13,7 +13,7 @@ export const healthRouter = Router();
 // plain-language meaning. Secrets redacted to set/unset. The :4001 dashboard
 // renders this same data as a table at /config.
 healthRouter.get('/health/config', (_req: Request, res: Response) => {
-  res.json({ generatedAt: new Date().toISOString(), groups: collectEffectiveConfig() });
+  res.json({ generatedAt: new Date().toISOString(), featuresHash: collectEffectiveConfigMeta().featuresHash, groups: collectEffectiveConfig() });
 });
 
 healthRouter.get('/health', (req: Request, res: Response) => {

@@ -14,6 +14,7 @@
  */
 
 import { profileAppliedKeys } from './interactiveProfile.js';
+import { featureAppliedKeys } from './featurePayload.js';
 
 export interface EffectiveLever {
   key: string;
@@ -24,7 +25,9 @@ export interface EffectiveLever {
   /** The value the running process actually resolved. */
   effective: string;
   /** Where the effective value came from. */
-  source: 'env' | 'code-default' | 'profile'; // 'profile' = filled by CORTEX_INTERACTIVE_PROFILE (R219), not set by the user
+  source: 'env' | 'code-default' | 'profile' | 'feature'; // 'profile' = filled by CORTEX_INTERACTIVE_PROFILE (R219); 'feature' = filled by a feature payload rule (R262); neither set by the user
+  /** R262: the payload rule that filled this lever (source 'feature' only). */
+  featureRule?: { ruleId?: string; experimentKey?: string; variationId?: number };
   /** For flags: is the feature ON right now? */
   active?: boolean;
   /** Secrets report presence only. */
@@ -34,6 +37,12 @@ export interface EffectiveLever {
 export interface EffectiveConfigGroup {
   group: string;
   levers: EffectiveLever[];
+}
+
+/** R262: process-level config facts reported beside the groups. */
+export interface EffectiveConfigMeta {
+  /** sha256 of the canonical feature payload (CORTEX_FEATURES_HASH); null when no payload is loaded. */
+  featuresHash: string | null;
 }
 
 type LeverSpec = {
@@ -325,16 +334,28 @@ const GROUPS: Array<{ group: string; levers: LeverSpec[] }> = [
       { key: 'CORTEX_HERDR_KEEP_DELEGATE_PANES', what: 'Keep herdr delegate panes (and their task/result files) after the sub-agent finishes for operator inspection; 0/false closes them on completion (R147)', codeDefault: '1 (keep)', kind: 'value' },
     ],
   },
+  {
+    group: 'Feature payload (R262 — GrowthBook-format rules, evaluated offline at launch)',
+    levers: [
+      { key: 'CORTEX_FEATURES', what: 'Feature payload layer switch: on (default; inert without a payload) | off = the layer never runs (= Claude Code DISABLE_GROWTHBOOK)', codeDefault: 'on', kind: 'value' },
+      { key: 'CORTEX_FEATURES_FILE', what: 'GrowthBook-format payload file; a rule that fires (force / experiment) fills a lever no user layer set (source `feature`), above the interactive profile and the shipped defaults. Wins over CORTEX_FEATURES_JSON', codeDefault: '(unset — layer inert)', kind: 'value' },
+      { key: 'CORTEX_FEATURES_JSON', what: 'Inline payload (same format as CORTEX_FEATURES_FILE)', codeDefault: '(unset)', kind: 'value' },
+      { key: 'CORTEX_FEATURE_ATTRS', what: 'JSON targeting attributes merged over the auto attributes {surface, model, run, arm, task, id}', codeDefault: '(unset)', kind: 'value' },
+      { key: 'CORTEX_FEATURES_HASH', what: 'REPORTED (read-only): sha256 of the canonical payload, set by the layer at launch', codeDefault: '(unset — no payload)', kind: 'value' },
+    ],
+  },
 ];
 
 export function collectEffectiveConfig(env: NodeJS.ProcessEnv = process.env): EffectiveConfigGroup[] {
   const fromProfile = profileAppliedKeys(env);
+  const fromFeature = featureAppliedKeys(env);
   return GROUPS.map(({ group, levers }) => ({
     group,
     levers: levers.map((s): EffectiveLever => {
       const raw = env[s.key];
       const present = raw !== undefined && raw !== '';
-      const source: EffectiveLever['source'] = present ? (fromProfile.has(s.key) ? 'profile' : 'env') : 'code-default';
+      const rule = present ? fromFeature.get(s.key) : undefined;
+      const source: EffectiveLever['source'] = present ? (rule ? 'feature' : fromProfile.has(s.key) ? 'profile' : 'env') : 'code-default';
       if (s.kind === 'secret') {
         return {
           key: s.key, what: s.what, codeDefault: s.codeDefault,
@@ -344,9 +365,22 @@ export function collectEffectiveConfig(env: NodeJS.ProcessEnv = process.env): Ef
       }
       const effective = present ? String(raw) : s.codeDefault;
       const lever: EffectiveLever = { key: s.key, what: s.what, codeDefault: s.codeDefault, effective, source };
+      if (rule) {
+        const fr: NonNullable<EffectiveLever['featureRule']> = {};
+        if (rule.ruleId) fr.ruleId = rule.ruleId;
+        if (rule.experimentKey) fr.experimentKey = rule.experimentKey;
+        if (typeof rule.variationId === 'number') fr.variationId = rule.variationId;
+        lever.featureRule = fr;
+      }
       if (s.kind === 'flag-true') lever.active = (raw ?? '').trim().toLowerCase() === 'true';
       if (s.kind === 'flag-not-false') lever.active = (raw ?? '').trim().toLowerCase() !== 'false';
       return lever;
     }),
   }));
+}
+
+/** R262: process-level facts beside the lever groups (the feature payload hash). */
+export function collectEffectiveConfigMeta(env: NodeJS.ProcessEnv = process.env): EffectiveConfigMeta {
+  const h = (env.CORTEX_FEATURES_HASH ?? '').trim();
+  return { featuresHash: h || null };
 }

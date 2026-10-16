@@ -13,6 +13,7 @@ import type { OrchestratorConfig } from '../orchestrator/CortexOrchestrator.js';
 import type { EnvironmentVariables } from './SettingsSchema.js';
 import { DEFAULT_SETTINGS, SETTINGS_METADATA, validateSetting, getSettingMetadata } from './SettingsSchema.js';
 import { applyInteractiveProfile, isInteractiveSession } from './interactiveProfile.js';
+import { applyFeaturePayload } from './featurePayload.js';
 
 /**
  * Result of a write operation
@@ -230,6 +231,10 @@ export function bootstrapEnv(packageRoot?: string, opts: { interactive?: boolean
     try { shippedProfile = parseEnvFile(fs.readFileSync(defaultsPath, 'utf-8')).CORTEX_INTERACTIVE_PROFILE; } catch { /* no profile */ }
   }
   applyInteractiveProfile(process.env, { interactive: opts.interactive ?? isInteractiveSession() }, shippedProfile);
+  // R262 FEATURE PAYLOAD LAYER: GrowthBook-format rules (CORTEX_FEATURES_FILE / CORTEX_FEATURES_JSON), evaluated offline,
+  // fill only levers no user layer set — ABOVE the profile (a rule may take a profile-filled key) and the shipped
+  // defaults, BELOW every user layer. No payload / CORTEX_FEATURES=off → nothing written (byte-identical).
+  try { applyFeaturePayload(process.env); } catch { /* fail-open: the layer never blocks a launch */ }
   if (defaultsPath) apply(defaultsPath, false); // the shipped read-live default layer — lowest base precedence
   for (const f of localFiles) apply(f, true);    // explicit overrides
   return { loadedFrom };
@@ -590,6 +595,11 @@ export function mergeWithDefaults(env: EnvironmentVariables): Required<Environme
     CORTEX_LIFT_PLAN_REASONING: env.CORTEX_LIFT_PLAN_REASONING || process.env.CORTEX_LIFT_PLAN_REASONING || D.CORTEX_LIFT_PLAN_REASONING,
     CORTEX_LIFT_PLAN_DOCTRINE: env.CORTEX_LIFT_PLAN_DOCTRINE || process.env.CORTEX_LIFT_PLAN_DOCTRINE || D.CORTEX_LIFT_PLAN_DOCTRINE,
     CORTEX_INTERACTIVE_PROFILE: env.CORTEX_INTERACTIVE_PROFILE || process.env.CORTEX_INTERACTIVE_PROFILE || D.CORTEX_INTERACTIVE_PROFILE,
+    CORTEX_FEATURES: env.CORTEX_FEATURES || process.env.CORTEX_FEATURES || D.CORTEX_FEATURES,
+    CORTEX_FEATURES_FILE: env.CORTEX_FEATURES_FILE || process.env.CORTEX_FEATURES_FILE || D.CORTEX_FEATURES_FILE,
+    CORTEX_FEATURES_JSON: env.CORTEX_FEATURES_JSON || process.env.CORTEX_FEATURES_JSON || D.CORTEX_FEATURES_JSON,
+    CORTEX_FEATURE_ATTRS: env.CORTEX_FEATURE_ATTRS || process.env.CORTEX_FEATURE_ATTRS || D.CORTEX_FEATURE_ATTRS,
+    CORTEX_FEATURES_HASH: env.CORTEX_FEATURES_HASH || process.env.CORTEX_FEATURES_HASH || D.CORTEX_FEATURES_HASH,
     CORTEX_LIFT_PLAN_TOOL_ROUNDS: env.CORTEX_LIFT_PLAN_TOOL_ROUNDS || process.env.CORTEX_LIFT_PLAN_TOOL_ROUNDS || D.CORTEX_LIFT_PLAN_TOOL_ROUNDS,
     CORTEX_LIFT_PLAN_TOOL_ROUND_BUDGET_MS: env.CORTEX_LIFT_PLAN_TOOL_ROUND_BUDGET_MS || process.env.CORTEX_LIFT_PLAN_TOOL_ROUND_BUDGET_MS || D.CORTEX_LIFT_PLAN_TOOL_ROUND_BUDGET_MS,
     CORTEX_ENDTURN_TIER: env.CORTEX_ENDTURN_TIER || process.env.CORTEX_ENDTURN_TIER || D.CORTEX_ENDTURN_TIER,

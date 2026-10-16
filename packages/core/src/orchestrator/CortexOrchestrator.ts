@@ -9,6 +9,7 @@
  */
 
 import { liftPlanAllowedInSession } from '../config/interactiveProfile.js';
+import { featureAppliedKeys } from '../config/featurePayload.js';
 import { v4 as uuidv4 } from 'uuid';
 
 // Phase 1.5 Week 1: Multi-Provider
@@ -705,6 +706,7 @@ export class CortexOrchestrator {
   private reqLedger: LedgerEntry[] | null = null; // R187: the stated-requirement ledger for this turn (null = not yet authored)
   private reqLedgerPromise: Promise<LedgerEntry[]> | null = null; // R187: authored at lift in the background
   private sessionUsage: SessionUsage = emptySessionUsage(); // R190: every main-model request this session (exact) + helper calls (estimated)
+  private featureExposureBankedFor: string | null = null; // R262: session id the feature_exposure event was banked for (one per session)
   private lastResolverDecision: LastResolverDecision | null = null; // R239: the LAST endturn_resolver adjudication of the current turn (null = no verdict)
   private reqLedgerHolds = 0; // R187: ledger holds used this turn
   private reqLedgerRetried = false; // R187c: one re-author at the first finish after an empty lift-time result
@@ -7105,6 +7107,7 @@ export class CortexOrchestrator {
     this.currentSessionId = sessionId;
     this.currentConversationId = conversationId;
     this.currentModelId = modelId;
+    this.bankFeatureExposureOnce(sessionId);
     this.messageHistory = [];
     this.turnNumber = 0;
 
@@ -7269,6 +7272,7 @@ export class CortexOrchestrator {
     this.currentSessionId = sessionId;
     this.currentConversationId = conversationId;
     this.currentModelId = modelId;
+    this.bankFeatureExposureOnce(sessionId);
     this.messageHistory = messages;
     // Messages have nested structure: m.message.role
     this.turnNumber = messages.filter((m: any) => (m.message || m).role === 'user').length;
@@ -10340,6 +10344,19 @@ export class CortexOrchestrator {
     let decisionsPath: string | undefined; try { decisionsPath = this.decisionsStorePath(); } catch { decisionsPath = undefined; }
     let sessionPath: string | undefined; try { sessionPath = this.currentSessionId ? this.historyStore.getSessionPath(this.currentSessionId) : undefined; } catch { sessionPath = undefined; }
     return { decisionsPath, sessionPath };
+  }
+
+  /** R262: ONE `feature_exposure` decision event per session when a feature payload is loaded — {featuresHash, applied}
+   *  (levers resolve once at bootstrap, so one event, not one per read). No payload → nothing banked. Never throws. */
+  private bankFeatureExposureOnce(sessionId: string): void {
+    try {
+      if (!sessionId || this.featureExposureBankedFor === sessionId) return;
+      const featuresHash = (process.env.CORTEX_FEATURES_HASH ?? '').trim() || null;
+      const applied = [...featureAppliedKeys(process.env).values()];
+      if (!featuresHash && applied.length === 0) return;
+      this.featureExposureBankedFor = sessionId;
+      void this.bankSteeringEvent('feature_exposure', { featuresHash, applied });
+    } catch { /* observability only */ }
   }
 
   /** R239 / P4: bank one steering event into this instance's decision store (best-effort; mechanism-engagement evidence). */
