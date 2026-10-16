@@ -15,17 +15,17 @@ export function jevAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
 export async function jevNoul(
   state: Record<string, unknown>,
   questions: Record<string, JevNoulQuestion>,
-  opts: { env?: NodeJS.ProcessEnv; timeoutMs?: number; fetchImpl?: typeof fetch; endpoint?: string } = {},
+  opts: { env?: NodeJS.ProcessEnv; timeoutMs?: number; fetchImpl?: typeof fetch; endpoint?: string; keyOptional?: boolean } = {},
 ): Promise<JevGateResult | null> {
   const env = opts.env ?? process.env;
   const key = (env.TYPESAFE_API_KEY ?? '').trim();
-  if (!key) return null;
+  if (!key && !(opts.keyOptional && opts.endpoint)) return null; // R260: a self-hosted System One endpoint needs no key
   const f = opts.fetchImpl ?? fetch;
   const t0 = Date.now();
   try {
     const resp = await f(opts.endpoint ?? (env.TYPESAFE_API_URL || 'https://api.typesafe.ai/v1/systemone'), {
       method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      headers: { ...(key ? { Authorization: `Bearer ${key}` } : {}), 'Content-Type': 'application/json' },
       body: JSON.stringify({ state, model: env.TYPESAFE_JEV_MODEL || 'jev-latest', questions }),
       signal: AbortSignal.timeout(opts.timeoutMs ?? 8000),
     });

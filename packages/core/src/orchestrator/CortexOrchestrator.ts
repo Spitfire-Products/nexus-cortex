@@ -33,6 +33,7 @@ import { ENV_RECON_COMMAND, resolveLiftPlanConfig, parsePlannerResponse, bankPla
 import { clipIn, FULL_CAPS, HINTS, resolveInventory, resolveInventoryPath } from '../training/steerInputs.js';
 import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetFloorActive, applyBudgetFloor, flooredEvidenceCap, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage, gapHoldable, parseSpecChecks, groundSpecCheck, specFailFraction, applyVetoFloor, holdProgressed, planSimilarity, specCheckEvidence, specBlockForJudge, dropSpecEchoes, specBlockForWriter, vetoMessageLead, RESOLVER_SCALE_CLAUSE } from '../training/endTurnResolver.js';
 import { jevAvailable, jevNoul, buildGapHoldState, GAP_HOLD_QUESTIONS } from '../training/jevGate.js'; // R173b
+import { resolveAcceptGateConfig, buildAcceptGateState, decideAcceptGate, decisionNoul, formatAcceptGateHoldMessage, isAcceptClass, ACCEPT_GATE_QUESTIONS } from '../training/acceptGate.js'; // R260
 import { resolveFrameConfig, FRAME_CONTRACT, FRAME_TOOL_NAME } from '../frames/frameConfig.js'; // R179
 import { FrameRunner } from '../frames/frameRunner.js'; // R179
 import { emptySessionUsage, addMainUsage, type SessionUsage, addSubagentUsage } from '../training/usageAccounting.js'; // R190
@@ -716,6 +717,7 @@ export class CortexOrchestrator {
   private specFailHistory = new Map<string, { streak: number; sig: string }>(); // R174b: consecutive identical spec failures
   private lastHoldMs = 0; // R173c: wall clock of the last hold/veto this turn
   private derivationHolds = 0; // R176: independent-derivation holds this turn (max 1)
+  private acceptGateHolds = 0; // R260: typed accept-gate holds this session (cap CORTEX_JUDGE_ACCEPT_GATE_MAX)
   private taskRulePlanRecorded = false; // R211–R214: task_rule_plan is banked once per session
   private liftPlanText = '';          // 4.107.0: the PLAN OF ATTACK delivered at lift — handed to the resolver / deadline-exit / loop-exit judges as an advisory anchor
   private effectiveDeferredLoading = true; // per-turn resolved deferred-loading (card > env > settings); set at assembly
@@ -1617,6 +1619,24 @@ export class CortexOrchestrator {
         }
         if (store) void store.recordEvent({ sessionId, kind: 'independent_derivation', toolName: 'EndTurn', detail: { ...derivationInfo, held: !!derivationHold, remainingFrac: resolverRemainingFrac } }).catch(() => {});
       }
+      // R260 HB-ACCEPT-GATE: an INDEPENDENT typed decision model (Jev or a self-hosted Amos) reads only the task, the final message, the
+      // recent tool outputs, the workspace delta and the harness-run check output — never the verdict or plan (E0: the judge's opinion in
+      // the state collapses the AND to the judge) — and, in `gate` mode, turns an accept-class finish into ONE more hold when P(done) is
+      // below the floor. `shadow` banks the probability only. Runs after every other hold had its say; fail-open on timeout/error.
+      let acceptGateHold: { message: string } | null = null; let acceptGateInfo: Record<string, unknown> | null = null;
+      const agc = resolveAcceptGateConfig();
+      if (agc.mode !== 'off' && isAcceptClass(action) && !reqHold && !reqFailVeto && !derivationHold && !belowFloor) {
+        const a0 = Date.now();
+        const agState = buildAcceptGateState({ task, workspaceDelta, checkOutput: combinedCheck, finalMessage: this.lastAssistantText(), toolResults, remainingFrac: resolverRemainingFrac });
+        const jr = await decisionNoul(agState, ACCEPT_GATE_QUESTIONS, agc);
+        const pDone = jr?.probabilities.done ?? null; const pVerified = jr?.probabilities.verified ?? null;
+        const agd = decideAcceptGate({ mode: agc.mode, action, pDone, min: agc.min, holdsUsed: this.acceptGateHolds, max: agc.max, remainingFrac: resolverRemainingFrac, minRemaining: cfg.vetoMinRemaining });
+        if (agd.held && pDone !== null) acceptGateHold = { message: formatAcceptGateHoldMessage({ pDone, pVerified, min: agc.min, holdIndex: this.acceptGateHolds + 1, max: agc.max, remainingFrac: resolverRemainingFrac }) };
+        acceptGateInfo = { mode: agc.mode, model: agc.model, pDone, pVerified, threshold: agc.min, actionBefore: action, actionAfter: acceptGateHold ? 'hold' : action, held: !!acceptGateHold, reason: agd.reason,
+          holdsUsed: this.acceptGateHolds, max: agc.max, latencyMs: jr?.latencyMs ?? (Date.now() - a0), inputTokens: jr?.inputTokens ?? null, failOpen: !jr, stateChars: JSON.stringify(agState).length };
+        if (store) void store.recordEvent({ sessionId, kind: 'accept_gate', toolName: 'EndTurn', detail: acceptGateInfo }).catch(() => {});
+        console.warn(`[EndTurnResolver] R260 ACCEPT-GATE ${agc.mode} (${agc.model}): P(done)=${pDone === null ? 'n/a' : pDone.toFixed(2)} vs ${agc.min} → ${acceptGateHold ? 'HOLD' : agd.reason}`);
+      }
       this.judgeAdjudicatedThisFinish = verdict.parsed;
       const latencyMs = Date.now() - t0;
       // OBSERVABILITY (resolver-AB follow-up, 2026-09-05): bank the TEXT the resolver produced +
@@ -1644,6 +1664,7 @@ export class CortexOrchestrator {
           specTests: cfg.specTests, specChecks: this.specChecks?.length ?? 0, specRan, specPassed, specFailed, specInconclusive, specSuspect, specFrac: specFrac === null ? null : Number(specFrac.toFixed(3)), specSets: this.specCheckSets.length, specVetoFrac: cfg.specVetoFrac, specText: cfg.specText, specGenLatencyMs: this.specChecksMeta.genLatencyMs, specTestsAt: cfg.specTestsAt, // R174 / R174b
           vetoMinRemaining: cfg.vetoMinRemaining, belowFloor, holdProgressed: holdProg, holdGapMs: msSinceLastHold, planSim: Number(planSimilarity(this.judgePriorPlan, verdict.plan).toFixed(3)), msSinceLastHold, // R173c
           derivation: cfg.derivation, derivationAgreement: derivationInfo?.agreement ?? null, derivationHeld: !!derivationHold, // R176
+          acceptGate: agc.mode, acceptGateHeld: !!acceptGateHold, acceptGatePDone: acceptGateInfo?.pDone ?? null, // R260
           reqLedger: cfg.reqLedger, reqLines: reqCounts.lines, reqOpen: reqCounts.open, reqExercised: reqCounts.exercised, reqFailed: reqCounts.failed, reqUnverifiable: reqCounts.unverifiable, reqHeld: !!reqHold, reqHolds: this.reqLedgerHolds, reqGenLatencyMs: this.reqLedgerMeta.genLatencyMs, reqJev: cfg.reqLedgerJev, reqJevAsked: reqJev?.asked ?? 0, reqJevClosed: reqJev?.closed ?? [], reqJevLatencyMs: reqJev?.latencyMs ?? 0, // R187/R187b
           reqFailVeto: !!reqFailVeto, reqFailVetoes: this.reqLedgerFailVetoes, reqFailedNow, reqFailJev, // R192
           verifyScale: cfg.verifyScale, // R208
@@ -1713,6 +1734,14 @@ export class CortexOrchestrator {
         et.is_error = true;
         et.content = derivationHold.message;
         console.warn(`[EndTurnResolver] R176 DERIVATION-HOLD — finish held once on a disagreeing independent recomputation`);
+      } else if (acceptGateHold) {
+        // R260: the judge would accept, the typed model says the task is not done — return the finish once more with the probability shown.
+        this.acceptGateHolds += 1;
+        this.lastHoldMs = Date.now();
+        ev.endTurnCalled = false;
+        et.is_error = true;
+        et.content = acceptGateHold.message;
+        console.warn(`[EndTurnResolver] R260 ACCEPT-GATE HOLD — finish held (${this.acceptGateHolds}/${agc.max})`);
       } else if ((action === 'accept-with-gap' || action === 'accept-low-confidence') &&
                  shouldFinishConfirm({ action, remainingFrac: resolverRemainingFrac, confirmsUsed: this.finishConfirms, cfg })) {
         // R167 HB-FINISH-CONFIRM: the judge would accept with a gap and budget remains — hold ONCE with an informed

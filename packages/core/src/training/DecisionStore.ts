@@ -85,6 +85,7 @@ export type SteeringEventKind =
   | 'time_budget_break' // #2 (2026-09-04): the per-turn wall-clock deadline forced synthesis (mechanism-engagement evidence)
   | 'lift_plan' // LIFT_MENTOR_PLANNER: bounded mentor-planner fired at the lift (mechanism-engagement evidence; detail carries {planChars, retire, criteriaStated})
   | 'endturn_resolver' // endTurnResolver: mentor-as-EndTurn-judge fired at finish (detail carries {meets, planChars, rejects})
+  | 'accept_gate' // R260 HB-ACCEPT-GATE: typed decision model over an accept-class verdict (detail carries {mode, model, pDone, pVerified, threshold, actionBefore, actionAfter, held, latencyMs})
   | 'deadline_exit_mentor' // deadlineExitMentor: mentor-as-deadline-checkpoint at the warn rung (detail carries {decision: continue|finish|action|retire})
   | 'deadline_exit_break' // deadlineExitMentor decided FINISH/RETIRE → the tool loop broke early for a clean synthesis exit
   | 'loop_tool_block' // CORTEX_LOOP_TOOL_BLOCK: the looping tool's executor was disabled for a turn + a redirect error returned (detail carries {blockNumber, redirectTools})
