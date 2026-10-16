@@ -1,0 +1,2191 @@
+{
+  "features": {
+    "CORTEX_ACTION_EFFORT": {
+      "defaultValue": "(unset — card decides)",
+      "rules": [],
+      "meta": {
+        "what": "Static reasoning effort for the PRIMARY (action) model (low|medium|high|max). Fills the request param when unset → overrides the model card default but NOT an explicit request param or the effort-pulse. Mentor levers (LIFT/RESOLVER/DEADLINE _EFFORT) are separate and stay max. Enables the pro-track wide-effort-delta A/B",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_ACTION_EFFORT_FIRST": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "HB-ACTION-EFFORT-FIRST: request 0 of each user turn also gets CORTEX_ACTION_EFFORT (was the card default). off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_ACTION_PLAN_FIELDS": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "Bash/Edit/Write calls must carry required analysis + plan fields; invalid calls returned unexecuted, no cap (R172 HB-ACTION-PLAN-FIELDS)",
+        "group": "Loop control",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_ANTHROPIC_AUTO_CACHE": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R225: Anthropic Messages adds top-level automatic cache_control beside the system + last-tool markers when a breakpoint slot is free (cap 4, R218 counted); never the xAI Messages branch. off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_ANTHROPIC_CACHE_TTL": {
+      "defaultValue": "5m",
+      "rules": [],
+      "meta": {
+        "what": "R225: TTL for every Anthropic cache_control the harness emits (system, last tool, R218 history, automatic). 1h (writes 2x) | unset/5m (default)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_ANTHROPIC_EFFORT": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "HB-ANTHROPIC-EFFORT: adaptive Claude families (4.7/4.8/5/fable-5) send output_config.effort = the request/action effort; budget families map effort max to min(120000, max_tokens-1024) budget_tokens (was 10000). Anthropic only. off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_ANTHROPIC_HISTORY_CACHE": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R218 HB-ANTHROPIC-CACHE: rolling message-level cache_control breakpoints (previous + newest user message) on the Anthropic Messages path within the 4-breakpoint cap (system + tool counted); needs ANTHROPIC_PROMPT_CACHING; never the xAI Messages branch. off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_API_NETWORK_RETRY_MS": {
+      "defaultValue": 600000,
+      "rules": [],
+      "meta": {
+        "what": "Wall-clock budget (ms) for retrying network-class API faults (connection error / terminated / 5xx) on an exponential ladder capped at 60 s per wait; 0 = legacy 3-attempt cap (R150)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_APPEND_ONLY_TOOLS": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R222 append-only history: with deferred tool loading, the tools array only grows — newly enabled tools are appended in first-enable order, nothing is evicted or reordered (deferral kept; the anchor lift is untouched). off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_ASK_FOR_ADVICE": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "Include the model-initiated AskForAdvice consult tool while mentorship is on; =false drops it (measured thinking-off, voluntary heed v1 0/6 — keep it out of mentor A/Bs)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "flag-not-false"
+      }
+    },
+    "CORTEX_BASH_OOM_PRIORITY": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "Bash children volunteer for the OOM killer ahead of the orchestrator (oom_score_adj 1000; R156 HB-OOM-CHILD-PRIORITY); false disables",
+        "group": "Loop control",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_BASH_PIPEFAIL": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "Pipelines report the failing command instead of masking it (cmd | head)",
+        "group": "Guards (the protection stack — see CONFIG_AUDIT_2026-08-31)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_BUDGET_CONTINUE_MAX_NUDGES": {
+      "defaultValue": 2,
+      "rules": [],
+      "meta": {
+        "what": "Continue-with-budget nudges allowed per turn; the second is firmer (R157 R151-v2); 0 = off",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_BUDGET_CONTINUE_MIN_REMAINING": {
+      "defaultValue": 0.5,
+      "rules": [],
+      "meta": {
+        "what": "Fraction of the wall budget that must remain for the open-items continue nudge (R151); 0 = off",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_BUDGET_FLOOR_MODE": {
+      "defaultValue": "evidence",
+      "rules": [],
+      "meta": {
+        "what": "R233 v2: what the budget floor clamps — evidence (default: only the evidence-veto cap collapses to 1) | all (v1: every fraction rule sees below-budget)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_BUDGET_FLOOR_S": {
+      "defaultValue": 0,
+      "rules": [],
+      "meta": {
+        "what": "R233 HB-BUDGET-FLOOR: seconds of wall budget under which every budget-aware verdict rule behaves as below-budget (liveness reject cap, no gap hold, veto floor, evidence cap 1) regardless of the fraction left; 0 = off",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_BUDGET_VISIBILITY": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "With a turn deadline: one-line WALL BUDGET reminder per 10% band + the open-items continue nudge (R151 HB-BUDGET-VISIBILITY); false disables",
+        "group": "Loop control",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_CHAT_REMINDERS_TO_SYSTEM": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R231 HB-CHAT-REMINDERS-SYSTEM: chat/completions mirror of the Responses-OFF reminder delivery — every <system-reminder> block carried in a USER text block is lifted out of the conversation and appended to the system message on each request (tool-result reminders stay in place). off = unchanged: in place with the tags stripped.",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_COMPACTION_CHECKPOINT_PCT": {
+      "defaultValue": 0.75,
+      "rules": [],
+      "meta": {
+        "what": "Pre-compaction checkpoint rung (4.108.2): first resume memory written at this fraction of the compaction threshold, before any drop; refreshed every CORTEX_COMPACTION_CHECKPOINT_STEP",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_COMPACTION_CHECKPOINT_STEP": {
+      "defaultValue": 0.1,
+      "rules": [],
+      "meta": {
+        "what": "Checkpoint refresh band as a fraction of the threshold (4.108.2)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_COMPACTION_HANDOFF_QA": {
+      "defaultValue": "false",
+      "rules": [],
+      "meta": {
+        "what": "DARK (R143 HB-HANDOFF-QA-SUMMARY): true = after each resume memory (checkpoint rung and rolled compaction) a FRESH history-free helper call asks what the memory is missing, a second helper call answers from the covered history, and the memory gains a GAPS (Q/A) section (compaction rows bank handoffQA {questions, answered, notRecorded, cost}); false = the plain memory",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_COMPACTION_HANDOFF_QA_MAX_QUESTIONS": {
+      "defaultValue": 6,
+      "rules": [],
+      "meta": {
+        "what": "Cap on the gap questions asked per handoff QA round (R143; 1-20)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_COMPACTION_RESUME": {
+      "defaultValue": "true",
+      "rules": [],
+      "meta": {
+        "what": "Proactive-compaction resume memory: true (default) = helper-model summary of the dropped messages + the original task verbatim are prepended as a system reminder, a compaction event is recorded (rows carry estimateSource usage-anchored|heuristic + anchorTokens since R132) and .cortex/memory/resume-<session>.md is written | false = silent drop (the pre-4.108.0 behavior)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_COMPACTION_TARGET_PCT": {
+      "defaultValue": 0.5,
+      "rules": [],
+      "meta": {
+        "what": "R256 compaction hysteresis (4.124.77): a proactive compaction keeps this fraction of the THRESHOLD (default 0.5) instead of the full history budget — stops the per-turn re-compaction + cache-bust loop (payments t4in: 57 compactions/60 min, 30 M uncached tokens)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_COMPACTION_THRESHOLD_TOKENS": {
+      "defaultValue": "(unset)",
+      "rules": [],
+      "meta": {
+        "what": "Test/ops override of the compaction threshold in tokens (4.108.3); empty = card-derived",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_COMPUTE_NUDGE": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "HB-COMPUTE-NUDGE: after a round whose response reasoned past CORTEX_COMPUTE_NUDGE_TOKENS (default 16000), append one 'compute/test instead of deliberating' line to the tail of the newest tool_result (HB-TURN-STATUS carrier, prefix-safe). Cooldown CORTEX_COMPUTE_NUDGE_COOLDOWN (3 rounds), cap CORTEX_COMPUTE_NUDGE_MAX (6/turn); compute_nudge event per firing. off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_DEADLINE_EXIT_MENTOR": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "DARK: the \"smart deadline\". At the WARN rung (~0.9 of the per-turn deadline, residual left) a bounded, residual-scaled mentor decides CONTINUE (on-track — do not truncate a late win) / FINISH (meets criteria → end) / ACTION (one minimal step then finish) / RETIRE (stuck → end cleanly) instead of the dumb wrap-up nudge. Hard-floor break at the deadline stays as failsafe",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_DEADLINE_EXIT_MENTOR_BUDGET_TOKENS": {
+      "defaultValue": 2000,
+      "rules": [],
+      "meta": {
+        "what": "Deadline exit planner output budget cap",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_DEADLINE_EXIT_MENTOR_EFFORT": {
+      "defaultValue": "max",
+      "rules": [],
+      "meta": {
+        "what": "Deadline exit planner reasoning effort",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_DEADLINE_EXIT_MENTOR_MODEL": {
+      "defaultValue": "",
+      "rules": [],
+      "meta": {
+        "what": "R232 HB-MENTOR-SURFACE-MODEL: model for the deadline-exit mentor (unset = MENTORSHIP_HELPER_MODEL / the caller)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_DEADLINE_EXIT_MENTOR_REASONING": {
+      "defaultValue": "(follows CORTEX_MENTOR_REASONING)",
+      "rules": [],
+      "meta": {
+        "what": "Deadline exit mentor: this surface's own thinking switch (on | none), wins over CORTEX_MENTOR_REASONING (4.107.0; cell-m-r1 §6: planner ON + resolver OFF is the candidate config)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_DELEGATION_HINT": {
+      "defaultValue": "false",
+      "rules": [],
+      "meta": {
+        "what": "DARK (4.108.1): true = the boot-minimal prompt gains one clause naming the Task tool for large/independent/output-heavy sub-tasks (delegation doctrine); false = the measured narrow door. Task dispatches are banked as task_spawn events either way.",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_EFFORT_RAMP": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "HB-EFFORT-RAMP: a window of MAIN action calls (counted from 1 per turn; 1 = the initial request, never ramped) runs at a lower reasoning effort, then the configured effort. off | <level>:<from>-<to> (low:2-8) | <level>:<n> (calls 2..n+1) | on (= low:2-8). Precedence: R153 backoff > effort pulse > ramp > request param > card. One effort_ramp event at start and at hand-back. Global low was harmful on TB4.0 — this covers only the opening calls",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_EFFORT_TAIL": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "On an EndTurn bounce, arm N more elevated-reasoning continuations (N = CORTEX_EFFORT_TAIL_TURNS, default 2)",
+        "group": "Loop control",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_EMPTY_TURN_CONTINUE": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "HB-ENDTURN-TERMINAL: a reasoning-only empty turn WITH budget remaining (<60% turn-deadline + <60% max-iterations) is classified reasoning_only_active → the empty-turn retry nudges \"continue\" with tools available (bounded to 3) instead of the terminal \"write your answer, no tools\" surrender that killed mid-recon builds. Exhausted/near-budget still force-synthesizes",
+        "group": "Guards (the protection stack — see CONFIG_AUDIT_2026-08-31)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_ENDTURN_CITATION_LINEWISE": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "EndTurn Stage-2 citation grounding matches multi-line quotes line-wise (every non-trivial line verbatim; contiguity relaxed) and the corpus includes Bash-authored text + the task statement",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-not-false"
+      }
+    },
+    "CORTEX_ENDTURN_GATE": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "DARK: mandatory verify-before-finish attestation (EndTurn tool)",
+        "group": "Mentorship & dark features (shipped OFF until benched)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_ENDTURN_INTEGRITY": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "Web-source attestation on finishes (justify web use, never block)",
+        "group": "Guards (the protection stack — see CONFIG_AUDIT_2026-08-31)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_ENDTURN_REQUIREMENTS": {
+      "defaultValue": "false",
+      "rules": [],
+      "meta": {
+        "what": "DARK: Stage-4 requirements verification on EndTurn (true | strict = verbatim requirements + run-grounded verified_how)",
+        "group": "Mentorship & dark features (shipped OFF until benched)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_ENDTURN_REQ_COVERAGE": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "EndTurn Stage 4f: the harness extracts the task's own requirement clauses (bullets + must/exactly/do-not sentences, no model) and, once per turn, rejects a finish whose requirements attestation leaves some uncovered, quoting them verbatim; needs CORTEX_ENDTURN_REQUIREMENTS (DARK)",
+        "group": "Loop control",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_ENDTURN_RESOLVER": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "DARK: at EndTurn, a bounded max-reasoning mentor adjudicates does-the-work-meet-the-task-requirements? — MEETS = finish, GAP = reject + a fix plan injected as a system-reminder (the finish-side twin of CORTEX_LIFT_PLAN; reroutes the rejection-loop reasoning from the narrow-door model to the mentor). Bounded by CORTEX_ENDTURN_RESOLVER_MAX_REJECTS then fallback-accept",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_ENDTURN_RESOLVER_ABSTAIN": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "DARK: gives the EndTurn resolver a third verdict, RETIRE, for a structurally UNCLOSABLE finish (missing capability / wrong-approach loop / impossible constraint) and HONORS it — accept the finish + stop the reject cycles instead of burning pro@max re-rejecting a task the junior cannot fix. Confidence gate in the prompt (when in doubt → GAP)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS": {
+      "defaultValue": 4000,
+      "rules": [],
+      "meta": {
+        "what": "EndTurn resolver output budget",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_ENDTURN_RESOLVER_EFFORT": {
+      "defaultValue": "max",
+      "rules": [],
+      "meta": {
+        "what": "EndTurn resolver reasoning effort",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED": {
+      "defaultValue": 6,
+      "rules": [],
+      "meta": {
+        "what": "Resolver GAP vetoes allowed while >= the budget-continue fraction of the wall budget remains; below it the liveness cap (2) applies (R160 HB-RESOLVER-BUDGET-CAP)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_ENDTURN_RESOLVER_MODEL": {
+      "defaultValue": "",
+      "rules": [],
+      "meta": {
+        "what": "R232 HB-MENTOR-SURFACE-MODEL: model for the EndTurn resolver (judge) + walled-thinking summary (unset = MENTORSHIP_HELPER_MODEL / the caller)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_ENDTURN_RESOLVER_REASONING": {
+      "defaultValue": "(follows CORTEX_MENTOR_REASONING)",
+      "rules": [],
+      "meta": {
+        "what": "EndTurn resolver: this surface's own thinking switch (on | none), wins over CORTEX_MENTOR_REASONING (4.107.0; cell-m-r1 §6: planner ON + resolver OFF is the candidate config)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_ENDTURN_TIER": {
+      "defaultValue": "essential",
+      "rules": [],
+      "meta": {
+        "what": "EndTurn discovery tier: essential = in the turn-1 tool set (default since 4.107.3; cell-n-r6 + tb21-k5-n1) | standard = deferred behind SearchTools (the 4.107.0 baseline)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_FAMILY_PRESETS": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R217 DARK: on = a model card WITHOUT its own promptPreset (every non-DeepSeek family) gets the family preset — today 'boot-minimal-generic' (the boot-minimal narrow door minus the DeepSeek-tuned 'Prefer acting over deliberating.' clause, with the .cortex/orient pointer). DeepSeek cards unchanged; CORTEX_PROMPT_MASS / CORTEX_SYSTEM_PROMPT_FILE still win",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_FINISH_CONFIRM": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "Accept-with-gap finish with >= MIN_REMAINING budget left is held once with an informed confirmation (budget, reviewer gaps, own open items) — R167 HB-FINISH-CONFIRM; false = off",
+        "group": "Loop control",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_FINISH_CONFIRM_MAX": {
+      "defaultValue": 1,
+      "rules": [],
+      "meta": {
+        "what": "Informed confirmations per session (R167)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_FINISH_CONFIRM_MIN_REMAINING": {
+      "defaultValue": 0.3,
+      "rules": [],
+      "meta": {
+        "what": "Wall-budget fraction that must remain to confirm (R167)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_FORCED_CHOICE_FULL_TOOLS": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R225: a forced named tool_choice keeps the full tools array instead of narrowing to the forced tool (cache-stable tools prefix). DeepSeek has ignored named choices with the full catalog; hf-space loses the force. off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_FRAME": {
+      "defaultValue": "tools",
+      "rules": [],
+      "meta": {
+        "what": "Action frame: tools (default) | terminus — one tmux pane as the only action surface, FrameAction + EndTurn, screen + state card + menu per turn (R179 HB-TERMINUS-FRAME)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_FRAME_AUTHOR": {
+      "defaultValue": "auto",
+      "rules": [],
+      "meta": {
+        "what": "Terminal-frame candidate author: helper = the helper model (thinking off) proposes genuinely different alternatives whenever the writer offers fewer candidates than the cap, so the typed chooser always has a menu (unset = helper when the chooser is on); off = writer-only (R185)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_FRAME_AUTHOR_MODEL": {
+      "defaultValue": "(HELPER_MODEL_ID)",
+      "rules": [],
+      "meta": {
+        "what": "Model card for the terminal-frame candidate author (unset = HELPER_MODEL_ID; e.g. deepseek-v4-pro for pro alternatives, thinking off) (R186)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_FRAME_AUTHOR_WHEN": {
+      "defaultValue": "stuck",
+      "rules": [],
+      "meta": {
+        "what": "When the terminal-frame author is called: stuck (default — only when the code diagnosis shows repeats, a failing streak or no prompt; near-zero cost on healthy sessions) or always (every under-filled turn) (R188)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_FRAME_CANDIDATES": {
+      "defaultValue": 1,
+      "rules": [],
+      "meta": {
+        "what": "Max candidate actions per FrameAction, 1..3 (R179)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_FRAME_CHOOSER": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "Frame menu chooser: off (default) | jev — a typed reader picks among candidates + templates, fail-open to the first candidate (R178)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_FRAME_CONTRACT_EXTRA": {
+      "defaultValue": "",
+      "rules": [],
+      "meta": {
+        "what": "Text appended to the turn-0 frame contract (cell guidance without a release) (R179)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_FRAME_KEY_GUARD": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "Keystroke guard in the terminal frame: pane-killing (C-d at an idle prompt, exit, tmux kill) and destructive (rm -rf /, mkfs, dd to a device, fork bomb, shutdown) candidates are refused before the menu step, never sent (R182)",
+        "group": "Loop control",
+        "kind": "flag-not-false"
+      }
+    },
+    "CORTEX_FRAME_MIN_CANDIDATES": {
+      "defaultValue": "auto",
+      "rules": [],
+      "meta": {
+        "what": "Distinct writer candidates the terminal-frame menu step needs before it executes (1..3; unset = 2 when the chooser is on, else 1). One candidate with the chooser on is sent back unexecuted with a request for alternatives, once per turn, at most 5 per session (R184)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_FRAME_SCREEN_LINES": {
+      "defaultValue": 45,
+      "rules": [],
+      "meta": {
+        "what": "Pane lines captured per observation (R179)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_FRAME_WAIT_CAP_S": {
+      "defaultValue": 300,
+      "rules": [],
+      "meta": {
+        "what": "Cap on waiting for one action, seconds (R179)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_GEMINI_CACHE_MIN_TOKENS": {
+      "defaultValue": "(per model)",
+      "rules": [],
+      "meta": {
+        "what": "HB-GEMINI-EXPLICIT-CACHE: override the per-model minimum cacheable size (3.x 4096, 2.5 2048)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_GEMINI_CACHE_QUIET": {
+      "defaultValue": "false",
+      "rules": [],
+      "meta": {
+        "what": "HB-GEMINI-EXPLICIT-CACHE: true silences the [gemini-cache] stderr lines",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_GEMINI_CACHE_RESNAPSHOT_TOKENS": {
+      "defaultValue": 16000,
+      "rules": [],
+      "meta": {
+        "what": "HB-GEMINI-EXPLICIT-CACHE: re-snapshot once the uncached tail exceeds this many (chars/4) tokens",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_GEMINI_CACHE_TTL_S": {
+      "defaultValue": 300,
+      "rules": [],
+      "meta": {
+        "what": "HB-GEMINI-EXPLICIT-CACHE: snapshot TTL seconds (PATCH-extended when used in the second half of its life)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_GEMINI_EXPLICIT_CACHE": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "HB-GEMINI-EXPLICIT-CACHE: Gemini REST + SDK builders snapshot (model, system, tools) + history before the newest turn as a cachedContents and send cachedContent + only the later turns without system/tools/toolConfig; re-snapshot on tail threshold / history rewrite / expiry, new snapshot on a head change, full-request fallback on any cache error. off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_GEMINI_SYSTEM_FIX": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R229 HB-GEMINI-SYSTEM (correctness): deliver the system prompt to Gemini — REST generateContent system_instruction, non-tool requests via the v1beta REST builders, google-sdk config.systemInstruction (the top-level field was dropped by @google/genai). off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_GEMINI_TOOLS_THINKING": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "HB-GEMINI-TOOLS-THINKING: Gemini REST + SDK send generationConfig.thinkingConfig mapped from the request/action effort, with or without tools (3.x thinkingLevel, 2.5 thinkingBudget). off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_GIT_CONTEXT": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "Per-turn \"Repository State\" harness-note (git branch / uncommitted changes / recent commits / cross-agent staleness). Built for a SHARED working tree; its \"another agent may be editing\" framing is false in a solo headless/bench container. Default on; set false to drop it",
+        "group": "Guards (the protection stack — see CONFIG_AUDIT_2026-08-31)",
+        "kind": "flag-not-false"
+      }
+    },
+    "CORTEX_HEADLESS_APPROVE": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "Headless (no-terminal) servers auto-approve tools. Only \"false\" disables",
+        "group": "Session & approvals",
+        "kind": "flag-not-false"
+      }
+    },
+    "CORTEX_HEADLESS_DROP_ASKUSER": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "Drop AskUserQuestion in non-interactive sessions (no human to answer)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_HELPER_MATCH_PROVIDER": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R217 DARK: on = a HELPER_MODEL_ID / MENTORSHIP_HELPER_MODEL left at its default (deepseek-flash) resolves from the ACTION model provider (anthropic→claude-haiku-4-5, openai→gpt-4.1-mini, google→gemini-2.5-flash-lite, xai→grok-4.3, deepseek→deepseek-flash); any other explicit value wins. Covers the helper + mentor calls in HelperModelMiddleware; compaction, vision hand-off and sub-agents are not routed",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_HERDR_AGENT_NAME": {
+      "defaultValue": "cortex",
+      "rules": [],
+      "meta": {
+        "what": "Agent label reported to herdr (report-agent --agent); sanitized to [a-z][a-z0-9_-]{0,31}",
+        "group": "Session & approvals",
+        "kind": "value"
+      }
+    },
+    "CORTEX_HERDR_BIN": {
+      "defaultValue": "(unset)",
+      "rules": [],
+      "meta": {
+        "what": "Explicit herdr binary override (legacy HERDR_BIN honored). Resolution order: this → HERDR_BIN_PATH → PATH probe",
+        "group": "Session & approvals",
+        "kind": "value"
+      }
+    },
+    "CORTEX_HERDR_KEEP_DELEGATE_PANES": {
+      "defaultValue": "1 (keep)",
+      "rules": [],
+      "meta": {
+        "what": "Keep herdr delegate panes (and their task/result files) after the sub-agent finishes for operator inspection; 0/false closes them on completion (R147)",
+        "group": "Session & approvals",
+        "kind": "value"
+      }
+    },
+    "CORTEX_HERDR_REPORTING": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "Inside a herdr pane (HERDR_ENV=1 + herdr on PATH) the orchestrator reports working/idle/blocked + a summary token to herdr so its status is authoritative (R145 HB-HERDR-LIFECYCLE); only \"false\" disables",
+        "group": "Session & approvals",
+        "kind": "flag-not-false"
+      }
+    },
+    "CORTEX_INTERACTIVE_PROFILE": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R219 HB-INTERACTIVE-PROFILE: named lever profile for INTERACTIVE (TTY) sessions only, applied at launch to levers the user did not set (source shows `profile`). bench-lite = CORTEX_LOOP_TOOL_BLOCK=true, CORTEX_EMPTY_TURN_CONTINUE=true, CORTEX_WALL_DROP=on, CORTEX_WALL_SUMMARY=on, CORTEX_REASONING_EXHAUST_BACKOFF=false, CORTEX_STEER_INPUTS=full, CORTEX_ORIENT_V2=1; the lift plan stays headless-only (CORTEX_LIFT_PLAN_INTERACTIVE). off | bench-lite",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_INVENTORY": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "Canonical workspace inventory (checkers+contracts, every dir, role-labelled files with content peeks, import resolution, missing deps, task env, services, data outside the workdir): orient prints it and it leads the steering env report (DARK)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_JUDGE_CHECK_TIMEOUT_MS": {
+      "defaultValue": 45000,
+      "rules": [],
+      "meta": {
+        "what": "Cap on the judge check run",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_DELTA": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "HB-JUDGE-GROUNDING: the EndTurn resolver + deadline exit planner see the workspace delta (files changed this task + heads), a fresh recon and the latest outputs",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-not-false"
+      }
+    },
+    "CORTEX_JUDGE_DELTA_HEAD_LINES": {
+      "defaultValue": 60,
+      "rules": [],
+      "meta": {
+        "what": "Lines of each changed file shown in the judge delta",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_DELTA_MAX_FILES": {
+      "defaultValue": 8,
+      "rules": [],
+      "meta": {
+        "what": "Files whose head is included in the judge delta",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_ESCALATE_REASONING": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "One thinking-on re-judge before accept-with-gap on a no-progress re-attest (R165); false disables",
+        "group": "Loop control",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_JUDGE_EVIDENCE_MAX_VETOES": {
+      "defaultValue": 1,
+      "rules": [],
+      "meta": {
+        "what": "Max evidence-backed vetoes per session in evidence mode (R166)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_GAP_HOLD": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "Evidence-mode GAP naming open items is returned to the junior while >= BUDGET_CONTINUE_MIN_REMAINING of the budget remains and the budgeted cap allows (R173 HB-GAP-HOLD)",
+        "group": "Loop control",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_JUDGE_GAP_HOLD_JEV": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "Jev fixable_with_more_turns gate over the gap hold: off | shadow (bank only) | gate (R173b; needs TYPESAFE_API_KEY)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_GAP_HOLD_JEV_MIN": {
+      "defaultValue": 0.3,
+      "rules": [],
+      "meta": {
+        "what": "Probability floor for the Jev gap-hold gate (R173b)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_GAP_HOLD_MIN_INTERVAL_MS": {
+      "defaultValue": 180000,
+      "rules": [],
+      "meta": {
+        "what": "A re-hold needs this much elapsed time since the last hold OR a changed open-items list (R173c)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_GAP_HOLD_PLAN_MAX_SIMILARITY": {
+      "defaultValue": 0.6,
+      "rules": [],
+      "meta": {
+        "what": "Token-Jaccard threshold below which the judge plan counts as changed for a re-hold (R173c)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_INDEPENDENT_DERIVATION": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "On a value-shaped task, recompute the result by a different method before a standing finish; disagreement holds once (R176 HB-INDEPENDENT-DERIVATION): off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_INDEPENDENT_DERIVATION_TOL": {
+      "defaultValue": 0.001,
+      "rules": [],
+      "meta": {
+        "what": "Relative tolerance for numeric agreement in the independent derivation (R176)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_PROGRESS_MIN_CALLS": {
+      "defaultValue": 3,
+      "rules": [],
+      "meta": {
+        "what": "Tool calls since the last veto that count as progress on the plan (R165)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_REQ_LEDGER": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "Requirement ledger (R187): at lift the mentor extracts each requirement the TASK STATES as a typed line with a read-only CHECK; the writer sees the ledger with its plan; every finish runs the checks; a FAILED line is evidence; a finish that would stand with a line still OPEN (never exercised) is held once",
+        "group": "Loop control",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_JUDGE_REQ_LEDGER_FAIL_JEV": {
+      "defaultValue": "shadow",
+      "rules": [],
+      "meta": {
+        "what": "Jev arbitration of a failed line: off | shadow | on (R192)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_REQ_LEDGER_FAIL_JEV_MIN": {
+      "defaultValue": 0.7,
+      "rules": [],
+      "meta": {
+        "what": "Jev threshold to call a failed check defective (R192)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "return a would-be accept-with-gap when a ledger line FAILED at this finish (R192)",
+        "group": "Loop control",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO_MAX": {
+      "defaultValue": 2,
+      "rules": [],
+      "meta": {
+        "what": "max ledger-failed vetoes per session (R192)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_REQ_LEDGER_FAIL_VETO_MIN_REMAINING": {
+      "defaultValue": 0.25,
+      "rules": [],
+      "meta": {
+        "what": "budget fraction below which the ledger-failed veto never fires (R192)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_REQ_LEDGER_HOLD_MAX": {
+      "defaultValue": 1,
+      "rules": [],
+      "meta": {
+        "what": "Max ledger holds per turn on open lines (R187)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_REQ_LEDGER_JEV": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "Jev closes ledger lines the shell could not decide, from the writer attestation + harness evidence, one typed question per line (R187b)",
+        "group": "Loop control",
+        "kind": "flag-not-false"
+      }
+    },
+    "CORTEX_JUDGE_REQ_LEDGER_JEV_MIN": {
+      "defaultValue": 0.7,
+      "rules": [],
+      "meta": {
+        "what": "Jev threshold to close a ledger line (R187b)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_REQ_LEDGER_MAX": {
+      "defaultValue": 8,
+      "rules": [],
+      "meta": {
+        "what": "Max ledger lines (R187)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_RUN_CHECK": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "HB-JUDGE-GROUNDING: at the EndTurn resolver, run an evident check entry point (Makefile test / test.sh / pytest) and hand the judge its result",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-not-false"
+      }
+    },
+    "CORTEX_JUDGE_SEMANTIC": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "Judge decides semantics (no regex task-shape gate; regex nudges deferred when the judge ran; judge-named checks run; confidence-graded GAP; progress-conditioned vetoes + one thinking-on escalation) — R165; false = 4.111 gating",
+        "group": "Loop control",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_JUDGE_SPEC_REPEAT_MAX": {
+      "defaultValue": 2,
+      "rules": [],
+      "meta": {
+        "what": "Consecutive identical spec-check failures before the check is suspect, not veto evidence (R174b)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_SPEC_TESTS": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "Blind spec-derived CHECK lines authored from the task text alone at the first finish, run at every adjudication; a FAILED one is veto evidence (R174 HB-SPEC-TESTS)",
+        "group": "Loop control",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_JUDGE_SPEC_TESTS_AT": {
+      "defaultValue": "finish",
+      "rules": [],
+      "meta": {
+        "what": "When the blind spec checks are authored: finish (first adjudication) | lift (background at task lift) (R174b)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_SPEC_TESTS_MAX": {
+      "defaultValue": 4,
+      "rules": [],
+      "meta": {
+        "what": "Max blind spec checks per turn (R174)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_SPEC_TESTS_SAMPLES": {
+      "defaultValue": 3,
+      "rules": [],
+      "meta": {
+        "what": "Independent spec-check author samples per turn; the veto reads their averaged fail fraction (R174d)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_SPEC_TEXT": {
+      "defaultValue": "shown",
+      "rules": [],
+      "meta": {
+        "what": "R174e: shown (default) = spec-check commands + output reach the judge prompt and the writer veto message; hidden = spec evidence acts only through the averaged fraction gate (judge never sees the checks, a judge CHECK echoing one is not a named check, a fraction hold on a MEETS gets a neutral re-verify lead)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_SPEC_VETO_FRAC": {
+      "defaultValue": 0.5,
+      "rules": [],
+      "meta": {
+        "what": "Averaged spec-fail fraction at or above which spec evidence vetoes, and holds a MEETS once (R174d)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_TOOL_AUTOLOOP": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "First-round MEETS/GAP naming CHECK lines is re-asked once with the harness-run results (R170b; needs ROUNDS >= 2)",
+        "group": "Loop control",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_JUDGE_TOOL_ROUNDS": {
+      "defaultValue": 1,
+      "rules": [],
+      "meta": {
+        "what": "Judge calls per finish adjudication; >1 offers VERDICT: INVESTIGATE (harness runs read-only CHECK/READ lines between rounds) — R170 HB-JUDGE-TOOL-LOOP; 1 = single-shot",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_TOOL_ROUND_BUDGET_MS": {
+      "defaultValue": 240000,
+      "rules": [],
+      "meta": {
+        "what": "Aggregate wall clock for one adjudication's investigation rounds (R170)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_VETO": {
+      "defaultValue": "evidence",
+      "rules": [],
+      "meta": {
+        "what": "Finish-judge veto mode: evidence = only a failed harness-run judge-named check holds a finish (max CORTEX_JUDGE_EVIDENCE_MAX_VETOES); opinion = R165; never = record only (R166)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_VETO_MIN_REMAINING": {
+      "defaultValue": 0,
+      "rules": [],
+      "meta": {
+        "what": "Budget floor: below this fraction of the wall budget no veto or hold of any kind holds the finish (R173c; 0 = off)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_KEEP_MENTOR_MESSAGES": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R227: keep mentor/guidance messages in history at turn end instead of removing them from mid-history (cache-stable; costs stale guidance in context). off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_KILL_GUARD": {
+      "defaultValue": "on",
+      "rules": [],
+      "meta": {
+        "what": "HB-KILL-GUARD: pkill / killall / pgrep wrappers first on the Bash tool PATH that never signal (or list) the calling shell, the harness server or the harness parent processes (bench adapter, its request, the recorder); model-started processes stay killable; skips reported on stderr. on | off",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_LIFT_NUDGE": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "One-line signpost after the turn-1 lift pointing at SearchTools/AskForAdvice",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_LIFT_PLAN": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "DARK: at the turn-1 lift, a bounded max-reasoning mentor plans the task (adversarial analysis + confirm real grader criteria + step plan or RETIRE) and injects it as a system-reminder for the narrow-door model to follow (LIFT_MENTOR_PLANNER spec)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_LIFT_PLAN_BUDGET_TOKENS": {
+      "defaultValue": 4000,
+      "rules": [],
+      "meta": {
+        "what": "Lift planner output budget",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_LIFT_PLAN_DOCTRINE": {
+      "defaultValue": "v1",
+      "rules": [],
+      "meta": {
+        "what": "Lift planner doctrine: v1 = 4.107.0 prompt (default) | v2 = + the census bullets (one install layer, no long sleeps, byte-level exact output, literals verbatim). 4.107.2 lever for the cell-n-r6 2×2",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_LIFT_PLAN_EFFORT": {
+      "defaultValue": "max",
+      "rules": [],
+      "meta": {
+        "what": "Lift planner reasoning effort (sent only when CORTEX_MENTOR_REASONING=on)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_LIFT_PLAN_MODEL": {
+      "defaultValue": "",
+      "rules": [],
+      "meta": {
+        "what": "R232 HB-MENTOR-SURFACE-MODEL: model for the lift planner (unset = MENTORSHIP_HELPER_MODEL / the caller)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_LIFT_PLAN_REASONING": {
+      "defaultValue": "(follows CORTEX_MENTOR_REASONING)",
+      "rules": [],
+      "meta": {
+        "what": "Lift planner: this surface's own thinking switch (on | none), wins over CORTEX_MENTOR_REASONING (4.107.0; cell-m-r1 §6: planner ON + resolver OFF is the candidate config)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_LIFT_PLAN_SCOPE": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "Lift planner EDIT SCOPE bullet: true = strict (repair tasks: only named files; never vendored code, runners, tests, fixtures, data; revert unrequired changes); adaptive = named files bind, otherwise smallest set, tests/runners/fixtures/data only when the task asks, revert only EXISTING files (DARK); task = task-conditioned (2026-10-03): named files bind, forbidden/vendored/tests/runners/fixtures/data off-limits unless the task points there, otherwise every file the fix needs; revert only incidental changes after a re-run-without-it check; the judge gets a SCOPE RULE that never counts files",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_LIFT_PLAN_TOOL_ROUNDS": {
+      "defaultValue": 1,
+      "rules": [],
+      "meta": {
+        "what": "Planner calls at the lift; >1 offers INVESTIGATE (harness runs read-only CHECK/READ lines between rounds) — R171 HB-LIFT-PLAN-TOOL-LOOP; 1 = single-shot",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_LIFT_PLAN_TOOL_ROUND_BUDGET_MS": {
+      "defaultValue": 240000,
+      "rules": [],
+      "meta": {
+        "what": "Aggregate wall clock for the planner's investigation rounds (R171)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_LOOP_TOOL_BLOCK": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "On a detected loop, disables the looping tool's EXECUTOR for one turn (cache-safe; tools list unchanged) and returns a redirect error steering to the complementary tools; escalates after 2 blocks to a bounded pro-max exit-planner mentor (REPLAN|RETIRE)",
+        "group": "Guards (the protection stack — see CONFIG_AUDIT_2026-08-31)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_LOOP_TOOL_BLOCK_BUDGET_TOKENS": {
+      "defaultValue": 4000,
+      "rules": [],
+      "meta": {
+        "what": "Output-token budget for the exit-planner mentor (big enough that reasoning does not eat the plan on DeepSeek)",
+        "group": "Guards (the protection stack — see CONFIG_AUDIT_2026-08-31)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_LOOP_TOOL_BLOCK_EFFORT": {
+      "defaultValue": "max",
+      "rules": [],
+      "meta": {
+        "what": "Reasoning effort for the loop-block escalation exit-planner mentor (bounded single-shot; max by design — a bounded planner cannot grind)",
+        "group": "Guards (the protection stack — see CONFIG_AUDIT_2026-08-31)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_LOOP_TOOL_BLOCK_MODEL": {
+      "defaultValue": "",
+      "rules": [],
+      "meta": {
+        "what": "R232 HB-MENTOR-SURFACE-MODEL: model for the loop-exit planner (unset = MENTORSHIP_HELPER_MODEL / the caller)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_LOOP_TOOL_BLOCK_REASONING": {
+      "defaultValue": "(follows CORTEX_MENTOR_REASONING)",
+      "rules": [],
+      "meta": {
+        "what": "Loop-exit planner: this surface's own thinking switch (on | none), wins over CORTEX_MENTOR_REASONING (4.107.0; cell-m-r1 §6: planner ON + resolver OFF is the candidate config)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_LOOP_TOOL_BLOCK_TIMEOUT_MS": {
+      "defaultValue": 90000,
+      "rules": [],
+      "meta": {
+        "what": "withTimeout cap on the exit-planner mentor call (fail-open to the generic redirect on timeout)",
+        "group": "Guards (the protection stack — see CONFIG_AUDIT_2026-08-31)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_MEETS_CONFIRM": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "A MEETS verdict must name a proving CHECK that passes; an unverified MEETS with >= MIN_REMAINING budget left is held once (shares FINISH_CONFIRM_MAX) — R168 HB-MEETS-CONFIRM; false = 4.116.2",
+        "group": "Loop control",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_MEETS_CONFIRM_MIN_REMAINING": {
+      "defaultValue": 0.5,
+      "rules": [],
+      "meta": {
+        "what": "Wall-budget fraction that must remain to hold an unverified MEETS (R168)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_MENTOR_AUTO": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "DARK: orchestrator consults the mentor itself on thrash and injects the hint",
+        "group": "Mentorship & dark features (shipped OFF until benched)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_MENTOR_CONSULT_BUDGET_TOKENS": {
+      "defaultValue": 800,
+      "rules": [],
+      "meta": {
+        "what": "Output cap for an AskForAdvice mentor hint (2026-09-16: 400 cut hints mid-sentence)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_MENTOR_CONSULT_MODEL": {
+      "defaultValue": "",
+      "rules": [],
+      "meta": {
+        "what": "R232 HB-MENTOR-SURFACE-MODEL: model for the AskForAdvice consult (unset = MENTORSHIP_HELPER_MODEL / the caller)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_MENTOR_CONSULT_REASONING": {
+      "defaultValue": "none",
+      "rules": [],
+      "meta": {
+        "what": "AskForAdvice consult hint reasons (on) or stays thinking-off (none; 08-30: thinking-on hints came back blank under the 400-token consult budget)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_MENTOR_EFFORT": {
+      "defaultValue": "(unset → per-surface, max)",
+      "rules": [],
+      "meta": {
+        "what": "ONE effort for every planner surface (low|medium|high|max) — the mentor-effort A/B lever; a surface's own *_EFFORT, when set, wins over it",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_MENTOR_FORCE": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "DARK: force an AskForAdvice consult on thrash (provider-unreliable on DeepSeek)",
+        "group": "Mentorship & dark features (shipped OFF until benched)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_MENTOR_REASONING": {
+      "defaultValue": "on",
+      "rules": [],
+      "meta": {
+        "what": "Planner surfaces (lift / EndTurn resolver / deadline exit / loop-exit) send their *_EFFORT on the wire (thinking ON) — on | none (= the pre-4.103.0 thinking-off behaviour every mentor result to date was measured under)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_MENTOR_REASONING_ALLOWANCE": {
+      "defaultValue": "(per-effort table)",
+      "rules": [],
+      "meta": {
+        "what": "HB-MENTOR-BUDGET: extra max_tokens a thinking-on mentor call gets for reasoning (DeepSeek counts reasoning inside max_tokens; cell-m 2026-09-10: capped at the 4000 content budget, pro returned 0/10 plans). Empty = per-effort table low 4000 / medium 8000 / high 12000 / max 24000; a blank result retries once thinking-off",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_MENTOR_TEMPERATURE": {
+      "defaultValue": "(unset)",
+      "rules": [],
+      "meta": {
+        "what": "Optional sampling temperature for mentor calls; empty = adapter default 0.7",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_MENTOR_THINKING_TIMEOUT_MS": {
+      "defaultValue": "(per-effort table)",
+      "rules": [],
+      "meta": {
+        "what": "Thinking-aware surface timeout for a thinking-on mentor call = max(surface timeout, this); the first request is aborted at 60% so the thinking-off retry fits (cell-m-r1 2026-09-10: pro@high/flash@max ran past the 90 s surface timeout and banked none). Empty = per-effort table low 120000 / medium 180000 / high 240000 / max 300000",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_MODE": {
+      "defaultValue": "persistent",
+      "rules": [],
+      "meta": {
+        "what": "stateless = fresh session per request; persistent = one continuing session",
+        "group": "Session & approvals",
+        "kind": "value"
+      }
+    },
+    "CORTEX_NEARDUP_BREAKER": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "Detects \"same approach retried with small tweaks\" and forces a strategy change (targets the retry-loop class)",
+        "group": "Guards (the protection stack — see CONFIG_AUDIT_2026-08-31)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_OPENAI_CACHE_KEY": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R225: OpenAI chat/completions + Responses send prompt_cache_key = session id (cache routing). OpenAI provider only. off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_OPENAI_TOOLS_REASONING": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "HB-OPENAI-TOOLS-REASONING: OpenAI chat/completions keeps reasoning_effort with tools (R19b drop skipped) and the gateway forwards the request/action effort for OpenAI reasoning cards (chat reasoning_effort / Responses reasoning.effort). OpenAI only. off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_ORIENT_BASELINE": {
+      "defaultValue": "0 (off)",
+      "rules": [],
+      "meta": {
+        "what": "orient workspace baseline: 1 = checksum list once in <workspace>/.cortex + .cortex/changed + pre-finish revert line (bench repair tasks); auto = only when NOT a git repo, stored outside the project (~/.cortex/baselines, else /tmp) (DARK)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_ORIENT_BOOTSTRAP": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "orient prints a bare-box bootstrap directive when a needed toolchain is absent (DARK, A/B-able; factual tooling line is always on)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_ORIENT_V2": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "orient v2: verification entry points, git baseline line, 2-level map, one-line capability guides, vendor-tree install guard (DARK; unset = v1 output)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_OUTER_TOOL_TIMEOUT_MS": {
+      "defaultValue": "(unset — no floor)",
+      "rules": [],
+      "meta": {
+        "what": "Floor (ms) for the outer per-batch tool abort; the deadline becomes max(computed, floor + 30 s grace). Unset = no floor (150 s for non-Bash tools without their own limit).",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_OUTPUT_CAP_TOKENS": {
+      "defaultValue": "(unset — card limit)",
+      "rules": [],
+      "meta": {
+        "what": "HB-OUTPUT-CAP: per-call output cap (max tokens) for the action model, applied only when the request sets none; integer >= 1024; recommended 48000 (c22 acting-call reasoning p99.9 = 40K)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_PERSIST_INJECTED": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R223 append-only history: the injected first-request user content (repo-state note, deferred-tool announcement, MCP / slash-command notes) is remembered per message and re-sent on every later request; session storage + display keep the raw text. off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_PID1_GUARD": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R209 HB-CONTAINER-PID1: at the first tool_result boundary (the boot observation), when PID 1 is not the harness, one note names PID 1 and the services it supervises (from /proc/1/cmdline + /proc/*/stat ppid==1) — killing them stops the container and ends the session; restart via the supervisor instead. Linux-only, fail-safe; pid1_guard event. off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_PLATEAU_MIN_POINTS": {
+      "defaultValue": 8,
+      "rules": [],
+      "meta": {
+        "what": "R210: reports of a metric needed before any plateau stop can fire",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_PLATEAU_REL": {
+      "defaultValue": 0.002,
+      "rules": [],
+      "meta": {
+        "what": "R210: relative-improvement target over the trailing window (fraction; 0.002 = 0.2%)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_PLATEAU_STOP": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R210 HB-PLATEAU-STOP: one boot instruction asks the model to print `PLATEAU_METRIC <name>=<number> dir=<max|min>` after every evaluation; the harness keeps a per-session series per metric and, when the best of the last CORTEX_PLATEAU_WINDOW reports improves on the best before them by < CORTEX_PLATEAU_REL (relative; worse counts), steers one stop-and-verify reminder (max 2/session); plateau_metric_seen / plateau_stop events. status = instruction + tracking + STATUS segment only (no reminder; would-be firings banked as plateau_detected). off | on | status",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_PLATEAU_WINDOW": {
+      "defaultValue": 6,
+      "rules": [],
+      "meta": {
+        "what": "R210: most recent PLATEAU_METRIC reports compared against the best before them",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_POLL_GUARD": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "After 4 identical status checks: \"stop polling, background it\"",
+        "group": "Guards (the protection stack — see CONFIG_AUDIT_2026-08-31)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_PROMPT_MASS": {
+      "defaultValue": "(unset — card wins)",
+      "rules": [],
+      "meta": {
+        "what": "UNSET = the model card decides the prompt (boot-minimal narrow door for deepseek). Setting it overrides the card",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_REASONING_EXHAUST_BACKOFF": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "After a truncated reasoning-only turn (output cap hit, nothing delivered): step the reasoning effort down one level for the next N continuations + an exhaustion nudge (R153 HB-REASONING-EXHAUSTION); false disables",
+        "group": "Loop control",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_REASONING_EXHAUST_BACKOFF_TURNS": {
+      "defaultValue": 2,
+      "rules": [],
+      "meta": {
+        "what": "Continuations run one effort level lower after a reasoning-exhaustion turn (R153)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_REASONING_EXHAUST_LADDER": {
+      "defaultValue": "provider",
+      "rules": [],
+      "meta": {
+        "what": "R153c: the R153 exhaustion backoff steps down the PROVIDER ladder — DeepSeek low | high | max (medium runs as high), so high → low; other providers keep low | medium | high. provider (default) | legacy (pre-R153c: high → medium, a no-op on DeepSeek)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_RESPONSES_INLINE_REMINDERS": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R215 HB-RESPONSES-REMINDERS: on the Responses path keep <system-reminder> blocks in place as user input_text items (moved after the function_call_output items they follow) instead of extracting them into `instructions` (xAI dropped them; OpenAI lost their position); instructions keep only the R63 system prompt. off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_RESPONSES_SLICE_ALL": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R228 (bug fix): every Responses request that chains previous_response_id (EndTurn gate, wall/empty retries, inaction retry, tools-off synthesis) sends only the input items added since the held response and moves the slice checkpoint; if the held response is unavailable (store off / expired / error) the chain is dropped and the FULL history is resent once without previous_response_id (responses_chain_fallback event). off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_RESPONSES_STOP_REASON": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R216 HB-RESPONSES-STOPREASON: map the Responses truncation signal (status incomplete + incomplete_details.reason max_output_tokens, also from the streaming terminal event) and the hf-space finish_reason to stop reasons, so the wall levers + truncated-continue fire there. off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_RULE_HOLDOUT": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R213 HB-TASK-RULES L3 held-out / variant validation: planner HELD-OUT VALIDATION bullet + judge HELD-OUT RULE clause (hidden inputs or generalisation implied → validate on a held-out split or constructed variants — else GAP + CHECK). off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_RULE_INDEP": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R214 HB-TASK-RULES L4 independent verifier: planner INDEPENDENT CHECK bullet + judge INDEPENDENT-CHECK RULE clause (final check must not reuse the producing logic; unreconciled measured discrepancy is a GAP; task's own verification commands/limits). off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_RULE_INPUTS": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R211 HB-TASK-RULES L1 input-coverage audit: the lift-plan persona gains one INPUT COVERAGE bullet and the EndTurn judge persona one INPUTS RULE clause (every field/column/parameter of the provided inputs accounted for; given constants never altered — else GAP + CHECK); task_rule_plan / task_rule_judge events. off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_RULE_INTERP": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R212 HB-TASK-RULES L2 interpretation enumeration: planner INTERPRETATIONS bullet + judge INTERPRETATION RULE clause (named alternatives each computed; keep the one consistent with every explicit hint and all data — else GAP + CHECK). off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SECOND_ATTEMPT": {
+      "defaultValue": "(unset = off)",
+      "rules": [],
+      "meta": {
+        "what": "R239 / P4 HB-SECOND-ATTEMPT (the R194 chain in the library, 2026-10-07): 1 = after a finish whose last resolver verdict is in CORTEX_SECOND_ATTEMPT_TRIGGER, with >= MIN_REMAINING of the ORIGINAL deadline left and >= FLOOR after the RESERVE, snapshot-restore the workspace and run a fresh INDEPENDENT attempt (own state dir, sessions dir, reduced deadline); select by shipped check > verdict > fewest turns > named checks > earliest; response = the pick with usage.session summed. Non-streaming /v1/messages only. Off = byte-identical",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SECOND_ATTEMPT_FLOOR_MS": {
+      "defaultValue": 900000,
+      "rules": [],
+      "meta": {
+        "what": "HB-SECOND-ATTEMPT: the next attempt must keep at least this (ms) after the reserve",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SECOND_ATTEMPT_INFORMED": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R254 HB-SECOND-ATTEMPT (dark): 1 = attempts >= 2 receive the PRIOR ATTEMPTS block (earlier verdicts, open items, readings, final messages) appended to the task content — the no-pass chains of the 10-12 cells shared one misreading across independent attempts",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SECOND_ATTEMPT_MAX": {
+      "defaultValue": 1,
+      "rules": [],
+      "meta": {
+        "what": "HB-SECOND-ATTEMPT: maximum number of EXTRA attempts (0 = none; non-integer = 1)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SECOND_ATTEMPT_MIN_REMAINING": {
+      "defaultValue": 0.5,
+      "rules": [],
+      "meta": {
+        "what": "HB-SECOND-ATTEMPT: fraction of the ORIGINAL deadline that must remain for another attempt (wall clock from task start)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SECOND_ATTEMPT_OUT_DIR": {
+      "defaultValue": "(unset = <state dir>/attempts)",
+      "rules": [],
+      "meta": {
+        "what": "HB-SECOND-ATTEMPT: directory for the banked per-attempt artifacts (response/decisions/session.attempt<k>.*, second-attempt.json); empty = <state dir>/attempts",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SECOND_ATTEMPT_RESERVE_MS": {
+      "defaultValue": 300000,
+      "rules": [],
+      "meta": {
+        "what": "HB-SECOND-ATTEMPT: wall-clock reserve (ms) subtracted from the next attempt's deadline",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SECOND_ATTEMPT_SELECT": {
+      "defaultValue": "turns",
+      "rules": [],
+      "meta": {
+        "what": "R255 HB-SECOND-ATTEMPT: selection order — turns (DEFAULT since 4.124.76: shipped check → fewest tool-call turns → earliest, no resolver labels; = the sibling-oracle ceiling on all 22 graded chains) | evidence (accepted-class, then fewest turns) | verdict (judge rank first) | judge (R251 comparative judge call, dark)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SECOND_ATTEMPT_TRIGGER": {
+      "defaultValue": "accept-with-gap,accept-low-confidence,accept,none",
+      "rules": [],
+      "meta": {
+        "what": "HB-SECOND-ATTEMPT: resolver actions that open another attempt (comma list); 'none' = a give-up (the turn ended with no verdict)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SECOND_ATTEMPT_UNTIL_BUDGET": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R247 HB-SECOND-ATTEMPT: 1 = keep reopening while >= MIN_REMAINING of the clock is left (the extra-attempt COUNT cap is ignored; reserve + floor still apply)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SLASH_COMMAND_HINT": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "Turn-0 \"Available Slash Commands\" harness-note so the model can suggest /commands to a USER. Pointless in headless/bench (no user). Default on; set false to drop it",
+        "group": "Guards (the protection stack — see CONFIG_AUDIT_2026-08-31)",
+        "kind": "flag-not-false"
+      }
+    },
+    "CORTEX_SLICE_BLOCK": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "HB-SLICE-BLOCK: coercive escalation of the slice-nudge — after CORTEX_SLICE_BLOCK_AT slices of a STATIC/source file, BLOCK further slice-reads of it (force Read), bounded to CORTEX_SLICE_BLOCK_MAX/file; append-mostly logs exempt. Evidence: soft nudge ignored ~80% of re-tested cases",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-not-false"
+      }
+    },
+    "CORTEX_SLICE_BLOCK_AT": {
+      "defaultValue": 5,
+      "rules": [],
+      "meta": {
+        "what": "slice count at which CORTEX_SLICE_BLOCK starts blocking a file (leaves the soft nudge at 3 + shallow-stoppers alone)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SLICE_BLOCK_MAX": {
+      "defaultValue": 2,
+      "rules": [],
+      "meta": {
+        "what": "max coercive slice-blocks per file before letting it through (bounded, no infinite loop)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SLICE_NUDGE": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "after 3 bash slice-reads of one file, remind to Read it once",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-not-false"
+      }
+    },
+    "CORTEX_STABLE_TOOL_ORDER": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R230 HB-STABLE-TOOL-ORDER: xAI hybrid server+client tools (ENABLE_SERVER_SIDE_TOOLS) keep the caller tool order on every request instead of server-tools-first on each user turn's first request (tools prefix reorder). off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_STATE_DIR": {
+      "defaultValue": "(unset)",
+      "rules": [],
+      "meta": {
+        "what": "Explicit runtime-state root (4.108.6); empty = <project>/.cortex with writable-probe fallback to ~/.cortex/projects/<hash> or tmpdir",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_STEER_INPUTS": {
+      "defaultValue": "(unset)",
+      "rules": [],
+      "meta": {
+        "what": "Steering-prompt input sizing: full = larger caps for plan/delta/env/observations/work product and a \"[… N more chars not shown — hint]\" marker on every remaining cut (planner, judge, exit planner, deadline mentor, spec, ledger, derivation); unset = the old silent slices (DARK)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_STREAM_USAGE": {
+      "defaultValue": "on (openai|deepseek|groq)",
+      "rules": [],
+      "meta": {
+        "what": "R224a/R236: streaming chat/completions send stream_options.include_usage and the final message carries the provider usage (was zeros). unset = on for openai|deepseek|groq, off elsewhere; on forces any provider; off disables",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SUBAGENT_RUNTIME": {
+      "defaultValue": "auto",
+      "rules": [],
+      "meta": {
+        "what": "Where Task sub-agents run: auto | process | herdr. process = forked IPC child; herdr = sibling herdr pane running the same agent-mode entry (visible, takeover-able, auto-approved). auto = herdr when HERDR_ENV=1 + the herdr terminal backend resolves + the parent auto-approves, else process; Task input `runtime` overrides per dispatch (R147 HB-HERDR-DELEGATES)",
+        "group": "Session & approvals",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SUBAGENT_TIMEOUT_MAX_MS": {
+      "defaultValue": "(unset — no cap)",
+      "rules": [],
+      "meta": {
+        "what": "Upper cap (ms) on the deadline-derived Task sub-agent limit; unset = no cap (R133)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SUBAGENT_TIMEOUT_MS": {
+      "defaultValue": 300000,
+      "rules": [],
+      "meta": {
+        "what": "Task sub-agent wall-clock limit (ms) when no parent turn deadline is set; default 300000 (R133: with a deadline the limit derives from the parent's remaining budget, 90% minus 30 s)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SURRENDER_NUDGE": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "Catches \"here is what remains to do\" endings: \"execute your plan, do not describe it\"",
+        "group": "Guards (the protection stack — see CONFIG_AUDIT_2026-08-31)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_TASK_INTEGRITY": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "Anti-reward-hack framing line in the system prompt",
+        "group": "Guards (the protection stack — see CONFIG_AUDIT_2026-08-31)",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_TERMINAL_BACKEND": {
+      "defaultValue": "auto",
+      "rules": [],
+      "meta": {
+        "what": "Persistent-session backend under Bash persistentSession / TmuxSession / CreateArtifact persistent: auto | herdr | tmux | detached. auto = herdr pane (HERDR_ENV=1 + socket reachable) > tmux > detached background process (R146 HB-HERDR-TERMINAL-BACKEND); resolved once per process",
+        "group": "Session & approvals",
+        "kind": "value"
+      }
+    },
+    "CORTEX_THRASH_CUM_FAILS": {
+      "defaultValue": 12,
+      "rules": [],
+      "meta": {
+        "what": "Cumulative session failures that trip the thrash detector (dilution-immune)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_TMUX_AUTO_INSTALL": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "When tmux is missing, the first persistent request (Bash persistentSession / TmuxSession / CreateArtifact persistent / tmux terminal backend) tries to install it: package manager (apt-get with expired-Release tolerance, apk, dnf, yum, brew; each step capped at 120 s) then a static binary from CORTEX_TMUX_STATIC_URL, then the R134 detached degrade. One attempt per process (R138 HB-TMUX-SELF-INSTALL); only \"false\" disables",
+        "group": "Session & approvals",
+        "kind": "flag-not-false"
+      }
+    },
+    "CORTEX_TMUX_HISTORY_LIMIT": {
+      "defaultValue": 50000,
+      "rules": [],
+      "meta": {
+        "what": "Scrollback lines kept per tmux pane created by the harness (applied around new-session so the first window gets it, plus the session option; R141 HB-TMUX-CAPTURE-CAP)",
+        "group": "Session & approvals",
+        "kind": "value"
+      }
+    },
+    "CORTEX_TMUX_PANE_SIZE": {
+      "defaultValue": "160x40",
+      "rules": [],
+      "meta": {
+        "what": "Fixed pane geometry WxH for tmux sessions created by the harness (new-session -x W -y H; Terminus captures a fixed 160x40 pane; R141). Captures are always 10 KB middle-omitted",
+        "group": "Session & approvals",
+        "kind": "value"
+      }
+    },
+    "CORTEX_TMUX_STATIC_URL": {
+      "defaultValue": "(unset — static step skipped)",
+      "rules": [],
+      "meta": {
+        "what": "URL of a prebuilt/static tmux binary for the R138 self-install fallback (downloaded with curl/wget into ~/.local/bin/tmux after the package managers fail). Unset = the static step is skipped; no default download",
+        "group": "Session & approvals",
+        "kind": "value"
+      }
+    },
+    "CORTEX_TOOL_ANCHOR": {
+      "defaultValue": "(card decides)",
+      "rules": [],
+      "meta": {
+        "what": "Turn-1 tool narrowing (bash-edit = Bash+Edit only on turn 1)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_TOOL_DOCTRINE": {
+      "defaultValue": "(unset)",
+      "rules": [],
+      "meta": {
+        "what": "Tool-description doctrine variant: mimo-v1 = the 3 edits both MiMo doctrine mines proposed (Read over bash, no reference mining outside the workspace, manifests as graded inputs); unset = shipped text (DARK)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_TOOL_REDIRECTS": {
+      "defaultValue": "(card decides; off for bash-edit)",
+      "rules": [],
+      "meta": {
+        "what": "cat→Read style steering (OFF for bash-anchored cards — measured +26% calls at zero accuracy)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_TOOL_RESULT_PRUNE_AT": {
+      "defaultValue": 0.5,
+      "rules": [],
+      "meta": {
+        "what": "R258 (4.124.79): aged tool results are pruned from the outgoing request copy once the estimated context exceeds this fraction of the COMPACTION THRESHOLD (was a hard 50 % of the raw window, which sat above the threshold on the 393 K-output cards and never ran) — Claude Code keep-recent microcompaction port",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_TOOL_RESULT_PRUNE_HARD_AGE": {
+      "defaultValue": 10,
+      "rules": [],
+      "meta": {
+        "what": "R258: turn age at which an aged tool result is fully elided (younger aged results are middle-trimmed)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_TOOL_RESULT_PRUNE_KEEP_TURNS": {
+      "defaultValue": 3,
+      "rules": [],
+      "meta": {
+        "what": "R258: newest N turns whose tool results are never pruned",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_TURN_CONTRACT": {
+      "defaultValue": "",
+      "rules": [],
+      "meta": {
+        "what": "'' = shipped door (suppress deliberation); channel = think freely then ANALYSIS+PLAN+action every turn, length recovery re-issues at the same effort (HB-TURN-CONTRACT)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_TURN_CONTRACT_ENFORCE": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "Tool-calling responses lacking ANALYSIS + PLAN are rejected unexecuted with a re-prompt (bounded per turn); the structural half of CORTEX_TURN_CONTRACT=channel (HB-TURN-CONTRACT-ENFORCE)",
+        "group": "Loop control",
+        "kind": "flag-true"
+      }
+    },
+    "CORTEX_TURN_CONTRACT_ENFORCE_MAX": {
+      "defaultValue": 2,
+      "rules": [],
+      "meta": {
+        "what": "Format rejections per turn before the batch executes as-is (HB-TURN-CONTRACT-ENFORCE; 4.119.0 clamp 0..10000)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_TURN_DEADLINE_MS": {
+      "defaultValue": "0 (off)",
+      "rules": [],
+      "meta": {
+        "what": "Per-turn wall-clock deadline (ms); at the limit the loop force-synthesizes a best-effort finish. 0 = disabled. A bench task is ONE turn, so the adapter sets ~90% of the task budget → effectively a whole-task bound",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_TURN_STATUS": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "HB-TURN-STATUS: one STATUS line (elapsed/remaining on the turn clock, usage-anchored context estimate vs the card window, up to 3 background shells with age + state) at the TAIL of the newest tool_result on EVERY tool-result round; persisted in-memory like the band line so request prefixes stay byte-identical. off | auto (when a turn deadline exists) | on (always; elapsed only without a deadline); one turn_status event per turn",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_VERIFY_SCALE": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R208 HB-VERIFY-AT-SCALE: the EndTurn judge persona carries one rubric item — evidence that only covers a smaller scale/volume/concurrency/timing than the task's tests imply is a GAP; verify_scale_item event per adjudication. off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_WALL_CACHE_FIX": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R221 append-only history: every in-place mutation of a history message (HB-WALL-DROP nudge + wall summary on the newest tool_result, steering carriers, R26 empty-turn repair, R154 image stub) drops that message's cached canonical conversion, so later requests carry the mutated bytes — the wall nudge no longer vanishes one request after the retry (no second prefix break). The wall drop itself is unchanged. off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_WALL_DROP": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "HB-WALL-DROP: on a reasoning-exhaustion wall, drop the walled turn (reasoning only, no text/tool) from the in-memory history before the retry and carry the nudge on the newest tool_result tail (exact pre-wall prefix + nudge, cache-preserving); never drops a turn with a tool call; wall_drop event. off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_WALL_FORCE_ACTION_AT": {
+      "defaultValue": 2,
+      "rules": [],
+      "meta": {
+        "what": "HB-WALL-RETRY-LADDER: wall index (1-based) from which the retry carries tool_choice required (thinking off on DeepSeek) to force an action; 0 = never",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_WALL_RETRY_LADDER": {
+      "defaultValue": "",
+      "rules": [],
+      "meta": {
+        "what": "HB-WALL-RETRY-LADDER: max_tokens rungs for the retry after the n-th reasoning-exhaustion wall of a turn, e.g. 65536,16384 (last rung repeats); empty = off",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_WALL_SUMMARY": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "HB-WALL-SUMMARY: on a reasoning-exhaustion wall, one helper call condenses the walled reasoning into CONCLUDED / STUCK ON / NEXT lines carried inside the wall nudge (attributed, user-role; never the thinking channel); fail-open; timeout CORTEX_WALL_SUMMARY_TIMEOUT_MS (30000); wall_summary event. off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_WORKSPACE_CLEAN": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "Nothing the harness writes lands in the task tree: orient CORTEX.md + baseline, memory, doctrine staging, sub-agent results, turn predictions, compactions, audit log and the .addon-tools sandbox registry go to the state dir; the project dir is never a state-dir candidate (DARK)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-true"
+      }
+    },
+    "DEFAULT_MODEL_ID": {
+      "defaultValue": "(registry default)",
+      "rules": [],
+      "meta": {
+        "what": "The model new sessions use",
+        "group": "Session & approvals",
+        "kind": "value"
+      }
+    },
+    "ENABLE_DEFERRED_TOOL_LOADING": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "16 curated tools offered; the rest discoverable via SearchTools",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-not-false"
+      }
+    },
+    "ENABLE_WEBTOOLS": {
+      "defaultValue": "auto",
+      "rules": [],
+      "meta": {
+        "what": "web surface mode: auto = WebFetch on, search/browse/hosted-search on iff a search key is present; true = all on; false = all off (benches pin explicitly)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "HELPER_MODEL_ID": {
+      "defaultValue": "deepseek-flash",
+      "rules": [],
+      "meta": {
+        "what": "HELPER role model (compaction, summaries, error guidance, vision hand-off; thinking OFF) — distinct from the MENTOR role (MENTORSHIP_HELPER_MODEL). Bench gates assert this key (cell-m-p2 2026-09-10 halted because it was unreported)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "HERDR_BIN_PATH": {
+      "defaultValue": "(unset — PATH probe)",
+      "rules": [],
+      "meta": {
+        "what": "herdr 0.9.0 pane export of its own binary path — the bin the reporter uses when no override is set and it is executable (informational; set by herdr, not by us)",
+        "group": "Session & approvals",
+        "kind": "value"
+      }
+    },
+    "LOOP_BREAK_AT": {
+      "defaultValue": 6,
+      "rules": [],
+      "meta": {
+        "what": "Exact-repeat ladder: hard break at N",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "LOOP_DIVERSIFY_AT": {
+      "defaultValue": 4,
+      "rules": [],
+      "meta": {
+        "what": "Exact-repeat ladder: diversify nudge at N",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "LOOP_REMIND_AT": {
+      "defaultValue": 2,
+      "rules": [],
+      "meta": {
+        "what": "Exact-repeat ladder: remind after N identical calls",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "MAX_CONSECUTIVE_ERRORS": {
+      "defaultValue": 3,
+      "rules": [],
+      "meta": {
+        "what": "Failing tool calls in a row before the turn is cut (3 = blunt; 6 = tolerant of normal debugging)",
+        "group": "Guards (the protection stack — see CONFIG_AUDIT_2026-08-31)",
+        "kind": "value"
+      }
+    },
+    "MAX_LOOP_REPETITIONS": {
+      "defaultValue": 5,
+      "rules": [],
+      "meta": {
+        "what": "Byte-identical repeated call limit (consecutive)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "MAX_TOOL_ITERATIONS": {
+      "defaultValue": 1000,
+      "rules": [],
+      "meta": {
+        "what": "Hard cap on tool calls per turn (failsafe, not a work limit)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "MENTORSHIP_ENABLED": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "Master switch: a stronger helper model mentors the primary",
+        "group": "Mentorship & dark features (shipped OFF until benched)",
+        "kind": "flag-true"
+      }
+    },
+    "MENTORSHIP_HELPER_MODEL": {
+      "defaultValue": "(HELPER_MODEL_ID)",
+      "rules": [],
+      "meta": {
+        "what": "Which model gives the mentor hints",
+        "group": "Mentorship & dark features (shipped OFF until benched)",
+        "kind": "value"
+      }
+    },
+    "TOOL_BUDGET_SOFT": {
+      "defaultValue": 400,
+      "rules": [],
+      "meta": {
+        "what": "Soft budget signal to the model",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "TOOL_TIMEOUT_MODE": {
+      "defaultValue": "auto",
+      "rules": [],
+      "meta": {
+        "what": "Bash deadline policy: auto = promote to background in headless sessions (kill in interactive); background/kill force",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "VISION_HANDOFF_MAX": {
+      "defaultValue": 8,
+      "rules": [],
+      "meta": {
+        "what": "per-turn cap on ReadImage→vision-helper hand-offs; past it ReadImage returns a consolidate reminder (0 = unlimited)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "VISION_HELPER_MODEL": {
+      "defaultValue": "deepseek-flash",
+      "rules": [],
+      "meta": {
+        "what": "vision hand-off: text-only primaries keep ReadImage; the image + question go to this helper card via the helper middleware and text comes back (false = vision primaries only)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "WEB_TOOLS_MODEL": {
+      "defaultValue": "(auto by keys)",
+      "rules": [],
+      "meta": {
+        "what": "Which provider backs WebSearch/WebFetch. Unset = auto-pick by available keys, else DuckDuckGo fallback",
+        "group": "Web tools",
+        "kind": "value"
+      }
+    },
+    "YOLO": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "Auto-approve all tool permissions",
+        "group": "Session & approvals",
+        "kind": "flag-true"
+      }
+    }
+  }
+}

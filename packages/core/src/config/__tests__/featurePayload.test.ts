@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { applyFeaturePayload, featureAppliedKeys, featurePayloadHash } from '../featurePayload.js';
 import { collectEffectiveConfig, collectEffectiveConfigMeta } from '../effectiveConfig.js';
 // @ts-ignore — plain .mjs generator script (no type declarations)
-import { buildFeaturePayload, readGroups } from '../../../../../scripts/sync-features.mjs';
+import { buildFeaturePayload, readGroups, renderPayload } from '../featuresGen.js';
 
 const KEY = 'CORTEX_LIFT_PLAN';
 
@@ -157,5 +157,15 @@ describe('R262 sync-features generator', () => {
     expect(secrets.length).toBeGreaterThan(0);
     const p = buildFeaturePayload(groups);
     for (const k of secrets) expect(p.features[k]).toBeUndefined();
+  });
+});
+
+describe('R262 generator parity (library module vs the committed config/features.json)', () => {
+  it('the committed payload equals what the library generator produces from effectiveConfig.ts (skipped when the file is pruned)', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const committed = path.join(here, '..', '..', '..', '..', '..', 'config', 'features.json');
+    if (!fs.existsSync(committed)) return; // published trees may prune config/; the dev repo always has it
+    const src = fs.readFileSync(path.join(here, '..', 'effectiveConfig.ts'), 'utf8');
+    expect(fs.readFileSync(committed, 'utf8')).toBe(renderPayload(buildFeaturePayload(readGroups(src))));
   });
 });
