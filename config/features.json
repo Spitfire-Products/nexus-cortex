@@ -279,6 +279,24 @@
         "kind": "value"
       }
     },
+    "CORTEX_DECISION_MODEL": {
+      "defaultValue": "jev",
+      "rules": [],
+      "meta": {
+        "what": "Typed decision model behind the accept gate: jev (hosted, TYPESAFE_API_KEY) | amos (self-hosted System One at CORTEX_DECISION_URL) (R260)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_DECISION_URL": {
+      "defaultValue": "(unset)",
+      "rules": [],
+      "meta": {
+        "what": "Self-hosted System One endpoint for CORTEX_DECISION_MODEL=amos, e.g. http://host:8000/v1/systemone (R260)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
     "CORTEX_DELEGATION_HINT": {
       "defaultValue": "false",
       "rules": [],
@@ -727,6 +745,33 @@
         "what": "Canonical workspace inventory (checkers+contracts, every dir, role-labelled files with content peeks, import resolution, missing deps, task env, services, data outside the workdir): orient prints it and it leads the steering env report (DARK)",
         "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
         "kind": "flag-true"
+      }
+    },
+    "CORTEX_JUDGE_ACCEPT_GATE": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "R260 HB-ACCEPT-GATE: an independent typed decision model (done/verified nouls over task + final message + tool outputs + workspace delta, never the verdict) over every accept-class resolver verdict: off | shadow (bank P(done) only) | gate (P(done) < MIN → one more hold, within MAX and above the veto floor)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_ACCEPT_GATE_MAX": {
+      "defaultValue": 2,
+      "rules": [],
+      "meta": {
+        "what": "Accept-gate holds per session (R260)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_JUDGE_ACCEPT_GATE_MIN": {
+      "defaultValue": 0.3,
+      "rules": [],
+      "meta": {
+        "what": "P(done) floor for the accept gate (R260; Jev 0.30)",
+        "group": "Loop control",
+        "kind": "value"
       }
     },
     "CORTEX_JUDGE_CHECK_TIMEOUT_MS": {

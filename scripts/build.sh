@@ -19,6 +19,9 @@ cd "$(dirname "$0")/.."
 # on ONE trigger, so no copy can silently lag (the 2026-09-06 GATE=false drift: copies
 # synced on different triggers with no guard). See scripts/sync-env-defaults.mjs.
 node scripts/sync-env-defaults.mjs
+# R262b (4.124.85): the feature payload is generated from the same GROUPS — regenerate it with the mirrors, or the parity test fails in CI
+# (4.124.84: five new levers reached effectiveConfig.ts, config/features.json stayed at the R262 commit → test job failed, publish skipped).
+[ -f scripts/sync-features.mjs ] && node scripts/sync-features.mjs || true
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "NEXUS CORTEX BUILD SYSTEM"
