@@ -45,6 +45,7 @@ describe('2026-10-17 CORTEX_PROFILE: standard (shipped) + bench-tb4 (reproductio
     expect(resolveInteractiveProfileName({ CORTEX_PROFILE: 'off', CORTEX_INTERACTIVE_PROFILE: 'bench-lite' })).toBe('off');
     expect(resolveInteractiveProfileName({ CORTEX_INTERACTIVE_PROFILE: 'bench-lite' })).toBe('bench-lite');
     expect(resolveInteractiveProfileName({ CORTEX_PROFILE: 'nope' })).toBe('off');
+    expect(resolveInteractiveProfileName({ CORTEX_PROFILE: 'container' })).toBe('standard'); // the hosted sandboxes' pre-existing value
   });
   it('applies-to: bench-lite = interactive only; standard and bench-tb4 = headless too; off = never', () => {
     expect(profileAppliesTo('bench-lite', false)).toBe(false);

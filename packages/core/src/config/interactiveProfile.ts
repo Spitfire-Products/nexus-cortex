@@ -142,12 +142,16 @@ export const BENCH_TB4_LEVERS: ReadonlyArray<ProfileLever> = (() => {
   return [...STANDARD_LEVERS.filter((l) => !extra.has(l.key)), ...BENCH_TB4_EXTRA_LEVERS];
 })();
 
+/** 'container' = the hosted sandbox images' pre-existing CORTEX_PROFILE value (a preconfigured one-shot marker, no reader until 4.125.0);
+ *  it means the shipped set there, so it resolves to `standard` — otherwise every hosted MCP / autoresearch session silently ran `off`. */
+const ALIASES: Readonly<Record<string, InteractiveProfileName>> = { container: 'standard' };
 const KNOWN: ReadonlySet<string> = new Set(['off', 'bench-lite', 'standard', 'bench-tb4']);
 
 /** Profile name from CORTEX_PROFILE, else the legacy CORTEX_INTERACTIVE_PROFILE. Unset / blank / unknown → off (an unknown name never arms anything). */
 export function resolveInteractiveProfileName(env: NodeJS.ProcessEnv = process.env): InteractiveProfileName {
   const raw = (env[PROFILE_ENV] ?? '').trim() || (env[LEGACY_PROFILE_ENV] ?? '').trim();
   const v = raw.toLowerCase();
+  if (v in ALIASES) return ALIASES[v]!;
   return KNOWN.has(v) ? (v as InteractiveProfileName) : 'off';
 }
 
