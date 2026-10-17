@@ -1056,9 +1056,16 @@ export class APIClient {
     // DeepSeek: a FORCED tool_choice requires thinking OFF — thinking is ON by default (effort high)
     // and the API returns "400 Thinking mode does not support this tool_choice". Dropping
     // reasoning_effort is NOT enough (thinking stays on); the OpenAI-format explicit disable field is
-    // required (DeepSeek thinking-mode docs). Only fires when a tool_choice is actually forced.
-    if (hasForcedToolChoice && isChatCompletionsRoute && modelConfig.provider === 'deepseek') {
+    // required (DeepSeek thinking-mode docs). Fires for a forced tool_choice, AND (2026-10-17, live probe on
+    // deepseek-flash/1017) for an explicit thinking-off request — CORTEX_ACTION_EFFORT=none or disableThinking —
+    // which until now only OMITTED reasoning_effort and so ran thinking ON at the provider default. Probe:
+    // {thinking:enabled, reasoning_effort:none} → reasons; {reasoning_effort:none} alone or {thinking:disabled} → no reasoning.
+    const explicitThinkingOff = disableThinking === true || reasoningEffort === 'none';
+    if ((hasForcedToolChoice || explicitThinkingOff) && isChatCompletionsRoute && modelConfig.provider === 'deepseek') {
       chatRequest.thinking = { type: 'disabled' };
+      if (process.env.DEBUG === 'true' || process.env.DEBUG_THINKING === 'true') {
+        console.log(`[DEBUG APIClient] DeepSeek thinking DISABLED (${hasForcedToolChoice ? 'forced tool_choice' : 'effort none / disableThinking'}) for ${modelConfig.id}`);
+      }
     }
 
     // Attach tools

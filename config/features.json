@@ -4,7 +4,7 @@
       "defaultValue": "(unset — card decides)",
       "rules": [],
       "meta": {
-        "what": "Static reasoning effort for the PRIMARY (action) model (low|medium|high|max). Fills the request param when unset → overrides the model card default but NOT an explicit request param or the effort-pulse. Mentor levers (LIFT/RESOLVER/DEADLINE _EFFORT) are separate and stay max. Enables the pro-track wide-effort-delta A/B",
+        "what": "Static reasoning effort for the PRIMARY (action) model (low|medium|high|max | none = THINKING OFF: DeepSeek chat gets the explicit thinking.type=disabled, 4.125.4). Fills the request param when unset → overrides the model card default but NOT an explicit request param or the effort-pulse. Mentor levers (LIFT/RESOLVER/DEADLINE _EFFORT) are separate and stay max. Enables the pro-track wide-effort-delta A/B",
         "group": "Loop control",
         "kind": "value"
       }
