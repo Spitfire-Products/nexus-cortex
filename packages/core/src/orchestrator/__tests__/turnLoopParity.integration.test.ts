@@ -106,12 +106,14 @@ const KNOWN_GAPS: Record<Script, string[]> = {
   // + endturn_gate_fallback (2026-10-07, same R234 root): the non-streaming loop reaches the end-turn gate after its retry and banks the
   // fallback; the streaming loop never gets there because it already exited at the wall. (Pinned once the ratchet's store read waited
   // for the async event appends to land — the race had hidden it.)
-  'wall-mid-turn': ['event:reasoning_exhaustion', 'event:wall_drop', 'event:endturn_gate_fallback', 'messageCounts', 'requests'],
+  // + wall_summary (2026-10-17, surfaced when the shipped `CORTEX_PROFILE=standard` turned CORTEX_WALL_SUMMARY on in CI): same R234 root —
+  // summarizeWall() runs after the non-streaming loop's wall handling; the streaming loop has already exited at the wall. Unpin with R234.
+  'wall-mid-turn': ['event:reasoning_exhaustion', 'event:wall_drop', 'event:wall_summary', 'event:endturn_gate_fallback', 'messageCounts', 'requests'],
 };
 
 describe('turn-loop parity ratchet (sendMessage vs streamMessage, identical scripted provider)', () => {
   let dir: string;
-  const PINNED: Record<string, string> = { CORTEX_LIFT_PLAN: 'false', CORTEX_ENDTURN_RESOLVER: 'false', CORTEX_LIFT_NUDGE: 'false', CORTEX_WALL_DROP: 'on', CORTEX_EMPTY_TURN_CONTINUE: 'true' };
+  const PINNED: Record<string, string> = { CORTEX_LIFT_PLAN: 'false', CORTEX_ENDTURN_RESOLVER: 'false', CORTEX_LIFT_NUDGE: 'false', CORTEX_WALL_DROP: 'on', CORTEX_WALL_SUMMARY: 'on', CORTEX_EMPTY_TURN_CONTINUE: 'true' }; // WALL_SUMMARY pinned explicitly (the shipped profile sets it; the ratchet must not depend on the profile)
   const saved: Record<string, string | undefined> = {};
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-'));
