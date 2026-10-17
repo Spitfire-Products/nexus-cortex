@@ -72,6 +72,13 @@ for b in file xxd strings ps pgrep free pdftotext tesseract gcc make git curl; d
   if command -v "$b" >/dev/null 2>&1; then HAVE="$HAVE $b"; else MISS="$MISS $b"; fi
 done
 echo "-- tooling:${TI:- (no python/node on PATH)} | have:${HAVE:- none} | missing:${MISS:- none}"
+# Search tooling (2026-10-17): in the narrow bash+edit frame every search runs through Bash, so say which searchers exist. ripgrep when
+# installed; sgrep (semantic + lexical hybrid over code passages) when the harness bin dir or the box cache put it on PATH. One line, only
+# when something is there — absent = no output (byte-identical).
+SRCH=""
+command -v rg >/dev/null 2>&1 && SRCH="$SRCH rg (ripgrep: rg -n PATTERN DIR; rg -l; rg --type py)"
+command -v sgrep >/dev/null 2>&1 && SRCH="$SRCH | sgrep (semantic: sgrep \"what you mean in plain words\" DIR; or rg --json PATTERN | sgrep --stdin to re-rank)"
+[ -n "$SRCH" ] && echo "-- search: prefer${SRCH} over find|grep chains; read the hit before asserting."
 # orient v2: the baseline the judge's workspace delta is computed against — know it before editing.
 if [ "$V2" != "1" ]; then :
 elif command -v git >/dev/null 2>&1 && git -C "$W" rev-parse --is-inside-work-tree >/dev/null 2>&1; then

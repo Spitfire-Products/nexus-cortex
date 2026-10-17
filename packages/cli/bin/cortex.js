@@ -5,7 +5,7 @@
  *
  * Usage:
  *   cortex "Read package.json and tell me the version"
- *   cortex --model deepseek-v4-flash "Explain generics"
+ *   cortex --model deepseek-flash "Explain generics"
  *   cortex --resume abc123 "Continue from where we left off"
  *   cortex --new "Start a fresh conversation"
  *   cortex --json "Give me raw response"
@@ -118,7 +118,7 @@ let idleTimeoutFlag;
 const COMMANDER_SUBCOMMANDS = new Set([
   'autoresearch', 'models', 'message', 'mcp', 'config', 'permissions', 'context',
   'tools', 'middleware', 'artifact', 'cache', 'system-messages', 'tmux',
-  'update', 'uninstall',
+  'update', 'uninstall', 'setup',
 ]);
 const __firstPositional = args.find((a) => !a.startsWith('-'));
 if (__firstPositional && COMMANDER_SUBCOMMANDS.has(__firstPositional)) {
@@ -273,7 +273,7 @@ ENVIRONMENT:
 
 EXAMPLES:
   cortex "What is this project?"
-  cortex --model deepseek-v4-flash "Explain TypeScript generics"
+  cortex --model deepseek-flash "Explain TypeScript generics"
   cortex "Read package.json" && cortex "What was the version?"
   cortex --json "list files" | jq '.toolUses[].name'
   cortex --new "Let's start over"
@@ -467,9 +467,18 @@ async function ensureKeysOrExit() {
       seeded = true;
     } catch { /* read-only home — still print guidance below */ }
   }
+  // 2026-10-17: in a terminal, hand the first-time user to the setup wizard instead of a bare message.
+  if (process.stdin.isTTY && process.stdout.isTTY) {
+    process.stderr.write('\n[cortex] No API key found — starting the first-run setup (providers, keys, model roles, web tools).\n');
+    process.stderr.write('[cortex] (Run `cortex setup` any time to change these; `cortex config set KEY value` for one setting.)\n\n');
+    const CLI_ENTRY = join(__cortex_dirname, '..', 'dist', 'index.js');
+    const res = spawnSync(process.execPath, [CLI_ENTRY, 'setup'], { stdio: 'inherit' });
+    if ((res.status ?? 1) === 0) process.stderr.write('\n[cortex] Setup complete — run your command again.\n');
+    process.exit(res.status ?? 1);
+  }
   process.stderr.write('\n[cortex] No API key found — a model run needs one.\n');
   if (seeded) process.stderr.write(`[cortex] Created ${envPath}\n`);
-  process.stderr.write('[cortex] Add a provider key, then run again:\n');
+  process.stderr.write('[cortex] Add a provider key, then run again (or run `cortex setup` in a terminal):\n');
   process.stderr.write(`[cortex]   - edit ${envPath}  (e.g. DEEPSEEK_API_KEY=sk-...)\n`);
   process.stderr.write('[cortex]   - or inject it via your environment / secrets store (read from there too)\n');
   process.exit(1);

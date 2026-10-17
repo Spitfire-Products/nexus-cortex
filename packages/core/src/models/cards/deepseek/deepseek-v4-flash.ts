@@ -1,4 +1,10 @@
 /**
+ * 🔴 RETIRED ALIAS (2026-10-17): DeepSeek's pricing page — "The legacy names deepseek-v4-flash and
+ * deepseek-v4-flash-vision-exp are still accepted, but the corresponding models have been retired,
+ * their requests are served by the DeepSeek-V4.1-Flash-1017 model" (billed at the Flash price).
+ * Kept only so existing configs/arms keep resolving; new configs use `deepseek-flash`. The card below
+ * mirrors the served model's price/capabilities; the original V4 Flash notes follow for history.
+ *
  * DeepSeek V4 Flash (deepseek-v4-flash)
  * DeepSeek's fast V4 model — 284B total / 13B active params, 1M context
  *
@@ -12,8 +18,10 @@ import type { ModelConfig } from '../../ModelConfig.interface.js';
 
 export const deepseekV4Flash: ModelConfig = createDeepSeekModelConfig({
   id: 'deepseek-v4-flash',
-  displayName: 'DeepSeek V4 Flash',
+  displayName: 'DeepSeek V4 Flash (RETIRED alias → V4.1-Flash-1017)',
   family: 'deepseek-v4',
+
+  vision: true, // the SERVED model (V4.1-Flash-1017) is multimodal
 
   // Home-door anchor (P4 sweep 2026-08-17: bash-edit anchor = 14/14, -47% output tokens vs control; cue line REFUTED (hurts in our dialect)).
   anchorProfile: 'bash-edit',
@@ -32,8 +40,8 @@ export const deepseekV4Flash: ModelConfig = createDeepSeekModelConfig({
   headlessDropAskUser: true,
   contextWindow: 1000000,
   outputTokens: 393216, // DeepSeek API max_tokens range 1..393216 (384K); provider defaults when unset: 64K thinking / 128K at effort max. Was 65536 (the old thinking default) until 2026-10-05.
-  inputCost: 0.14,
-  outputCost: 0.28,
+  inputCost: 0.15,   // served by V4.1-Flash-1017 → billed at the Flash price (pricing page 2026-10-17)
+  outputCost: 0.6,
   reasoning: {
     supported: true,
     // Hybrid thinker: effort IS API-settable (minimal..max all accepted, probe

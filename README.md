@@ -22,45 +22,41 @@ Run it three ways: **as a library** (`import { CortexOrchestrator }`), **as a he
 
 ```bash
 npm install -g nexus-cortex
+cortex setup
 ```
 
-That puts the `cortex` command on your PATH. Now give it **one provider key** — three ways, pick whichever fits:
+`cortex setup` is the first-run wizard: pick the providers you intend to use, paste their API keys, then choose the **action**
+model (does the work), a cheap **helper** (compaction, summaries), the stronger **mentor** (plans and judges finishes), the vision
+hand-off and the web-tools backend. It writes everything to `~/.cortex/.env`, then sends one tiny request to each chosen model so
+you know it works before you start. One DeepSeek key is enough: the defaults run every role on `deepseek-flash`.
+
+Running `cortex` before setup in a terminal starts the wizard for you. Prefer to script it? One provider key is all it takes:
 
 ```bash
-# 1. Set a key in the global config file (created for you automatically)
-cortex config set DEEPSEEK_API_KEY sk-...        # writes ~/.cortex/.env
-
-# 2. …or open the file and edit it by hand
-#    ~/.cortex/.env  — every supported key is listed, blank; fill one in.
-#    (Run `cortex config init` to create it now without waiting for first run.)
-
-# 3. …or export it / use your platform's secrets store — the environment wins over the file
-export DEEPSEEK_API_KEY=sk-...
+cortex config set DEEPSEEK_API_KEY sk-...        # writes ~/.cortex/.env (or export it — the environment wins)
 ```
 
-> **Keys are read from your environment first, then `~/.cortex/.env`.** The file ships with every key blank, so a value set in your environment (or a Cloudflare/Replit-style secrets store) always takes precedence — drop the file in a container and let secrets fill it. If you run `cortex` with no key found anywhere, it creates `~/.cortex/.env` for you, tells you exactly what to add, and stops — no half-started server to clean up.
-
-Then just talk to it — **the server auto-starts on first use**, no separate step, and headless runs **auto-approve tools** (no approval prompts to babysit):
+Then just talk to it — **the server auto-starts on first use**, and headless runs **auto-approve tools**:
 
 ```bash
-# Chat — multi-turn, the session persists across calls
-cortex "What is this project?"
-cortex "Now summarize the largest file"
-
-# Browse the live web (zero-config — no setup, no API key of your own)
-cortex "Open example.com and summarize the page"
-
-# One-shot autonomous agent in any directory (alias: `cortex run`)
-cortex agent --cwd ./my-project "add a --version flag to the CLI and run the tests"
+cortex "What is this project?"                      # multi-turn; the session persists across calls
+cortex agent --cwd ./my-project "add a --version flag and run the tests"   # one-shot autonomous run (alias: cortex run)
 ```
 
-> Claude also works with a Claude.ai Pro/Max OAuth subscription instead of an API key — see [docs/authentication.md](docs/authentication.md). For advanced `.env` setup, see [docs/configuration.md](docs/configuration.md).
+What you get out of the box: every role on `deepseek-flash` (served by DeepSeek-V4.1-Flash-1017), the `standard` lever profile
+(the harness's proven failure-path and steering levers, interactive and headless; `CORTEX_PROFILE=off` restores the bare defaults),
+and web page reads via WebFetch. Web **search** and **browse** turn on when a search-capable key is present (Gemini, Anthropic or xAI)
+— `cortex setup` offers the choice. See how everything resolved with `cortex config get` or `GET /health/config` on the server.
+
+> Claude also works with a Claude.ai Pro/Max OAuth subscription instead of an API key — see [docs/authentication.md](docs/authentication.md).
+> Config precedence and every lever: [docs/configuration.md](docs/configuration.md).
 
 ## Everyday commands
 
 | Task | Command |
 |------|---------|
-| Set a key | `cortex config set KEY value`  (or edit `~/.cortex/.env`) |
+| First-run setup (providers, keys, model roles, web tools) | `cortex setup` |
+| Set one key or lever | `cortex config set KEY value`  (or edit `~/.cortex/.env`) |
 | Create the config file now | `cortex config init`  (keys-only; `--force` adds any missing provider-key slots) |
 | Run a one-shot agent | `cortex agent "…"`  (auto-approves tools, fresh session, self-stops on idle) |
 | Generate project context (`CORTEX.md`) | `cortex init` |
@@ -84,6 +80,24 @@ Cortex ships a library of agents, skills, and commands. Browse the bundled set i
 ```
 
 These folders are created for you on first run, each with a short README. Agent profiles should use `model: inherit` (the default) — the agent then runs on whatever model the orchestrator is using, and falls back gracefully if a pinned model's provider key isn't configured.
+
+## What the harness does between the model and the task
+
+Most of Nexus Cortex is the layer that steers a cheap model through hard, long tasks — the part a bare API loop does not have:
+
+- **Lift plan** — before the first edit, a mentor call (thinking on) turns the task into a plan with the real acceptance criteria and an
+  edit scope; the action model follows it.
+- **EndTurn judge + resolver** — a finish is not accepted on the model's say-so: a judge reads the evidence (checks run, outputs, the
+  task's own rules) and returns MEETS or a GAP with a fix plan; the resolver carries the loop instead of the action model.
+- **Exit planners** — a detected tool loop, a reasoning-exhaustion wall, or a looming deadline each route to a bounded planner call rather
+  than letting the model spin.
+- **Second attempt** — when a finish is accepted with a gap and budget remains, a fresh attempt is opened and the better one is selected.
+- **Lever profiles** — every one of these is a lever with a ledger line. `CORTEX_PROFILE=standard` (shipped) turns on the proven safe set;
+  `bench-tb4` reproduces our benchmark bundle; `off` is the bare frame. `cortex config get` shows every lever's resolved value and source.
+
+Results and how to reproduce them: [docs/REPRODUCING_BENCH_RESULTS.md](docs/REPRODUCING_BENCH_RESULTS.md) and
+[docs/RESULTS_2026-09_TERMINAL_BENCH.md](docs/RESULTS_2026-09_TERMINAL_BENCH.md). Every published number names the harness version,
+the profile and the model weights date.
 
 ## Why Nexus Cortex
 

@@ -520,6 +520,45 @@ permissions
   });
 
 // Config commands
+// 2026-10-17 first-run wizard: providers -> keys -> action / helper / mentor / vision / web tools -> write ~/.cortex/.env -> probe.
+// Every question has a flag, so a script/container can run it headless (`--key … --yes`); anything unnamed falls back to the same
+// suggestions the prompts show. `--print` shows the env lines without writing; `--json` reports machine-readable.
+program
+  .command('setup')
+  .description('First-run setup: choose providers, enter API keys, pick the action / helper / mentor / vision models and the web-tools backend, write ~/.cortex/.env, then verify')
+  .option('--provider <ids>', 'Providers to configure, comma-separated (ids or their key env var), e.g. deepseek,anthropic', (v: string) => v.split(',').map((s) => s.trim()).filter(Boolean), undefined)
+  .option('--key <ENV=value>', 'Set a provider key (repeatable), e.g. --key DEEPSEEK_API_KEY=sk-...', (v: string, acc: string[]) => { acc.push(v); return acc; }, [] as string[])
+  .option('--action <model>', 'Main action model id (default: suggested from the chosen providers)')
+  .option('--helper <model>', 'Cheap helper model id (compaction, summaries, turn prediction)')
+  .option('--mentor <model>', 'Stronger mentor model id (lift plan, EndTurn judge, exit planners)')
+  .option('--vision <model|none>', 'Vision hand-off model id, or "none"')
+  .option('--web <model|auto|off>', 'Web-tools backend (WEB_TOOLS_MODEL); auto/off = auto-pick from your keys')
+  .option('--print', 'Print the env lines that would be written (secrets masked) and exit — no write, no probe')
+  .option('--probe', 'Run the live one-request check per chosen model (default: on interactively, off for a scripted run)')
+  .option('--no-probe', 'Skip the live one-request check of each chosen model')
+  .option('-y, --yes', 'Write without the confirm prompt')
+  .action(async (options) => {
+    const { runSetup } = await import('./commands/setup/index.js');
+    const keys: Record<string, string> = {};
+    for (const pair of (options.key as string[]) ?? []) {
+      const eq = pair.indexOf('=');
+      if (eq > 0) keys[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
+    }
+    process.exit(await runSetup({
+      probe: options.probe,
+      yes: !!options.yes,
+      providers: options.provider,
+      keys,
+      action: options.action,
+      helper: options.helper,
+      mentor: options.mentor,
+      vision: options.vision,
+      web: options.web,
+      print: !!options.print,
+      json: !!program.opts().json,
+    }));
+  });
+
 const config = program.command('config').description('Configuration management');
 
 config

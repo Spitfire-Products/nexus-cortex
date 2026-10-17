@@ -65,7 +65,10 @@ export function parseEnvFile(content: string): EnvironmentVariables {
  * your settings live in a path you own.
  */
 export function getGlobalConfigDir(): string {
-  return path.join(os.homedir() || process.cwd(), '.cortex');
+  // CORTEX_HOME relocates the user-config dir (the bin has always honored it: `CORTEX_HOME || homedir()`);
+  // honoring it here too keeps every surface — CLI, server, TUIs, `cortex setup` — reading the SAME ~/.cortex.
+  // Also the supported isolation hook for tests and sandboxes.
+  return path.join(process.env.CORTEX_HOME || os.homedir() || process.cwd(), '.cortex');
 }
 
 /** Absolute path to the global config file (~/.cortex/.env). */
@@ -226,9 +229,11 @@ export function bootstrapEnv(packageRoot?: string, opts: { interactive?: boolean
   // R219 CORTEX_INTERACTIVE_PROFILE (DARK): a named lever profile for INTERACTIVE sessions, layered ABOVE the
   // shipped defaults and BELOW every user layer above — so it fills only levers the user did not set. Off/unset →
   // nothing written (byte-identical). The name may come from a user layer or (future default flip) the shipped file.
+  // 2026-10-17: CORTEX_PROFILE (standard ships ON for interactive AND headless; CORTEX_INTERACTIVE_PROFILE = legacy alias).
   let shippedProfile: string | undefined;
-  if (process.env.CORTEX_INTERACTIVE_PROFILE === undefined && defaultsPath) {
-    try { shippedProfile = parseEnvFile(fs.readFileSync(defaultsPath, 'utf-8')).CORTEX_INTERACTIVE_PROFILE; } catch { /* no profile */ }
+  const userNamed = (process.env.CORTEX_PROFILE ?? '').trim() !== '' || (process.env.CORTEX_INTERACTIVE_PROFILE ?? '').trim() !== '';
+  if (!userNamed && defaultsPath) {
+    try { const d = parseEnvFile(fs.readFileSync(defaultsPath, 'utf-8')); shippedProfile = d.CORTEX_PROFILE || d.CORTEX_INTERACTIVE_PROFILE; } catch { /* no profile */ }
   }
   applyInteractiveProfile(process.env, { interactive: opts.interactive ?? isInteractiveSession() }, shippedProfile);
   // R262 FEATURE PAYLOAD LAYER: GrowthBook-format rules (CORTEX_FEATURES_FILE / CORTEX_FEATURES_JSON), evaluated offline,
@@ -594,6 +599,7 @@ export function mergeWithDefaults(env: EnvironmentVariables): Required<Environme
     CORTEX_MENTOR_THINKING_TIMEOUT_MS: env.CORTEX_MENTOR_THINKING_TIMEOUT_MS || process.env.CORTEX_MENTOR_THINKING_TIMEOUT_MS || D.CORTEX_MENTOR_THINKING_TIMEOUT_MS,
     CORTEX_LIFT_PLAN_REASONING: env.CORTEX_LIFT_PLAN_REASONING || process.env.CORTEX_LIFT_PLAN_REASONING || D.CORTEX_LIFT_PLAN_REASONING,
     CORTEX_LIFT_PLAN_DOCTRINE: env.CORTEX_LIFT_PLAN_DOCTRINE || process.env.CORTEX_LIFT_PLAN_DOCTRINE || D.CORTEX_LIFT_PLAN_DOCTRINE,
+    CORTEX_PROFILE: env.CORTEX_PROFILE || process.env.CORTEX_PROFILE || D.CORTEX_PROFILE,
     CORTEX_INTERACTIVE_PROFILE: env.CORTEX_INTERACTIVE_PROFILE || process.env.CORTEX_INTERACTIVE_PROFILE || D.CORTEX_INTERACTIVE_PROFILE,
     CORTEX_FEATURES: env.CORTEX_FEATURES || process.env.CORTEX_FEATURES || D.CORTEX_FEATURES,
     CORTEX_FEATURES_FILE: env.CORTEX_FEATURES_FILE || process.env.CORTEX_FEATURES_FILE || D.CORTEX_FEATURES_FILE,

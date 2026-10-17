@@ -14,8 +14,8 @@ vi.mock('os', async (importOriginal) => {
 });
 
 import {
-  BENCH_LITE_LEVERS, BENCH_LITE_DEFERRED, resolveInteractiveProfileName, resolveInteractiveProfile,
-  applyInteractiveProfile, isInteractiveSession, liftPlanAllowedInSession, profileAppliedKeys,
+  BENCH_LITE_LEVERS, BENCH_LITE_DEFERRED, STANDARD_LEVERS, STANDARD_EXTRA_LEVERS, BENCH_TB4_LEVERS, resolveInteractiveProfileName, resolveInteractiveProfile,
+  applyInteractiveProfile, isInteractiveSession, liftPlanAllowedInSession, profileAppliedKeys, profileAppliesTo,
 } from '../interactiveProfile.js';
 import { bootstrapEnv, getGlobalEnvPath } from '../SettingsLoader.js';
 import { collectEffectiveConfig } from '../effectiveConfig.js';
@@ -35,6 +35,63 @@ describe('R219 profile name', () => {
     expect(isInteractiveSession({ isTTY: true }, { isTTY: true })).toBe(true);
     expect(isInteractiveSession({ isTTY: true }, { isTTY: false })).toBe(false);
     expect(isInteractiveSession({}, { isTTY: true })).toBe(false);
+  });
+});
+
+describe('2026-10-17 CORTEX_PROFILE: standard (shipped) + bench-tb4 (reproduction) apply to every session kind', () => {
+  it('names: CORTEX_PROFILE wins over the legacy alias; standard / bench-tb4 resolve; unknown → off', () => {
+    expect(resolveInteractiveProfileName({ CORTEX_PROFILE: 'standard' })).toBe('standard');
+    expect(resolveInteractiveProfileName({ CORTEX_PROFILE: ' Bench-TB4 ' })).toBe('bench-tb4');
+    expect(resolveInteractiveProfileName({ CORTEX_PROFILE: 'off', CORTEX_INTERACTIVE_PROFILE: 'bench-lite' })).toBe('off');
+    expect(resolveInteractiveProfileName({ CORTEX_INTERACTIVE_PROFILE: 'bench-lite' })).toBe('bench-lite');
+    expect(resolveInteractiveProfileName({ CORTEX_PROFILE: 'nope' })).toBe('off');
+  });
+  it('applies-to: bench-lite = interactive only; standard and bench-tb4 = headless too; off = never', () => {
+    expect(profileAppliesTo('bench-lite', false)).toBe(false);
+    expect(profileAppliesTo('standard', false)).toBe(true);
+    expect(profileAppliesTo('bench-tb4', false)).toBe(true);
+    expect(profileAppliesTo('off', true)).toBe(false);
+  });
+  it('standard = the bench-lite seven + the proven session-agnostic levers, filled in a HEADLESS session', () => {
+    const r = resolveInteractiveProfile({ CORTEX_PROFILE: 'standard' }, { interactive: false });
+    for (const l of BENCH_LITE_LEVERS) expect(r.apply[l.key]).toBe(l.value);
+    expect(r.apply.CORTEX_OUTER_TOOL_TIMEOUT_MS).toBe('600000');
+    expect(r.apply.CORTEX_WALL_RETRY_LADDER).toBe('65536,16384');
+    expect(r.apply.CORTEX_WALL_FORCE_ACTION_AT).toBe('2');
+    expect(r.apply.CORTEX_LIFT_PLAN_SCOPE).toBe('task');
+    expect(r.apply.CORTEX_MENTOR_REASONING_ALLOWANCE).toBe('16000');
+    expect(Object.keys(r.apply).length).toBe(STANDARD_LEVERS.length);
+    expect(STANDARD_LEVERS.length).toBe(BENCH_LITE_LEVERS.length + STANDARD_EXTRA_LEVERS.length);
+  });
+  it('standard never touches the levers kept dark on purpose', () => {
+    const keys = new Set(STANDARD_LEVERS.map((l) => l.key));
+    for (const k of ['CORTEX_RULE_INPUTS', 'CORTEX_VERIFY_SCALE', 'CORTEX_TURN_STATUS', 'CORTEX_JUDGE_EVIDENCE_MAX_VETOES', 'CORTEX_INVENTORY',
+      'CORTEX_WORKSPACE_CLEAN', 'CORTEX_SECOND_ATTEMPT', 'CORTEX_OUTPUT_CAP_TOKENS', 'CORTEX_MEETS_CONFIRM', 'CORTEX_ORIENT_BASELINE',
+      'CORTEX_PID1_GUARD', 'CORTEX_PLATEAU_STOP', 'CORTEX_ACTION_EFFORT', 'MENTORSHIP_HELPER_MODEL', 'ENABLE_WEBTOOLS', 'CORTEX_LIFT_PLAN_INTERACTIVE']) {
+      expect(keys.has(k)).toBe(false);
+    }
+  });
+  it('bench-tb4 ⊇ standard keys, carries the TB4 cell bundle values, and the resolver is pinned to the canonical flash id', () => {
+    const r = resolveInteractiveProfile({ CORTEX_PROFILE: 'bench-tb4' }, { interactive: false });
+    for (const l of STANDARD_LEVERS) expect(r.apply[l.key]).toBeDefined();
+    expect(r.apply.CORTEX_MENTOR_REASONING_ALLOWANCE).toBe('60000'); // bench value overrides the standard 16000
+    expect(r.apply.CORTEX_TURN_STATUS).toBe('auto');
+    expect(r.apply.CORTEX_JUDGE_EVIDENCE_MAX_VETOES).toBe('3');
+    expect(r.apply.CORTEX_SECOND_ATTEMPT).toBe('1');
+    expect(r.apply.CORTEX_SECOND_ATTEMPT_TRIGGER).toBe('accept-with-gap,accept-low-confidence,accept,none');
+    expect(r.apply.MENTORSHIP_HELPER_MODEL).toBe('deepseek-v4-pro');
+    expect(r.apply.CORTEX_ENDTURN_RESOLVER_MODEL).toBe('deepseek-flash');
+    expect(r.apply.ENABLE_WEBTOOLS).toBe('false');
+    const keys = BENCH_TB4_LEVERS.map((l) => l.key);
+    expect(new Set(keys).size).toBe(keys.length); // no duplicate keys
+  });
+  it('explicit user values still win under standard (headless)', () => {
+    const env: NodeJS.ProcessEnv = { CORTEX_PROFILE: 'standard', CORTEX_WALL_DROP: 'off', CORTEX_OUTER_TOOL_TIMEOUT_MS: '1' };
+    const r = applyInteractiveProfile(env, { interactive: false });
+    expect(env.CORTEX_WALL_DROP).toBe('off');
+    expect(env.CORTEX_OUTER_TOOL_TIMEOUT_MS).toBe('1');
+    expect(r.explicit.sort()).toEqual(['CORTEX_OUTER_TOOL_TIMEOUT_MS', 'CORTEX_WALL_DROP']);
+    expect(env.CORTEX_LOOP_TOOL_BLOCK).toBe('true');
   });
 });
 
@@ -125,7 +182,7 @@ describe('R219 lift-plan session gate', () => {
 
 describe('R219 bootstrapEnv layering', () => {
   let home: string; let pkgRoot: string;
-  const touched = [...LEVER_KEYS, 'CORTEX_INTERACTIVE_PROFILE', 'CORTEX_INTERACTIVE_PROFILE_APPLIED', 'CORTEX_LIFT_PLAN_INTERACTIVE'];
+  const touched = [...LEVER_KEYS, ...STANDARD_EXTRA_LEVERS.map((l) => l.key), 'CORTEX_PROFILE', 'CORTEX_INTERACTIVE_PROFILE', 'CORTEX_INTERACTIVE_PROFILE_APPLIED', 'CORTEX_LIFT_PLAN_INTERACTIVE'];
   const saved: Record<string, string | undefined> = {};
 
   beforeEach(() => {
@@ -133,6 +190,9 @@ describe('R219 bootstrapEnv layering', () => {
     home = fs.mkdtempSync(path.join(tmpdir(), 'r219-home-'));
     pkgRoot = fs.mkdtempSync(path.join(tmpdir(), 'r219-pkg-'));
     process.env.__R219_HOME__ = home;
+    // 2026-10-17: the repo's own ./.env (cwd user layer) ships CORTEX_PROFILE=standard; a BLANK real-env value counts as unset for the
+    // resolver but blocks the file layer (first-wins), so these fixtures see only the profile they name.
+    process.env.CORTEX_PROFILE = '';
     // shipped defaults: a profile lever set to a DIFFERENT value — the profile must sit above it.
     fs.writeFileSync(path.join(pkgRoot, '.env.defaults'), 'CORTEX_WALL_DROP=off\n');
   });
@@ -178,6 +238,20 @@ describe('R219 bootstrapEnv layering', () => {
     expect(process.env.CORTEX_EMPTY_TURN_CONTINUE).toBe('false');
     expect(process.env.CORTEX_ORIENT_V2).toBe('1');
     delete process.env.CORTEX_EMPTY_TURN_CONTINUE;
+  });
+
+  it('2026-10-17 shipped default: CORTEX_PROFILE=standard in .env.defaults applies in a HEADLESS session, marker set, user name wins', () => {
+    delete process.env.CORTEX_PROFILE;
+    fs.writeFileSync(path.join(pkgRoot, '.env.defaults'), 'CORTEX_PROFILE=standard\nCORTEX_WALL_DROP=off\n');
+    bootstrapEnv(pkgRoot, { interactive: false });
+    expect(process.env.CORTEX_WALL_DROP).toBe('on');
+    expect(process.env.CORTEX_OUTER_TOOL_TIMEOUT_MS).toBe('600000');
+    expect(profileAppliedKeys().has('CORTEX_WALL_RETRY_LADDER')).toBe(true);
+    for (const k of touched) delete process.env[k];
+    process.env.CORTEX_PROFILE = 'off'; // real env (the top user layer; ./.env sits above ~/.cortex/.env, so a global-file name would not beat the repo's own file)
+    bootstrapEnv(pkgRoot, { interactive: false });
+    expect(process.env.CORTEX_WALL_DROP).toBe('off');
+    expect(process.env.CORTEX_INTERACTIVE_PROFILE_APPLIED).toBeUndefined();
   });
 
   it('a profile name in the shipped .env.defaults applies (future default flip) unless the user names one', () => {

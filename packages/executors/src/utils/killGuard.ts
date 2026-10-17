@@ -188,10 +188,25 @@ export function ensureKillGuardDir(env: NodeJS.ProcessEnv = process.env, baseDir
   }
 }
 
-/** Spawn env for a Bash tool shell: the guard dir first on PATH + CORTEX_SERVER_PID. Undefined when the guard is off/unavailable
- *  (callers pass `env: undefined` → the child inherits process.env exactly as before). */
+/** HARNESS BIN DIR (2026-10-17): `<CORTEX_HOME|~>/.cortex/bin` — harness-provided command-line tools (sgrep, a vendored ripgrep, …)
+ *  that the model should reach from Bash in the narrow bash+edit frame, where the Grep tool is never called (0/2,235 calls in the
+ *  TB4 cells). Prepended to the Bash tool's PATH when the directory exists; absent = byte-identical spawn env. The orient scaffold
+ *  announces what it finds there (one steering line), so a binary dropped into the dir is both reachable and advertised. */
+export function harnessBinDir(env: NodeJS.ProcessEnv = process.env): string | null {
+  const home = (env.CORTEX_HOME ?? '').trim() || os.homedir() || '';
+  if (!home) return null;
+  const dir = path.join(home, '.cortex', 'bin');
+  try { return fs.statSync(dir).isDirectory() ? dir : null; } catch { return null; }
+}
+
+/** Spawn env for a Bash tool shell: the guard dir (kill guard) and the harness bin dir first on PATH + CORTEX_SERVER_PID.
+ *  Undefined when neither applies (callers pass `env: undefined` → the child inherits process.env exactly as before). */
 export function killGuardSpawnEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv | undefined {
   const dir = ensureKillGuardDir(env);
-  if (!dir) return undefined;
-  return { ...env, PATH: `${dir}${path.delimiter}${env.PATH ?? ''}`, CORTEX_SERVER_PID: String(process.pid) };
+  const bin = harnessBinDir(env);
+  if (!dir && !bin) return undefined;
+  const prefix = [dir, bin].filter(Boolean).join(path.delimiter);
+  const out: NodeJS.ProcessEnv = { ...env, PATH: `${prefix}${path.delimiter}${env.PATH ?? ''}` };
+  if (dir) out.CORTEX_SERVER_PID = String(process.pid);
+  return out;
 }

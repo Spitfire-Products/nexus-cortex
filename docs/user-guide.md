@@ -37,7 +37,7 @@ npm install @nexus-cortex/core @nexus-cortex/executors
 import { CortexOrchestrator } from '@nexus-cortex/core';
 
 const cortex = new CortexOrchestrator({
-  modelId: 'claude-sonnet-4-6',
+  modelId: 'deepseek-flash',
   projectPath: process.cwd(),
 });
 const res = await cortex.processMessage({ role: 'user', content: 'Analyze this codebase' });
@@ -83,7 +83,7 @@ the background and subsequent calls share one stateful session.
 cortex "What is this project?"
 
 # Specific model
-cortex --model deepseek-v4-flash "Explain TypeScript generics"
+cortex --model deepseek-flash "Explain TypeScript generics"
 
 # Multi-turn (session persists automatically)
 cortex "Remember the launch code is FALCON-42"
@@ -255,7 +255,7 @@ code changes take effect without losing session state. Pair it with `SERVER_IDLE
 | `CORTEX_MODE` | `persistent` | `stateless` for clean per-request sessions; `server` for HTTP-client mode |
 | `ENABLE_DASHBOARD` | `false` | Master switch for the sandbox/tmux web dashboard (binds `DASHBOARD_PORT`, default 4001) |
 
-Every variable is documented in [Configuration](configuration.md); `cortex config list` shows the live set with your effective values. Run
+Every variable is documented in [Configuration](configuration.md); `cortex config get` shows the live set with your effective values. Run
 `cortex-server --help` for the server's own summary.
 
 ## Development

@@ -1,10 +1,10 @@
 # Configuration reference
 
-Every Nexus Cortex setting is an environment variable, read from `.env` (or the process environment) at startup.
+Every Nexus Cortex setting is an environment variable, read from the layered `.env` files (or the process environment) at startup. First-time setup: `cortex setup`.
 
 > **Canonical sources:** the dev repo's `.env` (the MASTER, annotated with per-lever `[LEDGER]` notes) is generated into the shipped `.env.defaults` (read live as the default layer), and `packages/core/src/config/SettingsSchema.ts` is the schema (types + the hardcoded floor). This page mirrors them for browsing — if anything here disagrees, those win.
 >
-> **How config resolves (highest → lowest):** your `~/.cortex/.env` (keys + overrides) → the environment → the shipped `.env.defaults` → the hardcoded floor. You only set a lever in `~/.cortex/.env` (via `cortex config set` or by editing it) to DIVERGE from the shipped default; everything else you leave alone updates automatically on upgrade.
+> **How config resolves (highest → lowest):** a `.env.local` beside any base file → the process environment → `./.env` (current directory) → the package's own `.env` (source checkouts) → `~/.cortex/.env` (your keys + overrides; `cortex setup` / `cortex config set` write here) → feature-payload rules → the lever profile (`CORTEX_PROFILE`, shipped `standard`) → the shipped `.env.defaults` → the hardcoded floor. Every lever reports its resolved value and source (`env`, `profile`, `feature`, `code-default`) in `cortex config get` and `GET /health/config`.
 
 Per-launch overrides win — e.g. `DEFAULT_MODEL_ID=grok-4.3 PORT=4100 node packages/server/dist/index.js`. Booleans are the literal strings `true`/`false`. Only API keys are required; every other variable has a proven-optimal default.
 
@@ -37,7 +37,7 @@ Set the keys for the providers you use; leave the rest blank. A model is only av
 | Variable | Default | What it does / how to use it |
 |----------|---------|------------------------------|
 | `DEFAULT_MODEL_ID` | `deepseek-v4-pro` | Primary model — any registry ID or alias (`cortex models list`). |
-| `HELPER_MODEL_ID` | `deepseek-v4-flash` | Cheaper model for compaction & mentorship. |
+| `HELPER_MODEL_ID` | `deepseek-flash` | Cheaper model for compaction & mentorship. |
 | `WEB_TOOLS_MODEL` | `gemini-2.5-flash` | Model backing `WebSearch`/`WebFetch`; provider auto-detected from the ID prefix. |
 
 #### System
@@ -58,7 +58,7 @@ Set the keys for the providers you use; leave the rest blank. A model is only av
 | `MENTORSHIP_ERROR_THRESHOLD` | `medium` | Minimum severity to trigger: `low` \| `medium` \| `high`. |
 | `MENTORSHIP_KEYWORDS_ENABLED` | `false` | React to `@ultrathink` / `@analyze` / `@rethink`. |
 | `MENTORSHIP_CUSTOM_KEYWORDS` | — | Comma-separated extra trigger keywords. |
-| `MENTORSHIP_HELPER_MODEL` | `deepseek-v4-flash` | Model used for mentorship, overriding `HELPER_MODEL_ID`. |
+| `MENTORSHIP_HELPER_MODEL` | `deepseek-flash` | Model used for mentorship, overriding `HELPER_MODEL_ID`. |
 | `MENTORSHIP_TURN_BASED_ENABLED` | `false` | Periodic review every N turns. |
 | `MENTORSHIP_TURN_INTERVAL` | `10` | Turns between periodic reviews (1–50). |
 | `MENTORSHIP_INTERLEAVED_THINKING` | `false` | Inject thinking for non-reasoning models. |

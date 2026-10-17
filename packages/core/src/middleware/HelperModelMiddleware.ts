@@ -763,10 +763,10 @@ export class HelperModelMiddleware {
    * Select helper model based on main model provider
    */
   selectHelperModel(provider: string): string {
-    // Last-resort default = deepseek-v4-flash. SINGLE-PROVIDER congruence: the
+    // Last-resort default = deepseek-flash (V4.1-Flash-1017). SINGLE-PROVIDER congruence: the
     // shipped harness (and the TB2 bench container) runs one provider key; a
     // Gemma/CF default would force the user to enter a 2nd API key before the
-    // helper works. deepseek-v4-flash is cheap, large-context, and reuses the
+    // helper works. deepseek-flash is cheap, large-context, and reuses the
     // main DeepSeek key for the text-only helper role (compaction/mentorship).
     return HELPER_MODEL_REGISTRY[provider.toLowerCase()] || 'deepseek-flash';
   }

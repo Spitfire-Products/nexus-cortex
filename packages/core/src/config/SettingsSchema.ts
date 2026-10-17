@@ -115,7 +115,8 @@ export interface EnvironmentVariables {
   CORTEX_MENTOR_THINKING_TIMEOUT_MS?: string; // integer ms, optional (thinking-on mentor surface timeout; overrides the per-effort table)
   CORTEX_LIFT_PLAN_REASONING?: string; // 'on' | 'none' — per-surface, wins over CORTEX_MENTOR_REASONING
   CORTEX_LIFT_PLAN_DOCTRINE?: string; // 'v1' | 'v2' — planner doctrine
-  CORTEX_INTERACTIVE_PROFILE?: string; // 'off' | 'bench-lite' — R219 lever profile for interactive (TTY) sessions; fills unset levers only
+  CORTEX_PROFILE?: string; // 'off' | 'standard' (shipped default, every session) | 'bench-tb4' (reproduce the TB4 cells) | 'bench-lite' (legacy, TTY only) — fills unset levers only
+  CORTEX_INTERACTIVE_PROFILE?: string; // LEGACY alias of CORTEX_PROFILE (R219: 'off' | 'bench-lite')
   CORTEX_FEATURES?: string; // 'on' | 'off' — R262 feature payload layer master switch (default on; inert without a payload)
   CORTEX_FEATURES_FILE?: string; // path to a GrowthBook-format feature payload (R262; wins over CORTEX_FEATURES_JSON)
   CORTEX_FEATURES_JSON?: string; // inline GrowthBook-format feature payload (R262)
@@ -520,6 +521,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_MENTOR_THINKING_TIMEOUT_MS: '',
   CORTEX_LIFT_PLAN_REASONING: '',
   CORTEX_LIFT_PLAN_DOCTRINE: '',
+  CORTEX_PROFILE: '',
   CORTEX_INTERACTIVE_PROFILE: '',
   CORTEX_FEATURES: '',
   CORTEX_FEATURES_FILE: '',
@@ -1087,8 +1089,16 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     default: ''
   },
   {
+    key: 'CORTEX_PROFILE',
+    displayName: 'Lever profile',
+    description: 'off | standard (shipped default: the proven failure-path + steering levers, interactive and headless, filled only where you set nothing) | bench-tb4 (the exact Terminal-Bench 4.0 cell bundle, for reproducing published results with the Harbor executor; mentor on V4 Pro, effort high, grader-oriented rules) | bench-lite (legacy R219 TTY-only set). Explicit env always wins.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
     key: 'CORTEX_INTERACTIVE_PROFILE',
-    displayName: 'Interactive lever profile',
+    displayName: 'Interactive lever profile (legacy alias of CORTEX_PROFILE)',
     description: 'R219: off (default) | bench-lite. In an interactive (TTY) session only, turns on the headless levers that are safe for a human-driven session (loop tool block, empty-turn continue, reasoning-wall drop + summary with no effort backoff, full steering inputs, orient v2) — only those you have not set yourself. Headless/bench sessions are never affected. Applied at launch (restart to change).',
     type: 'string',
     category: 'training',

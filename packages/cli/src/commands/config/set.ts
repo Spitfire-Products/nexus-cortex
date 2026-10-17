@@ -34,7 +34,7 @@ export async function configSet(
       if (close.length > 0) {
         console.log(theme.colors.muted(`\nDid you mean: ${close.slice(0, 5).join(', ')}?`));
       }
-      console.log(theme.colors.muted('\nUse "cortex config list" to see all keys'));
+      console.log(theme.colors.muted('\nUse "cortex config get" to see all keys'));
       process.exit(1);
       return; // guard: process.exit is mockable in tests — never fall through to a write
     }

@@ -1,31 +1,32 @@
 # Authentication & API Keys
 
-Nexus Cortex resolves a provider key from your **environment first**, then a `.env` file
-(`./.env` in the current directory, then the global `~/.cortex/.env`). You only need **one**
-provider key to start. Pick whichever fits:
+The fastest path is the first-run wizard:
 
 ```bash
-# Set a key in the global config file (created for you automatically)
-cortex config set DEEPSEEK_API_KEY sk-...     # writes ~/.cortex/.env
-
-# …or open ~/.cortex/.env and fill in a key by hand
-#   (run `cortex config init` to create it now — keys-only; every supported key listed, blank)
-
-# …or export it / use your platform's secrets store — the environment wins over the file
-export DEEPSEEK_API_KEY=sk-...
+cortex setup
 ```
 
-`~/.cortex/.env` ships with every key **blank**, so a value set in your environment (or a
-secrets store like Cloudflare/Replit) always takes precedence — ideal for containers, where you
-inject secrets and write nothing to disk. If you run `cortex` with no key found anywhere, it
-creates `~/.cortex/.env`, tells you what to add, and stops (no half-started server to clean up).
+It asks which providers you intend to use, takes their keys, lets you pick the action / helper / mentor models and the web-tools
+backend, writes `~/.cortex/.env`, and verifies each model with one tiny request. Running `cortex` in a terminal with no key found
+starts the same wizard.
 
-> Running from a checkout instead of a global install? A `./.env` in the repo root works too and
-> overrides the global file. It's gitignored, so your keys are never committed.
+Without the wizard, you need **one** provider key, set any of these ways:
+
+```bash
+cortex config set DEEPSEEK_API_KEY sk-...     # writes ~/.cortex/.env
+#   …or open ~/.cortex/.env (created on first run, keys-only, every supported key listed blank) and fill one in
+export DEEPSEEK_API_KEY=sk-...                # …or inject it: the environment always wins over the files
+```
+
+**Where a key is read from, highest precedence first:** the process environment → `./.env` in the current directory → the
+package's own `.env` (source checkouts) → `~/.cortex/.env` → the shipped defaults. A `.env.local` beside any of those overrides
+everything. `~/.cortex/.env` ships with every key **blank**, so a secret injected by a container or secrets store is never
+overwritten and nothing needs to be written to disk. If you run `cortex` with no key anywhere and no terminal (a script), it
+creates `~/.cortex/.env`, prints what to add, and stops without starting a server.
 
 ## Provider API keys
 
-Set the variables for the providers you use (`cortex config list` shows every supported key):
+Set the variables for the providers you use (`cortex config get` shows every setting and where it came from; `cortex setup` lists the providers):
 
 | Variable | Provider |
 |----------|----------|

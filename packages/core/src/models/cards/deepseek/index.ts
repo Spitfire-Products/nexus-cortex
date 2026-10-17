@@ -4,8 +4,9 @@
  *
  * Active models (api.deepseek.com):
  *   - deepseek-v4-pro              — flagship; supersedes deepseek-reasoner
- *   - deepseek-v4-flash            — fast; supersedes deepseek-chat
- *   - deepseek-v4-flash-vision-exp — EXPERIMENTAL multimodal (image input,
+ *   - deepseek-flash               — CANONICAL; served by V4.1-Flash-1017 (2026-10-17)
+ *   - deepseek-v4-flash            — RETIRED alias → served by 1017 at the Flash price
+ *   - deepseek-v4-flash-vision-exp — RETIRED alias → served by 1017 (multimodal) (was: EXPERIMENTAL multimodal, image input,
  *     released 2026-08-21); flash pricing; tool-calls-with-images probe-verified
  *
  * Removed 2026-06-10: deepseek-chat and deepseek-reasoner — DeepSeek is deprecating
@@ -21,7 +22,7 @@
  */
 
 export { deepseekV4Pro } from './deepseek-v4-pro.js';
-export { deepseekFlash } from './deepseek-flash.js'; // deepseek-flash = V4.1 Flash GA (catalog collapse 2026-09-10)
+export { deepseekFlash } from './deepseek-flash.js'; // deepseek-flash = CANONICAL; served by V4.1-Flash-1017 since 2026-10-17 (catalog collapse 2026-09-10)
 export { deepseekV4Flash } from './deepseek-v4-flash.js';
 export { deepseekV41Flash } from './deepseek-v4-1-flash.js'; // BETA, expires 2026-09-10
 export { deepseekV4FlashVisionExp } from './deepseek-v4-flash-vision-exp.js';

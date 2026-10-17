@@ -733,7 +733,7 @@
       "defaultValue": "off",
       "rules": [],
       "meta": {
-        "what": "R219 HB-INTERACTIVE-PROFILE: named lever profile for INTERACTIVE (TTY) sessions only, applied at launch to levers the user did not set (source shows `profile`). bench-lite = CORTEX_LOOP_TOOL_BLOCK=true, CORTEX_EMPTY_TURN_CONTINUE=true, CORTEX_WALL_DROP=on, CORTEX_WALL_SUMMARY=on, CORTEX_REASONING_EXHAUST_BACKOFF=false, CORTEX_STEER_INPUTS=full, CORTEX_ORIENT_V2=1; the lift plan stays headless-only (CORTEX_LIFT_PLAN_INTERACTIVE). off | bench-lite",
+        "what": "LEGACY alias of CORTEX_PROFILE. R219 HB-INTERACTIVE-PROFILE: named lever profile for INTERACTIVE (TTY) sessions only, applied at launch to levers the user did not set (source shows `profile`). bench-lite = CORTEX_LOOP_TOOL_BLOCK=true, CORTEX_EMPTY_TURN_CONTINUE=true, CORTEX_WALL_DROP=on, CORTEX_WALL_SUMMARY=on, CORTEX_REASONING_EXHAUST_BACKOFF=false, CORTEX_STEER_INPUTS=full, CORTEX_ORIENT_V2=1; the lift plan stays headless-only (CORTEX_LIFT_PLAN_INTERACTIVE). off | bench-lite",
         "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
         "kind": "value"
       }
@@ -1528,6 +1528,15 @@
         "what": "After 4 identical status checks: \"stop polling, background it\"",
         "group": "Guards (the protection stack — see CONFIG_AUDIT_2026-08-31)",
         "kind": "flag-true"
+      }
+    },
+    "CORTEX_PROFILE": {
+      "defaultValue": "off",
+      "rules": [],
+      "meta": {
+        "what": "2026-10-17 lever profile (fills only levers no user layer set; source shows `profile`): standard = SHIPPED DEFAULT for interactive AND headless (bench-lite seven + outer tool-timeout floor 600000 + wall ladder 65536,16384 force-at 2 + LIFT_PLAN_SCOPE=task + mentor allowance 16000); bench-tb4 = the exact TB4.0 cell bundle for reproduction; bench-lite = legacy TTY-only set; off = byte-identical shipped defaults",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
       }
     },
     "CORTEX_PROMPT_MASS": {

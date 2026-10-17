@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawn, execFileSync } from 'child_process';
-import { ensureKillGuardDir, killGuardEnabled, killGuardSpawnEnv } from '../../utils/killGuard.js';
+import { ensureKillGuardDir, killGuardEnabled, killGuardSpawnEnv, harnessBinDir } from '../../utils/killGuard.js';
 import { ShellTool } from '../../implementations/execution/ShellTool.js';
 
 const linux = process.platform === 'linux' && fs.existsSync('/proc/self/status');
@@ -115,10 +115,25 @@ describe.skipIf(!linux)('HB-KILL-GUARD (live processes)', () => {
     expect(alive(`node -e.*${tag}-next-server`)).toEqual([]);
   });
 
+  it('harness bin dir (2026-10-17): <CORTEX_HOME>/.cortex/bin is first on the Bash PATH when it exists, even with the guard off; absent = untouched', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cortex-home-'));
+    const base = { ...process.env, CORTEX_KILL_GUARD: 'off', CORTEX_HOME: home };
+    expect(harnessBinDir(base)).toBeNull();
+    expect(killGuardSpawnEnv(base)).toBeUndefined();
+    const bin = path.join(home, '.cortex', 'bin'); fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, 'sgrep'), '#!/bin/sh\necho sgrep-shim "$@"\n'); fs.chmodSync(path.join(bin, 'sgrep'), 0o755);
+    expect(harnessBinDir(base)).toBe(bin);
+    const env = killGuardSpawnEnv(base)!;
+    expect(env.PATH!.split(path.delimiter)[0]).toBe(bin);
+    expect(env.CORTEX_SERVER_PID).toBeUndefined();
+    expect(execFileSync('sh', ['-c', 'sgrep hello'], { env, encoding: 'utf8' }).trim()).toBe('sgrep-shim hello');
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
   it('CORTEX_KILL_GUARD=off → no wrappers, spawn env untouched', () => {
     expect(killGuardEnabled({ CORTEX_KILL_GUARD: 'off' })).toBe(false);
     expect(killGuardEnabled({})).toBe(true);
     expect(ensureKillGuardDir({ ...process.env, CORTEX_KILL_GUARD: 'off' }, dir)).toBeNull();
-    expect(killGuardSpawnEnv({ ...process.env, CORTEX_KILL_GUARD: 'off' })).toBeUndefined();
+    expect(killGuardSpawnEnv({ ...process.env, CORTEX_KILL_GUARD: 'off', CORTEX_HOME: fs.mkdtempSync(path.join(os.tmpdir(), 'nohome-')) })).toBeUndefined();
   });
 });
