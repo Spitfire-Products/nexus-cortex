@@ -47,6 +47,7 @@ import { configInit } from './commands/config/init.js';
 import { updateCli } from './commands/update.js';
 import { uninstallCli } from './commands/uninstall.js';
 import { checkForUpdate } from './lifecycle/updateCheck.js';
+import { ensureTools, installTools, toolsStatus } from './lifecycle/toolsInstall.js';
 import { autoResearchEvaluate } from './commands/autoresearch/evaluate.js';
 import { autoResearchList } from './commands/autoresearch/list.js';
 import { autoResearchBench } from './commands/autoresearch/bench.js';
@@ -1187,6 +1188,31 @@ context
 const tools = program.command('tools').description('Tool management');
 
 tools
+  .command('install [names...]')
+  .description('Install the external search tools (sgrep, rg) into ~/.cortex/bin from pinned, checksummed releases')
+  .option('--force', 'Reinstall even when the pinned version is already present')
+  .action(async (names: string[], options) => {
+    const results = await installTools(names, { force: options.force });
+    const globalOpts = program.opts();
+    if (globalOpts.json) { console.log(JSON.stringify(results, null, 2)); return; }
+    for (const r of results) {
+      const line = r.status === 'installed' ? `[OK] ${r.tool} ${r.version} installed` : r.status === 'up-to-date' ? `[OK] ${r.tool} ${r.version} already installed` : r.status === 'unsupported' ? `[SKIP] ${r.tool}: no build for ${process.platform}-${process.arch}` : `[FAIL] ${r.tool}: ${r.error}`;
+      console.log(line);
+    }
+    if (results.some((r) => r.status === 'failed')) process.exitCode = 1;
+  });
+
+tools
+  .command('status')
+  .description('Show the external search tools pinned by this release and what is installed in ~/.cortex/bin')
+  .action(async () => {
+    const rows = toolsStatus();
+    const globalOpts = program.opts();
+    if (globalOpts.json) { console.log(JSON.stringify(rows, null, 2)); return; }
+    for (const r of rows) console.log(`${r.tool.padEnd(6)} pinned ${r.pinned.padEnd(8)} installed ${(r.installed ?? '-').padEnd(8)} ${r.supported ? '' : '(no build for this platform) '}${r.path}`);
+  });
+
+tools
   .command('list')
   .description('List all available tools')
   .option('--grouped', 'Group tools by category')
@@ -1286,6 +1312,8 @@ program.hook('preAction', async (_thisCommand, actionCommand) => {
   const name = actionCommand.name();
   if (name === 'update' || name === 'uninstall') return;
   await checkForUpdate();
+  // External tools (sgrep, ripgrep) for the Bash tool's PATH — pinned releases, sha256-checked, TTL-gated, CORTEX_TOOLS_AUTO_INSTALL=off disables.
+  await ensureTools();
 });
 
 // Error handling

@@ -859,11 +859,15 @@ class NexusCortex(BaseInstalledAgent):
         # fails loudly on the absent CORTEX_FEATURES_HASH instead of a silent control.
         _feat_name = (os.environ.get("CORTEX_FEATURES_FILE") or "").strip()
         _feat_name = _feat_name if _feat_name and "/" not in _feat_name and all(c.isalnum() or c in "._-" for c in _feat_name) else ""
-        # 2026-10-17 SEARCH TOOLING: a vendored Linux `sgrep` served from the box package cache (bin/sgrep, seeded from the arm store) lands
-        # in /usr/local/bin so the model can call it from Bash; the orient scaffold advertises it when present. Fail-soft: no file = no change.
+        # 2026-10-17 SEARCH TOOLING (10-18: release-store sourced): `sgrep` served from the box package cache (the bootstrap downloads the
+        # pinned github.com/Spitfire-Products/cortex-tools release, sha256-checked) lands in /usr/local/bin so the model can call it from
+        # Bash; the orient scaffold advertises it when present. The model cache rides along into /root/.cache so the first search never
+        # downloads 32 MB inside the task. Fail-soft: no file = no change.
         _sgrep_cmd = ('for h in $PKG_HOSTS; do [ -n "$h" ] || continue; '
                       'if curl -fsS -m 60 "http://$h:$PKG_PORT/bin/sgrep" -o /usr/local/bin/sgrep 2>/dev/null && [ -s /usr/local/bin/sgrep ]; then '
-                      'chmod a+rx /usr/local/bin/sgrep; echo "sgrep from box cache ($h)" | tee -a /logs/agent/nexus-cortex.txt; break; else rm -f /usr/local/bin/sgrep; fi; done; ')
+                      'chmod a+rx /usr/local/bin/sgrep; echo "sgrep from box cache ($h)" | tee -a /logs/agent/nexus-cortex.txt; '
+                      'mkdir -p /root/.cache && curl -fsS -m 120 "http://$h:$PKG_PORT/sgrep-model-cache.tgz" -o /tmp/sgrep-cache.tgz 2>/dev/null && tar xzf /tmp/sgrep-cache.tgz -C /root/.cache 2>/dev/null && chmod -R a+rX /root/.cache/huggingface 2>/dev/null && echo "sgrep model cache from box cache ($h)" | tee -a /logs/agent/nexus-cortex.txt; rm -f /tmp/sgrep-cache.tgz; '
+                      'break; else rm -f /usr/local/bin/sgrep; fi; done; ')
         _feat_cmd = ((f'FEAT="{_feat_name}"; mkdir -p /usr/local/share; FOK=0; for h in $PKG_HOSTS; do [ -n "$h" ] || continue; '
                       'if curl -fsS -m 60 "http://$h:$PKG_PORT/features/$FEAT" -o /usr/local/share/cortex-features.json 2>/dev/null && [ -s /usr/local/share/cortex-features.json ]; then '
                       'chmod a+r /usr/local/share/cortex-features.json; FOK=1; echo "features payload from box cache ($h): $FEAT" | tee -a /logs/agent/nexus-cortex.txt; break; fi; done; '
@@ -964,6 +968,9 @@ class NexusCortex(BaseInstalledAgent):
         env["CORTEX_STATE_DIR"] = "/tmp/.cortex-state"
         # R239 / P4: the library chain banks its per-attempt artifacts where harbor collects them (same names the adapter chain used)
         env.setdefault("CORTEX_SECOND_ATTEMPT_OUT_DIR", "/logs/agent")
+        # 2026-10-18: the public CLI auto-installs sgrep/rg from GitHub releases on startup; bench containers get the same binaries from the
+        # box package cache (sgrep) and apt (ripgrep) — no per-task GitHub download, no behaviour difference in what is on PATH.
+        env.setdefault("CORTEX_TOOLS_AUTO_INSTALL", "off")
         env["CORTEX_BASH_PIPEFAIL"] = "true"
         env["CORTEX_TASK_INTEGRITY"] = "true"
         env["CORTEX_POLL_GUARD"] = "true"
@@ -1099,6 +1106,7 @@ class NexusCortex(BaseInstalledAgent):
             "CORTEX_SECOND_ATTEMPT_RESERVE_MS", "CORTEX_SECOND_ATTEMPT_FLOOR_MS", "CORTEX_SECOND_ATTEMPT_OUT_DIR",
             "CORTEX_SECOND_ATTEMPT_SELECT", "CORTEX_SECOND_ATTEMPT_UNTIL_BUDGET",  # R246/R247 (4.124.69)
             "CORTEX_SECOND_ATTEMPT_INFORMED",  # R254 informed retry (4.124.74, dark)
+            "CORTEX_TOOLS_AUTO_INSTALL",  # 2026-10-18 external tools (sgrep/rg) auto-install; the bench pins it off below (box cache provides them)
             "TB2_ATTEMPTS", "TB2_ATTEMPTS_MODELS", "TB2_ATTEMPTS_PROVIDERS", "TB2_ATTEMPTS_KEY_POLICY", "TB2_ATTEMPTS_SELECT", "TB2_ATTEMPTS_MIN_S", "TB2_ATTEMPTS_RESERVE_S",  # serial best-of-N (2026-09-29)
             # 2026-09-13 (4.108.10-.19 levers): outer tool floor, derived sub-agent limits, terminal/sub-agent runtime seams, tmux self-install/capture levers, dark handoff-QA
             "CORTEX_OUTER_TOOL_TIMEOUT_MS", "CORTEX_API_NETWORK_RETRY_MS", "CORTEX_BUDGET_VISIBILITY", "CORTEX_BUDGET_CONTINUE_MIN_REMAINING", "CORTEX_BUDGET_FLOOR_S", "CORTEX_BUDGET_FLOOR_MODE", "CORTEX_BUDGET_CONTINUE_MAX_NUDGES", "CORTEX_REASONING_EXHAUST_BACKOFF", "CORTEX_REASONING_EXHAUST_BACKOFF_TURNS", "CORTEX_BASH_OOM_PRIORITY", "CORTEX_MENTOR_CONSULT_BUDGET_TOKENS", "CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED", "CORTEX_JUDGE_SEMANTIC", "CORTEX_JUDGE_PROGRESS_MIN_CALLS", "CORTEX_JUDGE_ESCALATE_REASONING", "CORTEX_SUBAGENT_TIMEOUT_MS", "CORTEX_SUBAGENT_TIMEOUT_MAX_MS", "CORTEX_TERMINAL_BACKEND", "CORTEX_SUBAGENT_RUNTIME",

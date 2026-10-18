@@ -783,6 +783,7 @@ export function mergeWithDefaults(env: EnvironmentVariables): Required<Environme
     // Runtime
     CORTEX_MODE: env.CORTEX_MODE || D.CORTEX_MODE,
     CORTEX_UPDATE_POLICY: env.CORTEX_UPDATE_POLICY || process.env.CORTEX_UPDATE_POLICY || D.CORTEX_UPDATE_POLICY,
+    CORTEX_TOOLS_AUTO_INSTALL: env.CORTEX_TOOLS_AUTO_INSTALL || process.env.CORTEX_TOOLS_AUTO_INSTALL || D.CORTEX_TOOLS_AUTO_INSTALL,
     YOLO: env.YOLO || process.env.YOLO || D.YOLO,
     AUTO_RESUME: env.AUTO_RESUME || process.env.AUTO_RESUME || D.AUTO_RESUME,
     PORT: env.PORT || process.env.PORT || D.PORT,

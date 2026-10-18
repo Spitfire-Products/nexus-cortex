@@ -425,6 +425,9 @@ export interface EnvironmentVariables {
   /** Self-update behaviour when a newer release exists */
   CORTEX_UPDATE_POLICY?: string; // 'auto' | 'off' | 'warn' | 'error' | 'force'
 
+  /** External search tools (sgrep, ripgrep) auto-install into ~/.cortex/bin on startup */
+  CORTEX_TOOLS_AUTO_INSTALL?: string; // 'auto' | 'off'
+
   /** Auto-approve ALL tool executions (bypasses permissions) */
   YOLO?: string; // 'true' | 'false'
 
@@ -710,6 +713,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   // Runtime
   CORTEX_MODE: 'persistent',
   CORTEX_UPDATE_POLICY: 'auto',
+  CORTEX_TOOLS_AUTO_INSTALL: 'auto',
   YOLO: 'false',
   AUTO_RESUME: 'false',
   PORT: '4000',
@@ -2256,6 +2260,15 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     type: 'choice',
     category: 'runtime',
     choices: ['auto', 'off', 'warn', 'error', 'force'],
+    default: 'auto'
+  },
+  {
+    key: 'CORTEX_TOOLS_AUTO_INSTALL',
+    displayName: 'External tools auto-install',
+    description: 'auto: on startup, install the pinned external search tools (sgrep, ripgrep) into ~/.cortex/bin when missing or outdated (sha256-checked releases, at most once a day, never blocks on a network failure); off: never download (`cortex tools install` still works).',
+    type: 'choice',
+    category: 'runtime',
+    choices: ['auto', 'off'],
     default: 'auto'
   },
   {
