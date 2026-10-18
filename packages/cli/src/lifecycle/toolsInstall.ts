@@ -3,8 +3,10 @@
  * `<CORTEX_HOME|~>/.cortex/bin` — the directory the Bash tool prepends to its PATH (executors/utils/killGuard.ts harnessBinDir) and
  * the orient scaffold advertises ("-- search: prefer rg … | sgrep …"). Nothing ships INSIDE the npm package: each tool is a pinned
  * release asset downloaded at first run (or `cortex tools install`), verified against a pinned sha256, extracted with the host's
- * `tar`. Sources: sgrep from the in-house release store github.com/Spitfire-Products/cortex-tools (public; Linux builds of
- * context-dot-dev/sgrep, which ships only a macOS binary; the macOS asset is upstream's own), ripgrep from BurntSushi/ripgrep releases.
+ * `tar`. Sources: sgrep from the in-house release store github.com/Spitfire-Products/cortex-tools (public; Linux AND macOS arm64
+ * builds of context-dot-dev/sgrep at one pinned commit — upstream's own macOS tarball is cut from the v0.3.0 tag and lacks the flags
+ * the orient line relies on), ripgrep from BurntSushi/ripgrep releases. An asset is identified by its sha256, not its version string:
+ * a changed pin re-installs even when the version is unchanged.
  *
  * Policy (canonical setting CORTEX_TOOLS_AUTO_INSTALL): auto (default — install missing/outdated tools on startup, TTL-gated, best-effort,
  * never blocks the CLI on a network failure) | off (never download; `cortex tools install` still works explicitly). Bench containers run
@@ -27,7 +29,6 @@ export interface InstallResult { tool: string; status: 'installed' | 'up-to-date
 export interface StatusRow { tool: string; pinned: string; installed: string | null; path: string; supported: boolean }
 
 const CT = 'https://github.com/Spitfire-Products/cortex-tools/releases/download/sgrep-0.3.0';
-const SG_UP = 'https://github.com/context-dot-dev/sgrep/releases/download/v0.3.0';
 const RG = 'https://github.com/BurntSushi/ripgrep/releases/download/15.2.0';
 const rg = (triple: string, ext = 'tar.gz') => `${RG}/ripgrep-15.2.0-${triple}.${ext}`;
 
@@ -38,7 +39,9 @@ export const TOOLS_MANIFEST: ToolManifest = {
     assets: {
       // static musl build runs on every x86_64 Linux (glibc and Alpine alike)
       'linux-x64': { url: `${CT}/sgrep-0.3.0-x86_64-linux-musl`, sha256: '07c4d2f90bdd600811070c1d7b9a77e9c1ffeccaff51e7a60d98d943e05215e8', kind: 'bin' },
-      'darwin-arm64': { url: `${SG_UP}/sgrep-macos-arm64.tar.gz`, sha256: 'e387fca129c56824dd2292b4d6375fbddf1e73caac066ec5ef4f083ef27b2d8c', kind: 'tar', member: 'sgrep' },
+      // built by cortex-tools' macOS job from the SAME pinned commit: upstream's own macOS tarball is the v0.3.0 TAG, which predates
+      // --explain/--stdin/--rg-json (both report 0.3.0 — the sha pin below is what tells them apart)
+      'darwin-arm64': { url: `${CT}/sgrep-0.3.0-aarch64-darwin`, sha256: '4605e996e88d8455244dfc767ab0f58494a0dcf0a403902aec36927cc16bc975', kind: 'bin' },
     },
   },
   rg: {
@@ -63,7 +66,7 @@ const statePath = () => join(toolsBinDir(), '.tools.json');
 const checkPath = () => join(getGlobalConfigDir(), '.tools-check');
 const exeName = (tool: string) => (process.platform === 'win32' ? `${tool}.exe` : tool);
 
-type State = Record<string, { version: string; installedAt: string; platform: string }>;
+type State = Record<string, { version: string; sha256?: string; installedAt: string; platform: string }>;
 function readState(): State { try { return JSON.parse(readFileSync(statePath(), 'utf8')); } catch { return {}; } }
 function writeState(s: State): void { try { mkdirSync(toolsBinDir(), { recursive: true }); writeFileSync(statePath(), JSON.stringify(s, null, 2)); } catch { /* best-effort */ } }
 
@@ -116,7 +119,7 @@ async function installOne(tool: string, spec: ToolSpec, opts: { force?: boolean;
   if (!asset) return { tool, status: 'unsupported', version: spec.version };
   const bin = toolsBinDir(); const target = join(bin, exeName(tool));
   const state = readState();
-  if (!opts.force && state[tool]?.version === spec.version && existsSync(target)) return { tool, status: 'up-to-date', version: spec.version };
+  if (!opts.force && state[tool]?.version === spec.version && state[tool]?.sha256 === asset.sha256 && existsSync(target)) return { tool, status: 'up-to-date', version: spec.version };
   const work = mkdtempSync(join(tmpdir(), `cortex-tool-${tool}-`));
   try {
     const archive = join(work, 'asset');
@@ -127,7 +130,7 @@ async function installOne(tool: string, spec: ToolSpec, opts: { force?: boolean;
     mkdirSync(bin, { recursive: true });
     const tmpTarget = `${target}.tmp-${process.pid}`;
     copyFileSync(file, tmpTarget); chmodSync(tmpTarget, 0o755); renameSync(tmpTarget, target);
-    state[tool] = { version: spec.version, installedAt: new Date().toISOString(), platform: platformKey() };
+    state[tool] = { version: spec.version, sha256: asset.sha256, installedAt: new Date().toISOString(), platform: platformKey() };
     writeState(state);
     opts.log(`[tools] ${tool} ${spec.version} → ${target}`);
     return { tool, status: 'installed', version: spec.version };

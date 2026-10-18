@@ -76,9 +76,11 @@ echo "-- tooling:${TI:- (no python/node on PATH)} | have:${HAVE:- none} | missin
 # installed; sgrep (semantic + lexical hybrid over code passages) when the harness bin dir or the box cache put it on PATH. One line, only
 # when something is there — absent = no output (byte-identical).
 SRCH=""
-command -v rg >/dev/null 2>&1 && SRCH="$SRCH rg (ripgrep: rg -n PATTERN DIR; rg -l; rg --type py)"
-command -v sgrep >/dev/null 2>&1 && SRCH="$SRCH | sgrep (semantic: sgrep \"what you mean in plain words\" DIR; or rg --json PATTERN | sgrep --stdin to re-rank)"
-[ -n "$SRCH" ] && echo "-- search: prefer${SRCH} over find|grep chains; read the hit before asserting."
+# 2026-10-18 (sgrep-vs-ripgrep evaluation, research/sgrep-bench): terse identifier-like queries out-rank prose; -n costs nothing (embedding
+# dominates) so -n 5 is the floor; rank 1 is right ~40% / top-5 ~80%, and the --explain fused-score GAP says which case you are in.
+command -v rg >/dev/null 2>&1 && SRCH="$SRCH rg for an exact token: a name, a string literal or a regex you already have (rg -n PATTERN DIR; rg -l; rg --type py)"
+command -v sgrep >/dev/null 2>&1 && SRCH="$SRCH${SRCH:+;} sgrep is SEMANTIC search: use it whenever your query is a meaning - what the code does, a behavior, an intent, a question in plain words - rather than an exact token; write 2-5 identifier-like terms for that meaning: sgrep -n 5 --json --explain \"terms\" DIR (one directory per call; several roots: rg --json PATTERN ROOTS | sgrep --stdin \"terms\" PARENT, where PARENT contains every root), then rg the symbols from its top hits; a large fused-score gap means trust rank 1, a flat spread means read ranks 2-5"
+[ -n "$SRCH" ] && echo "-- search:${SRCH}; prefer these over find|grep chains; read the hit before asserting."
 # orient v2: the baseline the judge's workspace delta is computed against — know it before editing.
 if [ "$V2" != "1" ]; then :
 elif command -v git >/dev/null 2>&1 && git -C "$W" rev-parse --is-inside-work-tree >/dev/null 2>&1; then

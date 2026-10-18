@@ -1,0 +1,5 @@
+---
+"@nexus-cortex/core": patch
+---
+
+Orient scaffold search pointer v2 (`docs/prompts/orient-scaffold.sh`, shipped as `.cortex/orient`): ripgrep for an exact token (name, string literal, regex); sgrep named as SEMANTIC search for any meaning-shaped query (what the code does, a behavior, an intent), with 2-5 identifier-like terms, `-n 5 --json --explain`, one directory per call, or `rg --json PATTERN ROOTS | sgrep --stdin "terms" PARENT` to re-rank hits from several roots (the scope must contain every root), then ripgrep on the symbols from the top hits; a large fused-score gap means trust rank 1, a flat spread means read ranks 2-5. Printed only for searchers actually on PATH. Chosen by a local 4-arm A/B on the 681-file harness tree (deepseek-flash, 8 behavior-described file:line questions x2): the semantic framing was the only wording under which the model reached for sgrep on its own (4 calls, all on the hardest question, each returning the right module as rank 1) with no loss elsewhere; the conditional "when you can only describe it" wording was never acted on. Ledger: `.cortex/bench/r-sgab-orient-2026-10-18.md`.

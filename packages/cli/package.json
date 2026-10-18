@@ -29,9 +29,8 @@
     "highlight.js": "^11.9.0",
     "inquirer": "^9.2.12",
     "marked-terminal": "^6.0.0",
-    "node-fetch": "^3.3.2",
-    "undici": "^7.28.0",
-    "nexus-canon": "1.11.21"
+    "nexus-canon": "1.11.21",
+    "undici": "^7.28.0"
   },
   "devDependencies": {
     "@types/diff": "^7.0.2",
