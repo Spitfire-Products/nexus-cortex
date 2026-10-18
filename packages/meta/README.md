@@ -19,6 +19,19 @@ Full docs, the REST API, and the embeddable library packages (`@nexus-cortex/cor
 
 Apache-2.0 © Spitfire-Products.
 
+## Terminal UIs
+
+The install also carries the terminal UIs (since 4.127.0 — earlier installs needed a separate `npm install -g @nexus-cortex/tui`):
+
+| command | what it is |
+|---|---|
+| `neoncortex` | the React/Ink terminal UI |
+| `fuzzycortex`, `cortex-launch` | start the server and the UI together (the server stops when the UI exits) |
+| `cortex-cli` | the minimal Ink UI |
+| `fuzzycortex-cli` | the full interactive CLI (chat REPL + browsers) |
+
+`cortex update` keeps them in lockstep with the CLI.
+
 ## First run
 
 ```bash
