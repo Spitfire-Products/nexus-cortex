@@ -377,7 +377,17 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
   ): Promise<ToolResult> {
     const info = `[INFO] terminal backend: ${backend.describe()}`;
     const resolve = (id: string) => (backend.resolveId ? backend.resolveId(id) : id);
-    const exists = async (id: string) => (await backend.list()).includes(id);
+    // A pane this process created, or (herdr) an existing server pane adopted on first use —
+    // def-e8499ac13f: the arena driver is handed pre-split panes it never created.
+    const locate = async (id: string): Promise<string | null> => {
+      if ((await backend.list()).includes(id)) return id;
+      return backend.attach ? backend.attach(id) : null;
+    };
+    const notFound = (sid: string) =>
+      this.createErrorResult(
+        `Session '${sid}' does not exist: not a pane this process created and no herdr pane with that id or title. ` +
+        `Use action='list' to see every pane on the herdr server (ids look like w2:p1), then pass that id as sessionId.`
+      );
 
     switch (params.action) {
       case 'create': {
@@ -405,8 +415,8 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
         );
       }
       case 'send': {
-        const id = resolve(params.sessionId!);
-        if (!(await exists(id))) return this.createErrorResult(`Session '${params.sessionId}' does not exist`);
+        const id = await locate(resolve(params.sessionId!));
+        if (!id) return notFound(params.sessionId!);
         updateOutput?.(`Sending command to herdr pane ${id}...\n`);
         await backend.sendText(id, params.command!);
         await backend.sendKeys(id, ['Enter']);
@@ -419,8 +429,8 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
         );
       }
       case 'capture': {
-        const id = resolve(params.sessionId!);
-        if (!(await exists(id))) return this.createErrorResult(`Session '${params.sessionId}' does not exist`);
+        const id = await locate(resolve(params.sessionId!));
+        if (!id) return notFound(params.sessionId!);
         updateOutput?.(`Capturing output from herdr pane ${id}...\n`);
         const output = await backend.read(id, { history: params.captureHistory, lines: params.lines });
         return this.createSuccessResult(
@@ -434,26 +444,33 @@ export class TmuxSessionTool extends BaseTool<TmuxSessionParams, ToolResult> {
       }
       case 'list': {
         const panes = await backend.list();
+        let server: Array<{ id: string; title?: string }> = [];
+        try { server = backend.listServer ? await backend.listServer() : []; } catch { /* server listing is best-effort */ }
+        const others = server.filter((p) => !panes.includes(p.id));
+        const othersText = others.length
+          ? `\n\nOther panes on this herdr server (${others.length}) — pass the id as sessionId to drive one:\n` +
+            others.map((p) => `- ${p.id}${p.title ? ` (${p.title})` : ''}`).join('\n')
+          : '';
         if (panes.length === 0) {
           return this.createSuccessResult(
-            `${info}\nNo herdr panes created by this process.\n\nUse action="create" to create one.`,
-            { sessions: [], backend: 'herdr' }
+            `${info}\nNo herdr panes created by this process.${othersText}\n\nUse action="create" to create one.`,
+            { sessions: [], serverPanes: others, backend: 'herdr' }
           );
         }
         return this.createSuccessResult(
-          `${info}\nherdr panes created by this process (${panes.length}):\n\n` +
-          panes.map((p) => `- ${p}`).join('\n'),
-          { sessions: panes.map((paneId) => ({ sessionId: paneId, paneId })), count: panes.length, backend: 'herdr' }
+          `${info}\nherdr panes managed by this process (${panes.length}):\n\n` +
+          panes.map((p) => `- ${p}`).join('\n') + othersText,
+          { sessions: panes.map((paneId) => ({ sessionId: paneId, paneId })), count: panes.length, serverPanes: others, backend: 'herdr' }
         );
       }
       case 'wait': {
-        const id = resolve(params.sessionId!);
-        if (!(await exists(id))) return this.createErrorResult(`Session '${params.sessionId}' does not exist`);
+        const id = await locate(resolve(params.sessionId!));
+        if (!id) return notFound(params.sessionId!);
         return this.handleWait(params, backend, updateOutput);
       }
       case 'kill': {
-        const id = resolve(params.sessionId!);
-        if (!(await exists(id))) return this.createErrorResult(`Session '${params.sessionId}' does not exist`);
+        const id = await locate(resolve(params.sessionId!));
+        if (!id) return notFound(params.sessionId!);
         updateOutput?.(`Closing herdr pane ${id}...\n`);
         await backend.kill(id);
         return this.createSuccessResult(

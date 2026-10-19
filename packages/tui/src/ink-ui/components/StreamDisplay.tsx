@@ -16,6 +16,8 @@ import { DiffPreview, UnifiedDiffDisplay } from './DiffPreview.js';
 import { theme } from '../semantic-colors.js';
 
 import { SimpleMarkdown } from './SimpleMarkdown.js';
+import { windowForViewport } from './streamViewport.js';
+import { streamViewportBudget } from '../renderOptions.js';
 
 /**
  * Word-wrap code line to a specific width, breaking at logical points
@@ -234,6 +236,8 @@ export interface StreamDisplayProps {
   showThinking?: boolean;
   /** Timestamp when streaming started (for elapsed timer) */
   streamStartTime?: number;
+  /** R265: rows occupied by the other dynamic-region siblings (approval dialog, sub-agent panel) — subtracted from the live-turn viewport. */
+  siblingRows?: number;
   /** Actual usage data from orchestrator response (if available) */
   turnUsage?: { inputTokens: number; outputTokens: number };
 }
@@ -447,6 +451,7 @@ export const StreamDisplay: React.FC<StreamDisplayProps> = ({
   showThinking: _showThinking = true, // Not used - interleaved thinking always shown
   streamStartTime,
   turnUsage,
+  siblingRows = 0,
 }) => {
   const { stdout } = useStdout();
   const terminalWidth = stdout?.columns || 80;
@@ -500,9 +505,19 @@ export const StreamDisplay: React.FC<StreamDisplayProps> = ({
     }
   }
 
+  // R265: while streaming, keep the live turn inside the terminal — Ink cannot erase or
+  // reposition lines that scrolled off screen, so a taller-than-terminal dynamic region
+  // jumps on every frame. The full turn is rendered into history on completion.
+  const viewport = isStreaming
+    ? windowForViewport(consolidated, streamViewportBudget(stdout?.rows, process.env, siblingRows), terminalWidth - 2)
+    : { items: consolidated, hiddenLines: 0 };
+
   return (
     <Box flexDirection="column">
-      {consolidated.map((item) => {
+      {viewport.hiddenLines > 0 && (
+        <Text dimColor>{`↑ ${viewport.hiddenLines} earlier line${viewport.hiddenLines === 1 ? '' : 's'} (full text when the turn completes)`}</Text>
+      )}
+      {viewport.items.map((item) => {
         // User message
         if (item.type === 'user' && item.content) {
           return (

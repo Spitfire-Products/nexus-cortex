@@ -2998,6 +2998,7 @@ export const CortexApp: React.FC<CortexAppProps> = ({
             isStreaming={true}
             showThinking={showThinking}
             streamStartTime={streamStartTime}
+            siblingRows={(pendingApproval ? 18 : 0) + (subAgents.size > 0 ? subAgents.size + 4 : 0)}
           />
         )}
 

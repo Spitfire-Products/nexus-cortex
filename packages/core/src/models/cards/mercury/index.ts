@@ -12,3 +12,7 @@ export { mercury2 } from './mercury-2.js';
 // 260K ctx, 65536 out, tools + json_mode + structured_outputs; reasons internally (billed
 // reasoning_tokens, not surfaced → needs generous max_tokens). See mercury-2-5.ts header.
 export { mercury25 } from './mercury-2-5.js';
+// mercury-3 — probe-verified 2026-10-19 (/v1/models + tool-call round-trip + streaming), registered.
+// 1M ctx, 131072 out, tools + json_mode + structured_outputs; reasons internally (billed, not
+// surfaced; reasoning_effort accepted but not sent). See mercury-3.ts header.
+export { mercury3 } from './mercury-3.js';

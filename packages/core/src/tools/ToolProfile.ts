@@ -154,6 +154,32 @@ export function resolveToolProfile(env: NodeJS.ProcessEnv = process.env): ToolPr
  * session's own profile applies (injection at the first tool_result boundary
  * — the dsh anchored-standard point). 'full' or unknown → no anchor.
  */
+/**
+ * R266 (2026-10-19): the first-turn anchor / narrow frame is the MAIN action model's turn-0 door. A
+ * delegated sub-agent process (CORTEX_AGENT_MODE=true: Task / Browse / herdr delegates) runs a ROLE
+ * prompt with its own allowlist and must never be narrowed to {Bash, Edit} — the browse delegate
+ * was left with an empty first request and could not reach its MCP tools or SearchTools.
+ */
+export function anchorAppliesToProcess(env: NodeJS.ProcessEnv = process.env): boolean {
+  if ((env.CORTEX_AGENT_MODE ?? '').trim().toLowerCase() !== 'true') return true;
+  // R267: a delegate whose agent definition declares `anchor:` opts back in (agent-mode sets this from the definition).
+  return (env.CORTEX_DELEGATE_ANCHOR ?? '').trim().toLowerCase() === 'true';
+}
+
+/** R267: valid `anchor:` values on an agent definition. */
+export const DELEGATE_ANCHOR_VALUES = ['lean', 'bash-only', 'bash-plus', 'bash-edit', 'none', 'full', 'off'] as const;
+
+/**
+ * R267: the env patch agent-mode applies for a definition-declared anchor. A profile name arms the anchor for this
+ * delegate (CORTEX_TOOL_ANCHOR + CORTEX_DELEGATE_ANCHOR=true); none/full/off pins it off; unset/invalid = no change.
+ */
+export function delegateAnchorEnv(anchor: unknown): Record<string, string> {
+  const a = typeof anchor === 'string' ? anchor.trim().toLowerCase() : '';
+  if (!a || !(DELEGATE_ANCHOR_VALUES as readonly string[]).includes(a)) return {};
+  if (a === 'none' || a === 'full' || a === 'off') return { CORTEX_TOOL_ANCHOR: 'none' };
+  return { CORTEX_TOOL_ANCHOR: a, CORTEX_DELEGATE_ANCHOR: 'true' };
+}
+
 export function resolveToolAnchor(
   env: NodeJS.ProcessEnv = process.env,
   cardAnchor?: string | null,
@@ -291,4 +317,11 @@ export function isToolAllowedByProfile(
   if (profile === 'bash-plus') return BASH_PLUS.has(name);
   if (profile === 'bash-edit') return BASH_EDIT.has(name);
   return lookupTier(name) === 'essential';
+}
+
+/** R267: env patch for a definition-declared `mcp:` list — the per-profile form of Browse's envOverrides. */
+export function delegateMcpEnv(mcp: unknown): Record<string, string> {
+  const list = Array.isArray(mcp) ? mcp.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map((x) => x.trim()) : [];
+  if (list.length === 0) return {};
+  return { MCP_AUTO_INJECT: 'true', CORTEX_MCP_AUTOCONNECT: list.join(',') };
 }

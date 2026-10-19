@@ -78,7 +78,7 @@ import type { AgentDefinition, SubAgentResult, ISubAgentEventEmitter } from './S
 
 // Phase 1: Tool Architecture Refactor - Unified Tool Registry
 import { toolFactory } from '../tools/ToolFactory.js';
-import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveLiftPlan, resolveEndTurnResolver, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked, resolveVisionHelperModel, resolveVisionHandoffMax, resolveSliceNudge, resolveSliceBlock, resolveSliceBlockAt, resolveSliceBlockMax } from '../tools/ToolProfile.js';
+import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveLiftPlan, resolveEndTurnResolver, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked, resolveVisionHelperModel, resolveVisionHandoffMax, resolveSliceNudge, resolveSliceBlock, resolveSliceBlockAt, resolveSliceBlockMax, anchorAppliesToProcess } from '../tools/ToolProfile.js';
 import { sliceReadFile, decideSliceBlock, sliceReadStep } from './sliceBlock.js';
 import type { ChunkRead } from '../training/chunkReadProgression.js';
 import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
@@ -132,6 +132,7 @@ import { classifyTask } from '../training/TaskClassifier.js';
 import { closestToolMatches } from './toolNameMatcher.js';
 import { classifyApiError } from './apiErrorClassifier.js';
 import { pinStaticSystemPrompt } from './staticSystemPromptPin.js';
+import { applyAllowlistKeepingCore } from './toolAllowlist.js';
 import { hasVisibleAssistantText, shouldForceSynthesis } from './assistantTextPresence.js';
 import { resolveTurnContractEnforce, checkTurnFormat, buildFormatRejectMessage, resolveActionPlanFields, ACTION_PLAN_TOOLS, planFieldsMissing, stripPlanFields, buildPlanFieldsRejectMessage } from './turnContractValidator.js'; // HB-TURN-CONTRACT-ENFORCE / R172
 import { computeToolBudgetSignal, isToolProgressStalled } from './toolBudgetSignal.js';
@@ -1870,6 +1871,7 @@ export class CortexOrchestrator {
    *  deferred filter at both request-assembly sites. */
   private applyAnchorIfArmed<T extends { name: string; discoveryTier?: string }>(tools: T[]): T[] {
     if (this.anchorLifted) return tools;
+    if (!anchorAppliesToProcess(process.env)) return tools; // R266: delegates never get the narrow frame
     const anchor = resolveToolAnchor(process.env, this.cardAnchorProfile);
     if (!anchor) return tools;
     return applyToolProfile(tools, anchor);
@@ -1879,7 +1881,7 @@ export class CortexOrchestrator {
    *  armed (pre-lift calls to hidden tools are refused like any hidden
    *  tool), the session profile after. */
   private effectiveGuardProfile(): ReturnType<typeof resolveToolProfile> {
-    if (!this.anchorLifted) {
+    if (!this.anchorLifted && anchorAppliesToProcess(process.env)) {
       const anchor = resolveToolAnchor(process.env, this.cardAnchorProfile);
       if (anchor) return anchor;
     }
@@ -4184,6 +4186,7 @@ export class CortexOrchestrator {
       // is on, the re-filter block below performs the rebuild.)
       if (
         !this.anchorLifted &&
+        anchorAppliesToProcess(process.env) &&
         resolveToolAnchor(process.env, this.cardAnchorProfile) &&
         // Persist frame (backlog item 5): the anchored surface IS the session
         // surface — never lift, never deliver the deferred corpus.
@@ -6218,6 +6221,7 @@ export class CortexOrchestrator {
         // Anchor lift — streaming mirror of the sendMessage continuation path.
         if (
         !this.anchorLifted &&
+        anchorAppliesToProcess(process.env) &&
         resolveToolAnchor(process.env, this.cardAnchorProfile) &&
         // Persist frame (backlog item 5): the anchored surface IS the session
         // surface — never lift, never deliver the deferred corpus.
@@ -6980,14 +6984,6 @@ export class CortexOrchestrator {
     return toolFactory.getAllTools();
   }
 
-  /**
-   * Normalize a tool name for whitelist matching: lowercase + strip non-
-   * alphanumerics so PascalCase canonical names match the lower/snake_case
-   * names used in agent definitions (e.g. `WebSearch` ≡ `web_search`).
-   */
-  private static normalizeToolName(name: string): string {
-    return name.toLowerCase().replace(/[^a-z0-9]/g, '');
-  }
 
   /**
    * Apply `config.allowedBaseTools` to the factory/base tool list. Returns the
@@ -7015,10 +7011,7 @@ export class CortexOrchestrator {
   }
 
   private applyBaseToolAllowlist<T extends { name: string }>(tools: T[]): T[] {
-    const allow = this.config.allowedBaseTools;
-    if (!allow || allow.length === 0) return tools;
-    const allowed = new Set(allow.map((t) => CortexOrchestrator.normalizeToolName(t)));
-    return tools.filter((t) => allowed.has(CortexOrchestrator.normalizeToolName(t.name)));
+    return applyAllowlistKeepingCore(tools, this.config.allowedBaseTools); // R266: SearchTools + EndTurn always survive
   }
 
   /**
@@ -9498,10 +9491,15 @@ export class CortexOrchestrator {
     // model gets an unambiguous, server-qualified handle. Without prefixing,
     // bare names like `browse` collide with the model's PascalCase native
     // tool conventions and tools across servers can shadow each other.
+    // R266: a server named in CORTEX_MCP_AUTOCONNECT was asked for explicitly (the Browse delegate's
+    // envOverrides) — its tools are ESSENTIAL so the deferred filter cannot strip them; other MCP tools
+    // keep no tier (deferred as before).
+    const pinnedServers = new Set((process.env.CORTEX_MCP_AUTOCONNECT ?? '').split(',').map((x) => x.trim()).filter(Boolean));
     return mcpTools.map(tool => ({
       name: prefixMcpToolName(tool.serverName, tool.name),
       description: tool.description || `MCP tool from ${tool.serverName}`,
       schema: tool.inputSchema || { type: 'object', properties: {} },
+      ...(pinnedServers.has(tool.serverName) ? { discoveryTier: 'essential' as const } : {}),
       metadata: {
         source: 'mcp',
         serverName: tool.serverName,
@@ -9928,7 +9926,10 @@ export class CortexOrchestrator {
   ): Promise<SubAgentResult> {
     const { runtime, reason } = await this.resolveSubAgentRuntimeFor(input);
     if (this.config.debug) console.log(`[SubAgent] runtime ${runtime} (${reason})`);
-    if (runtime !== 'herdr') return processManager.spawnAgent(agentDef, taskPrompt, options);
+    // R266b: the delegate inherits the parent's approval mode — auto-approving parents (headless, one-shot, TUI yolo)
+    // must not leave a child blocked on an approval the operator never sees; interactive parents keep the IPC forward.
+    const permissionMode: 'auto' | 'interactive' = this.approvalMode?.autoApproveActions === true ? 'auto' : 'interactive';
+    if (runtime !== 'herdr') return processManager.spawnAgent(agentDef, taskPrompt, { ...options, permissionMode });
 
     const name = sanitizeHerdrAgentName(`${agentDef.name}-${randomBytes(2).toString('hex')}`);
     const result = await runDelegateInHerdr({

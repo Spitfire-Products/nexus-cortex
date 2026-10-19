@@ -24,6 +24,8 @@ import {
   IPCApprovalHandler,
   createOrchestrator,
 } from '@nexus-cortex/core';
+import { materializeAgentSystemPrompt } from './agentSystemPrompt.js';
+import { delegateAnchorEnv, delegateMcpEnv } from '@nexus-cortex/core';
 import type {
   OrchestratorConfig,
   CortexOrchestrator,
@@ -158,6 +160,14 @@ async function handleStart(message: IPCStartMessage | { type: 'start'; payload: 
     // or an omitted list leaves all base tools available (no restriction).
     const agentTools = payload.agentDefinition.tools;
     const allowedBaseTools = Array.isArray(agentTools) ? agentTools : undefined;
+    // R266: the agent definition's own system prompt replaces the card prompt for this delegate
+    // (file override channel; the env var also makes the middleware skip the boot-minimal preset).
+    const systemPromptFile = materializeAgentSystemPrompt(payload.agentDefinition);
+    if (systemPromptFile) process.env.CORTEX_SYSTEM_PROMPT_FILE = systemPromptFile;
+    // R267: a definition-declared `anchor:` (e.g. the shipped action-agent's bash-edit) re-arms the narrow door for this delegate.
+    Object.assign(process.env, delegateAnchorEnv((payload.agentDefinition as { anchor?: unknown }).anchor));
+    // R267: a definition-declared `mcp:` list auto-connects those servers for this delegate (explicit envOverrides still win).
+    for (const [k, v] of Object.entries(delegateMcpEnv((payload.agentDefinition as { mcp?: unknown }).mcp))) if (!process.env[k]) process.env[k] = v;
     const config: OrchestratorConfig = {
       defaultModelId: payload.modelId,
       projectPath: payload.projectPath,
@@ -167,6 +177,7 @@ async function handleStart(message: IPCStartMessage | { type: 'start'; payload: 
       debug: payload.debug ?? false,
       enableMcp,
       allowedBaseTools,
+      ...(systemPromptFile ? { systemPromptFile } : {}),
     };
 
     // Stage-3 memory ownership rule (P-A 2026-07): sub-agent processes are

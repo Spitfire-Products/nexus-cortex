@@ -4,7 +4,7 @@ import { promises as fs } from 'fs';
 import { join, resolve as resolvePath } from 'path';
 import { homedir } from 'os';
 import { glob } from 'glob';
-import { resolveProjectAgentsDir } from '@nexus-cortex/core';
+import { resolveProjectAgentsDir, mergeExtraTools } from '@nexus-cortex/core';
 import { checkAutoResearchPlanGate } from '../../utils/autoResearchPlanGate.js';
 
 /**
@@ -14,6 +14,7 @@ export interface TaskParams {
   description: string;  // Short description of the task
   prompt: string;       // The task for the agent to perform
   subagent_type: string; // Type of specialized agent to use
+  tools?: string[];     // R267: extra tools granted to this delegate on top of its definition's allowlist
   model?: string;       // Optional model override
   temperature?: number; // Optional per-subagent sampling temperature (clamped to the model's range)
   strategy?: string;    // Optional arm persona/strategy label — recorded with benchmarks for (model×temp×strategy) effectiveness scoring
@@ -94,6 +95,11 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
           type: 'number' as const,
           description: "Optional wall-clock limit for the sub-agent in ms. Default derives from the parent's remaining turn deadline (90% minus a 30 s margin) or 5 minutes when no deadline is set; a value below 60000 is raised to 60000."
         },
+        tools: {
+          type: 'array' as const,
+          items: { type: 'string' as const },
+          description: 'Optional extra tools to grant this delegate for this call, added to its definition\'s allowlist (e.g. ["Write", "WebSearch"]). Ignored when the definition allows all tools. Use it to widen a narrow profile such as action-agent (Bash+Edit entry) when the sub-task needs more.'
+        },
         runtime: {
           type: 'string' as const,
           enum: ['process', 'herdr'],
@@ -137,6 +143,13 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
     }
 
     const trimmedType = params.subagent_type.trim();
+
+    // R267: extra tools must be a short list of tool names
+    if (params.tools !== undefined) {
+      if (!Array.isArray(params.tools) || params.tools.length > 32 || params.tools.some((t) => typeof t !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(t))) {
+        return 'tools must be an array of up to 32 tool names (letters, digits, _ or -)';
+      }
+    }
 
     if (!/^[a-zA-Z0-9-]+$/.test(trimmedType)) {
       return 'subagent_type must contain only letters, numbers, and hyphens';
@@ -235,10 +248,12 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
             name: agent.name,
             description: agent.description,
             systemPrompt: agent.systemPrompt,
-            tools: agent.tools || [],
+            tools: mergeExtraTools(agent.tools || [], params.tools), // R267: per-call grants on top of the allowlist
             model: effectiveModel,
             location: agent.location,
-            filePath: agent.filePath
+            filePath: agent.filePath,
+            ...((agent as { anchor?: string }).anchor ? { anchor: (agent as { anchor?: string }).anchor } : {}), // R267
+            ...(Array.isArray((agent as { mcp?: string[] }).mcp) ? { mcp: (agent as { mcp?: string[] }).mcp } : {}), // R267
           },
           // Task prompt for SubAgentManager
           taskPrompt: params.prompt,
@@ -307,7 +322,11 @@ export class TaskToolExecutor extends BaseTool<TaskParams, ToolResult> {
 
     throw new Error(
       `Agent '${agentType}' not found in .cortex/agents/ or ~/.cortex/agents/\n\n` +
-      `Available agents: ${available.join(', ')}`
+      `Available agents: ${available.join(', ')}\n\n` +
+      // R267: observed twice on 2026-10-19 — a headless main model answered this error by WRITING its own
+      // <name>.md into the nearest .cortex/agents (which then shadowed the shipped profile by name).
+      `Do NOT create or edit an agent profile to work around this: pick one of the available agents ` +
+      `(general-purpose fits any task), or do the work yourself. Profiles are authored by the operator.`
     );
   }
 

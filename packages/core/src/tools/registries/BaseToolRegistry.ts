@@ -2139,6 +2139,7 @@ Actions:
 - kill: Terminate a session
 - snapshot: Capture visual screenshot (if supported)
 - wait: Block until the screen shows match (literal) or regex, capped by timeoutMs — side-effect free; prefer it over sleep polling (the echoed command line counts, so wait for text the command itself does not contain). Returns "[wait] <elapsed>s, matched|timeout" + the screen.
+herdr backend (HERDR_ENV=1): sessions are herdr panes. sessionId may be a pane this tool created OR any existing pane on the herdr server, by id (e.g. w2:p1) or title — action='list' shows every server pane; the first send/capture/wait/kill adopts it.
 
 Graceful degradation: Returns error if tmux is not installed.`,
     schema: {
@@ -2151,7 +2152,7 @@ Graceful degradation: Returns error if tmux is not installed.`,
         },
         sessionId: {
           type: 'string',
-          description: 'Session identifier (required for send, capture, kill, snapshot actions)'
+          description: 'Session identifier (required for send, capture, kill, snapshot actions). On the herdr backend also an existing herdr pane id (w2:p1) or pane title.'
         },
         command: {
           type: 'string',

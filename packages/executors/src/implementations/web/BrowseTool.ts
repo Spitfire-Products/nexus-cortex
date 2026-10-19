@@ -47,7 +47,9 @@ export function buildBrowseSubagentDispatch(
       // built-in nexus-browser registry entry with NO MCP_CONFIG.md required, so
       // `browse` works zero-config / one-shot on a clean install. Scoped to this
       // subagent — the parent's lean tool surface is unaffected.
-      envOverrides: { MCP_AUTO_INJECT: 'true', CORTEX_MCP_AUTOCONNECT: 'nexus-browser' },
+      // R266: the delegate is a role agent — never the parent's turn-0 narrow frame (explicit, in case
+      // the orchestrator-level CORTEX_AGENT_MODE guard is ever bypassed).
+      envOverrides: { MCP_AUTO_INJECT: 'true', CORTEX_MCP_AUTOCONNECT: 'nexus-browser', CORTEX_TOOL_ANCHOR: 'none' },
       description: llmDisplay.slice(0, 200),
       ...(startTime !== undefined ? { executionTime: Date.now() - startTime } : {}),
     },
@@ -97,7 +99,9 @@ fill_form, extract_table, screenshot, etc.).
 ## Output discipline
 
 Return ONE concise text reply to the parent containing exactly the information requested. Do not
-narrate the steps you took. Do not include screenshots unless they are the requested output. If the
+narrate the steps you took. When you call EndTurn, each citation must be an EXACT substring of a tool
+output you saw this turn (copy the text verbatim, including quotes and braces) — paraphrased citations are
+rejected and cost you a re-browse. Do not include screenshots unless they are the requested output. If the
 task asked for structured data, return it as a small JSON object or markdown table — not prose
 describing the data.
 

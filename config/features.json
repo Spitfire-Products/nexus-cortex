@@ -1945,7 +1945,7 @@
       }
     },
     "CORTEX_TOOL_RESULT_PRUNE_HARD_AGE": {
-      "defaultValue": 10,
+      "defaultValue": 12,
       "rules": [],
       "meta": {
         "what": "R258: turn age at which an aged tool result is fully elided (younger aged results are middle-trimmed)",
@@ -1959,6 +1959,33 @@
       "meta": {
         "what": "R258: newest N turns whose tool results are never pruned",
         "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_TUI_INCREMENTAL_RENDER": {
+      "defaultValue": "true",
+      "rules": [],
+      "meta": {
+        "what": "TUI (Ink) redraw strategy: default on = rewrite only changed lines per frame; false = erase-and-rewrite the whole dynamic region every frame (R265 streaming flicker)",
+        "group": "Session & approvals",
+        "kind": "value"
+      }
+    },
+    "CORTEX_TUI_MAX_FPS": {
+      "defaultValue": 20,
+      "rules": [],
+      "meta": {
+        "what": "Ink render throttle for the TUIs in frames per second (0 = unthrottled)",
+        "group": "Session & approvals",
+        "kind": "value"
+      }
+    },
+    "CORTEX_TUI_STREAM_VIEWPORT_RESERVE": {
+      "defaultValue": 12,
+      "rules": [],
+      "meta": {
+        "what": "Lines reserved below the live streaming turn; the turn is capped to (rows − reserve) tail lines so the dynamic region never exceeds the screen (R265; 0 = no cap)",
+        "group": "Session & approvals",
         "kind": "value"
       }
     },

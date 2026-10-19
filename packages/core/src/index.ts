@@ -149,3 +149,5 @@ export type { GitHistoryStoreConfig } from './adapters/node/index.js';
 
 export { TUI_KEYMAP, keymapFooterHint, keymapHelpRows, keymapKey, type TuiSurface, type KeyBinding } from './config/tuiKeymap.js';
 export { onboardingLines, shouldShowOnboarding, markOnboardingShown } from './config/tuiOnboarding.js';
+export { applyAllowlistKeepingCore, mergeExtraTools, ALLOWLIST_CORE_TOOLS } from './orchestrator/toolAllowlist.js';
+export { anchorAppliesToProcess, delegateAnchorEnv, delegateMcpEnv, DELEGATE_ANCHOR_VALUES } from './tools/ToolProfile.js';

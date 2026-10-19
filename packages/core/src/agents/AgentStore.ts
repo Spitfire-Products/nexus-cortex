@@ -58,6 +58,10 @@ interface AgentFrontmatter {
   tools: string[] | 'all';
   model: string;
   permissions?: AgentPermissions;
+  /** R267: turn-0 tool anchor for this delegate (bash-edit | bash-only | bash-plus | lean | none). Unset = no anchor (delegates are role agents). */
+  anchor?: string;
+  /** R267: MCP servers this delegate needs auto-connected + injected (e.g. nexus-browser) — the per-profile form of Browse's envOverrides. */
+  mcp?: string[];
 }
 
 /**
@@ -233,6 +237,8 @@ export class AgentStore extends EventEmitter {
       systemPrompt,
       tools: frontmatter.tools,
       model: frontmatter.model,
+      ...(typeof frontmatter.anchor === 'string' && frontmatter.anchor.trim() ? { anchor: frontmatter.anchor.trim().toLowerCase() } : {}),
+      ...(Array.isArray(frontmatter.mcp) && frontmatter.mcp.length ? { mcp: frontmatter.mcp } : {}),
       location,
       filePath,
       permissions,
@@ -429,6 +435,8 @@ export class AgentStore extends EventEmitter {
       if (key === 'name') result.name = value;
       else if (key === 'description') result.description = value;
       else if (key === 'model') result.model = value;
+      else if (key === 'anchor') result.anchor = value; // R267
+      else if (key === 'mcp') result.mcp = value.split(',').map((v) => v.trim()).filter(Boolean); // R267 (comma list)
     }
 
     // Finalize any pending arrays/blocks

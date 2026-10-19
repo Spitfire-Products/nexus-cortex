@@ -13,6 +13,20 @@ This directory contains Task Agent profiles. The orchestrator spawns agents via 
 
 ---
 
+## Agent profile fields (frontmatter) — R266/R267, 2026-10-19
+
+| field | meaning |
+|---|---|
+| `name`, `description` | identity; `description` is what the parent reads when choosing a `subagent_type` |
+| `tools` | the delegate's allowlist (`all` = the deferred surface the parent has). SearchTools and EndTurn always survive it. The parent may widen it per call with `Task.tools: [...]` (ignored for `all`). |
+| `model` | `inherit`, an alias, or a full model id |
+| `anchor` | `bash-edit` \| `bash-only` \| `bash-plus` \| `lean` \| `none`. Unset = no turn-0 anchor: a delegate is a role agent and starts with its allowlist. Set it to give the delegate the parent's narrow door (see `action-agent.md`). |
+| `mcp` | comma list of MCP servers to auto-connect for this delegate (e.g. `nexus-browser`); their tools are injected and never stripped by deferred loading. Note: the `Browse` tool itself is refused inside a delegate (recursion guard) — a browsing profile declares `mcp: nexus-browser` and drives `nexus-browser__*` directly, as `web-researcher` does. |
+| body (after the frontmatter) | the delegate's SYSTEM PROMPT, replacing the card prompt. Leave it EMPTY to keep the card's own prompt (the narrow frame) — that is what `action-agent` does. |
+
+Two shipped shapes: **role agents** (`web-researcher`, the inline `browse-agent`: own prompt, tailored allowlist, no anchor) and the
+**action agent** (`action-agent`: card prompt + `bash-edit` anchor + `tools: all`, widened per call with `Task.tools`).
+
 ## Mode 1: Solo Agent
 
 A single Task tool call spawns one agent. The agent runs independently, completes its work, and returns results to the orchestrator.

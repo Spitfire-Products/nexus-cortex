@@ -96,6 +96,16 @@ export interface AgentDefinition {
   /** Model preference - 'inherit', alias, or full model ID */
   model: string;
 
+  /**
+   * R267: turn-0 tool anchor for this delegate — the main model's narrow door (bash-edit | bash-only | bash-plus | lean)
+   * or 'none'. Unset = no anchor: a delegate is a role agent and starts with its full allowlist (R266). The shipped
+   * `action-agent` sets bash-edit so a scoped coding sub-task enters through the same narrow frame as the parent.
+   */
+  anchor?: string;
+
+  /** R267: MCP servers to auto-connect + inject for this delegate (their tools are pinned essential; see CORTEX_MCP_AUTOCONNECT). */
+  mcp?: string[];
+
   /** Where the agent was loaded from ('builtin' = shipped with the install) */
   location: 'project' | 'personal' | 'builtin';
 
@@ -481,6 +491,12 @@ export interface SubAgentEvents {
  * Options for spawning a sub-agent
  */
 export interface SpawnAgentOptions {
+  /**
+   * R266b (2026-10-19): the child's approval mode. 'auto' = the parent is auto-approving (headless / one-shot /
+   * TUI yolo) so the delegate runs auto-approved too instead of forwarding every tool call to the parent's
+   * approval UI; 'interactive' (default) = the IPC approval handler forwards requests to the parent.
+   */
+  permissionMode?: 'auto' | 'interactive';
   /** Timeout in milliseconds (default: 300000 = 5 minutes) */
   timeoutMs?: number;
 

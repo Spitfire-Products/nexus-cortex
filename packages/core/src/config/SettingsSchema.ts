@@ -191,6 +191,9 @@ export interface EnvironmentVariables {
   CORTEX_HERDR_REPORTING?: string; // 'false' disables herdr lifecycle reporting inside a herdr pane (R145; default on when HERDR_ENV=1)
   CORTEX_HERDR_AGENT_NAME?: string; // agent label reported to herdr (R145; default cortex)
   CORTEX_TERMINAL_BACKEND?: string; // auto | herdr | tmux | detached — persistent-session backend under Bash/TmuxSession/CreateArtifact (R146; auto = herdr > tmux > detached)
+  CORTEX_TUI_INCREMENTAL_RENDER?: string; // 'false' = Ink erase-and-rewrite of the whole dynamic region every frame (pre-4.129 behaviour); default on = Ink incrementalRendering (only changed lines rewritten) — R265
+  CORTEX_TUI_MAX_FPS?: string; // Ink render throttle for the neoncortex/cortex-cli TUIs (frames per second; default 20; 0 = unthrottled) — R265
+  CORTEX_TUI_STREAM_VIEWPORT_RESERVE?: string; // lines reserved for input/status/indicator; the live streaming turn is capped to (rows − reserve) tail lines so the dynamic region never exceeds the terminal (default 10; 0 = no cap) — R265
   CORTEX_TMUX_AUTO_INSTALL?: string; // 'false' disables the R138 tmux self-install on the first persistent request (default on: apt-get/apk/dnf/yum/brew, then CORTEX_TMUX_STATIC_URL, then R134 degrade)
   CORTEX_TMUX_STATIC_URL?: string; // URL of a prebuilt tmux binary dropped into ~/.local/bin/tmux by the R138 self-install when package managers fail (unset = skipped)
   CORTEX_TMUX_HISTORY_LIMIT?: string; // scrollback lines per harness-created tmux pane (R141; default 50000)
@@ -623,6 +626,9 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_HERDR_REPORTING: '',
   CORTEX_HERDR_AGENT_NAME: '',
   CORTEX_TERMINAL_BACKEND: '',
+  CORTEX_TUI_INCREMENTAL_RENDER: '',
+  CORTEX_TUI_MAX_FPS: '',
+  CORTEX_TUI_STREAM_VIEWPORT_RESERVE: '',
   CORTEX_TMUX_AUTO_INSTALL: '',
   CORTEX_TMUX_STATIC_URL: '',
   CORTEX_TMUX_HISTORY_LIMIT: '',
@@ -1467,6 +1473,30 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     key: 'CORTEX_HERDR_AGENT_NAME',
     displayName: 'herdr agent label',
     description: 'Agent label passed to herdr pane report-agent --agent; sanitized to [a-z][a-z0-9_-]{0,31}. Default cortex (R145).',
+    type: 'string',
+    category: 'runtime',
+    default: ''
+  },
+  {
+    key: 'CORTEX_TUI_INCREMENTAL_RENDER',
+    displayName: 'TUI incremental rendering',
+    description: 'neoncortex / cortex-cli (Ink) redraw strategy. Default on: Ink incrementalRendering rewrites only the lines that changed between frames. false = the pre-4.129 erase-and-rewrite of the whole dynamic region on every frame (the source of the streaming flicker, R265).',
+    type: 'string',
+    category: 'runtime',
+    default: ''
+  },
+  {
+    key: 'CORTEX_TUI_MAX_FPS',
+    displayName: 'TUI max frames per second',
+    description: 'Ink render throttle for the TUIs. Default 20 (Ink default is 30); 0 = unthrottled. Lower values calm a fast-streaming screen at the cost of latency (R265).',
+    type: 'string',
+    category: 'runtime',
+    default: ''
+  },
+  {
+    key: 'CORTEX_TUI_STREAM_VIEWPORT_RESERVE',
+    displayName: 'TUI streaming viewport reserve',
+    description: 'While a turn streams, the live text is capped to (terminal rows − reserve) tail lines so the dynamic Ink region never grows past the screen — past the screen Ink cannot erase/reposition and the view jumps (R265). The full turn is rendered into history on completion. Default 12 (plus the height of an open approval dialog or sub-agent panel); 0 = no cap.',
     type: 'string',
     category: 'runtime',
     default: ''

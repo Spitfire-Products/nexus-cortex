@@ -1505,7 +1505,7 @@ Fix: a single `resolveCortexStateDir(projectPath)` in core — probe `<projectPa
 the server as `nobody` in a root-owned cwd (docker probe on the VM: `docker run --rm --entrypoint sh <risk-scorer image> -c 'id; touch /app/x'`).
 
 ## HB-MENTOR-BUDGET — thinking-ON mentor calls return EMPTY output because reasoning shares `max_tokens` (2026-09-10, cell-m pilot)
-**STATUS: SHIPPED 4.106.0 (commit bd6438612e, tag v4.106.0, 2026-09-10 22:05Z).** Built as specified below: allowance table +
+**STATUS: SHIPPED 4.106.0 (commit f8aa5244df, tag v4.106.0, 2026-09-10 22:05Z).** Built as specified below: allowance table +
 `CORTEX_MENTOR_REASONING_ALLOWANCE`, finish_reason/reasoning_tokens read, one thinking-off retry on blank, call meta banked on every
 mentor event (`finishReason/contentChars/reasoningTokens/maxTokensSent/truncated/retriedThinkingOff/retryMaxTokensSent`), blank
 resolver verdict → ABSTAIN (`blank:true, meets:false`; event `abstained+blank+failOpen`) — operator decision. Tests: adapter 12,
@@ -1779,13 +1779,13 @@ recorded, task text preserved; then a real TB4 8-h task on 4.108.x with the comp
 ## DELTA 2026-10-01 — R201–R207 (detail in the Rxx ledger memory `omniclaude-v4-harness-deficiencies`)
 | Rxx | item | state | field evidence / next |
 |---|---|---|---|
-| R201 | R153c provider-aware exhaustion ladder (DeepSeek high→low; medium was a no-op) | ON 4.124.34 (93ec051f1f) | backoff itself buys nothing post-wall + busts cache → c23 arm w runs BACKOFF=false |
+| R201 | R153c provider-aware exhaustion ladder (DeepSeek high→low; medium was a no-op) | ON 4.124.34 (f8e5dbfd2a) | backoff itself buys nothing post-wall + busts cache → c23 arm w runs BACKOFF=false |
 | R202 | HB-EFFORT-RAMP (`low:2-8`) + HB-COMPUTE-NUDGE | dark 4.124.34/.36 | c22 arm C +0.0 vs arm B +8.5 over history; recommend drop the ramp; verdict at c22 adjudication |
-| R203 | HB-KILL-GUARD (pkill/killall/pgrep wrappers protect shell + harness) | ON 4.124.37 (f1a765668e) | c21ba r3 self-SIGTERM; other adapter deaths: signal tracing on bench VMs |
-| R204 | WORKSPACE_CLEAN sub-agent store leak | fixed 4.124.37 (4bbc2f7c73) | — |
-| R205 | HB-WALL-DROP (dark) + HB-OUTPUT-CAP (dark; 48000 REJECTED) | 4.124.38 (bcb5b8cfc7) | c23 arm w; streaming wall path untested |
-| R206 | HB-WALL-SUMMARY (helper CONCLUDED/STUCK ON/NEXT in the wall nudge) | dark 4.124.38 (0e2a5fafd3) | c23 arm w |
-| R207 | HB-SUBAGENT-LEDGER (sub-agent spend in session usage) | built be1659cac0, UNRELEASED | next release after a full build incl. cli |
+| R203 | HB-KILL-GUARD (pkill/killall/pgrep wrappers protect shell + harness) | ON 4.124.37 (9caee7daff) | c21ba r3 self-SIGTERM; other adapter deaths: signal tracing on bench VMs |
+| R204 | WORKSPACE_CLEAN sub-agent store leak | fixed 4.124.37 (89e1aab0f9) | — |
+| R205 | HB-WALL-DROP (dark) + HB-OUTPUT-CAP (dark; 48000 REJECTED) | 4.124.38 (c5f4f0c5c6) | c23 arm w; streaming wall path untested |
+| R206 | HB-WALL-SUMMARY (helper CONCLUDED/STUCK ON/NEXT in the wall nudge) | dark 4.124.38 (3089b6b5e4) | c23 arm w |
+| R207 | HB-SUBAGENT-LEDGER (sub-agent spend in session usage) | built 56f93268b9, UNRELEASED | next release after a full build incl. cli |
 
 ## HB-CACHE-TTL — keep the prompt cache alive across long tool waits on providers with SHORT cache expiry (filed 2026-10-01, operator)
 Problem: some providers expire the prompt cache after minutes of inactivity (Anthropic: 5-minute default TTL on `cache_control`

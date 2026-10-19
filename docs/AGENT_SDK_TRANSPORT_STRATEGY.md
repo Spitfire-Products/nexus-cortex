@@ -190,7 +190,7 @@ authorization is.
 
 ---
 
-## 8. P0 IMPLEMENTED 2026-08-15 (commits: harness c3eb180a70, worker 30cb0e2cc9)
+## 8. P0 IMPLEMENTED 2026-08-15 (commits: harness 9b188ca150, worker c4eb2df09c)
 All three P0 fixes shipped + tested red-green (subscription-gate 12/12, modelKeyAvailability
 8/8, ai-proxy bearer-gate 6/6, gate3 regression 20/20; typecheck clean):
 - FIX 1: `sk-ant-oat01` prefix gate in AnthropicCredentialService (both OAuth sources) +

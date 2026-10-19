@@ -10,6 +10,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { tuiRenderOptions } from './ink-ui/renderOptions.js';
 import { render, Box, Text, Static, useApp, useInput } from 'ink';
 import { onboardingLines, shouldShowOnboarding, markOnboardingShown } from '@nexus-cortex/core';
 import { OrchestratorClient } from '@nexus-cortex/cli/dist/orchestrator/OrchestratorClient.js';
@@ -443,4 +444,4 @@ if (shouldShowOnboarding()) {
 }
 
 // Render the app
-render(<CortexApp />);
+render(<CortexApp />, tuiRenderOptions()); // R265

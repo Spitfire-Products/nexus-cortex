@@ -154,4 +154,54 @@ describe('R146: TmuxSession on the herdr backend', () => {
     expect(miss.llmContent as string).toMatch(/^\[wait\] \d+(\.\d)?s, timeout\n/);
     expect(miss.metadata?.matched).toBe(false);
   });
+
+  it('def-e8499ac13f: an existing server pane (id or title) is adopted on first use; list shows server panes; unknown ids get the hint', async () => {
+    const calls: string[][] = [];
+    const exec: BackendExecFn = async (_bin, args) => {
+      calls.push(args);
+      if (args[1] === 'list') return ok(JSON.stringify({ result: { panes: [
+        { pane_id: 'w1:p1', cwd: '/root' }, { pane_id: 'w2:p1', cwd: '/root/arena', title: 'root' }, { pane_id: 'w2:p2', title: 'claude' },
+      ] } }));
+      if (args[1] === 'read') return ok('$ echo DRIVER_OK_42\nDRIVER_OK_42\n$ ');
+      if (args[1] === 'close') return ok('{"result":{"type":"ok"}}');
+      return ok();
+    };
+    state.backend = new HerdrTerminalBackend({ bin: '/fake/herdr', parentPaneId: 'w1:p1', exec });
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tmuxtool-herdr-attach-'));
+    dirs.push(dir);
+    const tool = new TmuxSessionTool({ workingDirectory: dir });
+    const sig = new AbortController().signal;
+
+    // list before any create: the server's panes are offered as drivable targets
+    const list0 = await tool.execute({ action: 'list' }, sig);
+    expect(list0.success).toBe(true);
+    expect(list0.llmContent as string).toContain('Other panes on this herdr server (3)');
+    expect(list0.llmContent as string).toContain('- w2:p2 (claude)');
+
+    // send to a pane this process never created, by id
+    const sent = await tool.execute({ action: 'send', sessionId: 'w2:p1', command: 'echo DRIVER_OK_42' }, sig);
+    expect(sent.success).toBe(true);
+    expect(sent.metadata?.paneId).toBe('w2:p1');
+    expect(calls.slice(-2)).toEqual([
+      ['pane', 'send-text', 'w2:p1', 'echo DRIVER_OK_42'],
+      ['pane', 'send-keys', 'w2:p1', 'Enter'],
+    ]);
+    const cap = await tool.execute({ action: 'capture', sessionId: 'w2:p1' }, sig);
+    expect(cap.success).toBe(true);
+    expect(cap.llmContent as string).toContain('DRIVER_OK_42');
+
+    // by title → resolved to its id; afterwards it is managed (list) and killable
+    const byTitle = await tool.execute({ action: 'send', sessionId: 'claude', command: '/help' }, sig);
+    expect(byTitle.success).toBe(true);
+    expect(byTitle.metadata?.paneId).toBe('w2:p2');
+    const list1 = await tool.execute({ action: 'list' }, sig);
+    expect(list1.metadata?.sessions).toEqual([{ sessionId: 'w2:p1', paneId: 'w2:p1' }, { sessionId: 'w2:p2', paneId: 'w2:p2' }]);
+    expect((list1.metadata?.serverPanes as any[]).map((p) => p.id)).toEqual(['w1:p1']);
+
+    // unknown → the hint names action='list' and the id shape
+    const missing = await tool.execute({ action: 'capture', sessionId: 'w9:p9' }, sig);
+    expect(missing.success).toBe(false);
+    expect(missing.error).toContain("'w9:p9' does not exist");
+    expect(missing.error).toContain("action='list'");
+  });
 });

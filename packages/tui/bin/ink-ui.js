@@ -90,6 +90,7 @@ bootstrapEnv(PKG_ROOT);
 const React = (await import('react')).default;
 const { render } = await import('ink');
 const { CortexApp } = await import('../dist/ink-ui/CortexApp.js');
+const { tuiRenderOptions } = await import('../dist/ink-ui/renderOptions.js');
 
 // L-05 first-run onboarding: one-time orientation block, printed above the
 // Ink root (content + key hints are core-owned — TUI_KEYMAP truth table).
@@ -110,7 +111,9 @@ const { waitUntilExit } = render(
     projectPath,
     autoApprove,
     initialPrompt: initialPrompt || undefined,
-  })
+  }),
+  // R265: changed-lines-only redraw + a 20 fps throttle (levers CORTEX_TUI_INCREMENTAL_RENDER / CORTEX_TUI_MAX_FPS)
+  tuiRenderOptions()
 );
 
 // Wait for exit

@@ -216,9 +216,10 @@ export class ModularModelRegistry implements ModelRegistry {
       cloudflareModels.cfDeepseekR1Distill32b,
 
       // Mercury (Inception Labs) — diffusion LLM, OpenAI-compatible.
-      // Direct API serves mercury-2 (2026-06-07) + mercury-2.5 (probe-verified 2026-09-08).
+      // Direct API serves mercury-2 (2026-06-07), mercury-2.5 (probe-verified 2026-09-08), mercury-3 (probe-verified 2026-10-19).
       mercuryModels.mercury2,
       mercuryModels.mercury25,
+      mercuryModels.mercury3, // probe-verified 2026-10-19 — the flagship; 1M ctx / 131K out
 
       // Local / self-hosted inference for the harness or helper model.
       // Point LOCAL_MODEL_ENDPOINT at an OpenAI-compatible server; select via

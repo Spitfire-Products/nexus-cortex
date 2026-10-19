@@ -329,6 +329,7 @@ export class SubAgentProcessManager implements ISubAgentManager {
             timeoutMs: options.timeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS,
             maxTurns: options.maxTurns ?? 50,
             debug: this.config.debug,
+            ...(options.permissionMode ? { permissionMode: options.permissionMode } : {}),
           },
         };
 

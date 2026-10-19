@@ -32,6 +32,8 @@ export interface IPCStartMessage {
     timeoutMs: number;
     maxTurns: number;
     debug?: boolean;
+    /** R266b: 'auto' when the parent auto-approves; the child mirrors it (agent-mode permissionMode). */
+    permissionMode?: 'auto' | 'interactive';
   };
 }
 

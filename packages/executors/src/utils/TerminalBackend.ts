@@ -93,6 +93,14 @@ export interface TerminalBackend {
   describe(): string;
   /** Optional: map a createSession label to its session id (herdr). */
   resolveId?(idOrLabel: string): string;
+  /**
+   * Optional (herdr): adopt a pane this process did NOT create — an existing pane id (`w2:p1`)
+   * or pane title on the server — so send/read/wait/kill work on it. Returns the pane id or
+   * null when no such pane exists. Arena/driver use: panes pre-split by the image (def-e8499ac13f).
+   */
+  attach?(idOrLabel: string): Promise<string | null>;
+  /** Optional (herdr): every pane on the server (id + title), managed or not. */
+  listServer?(): Promise<Array<{ id: string; title?: string }>>;
 }
 
 export interface BackendExecResult {
@@ -402,6 +410,37 @@ export class HerdrTerminalBackend implements TerminalBackend {
 
   async list(): Promise<string[]> {
     return Array.from(this.panes);
+  }
+
+  /** Every pane the herdr server reports (`pane list`), with its title when the server exposes one. */
+  async listServer(): Promise<Array<{ id: string; title?: string }>> {
+    const env = parseEnvelope(await this.call(['pane', 'list'], EXEC_GRACE_MS), 'pane list');
+    if (env.error) throw new Error(`herdr pane list failed: ${env.error.message ?? env.error.code}`);
+    const panes: any[] = Array.isArray(env.result?.panes) ? env.result.panes : [];
+    return panes
+      .filter((p) => typeof p?.pane_id === 'string')
+      .map((p) => {
+        const title = [p.title, p.name, p.label].find((t) => typeof t === 'string' && t.trim());
+        return title ? { id: p.pane_id as string, title: String(title) } : { id: p.pane_id as string };
+      });
+  }
+
+  /**
+   * Adopt a pane this backend did not create (def-e8499ac13f, arena spike 2026-10-19): the
+   * driver is handed panes the image pre-split, and before this every verb refused them with
+   * "does not exist" while the model fell back to Bash + the herdr CLI. Matches a pane id or a
+   * title; on success the pane is managed like a created one (list/kill include it).
+   */
+  async attach(idOrLabel: string): Promise<string | null> {
+    const known = this.resolveId(idOrLabel);
+    if (this.panes.has(known)) return known;
+    let server: Array<{ id: string; title?: string }>;
+    try { server = await this.listServer(); } catch { return null; }
+    const hit = server.find((p) => p.id === known) ?? server.find((p) => p.title === idOrLabel);
+    if (!hit) return null;
+    this.panes.add(hit.id);
+    if (hit.title && hit.title !== hit.id) this.aliases.set(hit.title, hit.id);
+    return hit.id;
   }
 }
 
