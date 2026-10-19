@@ -65,7 +65,7 @@ const WEB_TOOLS = new Set([
 ]);
 const WEB_MCP_PREFIX = 'nexus-browser__';
 /** Credentials that make a real search backend usable (Gemini grounding, XAI/OpenAI hosted search). */
-export const WEB_SEARCH_CREDENTIAL_ENVS = ['GOOGLE_API_KEY', 'GEMINI_API_KEY', 'XAI_API_KEY', 'OPENAI_API_KEY'] as const;
+export const WEB_SEARCH_CREDENTIAL_ENVS = ['GOOGLE_API_KEY', 'GEMINI_API_KEY', 'XAI_API_KEY', 'OPENAI_API_KEY', 'DEEPSEEK_API_KEY'] as const; // DEEPSEEK: Search/Fetch API backend (2026-10-18)
 export type WebToolsMode = 'auto' | 'true' | 'false';
 export function isWebTool(name: string): boolean {
   return WEB_TOOLS.has(name) || name.startsWith(WEB_MCP_PREFIX);

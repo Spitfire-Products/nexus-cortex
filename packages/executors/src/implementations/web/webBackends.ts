@@ -18,7 +18,7 @@
 
 import { convert as htmlToText } from 'html-to-text';
 
-export type WebProvider = 'anthropic' | 'xai' | 'openai' | 'google' | 'fallback';
+export type WebProvider = 'anthropic' | 'xai' | 'openai' | 'google' | 'deepseek' | 'fallback';
 
 export interface BackendResult {
   /** Combined text body */
@@ -36,6 +36,7 @@ export function resolveProvider(modelId: string | undefined): WebProvider {
   if (id.startsWith('claude-') || id.startsWith('claude_')) return 'anthropic';
   if (id.startsWith('grok-') || id.startsWith('grok_')) return 'xai';
   if (id.startsWith('gemini-') || id.startsWith('gemma-')) return 'google';
+  if (id.startsWith('deepseek')) return 'deepseek';
   if (
     id.startsWith('gpt-') ||
     id.startsWith('o1-') || id === 'o1' || id === 'o1-pro' ||
@@ -58,6 +59,8 @@ function getApiKey(provider: WebProvider): string | null {
       return process.env.OPENAI_API_KEY ?? null;
     case 'google':
       return process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY ?? null;
+    case 'deepseek':
+      return process.env.DEEPSEEK_API_KEY ?? null;
     default:
       return null;
   }
@@ -223,6 +226,81 @@ export async function xaiFetch(prompt: string, modelId: string): Promise<Backend
     32000,
   );
   return { text, sources, backend: 'xai-web_search' };
+}
+
+// ── DeepSeek backend (Search / Fetch API, 2026-10-18) ─────────────────────────
+// api-docs.deepseek.com/guides/search: POST /v1/tools/search {query ≤128 chars, count 1–50, need_content} → {results[]: rerank_score,
+// title, url, snippet, summary, content, site_name, date, authority}; POST /v1/tools/fetch {url} → {title, content (Markdown)}.
+// Billed per SUCCESSFUL request ($0.75 / 1,000; free through the DeepSeek harness until 2026-11-01), 5 QPS per account. No model in the
+// loop: the backend returns the engine's own summaries / the page's Markdown and the calling model reads them. This is what makes a
+// single-key DeepSeek install a real web-tools provider (it had only the DuckDuckGo HTML scrape before).
+const DEEPSEEK_TOOLS_BASE = process.env.DEEPSEEK_TOOLS_BASE_URL?.trim() || 'https://api.deepseek.com/v1/tools';
+const DEEPSEEK_QUERY_MAX = 128;
+const DEEPSEEK_FETCH_MAX_CHARS = 60_000;
+// Search payload cap (2026-10-18 probe): 8 raw engine summaries ran 4–27k chars per search — context the CALLING model pays for on every
+// search, where Gemini returns a 2–8k synthesized answer. 6 results × ≤700-char summaries keeps a search under ~5k chars.
+const DEEPSEEK_SEARCH_COUNT = 6;
+const DEEPSEEK_SUMMARY_MAX_CHARS = 700;
+
+async function deepseekToolCall(path: 'search' | 'fetch', apiKey: string, body: Record<string, unknown>): Promise<any> {
+  const res = await fetch(`${DEEPSEEK_TOOLS_BASE}/${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '');
+    throw new Error(`DeepSeek ${path} ${res.status}: ${errBody.slice(0, 300)}`);
+  }
+  return res.json();
+}
+
+/** Trim a query to DeepSeek's 128-character limit on a word boundary. */
+export function deepseekQuery(query: string): string {
+  const q = query.replace(/\s+/g, ' ').trim();
+  if (q.length <= DEEPSEEK_QUERY_MAX) return q;
+  const cut = q.slice(0, DEEPSEEK_QUERY_MAX);
+  const sp = cut.lastIndexOf(' ');
+  return (sp > 40 ? cut.slice(0, sp) : cut).trim();
+}
+
+export async function deepseekSearch(query: string, count = DEEPSEEK_SEARCH_COUNT): Promise<BackendResult> {
+  const apiKey = getApiKey('deepseek');
+  if (!apiKey) throw new Error('DEEPSEEK_API_KEY not set');
+  const data = await deepseekToolCall('search', apiKey, { query: deepseekQuery(query), count: Math.max(1, Math.min(50, count)), need_content: false });
+  const results: any[] = Array.isArray(data?.results) ? data.results : [];
+  const sources = results.filter((r) => typeof r?.url === 'string').map((r) => ({ title: r.title, url: r.url }));
+  const text = results.length === 0
+    ? `No results for: ${query}`
+    : results.map((r, i) => {
+        const meta = [r.site_name, r.date ? String(r.date).slice(0, 10) : null, typeof r.authority === 'number' && r.authority >= 0 ? `authority ${r.authority}` : null].filter(Boolean).join(' · ');
+        const body = String(r.summary || r.snippet || '').replace(/^\s*#+\s*/gm, '').replace(/\s+/g, ' ').trim(); // engine summaries carry their own '#' headings
+        const clipped = body.length > DEEPSEEK_SUMMARY_MAX_CHARS ? `${body.slice(0, DEEPSEEK_SUMMARY_MAX_CHARS).replace(/\s+\S*$/, '')}…` : body;
+        return `[${i + 1}] ${r.title ?? 'Untitled'}\n${r.url}${meta ? `\n${meta}` : ''}\n${clipped}`;
+      }).join('\n\n');
+  return { text, sources, backend: 'deepseek-search' };
+}
+
+/** Fetch each URL (≤5) through DeepSeek's fetch endpoint; returns the pages' Markdown (the calling model does the reading). */
+export async function deepseekFetch(urls: string[]): Promise<BackendResult> {
+  const apiKey = getApiKey('deepseek');
+  if (!apiKey) throw new Error('DEEPSEEK_API_KEY not set');
+  if (urls.length === 0) throw new Error('No URLs supplied for DeepSeek fetch');
+  const parts: string[] = [];
+  const sources: Array<{ title?: string; url: string }> = [];
+  for (const u of urls.slice(0, 5)) {
+    try {
+      const data = await deepseekToolCall('fetch', apiKey, { url: u });
+      const title = typeof data?.title === 'string' ? data.title : '';
+      let content = typeof data?.content === 'string' ? data.content : '';
+      if (content.length > DEEPSEEK_FETCH_MAX_CHARS) content = `${content.slice(0, DEEPSEEK_FETCH_MAX_CHARS)}\n\n[truncated at ${DEEPSEEK_FETCH_MAX_CHARS} chars]`;
+      parts.push(`URL: ${u}${title ? `\nTitle: ${title}` : ''}\n\n${content}`);
+      sources.push({ title: title || undefined, url: u });
+    } catch (err: any) {
+      parts.push(`URL: ${u}\n[fetch failed: ${err.message}]`);
+    }
+  }
+  return { text: parts.join('\n\n---\n\n'), sources, backend: 'deepseek-fetch' };
 }
 
 // ── OpenAI backend (Responses API) ────────────────────────────────────────────
@@ -429,11 +507,132 @@ export async function directFetch(url: string): Promise<BackendResult> {
 export function getWebToolsModel(): string {
   const explicit = process.env.WEB_TOOLS_MODEL?.trim();
   if (explicit) return explicit;
+  // Auto-pick order (operator decision 2026-10-18, ledger .cortex/bench/r-web-backend-order-2026-10-18.md): Gemini first (Google ranking,
+  // free tier covers daily use), DeepSeek SECOND ($0.75 / 1k calls — 7-47x cheaper than the per-call tools below, fresh/niche recall,
+  // weaker canonical-docs ranking), then the $5-10 / 1k server tools. WEB_TOOLS_MODEL pins any backend explicitly.
   if (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY) return 'gemini-2.5-flash';
+  if (process.env.DEEPSEEK_API_KEY) return 'deepseek-flash';
   if (process.env.ANTHROPIC_API_KEY) return 'claude-haiku-4-5';
   if (process.env.XAI_API_KEY) return 'grok-4-fast-non-reasoning';
   if (process.env.OPENAI_API_KEY) return 'gpt-4o';
   return '';
+}
+
+// ── Multi-provider comparative search (2026-10-19) ───────────────────────────
+// WEB_SEARCH_PROVIDERS=auto (default: the single auto-picked backend) | all (every keyed backend) | csv of google,deepseek,anthropic,xai,openai.
+// The WebSearch tool also takes `providers: [...]` per call. Each keyed provider is queried in parallel; the merged answer shows every
+// provider's section plus the sources two or more providers agree on. Cost = the sum of the providers' per-search prices; latency = the slowest.
+
+export type KeyedWebProvider = Exclude<WebProvider, 'fallback'>;
+/** The model each provider's search runs on (the WEB_TOOLS_MODEL auto-pick defaults). */
+export const WEB_PROVIDER_MODELS: Record<KeyedWebProvider, string> = {
+  google: 'gemini-2.5-flash',
+  deepseek: 'deepseek-flash',
+  anthropic: 'claude-haiku-4-5',
+  xai: 'grok-4-fast-non-reasoning',
+  openai: 'gpt-4o',
+};
+const PROVIDER_ORDER: KeyedWebProvider[] = ['google', 'deepseek', 'anthropic', 'xai', 'openai'];
+const PROVIDER_ALIASES: Record<string, KeyedWebProvider> = { gemini: 'google', google: 'google', deepseek: 'deepseek', ds: 'deepseek', anthropic: 'anthropic', claude: 'anthropic', xai: 'xai', grok: 'xai', openai: 'openai', gpt: 'openai' };
+
+/** Providers that have a key in `env`, in the canonical order. */
+export function keyedProviders(env: NodeJS.ProcessEnv = process.env): KeyedWebProvider[] {
+  const has = (p: KeyedWebProvider) => {
+    switch (p) {
+      case 'google': return !!(env.GEMINI_API_KEY || env.GOOGLE_API_KEY);
+      case 'deepseek': return !!env.DEEPSEEK_API_KEY;
+      case 'anthropic': return !!env.ANTHROPIC_API_KEY;
+      case 'xai': return !!env.XAI_API_KEY;
+      case 'openai': return !!env.OPENAI_API_KEY;
+    }
+  };
+  return PROVIDER_ORDER.filter(has);
+}
+
+/** Resolve a providers spec ('auto' | 'all' | csv | array) to the keyed providers to fan out to. Fewer than 2 → the single-backend path. */
+export function resolveSearchProviders(spec: string | string[] | undefined, env: NodeJS.ProcessEnv = process.env): KeyedWebProvider[] {
+  const items = (Array.isArray(spec) ? spec : String(spec ?? '').split(',')).map((x) => x.trim().toLowerCase()).filter(Boolean);
+  if (items.length === 0 || items.includes('auto') || items.includes('off')) return [];
+  const keyed = keyedProviders(env);
+  if (items.includes('all')) return keyed;
+  const out: KeyedWebProvider[] = [];
+  for (const it of items) {
+    const p = PROVIDER_ALIASES[it];
+    if (p && keyed.includes(p) && !out.includes(p)) out.push(p);
+  }
+  return PROVIDER_ORDER.filter((p) => out.includes(p));
+}
+
+/** One provider's search through the backend functions (google is SDK-driven inside WebSearchTool, so the caller supplies it). */
+export async function searchWithProvider(
+  provider: KeyedWebProvider,
+  query: string,
+  google?: (query: string, modelId: string) => Promise<BackendResult>,
+): Promise<BackendResult> {
+  const model = WEB_PROVIDER_MODELS[provider];
+  switch (provider) {
+    case 'anthropic': return anthropicSearch(query, model);
+    case 'xai': return xaiSearch(query, model);
+    case 'openai': return openaiSearch(query, model);
+    case 'deepseek': return deepseekSearch(query);
+    case 'google':
+      if (!google) throw new Error('google search requires the Gemini SDK path');
+      return google(query, model);
+  }
+}
+
+/** Gemini grounding returns opaque vertexaisearch redirect links; follow them (HEAD, parallel, short cap) so URL agreement across providers can
+ *  be computed. A link that does not resolve in time is kept as-is. */
+export async function resolveRedirectSources(
+  sources: Array<{ title?: string; url: string }>,
+  capMs = 3000,
+): Promise<Array<{ title?: string; url: string }>> {
+  return Promise.all(sources.map(async (s) => {
+    if (!/grounding-api-redirect/.test(s.url)) return s;
+    try {
+      const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), capMs);
+      const res = await fetch(s.url, { method: 'HEAD', redirect: 'manual', signal: ctl.signal });
+      clearTimeout(t);
+      const loc = res.headers.get('location');
+      return loc && /^https?:\/\//.test(loc) ? { ...s, url: loc } : s;
+    } catch { return s; }
+  }));
+}
+
+export interface ProviderSearchOutcome { provider: KeyedWebProvider; ms: number; result?: BackendResult; error?: string }
+
+function normalizeUrl(u: string): string {
+  try {
+    const x = new URL(u);
+    // same page in its doc-site spellings: /limits/, /limits/index.md, /limits.html, /limits/index.html → /limits
+    const path = x.pathname.replace(/\/+$/, '').replace(/\/index\.(?:md|html?)$/i, '').replace(/\.(?:md|html?)$/i, '');
+    return `${x.hostname.toLowerCase().replace(/^www\./, '')}${path}`;
+  } catch { return u.trim().toLowerCase(); }
+}
+
+/** Merge per-provider outcomes into one comparative answer: a section per provider, then the sources ≥2 providers agree on, then the union. Pure. */
+export function mergeComparative(query: string, outcomes: ProviderSearchOutcome[]): BackendResult {
+  const ok = outcomes.filter((o) => o.result);
+  const sections = outcomes.map((o) => {
+    const head = `## ${o.provider} (${o.result ? `${o.result.backend}, ${o.result.sources.length} sources` : 'failed'}, ${o.ms} ms)`;
+    return o.result ? `${head}\n${o.result.text.trim()}` : `${head}\n[${o.error ?? 'no result'}]`;
+  });
+  const byUrl = new Map<string, { url: string; title?: string; providers: Set<KeyedWebProvider> }>();
+  for (const o of ok) {
+    for (const s of o.result!.sources) {
+      const k = normalizeUrl(s.url);
+      const e = byUrl.get(k) ?? { url: s.url, title: s.title, providers: new Set<KeyedWebProvider>() };
+      e.providers.add(o.provider); if (!e.title && s.title) e.title = s.title; byUrl.set(k, e);
+    }
+  }
+  const all = [...byUrl.values()];
+  const agreed = all.filter((e) => e.providers.size >= 2).sort((a, b) => b.providers.size - a.providers.size);
+  const agreedText = agreed.length
+    ? `## Sources cited by ${agreed.length === 1 ? 'more than one provider' : 'several providers'}\n` + agreed.map((e, i) => `[${i + 1}] ${e.title ?? 'Untitled'} (${e.url}) — ${[...e.providers].join(', ')}`).join('\n')
+    : '## Sources cited by more than one provider\n(none — the providers returned disjoint sources; weigh the sections above against each other)';
+  const text = `# Comparative web search: ${query}\nProviders: ${outcomes.map((o) => o.provider + (o.result ? '' : ' (failed)')).join(', ')}\n\n${sections.join('\n\n')}\n\n${agreedText}`;
+  const sources = all.map((e) => ({ title: e.title, url: e.url }));
+  return { text, sources, backend: `multi:${ok.map((o) => o.provider).join('+')}` };
 }
 
 /**
@@ -453,6 +652,8 @@ export async function runWebSearch(query: string): Promise<BackendResult> {
           return await xaiSearch(query, modelId);
         case 'openai':
           return await openaiSearch(query, modelId);
+        case 'deepseek':
+          return await deepseekSearch(query);
         case 'google':
           // Gemini googleSearch is implemented in WebSearchTool itself
           // because it uses the @google/genai SDK and citation-byte logic.
@@ -485,6 +686,8 @@ export async function runWebFetch(prompt: string, urls: string[]): Promise<Backe
           return await xaiFetch(prompt, modelId);
         case 'openai':
           return await openaiFetch(prompt, modelId);
+        case 'deepseek':
+          return await deepseekFetch(urls);
         case 'google':
           throw new Error('__USE_GEMINI_SDK__');
       }

@@ -18,6 +18,7 @@ import {
   anthropicFetch,
   xaiFetch,
   openaiFetch,
+  deepseekFetch,
   type BackendResult,
 } from './webBackends.js';
 import { browseEscalationDirective } from './escalateDirective.js';
@@ -258,6 +259,16 @@ Include up to 20 URLs and instructions directly in the 'prompt' parameter. The t
           return this.formatBackendResult(r, urls, startTime);
         } catch (err: any) {
           console.warn(`[web-tools] openai fetch failed: ${err.message}`);
+          return await this.executeFallback(params, url, signal, startTime);
+        }
+      }
+
+      if (provider === 'deepseek' && process.env.DEEPSEEK_API_KEY) {
+        try {
+          const r = await deepseekFetch(urls);
+          return this.formatBackendResult(r, urls, startTime);
+        } catch (err: any) {
+          console.warn(`[web-tools] deepseek fetch failed: ${err.message}`);
           return await this.executeFallback(params, url, signal, startTime);
         }
       }

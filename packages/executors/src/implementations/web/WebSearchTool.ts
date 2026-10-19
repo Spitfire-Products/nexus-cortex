@@ -19,6 +19,13 @@ import {
   getWebToolsModel,
   resolveProvider,
   runWebSearch,
+  resolveSearchProviders,
+  searchWithProvider,
+  mergeComparative,
+  resolveRedirectSources,
+  type BackendResult,
+  type KeyedWebProvider,
+  type ProviderSearchOutcome,
 } from './webBackends.js';
 import { buildBrowseSubagentDispatch } from './BrowseTool.js';
 
@@ -47,6 +54,11 @@ export interface WebSearchToolParams {
    * SPAs or behind-login content.
    */
   mode?: 'fast' | 'interactive';
+  /**
+   * Comparative search (2026-10-19): query several keyed providers in parallel and merge. ['all'] = every provider with a key;
+   * or a list of google|gemini, deepseek, anthropic|claude, xai|grok, openai. Overrides WEB_SEARCH_PROVIDERS for this call.
+   */
+  providers?: string[];
 }
 
 export interface WebSearchToolResult extends ToolResult {
@@ -77,6 +89,12 @@ Use this tool to find current information, facts, news, and data from the intern
             type: 'string',
             description:
               'The search query to find information on the web. Can be a question or keywords.',
+          },
+          providers: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              "Comparative mode: query several providers in parallel and get one merged answer (each provider's section + the sources they agree on). ['all'] = every provider you have a key for; or name them: google, deepseek, anthropic, xai, openai. Costs every provider's search fee; use for high-stakes or fast-moving facts.",
           },
           mode: {
             type: 'string',
@@ -150,6 +168,12 @@ Use this tool to find current information, facts, news, and data from the intern
         }
       }
 
+      // Comparative multi-provider mode (per-call `providers` wins over WEB_SEARCH_PROVIDERS).
+      const multi = resolveSearchProviders(params.providers ?? process.env.WEB_SEARCH_PROVIDERS);
+      if (multi.length >= 2) {
+        return await this.runComparativeSearch(params.query, multi, startTime);
+      }
+
       const modelId = getWebToolsModel();
       const provider = resolveProvider(modelId);
 
@@ -189,6 +213,42 @@ Use this tool to find current information, facts, news, and data from the intern
         metadata: { executionTime: Date.now() - startTime, error: errorMessage },
       };
     }
+  }
+
+  /** Fan out to every selected provider in parallel and merge (webBackends.mergeComparative). A failed provider is reported in its section. */
+  private async runComparativeSearch(
+    query: string,
+    providers: KeyedWebProvider[],
+    startTime: number,
+  ): Promise<WebSearchToolResult> {
+    const google = async (q: string, modelId: string): Promise<BackendResult> => {
+      const r = await this.runGeminiSearch(q, modelId, Date.now());
+      const text = typeof (r as any).content === 'string' ? (r as any).content : String((r as any).llmContent ?? '');
+      const raw = (r.sources ?? []).filter((s) => s.web?.uri).map((s) => ({ title: s.web?.title, url: s.web!.uri! }));
+      const sources = await resolveRedirectSources(raw); // real URLs → cross-provider agreement is computable
+      return { text, sources, backend: 'gemini-googleSearch' };
+    };
+    const outcomes: ProviderSearchOutcome[] = await Promise.all(providers.map(async (provider) => {
+      const t0 = Date.now();
+      try {
+        const result = await searchWithProvider(provider, query, google);
+        return { provider, ms: Date.now() - t0, result };
+      } catch (err: any) {
+        return { provider, ms: Date.now() - t0, error: String(err?.message ?? err).slice(0, 200) };
+      }
+    }));
+    const merged = mergeComparative(query, outcomes);
+    return {
+      ...this.createSuccessResult(merged.text),
+      sources: merged.sources.map((s) => ({ web: { title: s.title, uri: s.url } })),
+      metadata: {
+        executionTime: Date.now() - startTime,
+        query,
+        sourceCount: merged.sources.length,
+        backend: merged.backend,
+        providers: outcomes.map((o) => ({ provider: o.provider, ms: o.ms, ok: !!o.result, sources: o.result?.sources.length ?? 0 })),
+      },
+    };
   }
 
   private formatBackendOutput(

@@ -340,6 +340,8 @@ export interface EnvironmentVariables {
 
   /** Web surface mode: auto (fetch on; search/browse on iff a search key is present) | true | false */
   ENABLE_WEBTOOLS?: string; // 'auto' | 'true' | 'false'
+  /** WebSearch comparative mode: auto (one auto-picked backend) | all (every keyed provider in parallel) | csv of google,deepseek,anthropic,xai,openai */
+  WEB_SEARCH_PROVIDERS?: string;
 
   /** Vision hand-off helper card for text-only primaries (ReadImage → helper → text); 'false' disables */
   VISION_HELPER_MODEL?: string;
@@ -678,6 +680,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   ENABLE_LOCAL_CODE_EXECUTION: 'false',
   ENABLE_DEFERRED_TOOL_LOADING: 'true',
   ENABLE_WEBTOOLS: 'auto',
+  WEB_SEARCH_PROVIDERS: 'auto',
   VISION_HELPER_MODEL: 'deepseek-flash',
   TOOL_TIMEOUT_MODE: 'auto',
   VISION_HANDOFF_MAX: '8',
@@ -2048,6 +2051,14 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     default: 'auto'
   },
   {
+    key: 'WEB_SEARCH_PROVIDERS',
+    displayName: 'Web Search Providers',
+    description: "WebSearch comparative mode. auto (default): one backend, the WEB_TOOLS_MODEL auto-pick. all: every provider with a key, queried in parallel, merged into one answer with the sources they agree on. Or a comma list: google, deepseek, anthropic, xai, openai. The tool's per-call `providers` parameter overrides this. Cost = the sum of the providers' search fees.",
+    type: 'string',
+    category: 'server_side_tools',
+    default: 'auto'
+  },
+  {
     key: 'ENABLE_LOCAL_CODE_EXECUTION',
     displayName: 'Local Code Execution',
     description: 'Enable local code execution tool for non-PTC models (JS sandbox with tool-calling globals)',
@@ -2174,7 +2185,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
   {
     key: 'WEB_TOOLS_MODEL',
     displayName: 'Web Tools Model',
-    description: 'Model backing WebSearch/WebFetch. Provider auto-detected from ID. Empty = auto-pick.',
+    description: 'Model backing WebSearch/WebFetch. Provider auto-detected from ID (claude-* Anthropic, grok-* xAI, gpt-* OpenAI, gemini-* Google, deepseek-* DeepSeek Search/Fetch API). Empty = auto-pick from the keys present.',
     type: 'string',
     category: 'models',
     default: ''

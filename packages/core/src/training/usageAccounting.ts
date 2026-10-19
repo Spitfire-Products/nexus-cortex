@@ -17,6 +17,9 @@ export interface SessionUsage {
   cacheCreationTokens: number;
   uncachedInputTokens: number;
   reasoningTokens: number;
+  /** provider server-side tool calls (xAI web_search/x_search/x_thread_fetch…, OpenAI web_search) — summed over every main request;
+   *  the per-response field only shows the LAST request's count (2026-10-18: an x_thread_fetch turn reported 0) */
+  serverSideToolsUsed: number;
   /** helper + mentor calls (compaction, planner, judge, ledger, author, consults) — ESTIMATED from characters */
   helper: { calls: number; inputTokensEst: number; outputTokensEst: number; bySurface: Record<string, number> };
   /** Task sub-agents (child processes with their own orchestrator) — 2026-10-01. Their EXACT main-model usage is ALSO folded into the
@@ -26,7 +29,7 @@ export interface SessionUsage {
 }
 
 export function emptySessionUsage(): SessionUsage {
-  return { requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, uncachedInputTokens: 0, reasoningTokens: 0, helper: { calls: 0, inputTokensEst: 0, outputTokensEst: 0, bySurface: {} }, subagents: { calls: 0, requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, uncachedInputTokens: 0, reasoningTokens: 0, helperInputTokensEst: 0, helperOutputTokensEst: 0 } };
+  return { requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, uncachedInputTokens: 0, reasoningTokens: 0, serverSideToolsUsed: 0, helper: { calls: 0, inputTokensEst: 0, outputTokensEst: 0, bySurface: {} }, subagents: { calls: 0, requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, uncachedInputTokens: 0, reasoningTokens: 0, helperInputTokensEst: 0, helperOutputTokensEst: 0 } };
 }
 
 /** Fold one finished sub-agent's own session ledger into the parent's: its exact main usage into the totals AND the subagents breakdown,
@@ -61,6 +64,7 @@ export function addMainUsage(acc: SessionUsage, usage: TokenUsageMetrics | undef
     inputTokens: acc.inputTokens + inp, outputTokens: acc.outputTokens + out,
     cacheReadTokens: acc.cacheReadTokens + cr, cacheCreationTokens: acc.cacheCreationTokens + cc, uncachedInputTokens: acc.uncachedInputTokens + un,
     reasoningTokens: acc.reasoningTokens + Number((usage as { reasoningTokens?: number }).reasoningTokens ?? 0),
+    serverSideToolsUsed: (acc.serverSideToolsUsed ?? 0) + Number((usage as { serverSideToolsUsed?: number }).serverSideToolsUsed ?? 0),
   };
 }
 

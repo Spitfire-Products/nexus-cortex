@@ -314,8 +314,10 @@ export class HerdrTerminalBackend implements TerminalBackend {
     const extraRe = extra ? new RegExp(extra) : null;
     const regex = extra ? `(?:${sentinelRegex(token)})|(?:${extra})` : sentinelRegex(token);
     const deadline = Date.now() + timeoutMs;
+    let firstWait = true; // the first wait gets the caller's budget verbatim (a clock tick between the two Date.now() reads made it 6999 in CI)
     for (;;) {
-      const remaining = Math.max(1, deadline - Date.now());
+      const remaining = firstWait ? timeoutMs : Math.max(1, deadline - Date.now());
+      firstWait = false;
       const waited = await this.waitOutputRaw(id, { regex, timeoutMs: remaining });
       if (!waited.matched) {
         const output = await this.read(id);

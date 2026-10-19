@@ -63,3 +63,15 @@ describe('R239 sumSessionUsage (second-attempt chain)', () => {
     expect(sumSessionUsage({ inputTokens: 5 } as any, { inputTokens: 7 } as any).helper.calls).toBe(0);
   });
 });
+
+describe('serverSideToolsUsed (2026-10-18)', () => {
+  it('sums provider server-side tool calls across main requests (the per-response field only shows the last request)', () => {
+    let acc = emptySessionUsage();
+    expect(acc.serverSideToolsUsed).toBe(0);
+    acc = addMainUsage(acc, { inputTokens: 100, outputTokens: 10, totalTokens: 110, serverSideToolsUsed: 1 } as any);
+    acc = addMainUsage(acc, { inputTokens: 100, outputTokens: 10, totalTokens: 110, serverSideToolsUsed: 0 } as any);
+    acc = addMainUsage(acc, { inputTokens: 100, outputTokens: 10, totalTokens: 110 } as any);
+    expect(acc.serverSideToolsUsed).toBe(1);
+    expect(acc.requests).toBe(3);
+  });
+});

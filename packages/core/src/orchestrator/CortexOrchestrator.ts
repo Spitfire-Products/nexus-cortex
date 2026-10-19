@@ -4657,6 +4657,17 @@ export class CortexOrchestrator {
     const serverSideMetadata = extractServerSideMetadata(effectiveModel.provider, apiResponse.data);
     if (this.config.debug) console.log('[Orchestrator] Server-side metadata extracted:', serverSideMetadata ? 'YES' : 'NO');
 
+    // 2026-10-18: bank every provider server-side call as a decision event (engagement evidence + cost attribution). Before this the only
+    // trace of an x_thread_fetch was a text annotation in the merged message; usage.serverSideToolsUsed showed the LAST request only.
+    if (serverSideMetadata && serverSideMetadata.toolCalls.length > 0) {
+      const details = (convertedResponse.usage as { serverSideToolUsageDetails?: Record<string, number> } | undefined)?.serverSideToolUsageDetails;
+      for (const tc of serverSideMetadata.toolCalls) {
+        try {
+          this.gateDeps().recordEvent('server_side_tool', { provider: effectiveModel.provider, name: tc.name, status: tc.status, args: String(tc.arguments ?? '').slice(0, 300), ...(details ? { details } : {}) }, tc.name);
+        } catch { /* best-effort */ }
+      }
+    }
+
     if (serverSideMetadata && this.config.debug) {
       console.log('[Orchestrator] Server-side tool metadata detected:', {
         autonomousExecution: serverSideMetadata.autonomousExecution,
@@ -7857,6 +7868,13 @@ export class CortexOrchestrator {
    */
   private noteRequestUsage(usage?: TokenUsageMetrics): void {
     this.sessionUsage = addMainUsage(this.sessionUsage, usage); // R190: cumulative first — the anchor logic below skips zero usage
+    // 2026-10-18: one server_side_tool event PER REQUEST that ran provider server-side tools (count + xAI's per-family details).
+    // This hook sees every main request; the Phase 2.4 per-call events see only the turn's final response.
+    const sst = Number((usage as { serverSideToolsUsed?: number } | undefined)?.serverSideToolsUsed ?? 0);
+    if (sst > 0) {
+      const details = (usage as { serverSideToolUsageDetails?: Record<string, number> } | undefined)?.serverSideToolUsageDetails;
+      try { this.gateDeps().recordEvent('server_side_tool', { count: sst, ...(details ? { details } : {}) }, 'server_side_tools'); } catch { /* best-effort */ }
+    }
     const promptTokens = Number(usage?.inputTokens ?? 0);
     if (!(promptTokens > 0)) return;
     try {

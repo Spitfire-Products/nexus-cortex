@@ -158,6 +158,8 @@ export interface TokenUsageMetrics {
 
   /** Number of server-side tool invocations xAI billed for this request. */
   serverSideToolsUsed?: number;
+  /** xAI `server_side_tool_usage_details` (web_search_calls, x_search_calls, x_posts_fetched, …) — passed through verbatim when present */
+  serverSideToolUsageDetails?: Record<string, number>;
 
   /**
    * Internal-reasoning tokens billed as output but NOT included in the visible
@@ -1153,6 +1155,8 @@ export class GatewayTranslationLayer {
     const costTicksRaw = resp.usage?.cost_in_usd_ticks;
     const costUsdTicks = typeof costTicksRaw === 'number' ? costTicksRaw : undefined;
     const serverSideToolsRaw = resp.usage?.num_server_side_tools_used;
+    const serverSideDetailsRaw = resp.usage?.server_side_tool_usage_details;
+    const serverSideToolUsageDetails = serverSideDetailsRaw && typeof serverSideDetailsRaw === 'object' ? (serverSideDetailsRaw as Record<string, number>) : undefined;
 
     // Internal-reasoning tokens (billed as output, excluded from visible text) —
     // provider-agnostic read across the three wire conventions. On the Responses
@@ -1175,6 +1179,7 @@ export class GatewayTranslationLayer {
       ...(typeof serverSideToolsRaw === 'number'
         ? { serverSideToolsUsed: serverSideToolsRaw }
         : {}),
+      ...(serverSideToolUsageDetails ? { serverSideToolUsageDetails } : {}),
       ...(reasoningTokens !== undefined ? { reasoningTokens } : {})
     };
   }

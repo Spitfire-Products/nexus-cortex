@@ -303,3 +303,23 @@ describe('TypeScript Type Validation', () => {
     expect(definition.serverConfig?.allowed_domains).toEqual(['example.com']);
   });
 });
+
+
+describe('extractServerSideMetadata — xAI Responses (2026-10-18)', () => {
+  it('counts custom_tool_call (X tools) and web_search_call but never client function_call items', async () => {
+    const { extractServerSideMetadata } = await import('../ServerSideTools.js');
+    const md = extractServerSideMetadata('xai', {
+      output: [
+        { type: 'reasoning', id: 'r1' },
+        { type: 'function_call', name: 'bash', call_id: 'c1', arguments: '{}' },
+        { type: 'custom_tool_call', name: 'x_thread_fetch', call_id: 'c2', input: '{"post_id":"1"}', status: 'completed' },
+        { type: 'web_search_call', id: 'w1', status: 'completed' },
+        { type: 'message', role: 'assistant', content: [] },
+      ],
+      usage: { num_server_side_tools_used: 2, server_side_tool_usage_details: { x_search_calls: 1, web_search_calls: 1 } },
+    });
+    expect(md).not.toBeNull();
+    expect(md!.toolCalls.map((t) => t.name)).toEqual(['x_thread_fetch', 'web_search']);
+    expect(md!.toolCalls.every((t) => t.status === 'success')).toBe(true);
+  });
+});

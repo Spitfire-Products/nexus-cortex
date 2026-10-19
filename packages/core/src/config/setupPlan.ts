@@ -116,7 +116,8 @@ export function webChoices(keyEnvsPresent: ReadonlySet<string>): WebChoice[] {
   if (keyEnvsPresent.has('GEMINI_API_KEY') || keyEnvsPresent.has('GOOGLE_API_KEY')) out.push({ value: 'gemini-2.5-flash', label: 'Google search grounding via Gemini (gemini-2.5-flash): search + fetch with citations', needsKey: 'GEMINI_API_KEY' });
   if (keyEnvsPresent.has('ANTHROPIC_API_KEY')) out.push({ value: 'claude-haiku-4-5', label: 'Anthropic web_search server tool (claude-haiku-4-5): inline source citations', needsKey: 'ANTHROPIC_API_KEY' });
   if (keyEnvsPresent.has('XAI_API_KEY')) out.push({ value: 'grok-4-fast-non-reasoning', label: 'xAI Responses web_search (grok-4-fast-non-reasoning): URL citations', needsKey: 'XAI_API_KEY' });
-  out.push({ value: '', label: out.length ? 'Auto-pick from my keys (Gemini > Anthropic > xAI)' : 'No search key: WebFetch only (page reads via the helper model); search and browse stay off', needsKey: '' });
+  if (keyEnvsPresent.has('DEEPSEEK_API_KEY')) out.push({ value: 'deepseek-flash', label: 'DeepSeek Search/Fetch API (deepseek-flash): engine summaries + page Markdown, $0.75 per 1,000 calls', needsKey: 'DEEPSEEK_API_KEY' });
+  out.push({ value: '', label: out.length ? 'Auto-pick from my keys (Gemini > DeepSeek > Anthropic > xAI > OpenAI)' : 'No search key: WebFetch only (page reads via the helper model); search and browse stay off', needsKey: '' });
   return out;
 }
 

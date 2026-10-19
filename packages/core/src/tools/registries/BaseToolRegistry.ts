@@ -495,6 +495,11 @@ Results are text snippets from search engines. May not include full page content
           items: { type: 'string' },
           description: 'Never include results from these domains'
         },
+        providers: {
+          type: 'array',
+          items: { type: 'string' },
+          description: "Comparative mode: query several providers in parallel and get one merged answer (a section per provider + the sources they agree on). ['all'] = every provider you have a key for, or name them: google, deepseek, anthropic, xai, openai. Costs every provider's search fee — use for high-stakes or fast-moving facts."
+        },
         mode: {
           type: 'string',
           enum: ['fast', 'interactive'],

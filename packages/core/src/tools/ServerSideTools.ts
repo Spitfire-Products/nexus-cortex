@@ -363,8 +363,11 @@ export function extractServerSideMetadata(
     // Check for Responses API format (has 'output' array)
     if (response.output && Array.isArray(response.output)) {
       // XAI Responses API format
+      // Server-executed items only: web_search_call, x_search_call, code_execution_call, custom_tool_call (xAI's X tools, name-bearing).
+      // `function_call` is a CLIENT tool request (bash, read_image …) and must not be counted — before 2026-10-18 it was, which made
+      // the new server_side_tool decision events list client tools.
       const serverSideToolCalls = response.output.filter((item: any) =>
-        item.type && item.type.endsWith('_call')  // code_interpreter_call, web_search_call, etc.
+        item.type && item.type.endsWith('_call') && item.type !== 'function_call' && item.type !== 'function_call_output'
       );
 
       if (serverSideToolCalls.length > 0 || response.usage?.num_server_side_tools_used > 0) {
