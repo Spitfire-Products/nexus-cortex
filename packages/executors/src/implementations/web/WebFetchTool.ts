@@ -15,6 +15,7 @@ import { SchemaValidator } from '../../utils/SchemaValidator.js';
 import type { ExecutorConfig } from '../../base/ToolRegistry.js';
 import {
   resolveProvider,
+  getWebToolsModel,
   anthropicFetch,
   xaiFetch,
   openaiFetch,
@@ -24,9 +25,10 @@ import {
 import { browseEscalationDirective } from './escalateDirective.js';
 import { buildBrowserFetchInit } from './webFetchRequestInit.js';
 
-// Selected web tools model — read at call time so /set updates apply live.
-// Empty string means "no provider configured" → direct-fetch fallback.
-const getWebToolsModel = () => process.env.WEB_TOOLS_MODEL?.trim() || '';
+// Selected web tools model: the SAME resolver WebSearch uses (webBackends.getWebToolsModel) — WEB_TOOLS_MODEL when set, else the
+// auto-pick by keyed provider; read at call time so /set updates apply live. Before 2026-10-22 WebFetch had its own reader with NO
+// auto-pick: with WEB_TOOLS_MODEL blank and a Gemini key present (every hosted container — the platform proxy token makes the key look
+// present) it called Gemini with an EMPTY model name, failed, and pushed the model to `browse`.
 
 // Fetch configuration
 const URL_FETCH_TIMEOUT_MS = 30000; // 30s — gov/county sites are often slow
