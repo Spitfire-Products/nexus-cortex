@@ -15,6 +15,7 @@
  *
  * @module canon/canonSync
  */
+import { defaultCanonStore } from './storePath.js';
 import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush, isScopedStore, sparseAdd, withStoreLock } from './canonRepo.js';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
@@ -22,7 +23,7 @@ import * as path from 'node:path';
 import { dropArchivedDuplicates, dropEchoedSessions } from './canonArchive.js';
 
 export interface CanonSyncOptions {
-  /** Canon store working clone (default /tmp/canon-store — off-quota; auto-cloned). */
+  /** Canon store working clone (default: defaultCanonStore() in storePath.ts — CANON_STORE, an existing /tmp/canon-store, else ~/.cache/nexus-canon/store; auto-cloned). */
   store?: string;
   /** Home dir for harness roots + the mtime/size manifest (default $HOME). */
   home?: string;
@@ -214,7 +215,7 @@ export function scrubSecrets(s: string): string {
 async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncResult> {
   const HOME = o.home ?? process.env.HOME ?? os.homedir();
   const DRY = o.dryRun ?? false;
-  const STORE = o.store ?? '/tmp/canon-store';
+  const STORE = o.store ?? defaultCanonStore();
   const MANIFEST_PATH = path.join(HOME, '.canon', 'manifest.json');
   const MAX_BYTES = 50 * 1024 * 1024; // GitHub hard-rejects >100MB; margin for scrub growth
   const PART_BYTES = 25 * 1024 * 1024;
@@ -227,8 +228,8 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
     : null;
 
   if (!fs.existsSync(path.join(STORE, '.git'))) {
-    // Working clone is disposable (quota lesson 2026-07-27: keep it OFF the
-    // workspace quota — pass --store /tmp/canon-store); remote is the truth.
+    // Working clone is disposable — the remote is the truth. Where it lives: defaultCanonStore() (storePath.ts);
+    // on a quota'd workspace, point CANON_STORE / --store at a disk with room.
     const CANON_REPO = requireCanonRepo(o.repoUrl, STORE, 'canon-sync');
     console.log(`[canon-sync] no store at ${STORE} — cloning ${redactRepoUrl(CANON_REPO)}${SCOPE_RAW ? ` (scoped: ${SCOPE_RAW})` : ''}`);
     // Atomic clone (temp dir + rename): the store path never holds a .git over
@@ -548,6 +549,6 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
 
 /** Sync under the store's single-writer lock (withStoreLock). */
 export async function canonSync(o: CanonSyncOptions = {}): Promise<CanonSyncResult> {
-  return withStoreLock(o.store ?? '/tmp/canon-store', 'canon-sync', () => canonSyncUnlocked(o),
+  return withStoreLock(o.store ?? defaultCanonStore(), 'canon-sync', () => canonSyncUnlocked(o),
     () => ({ copied: 0, unchanged: 0, skipped: ['store busy — another canon writer held the lock'], chunked: 0, scrubbedHits: 0, pushed: false }));
 }

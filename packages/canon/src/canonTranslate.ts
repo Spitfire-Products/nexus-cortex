@@ -17,6 +17,7 @@
  *
  * @module canon/canonTranslate
  */
+import { defaultCanonStore } from './storePath.js';
 import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, guardedPush, atomicClone, requireFullSurfaceStore, withStoreLock } from './canonRepo.js';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
@@ -24,7 +25,7 @@ import * as path from 'node:path';
 import * as readline from 'node:readline';
 
 export interface CanonTranslateOptions {
-  /** Canon store working clone (default /tmp/canon-store — off-quota; auto-cloned). */
+  /** Canon store working clone (default: defaultCanonStore() in storePath.ts — CANON_STORE, an existing /tmp/canon-store, else ~/.cache/nexus-canon/store; auto-cloned). */
   store?: string;
   /** Home dir for the incremental manifest (default $HOME). */
   home?: string;
@@ -45,7 +46,7 @@ export interface CanonTranslateResult {
 async function canonTranslateUnlocked(o: CanonTranslateOptions = {}): Promise<CanonTranslateResult> {
   const HOME = o.home ?? process.env.HOME ?? os.homedir();
   const DRY = o.dryRun ?? false;
-  const STORE = o.store ?? '/tmp/canon-store';
+  const STORE = o.store ?? defaultCanonStore();
 const MANIFEST_PATH = path.join(HOME, '.canon', 'translate-manifest.json');
 const MAX_BYTES = 50 * 1024 * 1024;
 const PART_BYTES = 25 * 1024 * 1024;
@@ -818,8 +819,8 @@ by the library's gateway adapters and arrive with Phase C (\`cortex canon transl
 Until then their absence is stated here rather than implied.
 `;
   if (!fs.existsSync(path.join(STORE, '.git'))) {
-    // Working clone is disposable (quota lesson 2026-07-27: keep it OFF the
-    // workspace quota — pass --store /tmp/canon-store); remote is the truth.
+    // Working clone is disposable — the remote is the truth. Where it lives: defaultCanonStore() (storePath.ts);
+    // on a quota'd workspace, point CANON_STORE / --store at a disk with room.
     const CANON_REPO = requireCanonRepo(o.repoUrl, STORE, 'canon-translate');
     console.log(`[canon-translate] no store at ${STORE} — cloning ${redactRepoUrl(CANON_REPO)}`);
     // atomicClone (NOT a raw clone): temp-dir+rename race safety AND the
@@ -906,6 +907,6 @@ Until then their absence is stated here rather than implied.
 
 /** Translate under the store's single-writer lock (withStoreLock). */
 export async function canonTranslate(o: CanonTranslateOptions = {}): Promise<CanonTranslateResult> {
-  return withStoreLock(o.store ?? '/tmp/canon-store', 'canon-translate', () => canonTranslateUnlocked(o),
+  return withStoreLock(o.store ?? defaultCanonStore(), 'canon-translate', () => canonTranslateUnlocked(o),
     () => ({ translated: 0, unchanged: 0, errors: [], summary: 'skipped: store busy', pushed: false }));
 }

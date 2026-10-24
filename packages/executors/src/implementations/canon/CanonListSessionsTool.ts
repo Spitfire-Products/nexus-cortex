@@ -13,6 +13,7 @@ import {
   discoverCanonSessions,
   deriveProjectSessionMap,
   sessionProject,
+  defaultCanonStore,
   type CanonSession,
 } from '@nexus-cortex/core';
 import { mutedConsole } from './mutedConsole.js';
@@ -81,7 +82,7 @@ Each row: uuid, size, origin harness, recovered title. Requires a configured can
       if (params.project) {
         // Project-scoped listing mirrors the CLI: derived map + local discovery
         // (assumes the store exists; the unscoped branch clones/pulls it).
-        const resolvedStore = store ?? '/tmp/canon-store';
+        const resolvedStore = store ?? defaultCanonStore();
         const projects = deriveProjectSessionMap(resolvedStore);
         if (!projects[params.project]) {
           return {

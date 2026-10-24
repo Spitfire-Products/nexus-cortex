@@ -12,6 +12,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 /** The remote URL if configured (explicit option wins over CANON_REPO env), else null. */
 export function resolveCanonRepo(explicit?: string): string | null {
@@ -226,6 +227,7 @@ export function ensureArchiveExclusion(storePath: string, label: string): boolea
  */
 export function atomicClone(repoUrl: string, storePath: string, label: string, scope?: string[]): void {
   const tmp = `${storePath}.cloning-${process.pid}`;
+  fs.mkdirSync(path.dirname(storePath), { recursive: true });   // the 1.12 default (~/.cache/nexus-canon/store) may not exist yet
   fs.rmSync(tmp, { recursive: true, force: true });
   // PARTIAL clone by default (--filter=blob:none): the store's git history is
   // metadata-only and historical blobs are fetched on demand (`canon pull` of an

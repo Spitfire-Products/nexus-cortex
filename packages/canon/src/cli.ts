@@ -3,6 +3,7 @@
  * (The full themed experience lives in the nexus-cortex harness as
  * `cortex canon <verb>`; this bin serves harness-less installs.)
  */
+import { defaultCanonStore } from './storePath.js';
 import { canonArchive } from './canonArchive.js';
 import { canonArtifacts } from './canonArtifacts.js';
 import { canonGraph } from './canonGraph.js';
@@ -29,7 +30,7 @@ Verbs:
   graph [--project <id>] [--merge-graph <path>] [--cognition] [--include-thought-text] [--dry-run] [--store <dir>]
   watch [--debounce <ms>] [--dry-run] [--store <dir>]  watch harness roots & auto-sync on change
 
-Default store: /tmp/canon-store (override with --store or CANON_REPO env for the remote).
+Default store: $CANON_STORE, else an existing /tmp/canon-store, else ~/.cache/nexus-canon/store (override with --store; CANON_REPO sets the remote).
 Spec: docs/CANON.md in the nexus-cortex repository.`;
 
 function signal(): AbortSignal {
@@ -86,7 +87,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return r.code;
     }
     case 'tools': {
-      const inv = await deriveToolInventory(opt('--store') ?? '/tmp/canon-store');
+      const inv = await deriveToolInventory(opt('--store') ?? defaultCanonStore());
       if (flag('--json')) { console.log(JSON.stringify({ inventory: inv, concepts: TOOL_CONCEPTS }, null, 2)); return 0; }
       for (const [h, tools] of Object.entries(inv)) {
         const top = Object.entries(tools).sort((a, b) => b[1] - a[1]);
@@ -105,7 +106,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       const d = opt('--days');
       const days = d ? parseInt(d, 10) : undefined;
       if (d && (isNaN(days!) || days! < 1)) { console.error('--days must be a positive integer'); return 2; }
-      return canonArchive({ store: opt('--store') ?? '/tmp/canon-store', days, dryRun: flag('--dry-run'), push: !flag('--no-push') });
+      return canonArchive({ store: opt('--store') ?? defaultCanonStore(), days, dryRun: flag('--dry-run'), push: !flag('--no-push') });
     }
     case 'watch': {
       const debounceMs = opt('--debounce');

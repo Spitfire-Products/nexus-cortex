@@ -17,6 +17,7 @@
  *
  * @module canon/canonWatch
  */
+import { defaultCanonStore } from './storePath.js';
 import * as fsp from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -44,7 +45,7 @@ const DEFAULT_DEBOUNCE_MS = 60_000;
  */
 export async function canonWatch(options: CanonWatchOptions = {}): Promise<void> {
   const HOME = options.home ?? process.env.HOME ?? os.homedir();
-  const STORE = options.store ?? '/tmp/canon-store';
+  const STORE = options.store ?? defaultCanonStore();
   const debounceMs = options.debounceMs && options.debounceMs > 0 ? options.debounceMs : DEFAULT_DEBOUNCE_MS;
 
   // Derive the watch list + capture extensions from the SAME declarative source

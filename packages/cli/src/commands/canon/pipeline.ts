@@ -26,8 +26,8 @@ export async function canonTranslateCmd(o: CanonPipelineOptions): Promise<void> 
 export async function canonListCmd(o: CanonPipelineOptions & { all?: boolean; project?: string }): Promise<void> {
   if (o.project) {
     // Project-scoped listing via the derived project↔session map (leg 4).
-    const { deriveProjectSessionMap, discoverCanonSessions, sessionProject } = await import('@nexus-cortex/core');
-    const store = o.store ?? '/tmp/canon-store';
+    const { deriveProjectSessionMap, discoverCanonSessions, sessionProject, defaultCanonStore } = await import('@nexus-cortex/core');
+    const store = o.store ?? defaultCanonStore();
     const projects = deriveProjectSessionMap(store);
     if (!projects[o.project]) {
       console.error(`[canon-list] unknown project '${o.project}' — known: ${Object.keys(projects).sort().join(', ')}`);

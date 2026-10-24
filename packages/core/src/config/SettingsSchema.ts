@@ -260,7 +260,7 @@ export interface EnvironmentVariables {
   /** Debounce window (ms) before a reactive canon sync fires after the last turn */
   CANON_AUTO_SYNC_DEBOUNCE_MS?: string;
 
-  /** Canon store working clone path (empty = /tmp/canon-store) */
+  /** Canon store working clone path (empty = an existing /tmp/canon-store, else ~/.cache/nexus-canon/store) */
   CANON_STORE?: string;
 
   /** Canon store git remote URL (empty = the canonical nexus-canon-store repo) */
@@ -1853,7 +1853,7 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
   {
     key: 'CANON_STORE',
     displayName: 'Canon Store Path',
-    description: 'Canon store working clone directory (empty = /tmp/canon-store, off-quota)',
+    description: 'Canon store working clone directory (empty = an existing /tmp/canon-store, else ~/.cache/nexus-canon/store; /tmp is often RAM)',
     type: 'string',
     category: 'session',
     default: ''

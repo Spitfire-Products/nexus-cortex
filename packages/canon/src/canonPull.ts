@@ -14,6 +14,7 @@
  *
  * @module canon/canonPull
  */
+import { defaultCanonStore } from './storePath.js';
 import { requireCanonRepo, redactRepoUrl, canonGit, atomicClone, gitAuthArgs } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -23,7 +24,7 @@ import { createHash } from 'node:crypto';
 import { renderCapsule, renderCompat, sessionToolCalls, sessionToolNames, toolCompatibility, type HarnessName } from './canonTools.js';
 
 export interface CanonStoreOptions {
-  /** Canon store working clone (default /tmp/canon-store — off-quota; auto-cloned). */
+  /** Canon store working clone (default: defaultCanonStore() in storePath.ts — CANON_STORE, an existing /tmp/canon-store, else ~/.cache/nexus-canon/store; auto-cloned). */
   store?: string;
   /** Store remote for the auto-clone (or env CANON_REPO). Unconfigured + no store = fail-fast. */
   repoUrl?: string;
@@ -189,7 +190,7 @@ export function discoverCanonSessions(store: string): CanonSession[] {
 
 /** List canon sessions (prints rows; returns them). `all` includes <4KB sessions. */
 export async function canonList(o: CanonStoreOptions & { all?: boolean } = {}): Promise<CanonSession[]> {
-  const store = o.store ?? '/tmp/canon-store';
+  const store = o.store ?? defaultCanonStore();
   ensureFreshStore(store, o.repoUrl);
   const sessions = discoverCanonSessions(store);
   const rows = sessions.filter((s) => o.all || s.bytes > 4096);
@@ -292,7 +293,7 @@ export function claudeProjectSlug(cwd: string): string {
  * like canonPull, this is a branch, never a clobber.
  */
 export async function canonPullNative(o: CanonPullNativeOptions): Promise<CanonPullNativeResult> {
-  const store = o.store ?? '/tmp/canon-store';
+  const store = o.store ?? defaultCanonStore();
   ensureFreshStore(store, o.repoUrl, 'canon-pull-native');
   const live = await pullNativeFrom(o, path.join(store, 'native'));
   if (!live.noMatch || o.rel) return live;
@@ -550,7 +551,7 @@ function hydrateProjectMemory(nativeRoot: string, harness: string, destDir: stri
  * are skipped loudly with their size.
  */
 export async function canonPullNativeAll(o: CanonPullNativeAllOptions = {}): Promise<CanonPullNativeAllResult> {
-  const store = o.store ?? '/tmp/canon-store';
+  const store = o.store ?? defaultCanonStore();
   const harness = o.harness ?? 'claude-code';
   const maxBytes = (o.maxMb ?? 25) * 1024 * 1024;
   ensureFreshStore(store, o.repoUrl, 'canon-pull-native');
@@ -652,7 +653,7 @@ export function resolveCopies<T>(
 
 /** Materialize one canon session into a native session directory. */
 export async function canonPull(o: CanonPullOptions): Promise<CanonPullResult> {
-  const store = o.store ?? '/tmp/canon-store';
+  const store = o.store ?? defaultCanonStore();
   const home = o.home ?? process.env.HOME ?? os.homedir();
   ensureFreshStore(store, o.repoUrl);
   let sessions = discoverCanonSessions(store);

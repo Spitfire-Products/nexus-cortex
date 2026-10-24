@@ -18,6 +18,7 @@
  *
  * @module canon/canonArtifacts
  */
+import { defaultCanonStore } from './storePath.js';
 import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush, requireFullSurfaceStore } from './canonRepo.js';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
@@ -93,7 +94,7 @@ export function discoverProjectDirs(HOME: string): string[] {
 export async function canonArtifacts(o: CanonArtifactsOptions = {}): Promise<CanonArtifactsResult> {
   const HOME = o.home ?? process.env.HOME ?? os.homedir();
   const DRY = o.dryRun ?? false;
-  const STORE = o.store ?? '/tmp/canon-store';
+  const STORE = o.store ?? defaultCanonStore();
   const MANIFEST_PATH = path.join(HOME, '.canon', 'artifacts-manifest.json');
   if (!fs.existsSync(path.join(STORE, '.git'))) {
     const CANON_REPO = requireCanonRepo(o.repoUrl, STORE, 'canon-artifacts');

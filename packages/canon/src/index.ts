@@ -40,6 +40,7 @@ export type { HarnessSource } from './canonSync.js';
 export { scheduleCanonSync, flushCanonSync, canonAutoSyncConfig, __setCanonSyncRunner } from './canonSyncScheduler.js';
 export type { CanonAutoSyncConfig } from './canonSyncScheduler.js';
 export { canonWatch } from './canonWatch.js';
+export { defaultCanonStore, LEGACY_CANON_STORE } from './storePath.js';
 export type { CanonWatchOptions } from './canonWatch.js';
 export { canonPipeline } from './canonPipeline.js';
 export type { CanonPipelineResult } from './canonPipeline.js';

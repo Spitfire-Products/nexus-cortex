@@ -1,6 +1,6 @@
 {
   "name": "@nexus-cortex/cli",
-  "version": "4.129.1",
+  "version": "4.130.0",
   "description": "Nexus Cortex CLI - Terminal interface for multi-provider LLM orchestration",
   "main": "dist/index.js",
   "type": "module",
@@ -19,7 +19,7 @@
     "prepack": "node ../../scripts/copy-pkg-cortex-scaffold.mjs"
   },
   "dependencies": {
-    "@nexus-cortex/core": "4.129.1",
+    "@nexus-cortex/core": "4.130.0",
     "chalk": "^4.1.2",
     "cli-spinners": "^2.9.0",
     "commander": "^11.0.0",
@@ -29,7 +29,7 @@
     "highlight.js": "^11.9.0",
     "inquirer": "^9.2.12",
     "marked-terminal": "^6.0.0",
-    "nexus-canon": "1.11.21",
+    "nexus-canon": "1.12.0",
     "undici": "^7.28.0"
   },
   "devDependencies": {

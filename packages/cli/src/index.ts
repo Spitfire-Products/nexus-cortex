@@ -898,7 +898,7 @@ canon
 canon
   .command('sync')
   .description('Copy changed native harness sessions into the store (secret-scrubbed), commit + push')
-  .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
+  .option('--store <dir>', 'canon store working clone (default: $CANON_STORE, else an existing /tmp/canon-store, else ~/.cache/nexus-canon/store)')
   .option('--dry-run', 'report what would copy; write nothing')
   .action(async (opts) => {
     const globalOpts = program.opts();
@@ -908,7 +908,7 @@ canon
 canon
   .command('translate')
   .description('Maintain the canonical line: /native → /canon + /projections (incremental, deterministic)')
-  .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
+  .option('--store <dir>', 'canon store working clone (default: $CANON_STORE, else an existing /tmp/canon-store, else ~/.cache/nexus-canon/store)')
   .option('--dry-run', 'report what would translate; write nothing')
   .action(async (opts) => {
     const globalOpts = program.opts();
@@ -918,7 +918,7 @@ canon
 canon
   .command('list')
   .description('List canon sessions (uuid, size, origin harness, recovered title)')
-  .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
+  .option('--store <dir>', 'canon store working clone (default: $CANON_STORE, else an existing /tmp/canon-store, else ~/.cache/nexus-canon/store)')
   .option('--all', 'include sessions under 4KB')
   .option('--project <id>', 'only sessions of one project (derived project↔session map)')
   .action(async (opts) => {
@@ -929,7 +929,7 @@ canon
 canon
   .command('graph')
   .description('Generate project-scoped knowledge graphs (§27l): /projects/<id>/graph.json, node-link + edge confidence')
-  .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
+  .option('--store <dir>', 'canon store working clone (default: $CANON_STORE, else an existing /tmp/canon-store, else ~/.cache/nexus-canon/store)')
   .option('--project <id>', 'limit to one project')
   .option('--merge-graph <path>', 'fold an external (graphify) node-link graph.json into the output')
   .option('--no-touched', 'skip the session-content scan (session→file touched edges)')
@@ -942,7 +942,7 @@ canon
 canon
   .command('artifacts')
   .description('Capture capability artifacts (skills/agents/mcp/plugins/plans/projects) into the store (§27p)')
-  .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
+  .option('--store <dir>', 'canon store working clone (default: $CANON_STORE, else an existing /tmp/canon-store, else ~/.cache/nexus-canon/store)')
   .option('--dry-run', 'report what would capture; write nothing')
   .action(async (opts) => {
     const globalOpts = program.opts();
@@ -952,11 +952,11 @@ canon
 canon
   .command('tools')
   .description('Observed tool inventory per harness + the cross-harness concept map (Phase E rung 1)')
-  .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
+  .option('--store <dir>', 'canon store working clone (default: $CANON_STORE, else an existing /tmp/canon-store, else ~/.cache/nexus-canon/store)')
   .action(async (opts) => {
     const globalOpts = program.opts();
-    const { deriveToolInventory, TOOL_CONCEPTS } = await import('@nexus-cortex/core');
-    const inv = await deriveToolInventory(opts.store ?? '/tmp/canon-store');
+    const { deriveToolInventory, TOOL_CONCEPTS, defaultCanonStore } = await import('@nexus-cortex/core');
+    const inv = await deriveToolInventory(opts.store ?? defaultCanonStore());
     if (globalOpts.json) { console.log(JSON.stringify({ inventory: inv, concepts: TOOL_CONCEPTS }, null, 2)); return; }
     for (const [h, tools] of Object.entries(inv)) {
       const top = Object.entries(tools as Record<string, number>).sort((a, b) => b[1] - a[1]);
@@ -968,7 +968,7 @@ canon
 canon
   .command('pull <session>')
   .description('Materialize a canon session into a native session dir (pull = rehydrate; branch, never clobber)')
-  .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
+  .option('--store <dir>', 'canon store working clone (default: $CANON_STORE, else an existing /tmp/canon-store, else ~/.cache/nexus-canon/store)')
   .option('--to <dir>', 'destination dir (default ./.cortex/sessions)')
   .option('--force', 'overwrite an existing local session file')
   .option('--target <harness>', 'harness for the tool-compatibility report (default nexus-cortex)')
@@ -984,7 +984,7 @@ canon
 canon
   .command('watch')
   .description('Watch harness session roots and auto-sync on change (reactive canon capture for external harnesses)')
-  .option('--store <dir>', 'canon store working clone (default /tmp/canon-store)')
+  .option('--store <dir>', 'canon store working clone (default: $CANON_STORE, else an existing /tmp/canon-store, else ~/.cache/nexus-canon/store)')
   .option('--debounce <ms>', 'debounce window before a sync fires (default 60000)', (v) => parseInt(v, 10))
   .option('--dry-run', 'refresh the local manifest only; do not commit/push')
   .action(async (opts) => {
