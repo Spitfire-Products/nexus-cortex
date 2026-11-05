@@ -105,7 +105,13 @@ export function isWebToolEnabled(name: string, env: NodeJS.ProcessEnv = process.
 }
 /** Dispatch/assembly face: true when the tool is a web tool that the active mode disables. */
 export function webToolBlocked(name: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (name === 'Browse' && browseToolOff(env)) return true;
   return isWebTool(name) && !isWebToolEnabled(name, env);
+}
+/** CORTEX_BROWSE_TOOL=off (2026-11-06, tools-only profile): hide ONLY the Browse delegate tool — the main model drives the nexus-browser
+ *  tools itself (CORTEX_MCP_AUTOCONNECT=nexus-browser). The nexus-browser__* tools, WebFetch and WebSearch are untouched. */
+export function browseToolOff(env: NodeJS.ProcessEnv = process.env): boolean {
+  return /^(off|false|0|no)$/i.test(String(env.CORTEX_BROWSE_TOOL ?? '').trim());
 }
 /** @deprecated mode-level view kept for callers that only need "is anything blocked"; prefer webToolBlocked. */
 export function resolveWebToolsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {

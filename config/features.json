@@ -27,6 +27,15 @@
         "kind": "flag-true"
       }
     },
+    "CORTEX_ANCHOR_WEB": {
+      "defaultValue": "on",
+      "rules": [],
+      "meta": {
+        "what": "The bash-edit turn-1 door also passes Browse when web tools are enabled (inert when ENABLE_WEBTOOLS is off); off = Bash/Edit/ReadImage only",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
     "CORTEX_ANTHROPIC_AUTO_CACHE": {
       "defaultValue": "off",
       "rules": [],
@@ -106,6 +115,78 @@
         "what": "Pipelines report the failing command instead of masking it (cmd | head)",
         "group": "Guards (the protection stack — see CONFIG_AUDIT_2026-08-31)",
         "kind": "flag-true"
+      }
+    },
+    "CORTEX_BROWSE_CARRY": {
+      "defaultValue": "on",
+      "rules": [],
+      "meta": {
+        "what": "Follow-up Browse after a COMPLETED report this turn: the delegate gets the earlier task, its report excerpt and the URL it ended on, starts there and does only what the new task adds (skipped when the new task names a different site); off = fresh start (2026-11-04)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_BROWSE_DIRECT": {
+      "defaultValue": "auto",
+      "rules": [],
+      "meta": {
+        "what": "Browse mode \"direct\" availability: auto = only when a person is watching (headless sessions get the delegate only; a stray direct call runs as a delegate) | always | never",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_BROWSE_DIRECT_CONFIRM": {
+      "defaultValue": "on",
+      "rules": [],
+      "meta": {
+        "what": "The first Browse mode \"direct\" request of a multi-step task in a turn gets the reason to delegate instead of a browser; asking again connects. off disables",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_BROWSE_DIRECT_NUDGE_CALLS": {
+      "defaultValue": 15,
+      "rules": [],
+      "meta": {
+        "what": "Browse mode \"direct\": nexus-browser calls per turn before one nudge to delegate the rest of the task; 0 = off",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_BROWSE_PROBE_GUARD": {
+      "defaultValue": "on",
+      "rules": [],
+      "meta": {
+        "what": "The turn's first Browse call that only asks whether the site loads / what it shows is answered once with the reason to send the whole task; re-sending runs it; off disables",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_BROWSE_REVERIFY": {
+      "defaultValue": "guard",
+      "rules": [],
+      "meta": {
+        "what": "After a browse delegate returned a COMPLETED report in the turn, the first Browse call whose task reads as re-verification is answered with the reason not to (asking again runs it); allow = never",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_BROWSE_TIMEOUT_MS": {
+      "defaultValue": 600000,
+      "rules": [],
+      "meta": {
+        "what": "Browse delegate wall-clock limit (ms) when the call names no timeout_ms; a parent turn deadline still caps it",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_BROWSE_TOOL": {
+      "defaultValue": "on",
+      "rules": [],
+      "meta": {
+        "what": "2026-11-06 off = hide ONLY the Browse delegate tool (the main model drives the nexus-browser tools itself); set by CORTEX_PROFILE=tools-only",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
       }
     },
     "CORTEX_BUDGET_CONTINUE_MAX_NUDGES": {
@@ -279,6 +360,15 @@
         "kind": "value"
       }
     },
+    "CORTEX_DEBUG_FULL_REQUESTS": {
+      "defaultValue": "false",
+      "rules": [],
+      "meta": {
+        "what": "With DEBUG=true: false = per request a summary + only the new messages (the canonical session record holds the content); true = the full request body every round",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
     "CORTEX_DECISION_MODEL": {
       "defaultValue": "jev",
       "rules": [],
@@ -433,11 +523,20 @@
       }
     },
     "CORTEX_ENDTURN_RESOLVER_REASONING": {
-      "defaultValue": "(follows CORTEX_MENTOR_REASONING)",
+      "defaultValue": "none (an explicit CORTEX_MENTOR_REASONING still wins; 2026-11-03)",
       "rules": [],
       "meta": {
         "what": "EndTurn resolver: this surface's own thinking switch (on | none), wins over CORTEX_MENTOR_REASONING (4.107.0; cell-m-r1 §6: planner ON + resolver OFF is the candidate config)",
         "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_ENDTURN_SOURCES_AUTO": {
+      "defaultValue": "on",
+      "rules": [],
+      "meta": {
+        "what": "Stage-5: when the model gives no valid sources list, the harness fills the rows from the turn's own web calls (Browse/WebSearch/WebFetch) instead of rejecting; checks A/B unchanged; off = the model must attest",
+        "group": "Loop control",
         "kind": "value"
       }
     },
@@ -482,6 +581,15 @@
       "rules": [],
       "meta": {
         "what": "Wall-budget fraction that must remain to confirm (R167)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_FINISH_CONFIRM_WEB": {
+      "defaultValue": "stands",
+      "rules": [],
+      "meta": {
+        "what": "R167 finish-confirm on WEB turns (web results, no file writes): default = an accept-with-gap finish stands; hold = held once like coding turns",
         "group": "Loop control",
         "kind": "value"
       }
@@ -1224,6 +1332,15 @@
         "kind": "value"
       }
     },
+    "CORTEX_LOOKUP_PRIOR_DECISIONS": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "inject prior decisions as a reminder (tools-only = false)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-not-false"
+      }
+    },
     "CORTEX_LOOP_TOOL_BLOCK": {
       "defaultValue": false,
       "rules": [],
@@ -1278,8 +1395,26 @@
         "kind": "value"
       }
     },
+    "CORTEX_MCP_AUTOCONNECT": {
+      "defaultValue": "(none)",
+      "rules": [],
+      "meta": {
+        "what": "MCP servers connected into the main session at boot (comma list; tools pinned essential); tools-only = nexus-browser",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_MCP_TOOL_TIMEOUT_MS": {
+      "defaultValue": 300000,
+      "rules": [],
+      "meta": {
+        "what": "Per-call MCP tool timeout (ms); servers budget their own tools (nexus-browser browse 240 s, run_code 300 s)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
     "CORTEX_MEETS_CONFIRM": {
-      "defaultValue": true,
+      "defaultValue": false,
       "rules": [],
       "meta": {
         "what": "A MEETS verdict must name a proving CHECK that passes; an unverified MEETS with >= MIN_REMAINING budget left is held once (shares FINISH_CONFIRM_MAX) — R168 HB-MEETS-CONFIRM; false = 4.116.2",
@@ -1292,6 +1427,15 @@
       "rules": [],
       "meta": {
         "what": "Wall-budget fraction that must remain to hold an unverified MEETS (R168)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_MEETS_CONFIRM_WEB": {
+      "defaultValue": "evidenced",
+      "rules": [],
+      "meta": {
+        "what": "R168 MEETS hold on WEB turns: default = the web output the judge read evidences the finish (no hold); hold = held like any MEETS no command backed",
         "group": "Loop control",
         "kind": "value"
       }
@@ -1534,7 +1678,7 @@
       "defaultValue": "off",
       "rules": [],
       "meta": {
-        "what": "2026-10-17 lever profile (fills only levers no user layer set; source shows `profile`): standard = SHIPPED DEFAULT for interactive AND headless (bench-lite seven + outer tool-timeout floor 600000 + wall ladder 65536,16384 force-at 2 + LIFT_PLAN_SCOPE=task + mentor allowance 16000); bench-tb4 = the exact TB4.0 cell bundle for reproduction; bench-lite = legacy TTY-only set; off = byte-identical shipped defaults",
+        "what": "2026-10-17 lever profile (fills only levers no user layer set; source shows `profile`): tools-only (2026-11-06, opt-in) = model + tools only: browser tools autoconnected into the main session, no Browse delegate, every judge/planner/mentor/reviewer off, minimal prompt, all tools at turn 1, only the empty-turn + loop-block guards kept; standard = SHIPPED DEFAULT for interactive AND headless (bench-lite seven + outer tool-timeout floor 600000 + wall ladder 65536,16384 force-at 2 + LIFT_PLAN_SCOPE=task + mentor allowance 16000); bench-tb4 = the exact TB4.0 cell bundle for reproduction; bench-lite = legacy TTY-only set; off = byte-identical shipped defaults",
         "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
         "kind": "value"
       }
@@ -1571,6 +1715,33 @@
       "rules": [],
       "meta": {
         "what": "R153c: the R153 exhaustion backoff steps down the PROVIDER ladder — DeepSeek low | high | max (medium runs as high), so high → low; other providers keep low | medium | high. provider (default) | legacy (pre-R153c: high → medium, a no-op on DeepSeek)",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_RECORD_DECISIONS": {
+      "defaultValue": true,
+      "rules": [],
+      "meta": {
+        "what": "decision capture to the decision store (tools-only = false)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-not-false"
+      }
+    },
+    "CORTEX_RESOLVER_WEB_EFFORT": {
+      "defaultValue": "(resolver effort)",
+      "rules": [],
+      "meta": {
+        "what": "Judge effort on web-only turns (web results, no file writes); empty = CORTEX_ENDTURN_RESOLVER_EFFORT",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_RESOLVER_WEB_RULE": {
+      "defaultValue": "on",
+      "rules": [],
+      "meta": {
+        "what": "EndTurn judge web-answer rubric on WEB turns (web results, no file writes): a GAP must name an unmet stated constraint / contradicted answer / missing fact; no wording vetoes (site synonyms like GTX = GORE-TEX satisfy a term), a stated closest match is finished; off = grader persona only (2026-11-04)",
         "group": "Loop control",
         "kind": "value"
       }
@@ -1634,6 +1805,15 @@
       "rules": [],
       "meta": {
         "what": "R212 HB-TASK-RULES L2 interpretation enumeration: planner INTERPRETATIONS bullet + judge INTERPRETATION RULE clause (named alternatives each computed; keep the one consistent with every explicit hint and all data — else GAP + CHECK). off | on",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SCOPE_CHECK": {
+      "defaultValue": "on",
+      "rules": [],
+      "meta": {
+        "what": "EndTurn Stage 6 scope check: a task that names a place (ZIP / near X / within N mi) whose newest result set is unscoped (a SELECTED Nationwide / All distances choice, or a 5,000+ main count) is held once — apply the scope on the source or say it cannot be; zero model calls; also in sub-agents; inert on tasks with no place; off = no check (2026-11-04)",
         "group": "Loop control",
         "kind": "value"
       }
@@ -1800,11 +1980,29 @@
         "kind": "value"
       }
     },
+    "CORTEX_STREAM_HEADER_TIMEOUT_MS": {
+      "defaultValue": 120000,
+      "rules": [],
+      "meta": {
+        "what": "A STREAMING provider request that has sent no response headers after this many ms is aborted (the SDK retries it); non-streaming requests unaffected; 0 = off",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
     "CORTEX_STREAM_USAGE": {
       "defaultValue": "on (openai|deepseek|groq)",
       "rules": [],
       "meta": {
         "what": "R224a/R236: streaming chat/completions send stream_options.include_usage and the final message carries the provider usage (was zeros). unset = on for openai|deepseek|groq, off elsewhere; on forces any provider; off disables",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
+    "CORTEX_SUBAGENT_ENDTURN": {
+      "defaultValue": "mechanical",
+      "rules": [],
+      "meta": {
+        "what": "EndTurn inside sub-agents: mechanical = resolver judge OFF (the parent reviews the result), mechanical gates kept; off = no EndTurn gates at all; full = inherit the parent's",
         "group": "Loop control",
         "kind": "value"
       }
@@ -2194,6 +2392,15 @@
         "what": "Hard cap on tool calls per turn (failsafe, not a work limit)",
         "group": "Loop control",
         "kind": "value"
+      }
+    },
+    "MCP_AUTO_INJECT": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "inject autoconnected MCP servers' tools into the request",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-true"
       }
     },
     "MENTORSHIP_ENABLED": {

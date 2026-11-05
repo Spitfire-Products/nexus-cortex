@@ -43,7 +43,7 @@
  *                second-attempt chain, web tools / git context / slash hint off). For users reproducing published numbers with
  *                the Harbor executor (docs/REPRODUCING_BENCH_RESULTS.md); not meant for a human-driven session.
  */
-export type InteractiveProfileName = 'off' | 'bench-lite' | 'standard' | 'bench-tb4';
+export type InteractiveProfileName = 'off' | 'bench-lite' | 'standard' | 'bench-tb4' | 'tools-only';
 export const PROFILE_ENV = 'CORTEX_PROFILE';
 export const LEGACY_PROFILE_ENV = 'CORTEX_INTERACTIVE_PROFILE';
 
@@ -61,6 +61,36 @@ export interface DeferredLever {
   verdict: 'NEEDS-ADAPTATION' | 'BENCH-ONLY';
   reason: string;
 }
+
+/** `tools-only` (2026-11-06, operator: "a tools only profile lever for users that bypasses all the weight of the harness"). The model drives
+ *  its tools itself — the browser tools are connected into the MAIN session at boot (no Browse delegate) — and every judge / planner /
+ *  mentor / reviewer layer is off. Kept: the two failure-path guards that only fire when something already went wrong (empty-turn
+ *  continue stops the no-tools nudge that made a sub-agent invent results; the loop block stops a stuck tool loop). Evidence for the
+ *  speed gap: holdout-8 (.bench/eval/om2w) — the same models drove the browser tools directly at ~1 min/task vs 6.5–9.8 min through
+ *  `standard`; `standard` also lifted deepseek-flash 4/8 → 8/8, so this profile is OPT-IN and never the shipped default. */
+export const TOOLS_ONLY_LEVERS: ReadonlyArray<ProfileLever> = [
+  { key: 'CORTEX_MCP_AUTOCONNECT', value: 'nexus-browser', why: 'browser tools in the main session from turn 1 (local library or hosted MCP, per NEXUS_BROWSER_MODE)' },
+  { key: 'MCP_AUTO_INJECT', value: 'true', why: 'autoconnected MCP tools are injected into the request (pinned essential)' },
+  { key: 'CORTEX_BROWSE_TOOL', value: 'off', why: 'no Browse delegate: the main model drives the browser itself' },
+  { key: 'ENABLE_WEBTOOLS', value: 'true', why: 'web tools on regardless of key detection (auto could hide the browser tools on a keyless install)' },
+  { key: 'CORTEX_ENDTURN_RESOLVER', value: 'false', why: 'no second-model finish review' },
+  { key: 'CORTEX_ENDTURN_GATE', value: 'false', why: 'no citation gate on the finish' },
+  { key: 'CORTEX_ENDTURN_REQUIREMENTS', value: 'false', why: 'no requirements gate on the finish' },
+  { key: 'CORTEX_ENDTURN_INTEGRITY', value: 'false', why: 'no integrity/sources gate on the finish' },
+  { key: 'CORTEX_SCOPE_CHECK', value: 'off', why: 'no scope hold on the finish' },
+  { key: 'CORTEX_SECOND_ATTEMPT', value: '0', why: 'no library second attempt' },
+  { key: 'CORTEX_LIFT_PLAN', value: 'false', why: 'no planner call after the first tool result' },
+  { key: 'CORTEX_LIFT_NUDGE', value: 'false', why: 'no lift pointer reminder' },
+  { key: 'MENTORSHIP_ENABLED', value: 'false', why: 'no mentor helper model' },
+  { key: 'CORTEX_DEADLINE_EXIT_MENTOR', value: 'false', why: 'no deadline mentor call' },
+  { key: 'CORTEX_RECORD_DECISIONS', value: 'false', why: 'no decision capture' },
+  { key: 'CORTEX_LOOKUP_PRIOR_DECISIONS', value: 'false', why: 'no prior-decision reminder in the prompt' },
+  { key: 'ENABLE_DEFERRED_TOOL_LOADING', value: 'false', why: 'every tool present from turn 1 (no SearchTools discovery round-trips)' },
+  { key: 'CORTEX_TOOL_ANCHOR', value: 'none', why: 'no turn-1 tool anchor' },
+  { key: 'CORTEX_PROMPT_MASS', value: 'minimal', why: 'minimal system prompt (no tool guides / doctrine mass)' },
+  { key: 'CORTEX_EMPTY_TURN_CONTINUE', value: 'true', why: 'KEPT failure-path guard: an empty turn with budget left continues with tools (never the invent-an-answer nudge)' },
+  { key: 'CORTEX_LOOP_TOOL_BLOCK', value: 'true', why: 'KEPT failure-path guard: a detected tool loop is blocked + redirected' },
+];
 
 /** The SAFE-INTERACTIVE set (bench values from .bench/vm/common-cellv43a.env). */
 export const BENCH_LITE_LEVERS: ReadonlyArray<ProfileLever> = [
@@ -145,7 +175,7 @@ export const BENCH_TB4_LEVERS: ReadonlyArray<ProfileLever> = (() => {
 /** 'container' = the hosted sandbox images' pre-existing CORTEX_PROFILE value (a preconfigured one-shot marker, no reader until 4.125.0);
  *  it means the shipped set there, so it resolves to `standard` — otherwise every hosted MCP / autoresearch session silently ran `off`. */
 const ALIASES: Readonly<Record<string, InteractiveProfileName>> = { container: 'standard' };
-const KNOWN: ReadonlySet<string> = new Set(['off', 'bench-lite', 'standard', 'bench-tb4']);
+const KNOWN: ReadonlySet<string> = new Set(['off', 'bench-lite', 'standard', 'bench-tb4', 'tools-only']);
 
 /** Profile name from CORTEX_PROFILE, else the legacy CORTEX_INTERACTIVE_PROFILE. Unset / blank / unknown → off (an unknown name never arms anything). */
 export function resolveInteractiveProfileName(env: NodeJS.ProcessEnv = process.env): InteractiveProfileName {
@@ -174,6 +204,7 @@ export function profileLevers(name: InteractiveProfileName): ReadonlyArray<Profi
   if (name === 'bench-lite') return BENCH_LITE_LEVERS;
   if (name === 'standard') return STANDARD_LEVERS;
   if (name === 'bench-tb4') return BENCH_TB4_LEVERS;
+  if (name === 'tools-only') return TOOLS_ONLY_LEVERS;
   return [];
 }
 

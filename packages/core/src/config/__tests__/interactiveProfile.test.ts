@@ -261,3 +261,27 @@ describe('R219 bootstrapEnv layering', () => {
     expect(process.env.CORTEX_WALL_DROP).toBe('on');
   });
 });
+
+describe('tools-only profile (2026-11-06)', () => {
+  it('resolves by name and applies in headless sessions too', async () => {
+    const m = await import('../interactiveProfile.js');
+    expect(m.resolveInteractiveProfileName({ CORTEX_PROFILE: 'tools-only' } as any)).toBe('tools-only');
+    const r = m.resolveInteractiveProfile({ CORTEX_PROFILE: 'tools-only' } as any, { interactive: false });
+    expect(r.apply.CORTEX_ENDTURN_RESOLVER).toBe('false');
+    expect(r.apply.CORTEX_BROWSE_TOOL).toBe('off');
+    expect(r.apply.CORTEX_MCP_AUTOCONNECT).toBe('nexus-browser');
+    expect(r.apply.MENTORSHIP_ENABLED).toBe('false');
+    expect(r.apply.CORTEX_PROMPT_MASS).toBe('minimal');
+    // the failure-path guards are kept
+    expect(r.apply.CORTEX_EMPTY_TURN_CONTINUE).toBe('true');
+    expect(r.apply.CORTEX_LOOP_TOOL_BLOCK).toBe('true');
+    // it replaces standard: no standard-only lever (mentor model) leaks in
+    expect(r.apply.MENTORSHIP_HELPER_MODEL).toBeUndefined();
+  });
+  it('a user-set lever wins over the profile', async () => {
+    const m = await import('../interactiveProfile.js');
+    const r = m.resolveInteractiveProfile({ CORTEX_PROFILE: 'tools-only', CORTEX_ENDTURN_RESOLVER: 'true' } as any, { interactive: false });
+    expect(r.apply.CORTEX_ENDTURN_RESOLVER).toBeUndefined();
+    expect(r.explicit).toContain('CORTEX_ENDTURN_RESOLVER');
+  });
+});

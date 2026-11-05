@@ -315,3 +315,14 @@ describe('bash-edit door passes Browse when web tools are on (CORTEX_ANCHOR_WEB,
   });
   it('off restores the old door', () => { expect(anchorWebDoor({ CORTEX_ANCHOR_WEB: 'off' } as any)).toBe(false); expect(anchorWebDoor({} as any)).toBe(true); });
 });
+
+describe('CORTEX_BROWSE_TOOL=off (tools-only, 2026-11-06)', () => {
+  it('hides only the Browse delegate; nexus-browser tools and WebFetch stay', async () => {
+    const m = await import('../ToolProfile.js');
+    const env = { CORTEX_BROWSE_TOOL: 'off', ENABLE_WEBTOOLS: 'true' } as any;
+    expect(m.webToolBlocked('Browse', env)).toBe(true);
+    expect(m.webToolBlocked('nexus-browser__page_state', env)).toBe(false);
+    expect(m.webToolBlocked('WebFetch', env)).toBe(false);
+    expect(m.webToolBlocked('Browse', { ENABLE_WEBTOOLS: 'true' } as any)).toBe(false);
+  });
+});
