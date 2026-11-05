@@ -26,6 +26,9 @@ export function resolveCanonRepo(explicit?: string): string | null {
  */
 export function requireCanonRepo(explicit: string | undefined, storePath: string, label = 'canon'): string {
   const url = resolveCanonRepo(explicit);
+  // A token carried in the resolved URL (flag, env or settings) is remembered for this process's auth header, so the
+  // credential-free store remote keeps fetching/pushing after scrubStoreRemote.
+  if (url) { const t = splitRepoCredentials(url).token; if (t) urlToken = t; }
   if (!url) {
     throw new Error(
       `[${label}] no canon store at ${storePath} and no remote configured — ` +
@@ -52,8 +55,22 @@ export function redactRepoUrl(url: string): string {
  * applied via http.extraheader — never embedded in the clone URL, .git/config,
  * argv, or a log line. Empty when no token is set (public repo / ambient creds).
  */
-export function gitAuthArgs(env: NodeJS.ProcessEnv = process.env): string[] {
-  const token = env.GH_TOKEN || env.GITHUB_TOKEN || '';
+/**
+ * Split a repo URL into a credential-free URL + the token it carried (2026-11-06). A CANON_REPO written as
+ * `https://<token>@github.com/…` or `https://x-access-token:<token>@…` used to be passed to `git clone` as-is, so git
+ * stored the token in the store's .git/config `remote.origin.url` (reported by the macbook client). The token now rides
+ * only in the per-invocation auth header; the clone and the remote use the clean URL.
+ */
+export function splitRepoCredentials(url: string): { url: string; token: string } {
+  const m = /^(https?:\/\/)([^/@]+)@(.*)$/.exec(url || '');
+  if (!m) return { url, token: '' };
+  const userinfo = decodeURIComponent(m[2] ?? '');
+  const i = userinfo.indexOf(':');
+  return { url: (m[1] ?? '') + (m[3] ?? ''), token: i >= 0 ? userinfo.slice(i + 1) : userinfo };
+}
+
+export function gitAuthArgs(env: NodeJS.ProcessEnv = process.env, repoUrl?: string): string[] {
+  const token = env.GH_TOKEN || env.GITHUB_TOKEN || splitRepoCredentials(repoUrl ?? env.CANON_REPO ?? '').token || urlToken || '';
   return token
     ? ['-c', `http.extraheader=AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`]
     : [];
@@ -82,7 +99,22 @@ export function gitIdArgs(env: NodeJS.ProcessEnv = process.env): string[] {
  *
  * `cwd` null = repo-less commands (clone). Use this — never a bare execFileSync.
  */
+const scrubbedStores = new Set<string>();
+/** Token found in a resolved canon repo URL (requireCanonRepo / scrubStoreRemote); last-resort auth source after GH_TOKEN/GITHUB_TOKEN. */
+let urlToken = '';
+/** Rewrite a store's origin URL without credentials (stores cloned before 2026-11-06 kept the token in .git/config). Once per process per store. */
+export function scrubStoreRemote(storePath: string): void {
+  if (scrubbedStores.has(storePath)) return;
+  scrubbedStores.add(storePath);
+  try {
+    const cur = execFileSync('git', ['-C', storePath, 'config', '--get', 'remote.origin.url'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    const { url, token } = splitRepoCredentials(cur);
+    if (token) { if (!urlToken) urlToken = token; execFileSync('git', ['-C', storePath, 'remote', 'set-url', 'origin', url], { stdio: ['ignore', 'pipe', 'pipe'] }); }
+  } catch { /* not a git store yet, or no origin */ }
+}
+
 export function canonGit(cwd: string | null, label: string): (args: string[]) => string {
+  if (cwd) scrubStoreRemote(cwd);
   return (args: string[]): string => {
     try {
       return execFileSync('git', [...gitAuthArgs(), ...gitIdArgs(), ...args], {
@@ -254,7 +286,8 @@ export function atomicClone(repoUrl: string, storePath: string, label: string, s
   // first (when the remote has archive/) — so NO clone ever downloads/materializes archive/ (09-26 fix).
   const cloneArgs = [...filterArgs, '--no-checkout'];
   try {
-    execFileSync('git', [...gitAuthArgs(), 'clone', '-q', ...cloneArgs, repoUrl, tmp], {
+    // Clone the CREDENTIAL-FREE url (a token in the URL would be stored in .git/config); the token rides in the auth header.
+    execFileSync('git', [...gitAuthArgs(process.env, repoUrl), 'clone', '-q', ...cloneArgs, splitRepoCredentials(repoUrl).url, tmp], {
       encoding: 'utf8',
       maxBuffer: 256 * 1024 * 1024,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },

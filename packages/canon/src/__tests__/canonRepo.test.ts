@@ -41,3 +41,26 @@ describe('requireCanonRepo', () => {
     expect(requireCanonRepo(undefined, '/tmp/x')).toBe('https://example.com/mine');
   });
 });
+
+describe('credential-free store remote (2026-11-06, macbook report)', () => {
+  it('splitRepoCredentials strips a token from the URL and returns it', async () => {
+    const { splitRepoCredentials } = await import('../canonRepo.js');
+    expect(splitRepoCredentials('https://x-access-token:abc123@github.com/o/r.git')).toEqual({ url: 'https://github.com/o/r.git', token: 'abc123' });
+    expect(splitRepoCredentials('https://abc123@github.com/o/r.git')).toEqual({ url: 'https://github.com/o/r.git', token: 'abc123' });
+    expect(splitRepoCredentials('https://github.com/o/r.git')).toEqual({ url: 'https://github.com/o/r.git', token: '' });
+  });
+  it('gitAuthArgs falls back to the URL token when no GH_TOKEN is set', async () => {
+    const { gitAuthArgs } = await import('../canonRepo.js');
+    const a = gitAuthArgs({ CANON_REPO: 'https://x:tok9@github.com/o/r' } as any);
+    expect(a.join(' ')).toContain(Buffer.from('x-access-token:tok9').toString('base64'));
+  });
+  it('scrubStoreRemote rewrites an existing origin without the token', async () => {
+    const { scrubStoreRemote } = await import('../canonRepo.js');
+    const fs = await import('node:fs'); const os = await import('node:os'); const path = await import('node:path'); const { execFileSync } = await import('node:child_process');
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-scrub-'));
+    execFileSync('git', ['init', '-q', d]); execFileSync('git', ['-C', d, 'remote', 'add', 'origin', 'https://x:secret@github.com/o/r.git']);
+    scrubStoreRemote(d);
+    expect(execFileSync('git', ['-C', d, 'config', '--get', 'remote.origin.url'], { encoding: 'utf8' }).trim()).toBe('https://github.com/o/r.git');
+    fs.rmSync(d, { recursive: true, force: true });
+  });
+});
