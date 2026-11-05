@@ -19,6 +19,7 @@ export type EmptyResponseKind =
   | 'reasoning_only'
   | 'reasoning_only_active'
   | 'no_visible_content'
+  | 'empty_active'
   | 'truncated';
 
 /** Provider stop/finish reasons that mean the output was CUT OFF by the token limit (not "done"). */
@@ -72,7 +73,10 @@ export function classifyEmptyResponse(
     // finished-but-unsurfaced answer. Only when budget is spent do we demand the final answer (no tools).
     return { kind: loopHasBudget ? 'reasoning_only_active' : 'reasoning_only', hadReasoning, hadToolUse };
   }
-  return { kind: 'no_visible_content', hadReasoning, hadToolUse };
+  // 2026-11-05: a COMPLETELY empty turn (no text, no reasoning, no tool call) with budget remaining is a stall, not a finished answer. The
+  // terminal "write your answer now, do not call any tools" made a Browse sub-agent (gemini-3.8-flash, holdout 106/107) FABRICATE results it never
+  // read — its very first turn was empty. With budget left it continues with tools like reasoning_only_active; spent → the old terminal nudge.
+  return { kind: loopHasBudget ? 'empty_active' : 'no_visible_content', hadReasoning, hadToolUse };
 }
 
 /**
@@ -89,6 +93,9 @@ export function emptyResponseNudge(kind: EmptyResponseKind): string {
   if (kind === 'reasoning_only_active') {
     return 'You produced reasoning but took no action and gave no final answer, and you still have budget remaining. Continue the task now — take your next concrete action (call a tool), or give your complete, verified final answer only if you are actually finished.';
   }
+  if (kind === 'empty_active') {
+    return 'Your previous response was empty, and you still have budget remaining. Continue the task now — take your next concrete action (call a tool). Do not answer from memory: report only what you have actually read.';
+  }
   if (kind === 'reasoning_only') {
     return 'You produced reasoning but no visible answer. Write out your complete final answer now, in plain text, based on that reasoning.';
   }
@@ -99,7 +106,7 @@ export function emptyResponseNudge(kind: EmptyResponseKind): string {
  * "do not call any more tools" (which the reasoning_only/no_content path appends).
  * HB-ENDTURN-TERMINAL: `reasoning_only_active` (mid-recon, budget remaining) is likewise a CONTINUE. */
 export function nudgeForbidsTools(kind: EmptyResponseKind): boolean {
-  return kind !== 'truncated' && kind !== 'reasoning_only_active';
+  return kind !== 'truncated' && kind !== 'reasoning_only_active' && kind !== 'empty_active';
 }
 
 /**

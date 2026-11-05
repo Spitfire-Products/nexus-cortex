@@ -3103,7 +3103,7 @@ export class CortexOrchestrator {
             ? classifyEmptyResponse(currentAssistantCanonicalMessage.content, lastStopReason, loopHasBudget)
             : null;
           const isEmptyContinueKind = EMPTY_TURN_CONTINUE && !!emptyClass
-            && (emptyClass.kind === 'truncated' || emptyClass.kind === 'reasoning_only_active');
+            && (emptyClass.kind === 'truncated' || emptyClass.kind === 'reasoning_only_active' || emptyClass.kind === 'empty_active');
           const canRetryEmpty = isEmptyContinueKind
             ? emptyContinueCount < EMPTY_CONTINUE_MAX
             : !emptyResponseRetryUsed;
@@ -5575,7 +5575,7 @@ export class CortexOrchestrator {
           ? classifyEmptyResponse(currentAssistantCanonicalMessage.content, lastStopReason, loopHasBudget)
           : null;
         const isEmptyContinueKind = EMPTY_TURN_CONTINUE && !!emptyClass
-          && (emptyClass.kind === 'truncated' || emptyClass.kind === 'reasoning_only_active');
+          && (emptyClass.kind === 'truncated' || emptyClass.kind === 'reasoning_only_active' || emptyClass.kind === 'empty_active');
         const canRetryEmpty = isEmptyContinueKind
           ? emptyContinueCount < EMPTY_CONTINUE_MAX
           : !emptyResponseRetryUsed;

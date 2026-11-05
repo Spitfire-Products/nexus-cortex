@@ -95,8 +95,9 @@ describe('classifyEmptyResponse', () => {
     expect(classifyEmptyResponse([{ type: 'thinking', thinking: 'x' }], 'max_tokens', true).kind).toBe('truncated');
   });
 
-  it('HB-ENDTURN: no_visible_content is NOT promoted by budget (needs reasoning)', () => {
-    expect(classifyEmptyResponse([], undefined, true).kind).toBe('no_visible_content');
+  it('HB-ENDTURN (revised 2026-11-05): a fully empty turn WITH budget is empty_active (continue with tools) — the terminal nudge made a Browse sub-agent fabricate results', () => {
+    expect(classifyEmptyResponse([], undefined, true).kind).toBe('empty_active');
+    expect(classifyEmptyResponse([], undefined, false).kind).toBe('no_visible_content');
   });
 
   it('HB-ENDTURN: not_empty (text/tool present) ignores budget', () => {
@@ -145,5 +146,19 @@ describe('R153 reasoning exhaustion', () => {
     expect(n).toContain("'medium'");
     expect(reasoningExhaustionNudge(undefined)).not.toContain('temporarily lowered');
     expect(emptyResponseNudgeFor(classifyEmptyResponse([{ type: 'thinking', thinking: 'x' }], 'stop', true))).toBe(emptyResponseNudge('reasoning_only_active'));
+  });
+});
+
+describe('empty_active (2026-11-05: a fully empty turn with budget left continues with tools)', () => {
+  it('classifies a no-content turn with budget as empty_active and allows tools', async () => {
+    const m = await import('../emptyResponseClassifier.js');
+    expect(m.classifyEmptyResponse([], 'stop', true).kind).toBe('empty_active');
+    expect(m.nudgeForbidsTools('empty_active')).toBe(false);
+    expect(m.emptyResponseNudge('empty_active')).toContain('call a tool');
+  });
+  it('without budget it is still the terminal no_visible_content', async () => {
+    const m = await import('../emptyResponseClassifier.js');
+    expect(m.classifyEmptyResponse([], 'stop', false).kind).toBe('no_visible_content');
+    expect(m.nudgeForbidsTools('no_visible_content')).toBe(true);
   });
 });
