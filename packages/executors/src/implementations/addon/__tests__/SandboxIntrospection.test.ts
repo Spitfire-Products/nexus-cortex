@@ -47,7 +47,7 @@ describe.skipIf(!HAS_CHROMIUM)('Sandbox React introspection (bridge contract)', 
   beforeAll(async () => {
     bridge = new VisualFeedbackBridge();
     await bridge.initialize();
-  }, 60000);
+  }, 180000);   // 2026-11-06: a cold Chromium launch on a GitHub runner took >60 s and failed the 4.131.3 publish (nothing published)
 
   afterAll(async () => {
     await bridge?.close();
