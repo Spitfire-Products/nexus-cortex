@@ -21,7 +21,14 @@ interface BrowserPkg {
 /** The optional local browser package, or null when it is not installed. */
 export async function loadBrowserPackage(): Promise<BrowserPkg | null> {
   const spec = '@nexus-cortex/browser';   // optional, separately licensed: a runtime import, never a build dependency
-  try { return (await import(spec)) as unknown as BrowserPkg; } catch { return null; }
+  try { return (await import(spec)) as unknown as BrowserPkg; } catch (e: unknown) {
+    // 2026-11-06: a package that IS installed but fails to load (Node 20 has no node:sqlite) used to read as "not installed" — say why.
+    const code = (e as { code?: string })?.code;
+    if (code !== 'ERR_MODULE_NOT_FOUND' && code !== 'MODULE_NOT_FOUND') {
+      console.error(`[cortex browser] @nexus-cortex/browser is installed but failed to load on Node ${process.version}: ${String((e as Error)?.message ?? e).slice(0, 200)} (it needs Node >= 22.13)`);
+    }
+    return null;
+  }
 }
 
 const tty = () => !!process.stdin.isTTY && !!process.stdout.isTTY;
