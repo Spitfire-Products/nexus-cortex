@@ -21,7 +21,7 @@ import { runThemePicker } from '../../ui/ChalkThemePicker.js';
 import { showModelPicker } from '../../ui/InkModelPicker.js';
 import type { ModelDisplayInfo } from '@nexus-cortex/core';
 import { MentorshipConfigService, onboardingLines, shouldShowOnboarding, markOnboardingShown } from '@nexus-cortex/core';
-import { loadPersistedModelForPlatform, type Platform } from '@nexus-cortex/cli/dist/themes/colors.js';
+import { resolveSessionModel, type Platform } from '@nexus-cortex/cli/dist/themes/colors.js';
 import { showInteractiveMenu } from '../../ui/InkMenuPicker.js';
 import { showCommandPalette } from '../../ui/InkCommandPalette.js';
 import { showApprovalDialog } from '../../ui/InkApprovalDialog.js';
@@ -146,8 +146,7 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
   // Create orchestrator client (don't initialize yet - need to set callbacks first)
   // projectPath = user's cwd (where tools resolve files). CORTEX_ROOT is for config only.
   // Priority: CLI arg > persisted model (fuzzycortex) > env var > fallback
-  const persistedModel = loadPersistedModelForPlatform(PLATFORM);
-  const effectiveModelId = options.model || persistedModel || process.env.DEFAULT_MODEL_ID || 'grok-code-fast-1';
+  const effectiveModelId = resolveSessionModel(options.model, PLATFORM);   // library resolver (shared with neoncortex)
 
   const client = new OrchestratorClient({
     mode,
@@ -199,7 +198,9 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
   // Display compact header on startup (full splash available via /about)
   console.clear();
   console.log(renderCompactHeader({
-    model: options.model || process.env.DEFAULT_MODEL_ID || 'default',
+    // The model this session will actually run (2026-11-02: the header showed DEFAULT_MODEL_ID while the status line — and the session —
+    // used the persisted last-used model, e.g. deepseek-flash above the input, grok-4-1-fast-non-reasoning below it).
+    model: effectiveModelId,
     cwd: process.cwd(),
   }));
 
@@ -1160,6 +1161,19 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
         }
         prompt();
         return;
+
+      case 'secrets': {
+        // 2026-11-02 secrets vault: the shared Ink dialog (same component as neoncortex); only value-free notices are printed.
+        rl.pause();
+        const { showSecretsDialog } = await import('../../ui/InkSecretsDialog.js');
+        const notices = await showSecretsDialog();
+        await new Promise<void>(resolve => setImmediate(resolve));   // let Ink's cleanup finish before readline takes stdin back
+        if (process.stdin.isTTY) { process.stdin.setRawMode(false); process.stdin.ref(); process.stdin.resume(); }
+        rl.resume();
+        for (const n of notices) console.log(theme.dimmed(`🔐 ${n}`));
+        prompt();
+        return;
+      }
 
       case 'config':
         if (!parsed.subcommand || (parsed.subcommand === 'set' && !parsed.args[0])) {

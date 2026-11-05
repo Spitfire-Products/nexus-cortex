@@ -109,6 +109,7 @@ export * from './ui/index.js';
 
 // Training / routing
 export { ModelRouterMatrix, estimateCost as estimateModelCost, resolveMaxMatrixBytes } from './training/ModelRouterMatrix.js';
+export { priceLedgerForCard, type SessionUsage } from './training/usageAccounting.js';
 export { predictionMatchScore, flattenUserContent, scoreAndRecordTurnPrediction } from './training/TurnPredictionStore.js';
 export type { TurnPredictionRecord, PendingTurnPrediction } from './training/TurnPredictionStore.js';
 export type { BenchmarkRecord, ModelScore, CostEfficiencyProfile, ScoringMatrix } from './training/ModelRouterMatrix.js';
@@ -135,6 +136,23 @@ export type {
   RunBenchOptions, BenchSummary, BenchTaskSummary,
 } from './training/BenchRunner.js';
 export { runExperiment } from './training/ExperimentRunner.js';
+export { runBenchPaired } from './training/BenchRunner.js';
+export type { PairedBenchArm } from './training/BenchRunner.js';
+export {
+  decideConfirmation, planRuns, gateZ, normalCdf, normalQuantile, sampleSd,
+} from './training/AutoResearchConfirm.js';
+export type {
+  ConfirmMode, ConfirmOptions, ConfirmDecision, RunPlan, RunPlanOptions, RunPlanTask,
+} from './training/AutoResearchConfirm.js';
+export {
+  checkCandidateChanges, describeViolations, globToRegExp, hashPath, matchesAny, protectGlobFor,
+  repoRelative, sealTaskSet, taskIdsIn,
+} from './training/EvalGuard.js';
+export type { GuardPolicy, GuardViolation, SealedSet } from './training/EvalGuard.js';
+export {
+  familyEffects, stepGuards, totalGuards, recordDrift, describeGuardBlocks,
+} from './training/AutoResearchGuards.js';
+export type { FamilyEffect, GuardVerdict, GuardOptions, DriftLedger } from './training/AutoResearchGuards.js';
 export type {
   ExperimentArms, RunExperimentOptions, ExperimentResult, ExperimentBenchSummaries,
 } from './training/ExperimentRunner.js';

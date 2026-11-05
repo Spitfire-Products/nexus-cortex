@@ -6,6 +6,7 @@ import React from 'react';
 import { render } from 'ink';
 import { ArtifactDashboard } from '../../ui/components/ArtifactDashboard.js';
 import { ThemeManager } from '@nexus-cortex/cli/dist/themes/ThemeManager.js';
+import { wakeStdinForInk } from '../../ui/inkStdin.js';
 
 export interface UiArtifactsOptions {
   /** Server URL */
@@ -29,6 +30,7 @@ export async function uiArtifacts(options: UiArtifactsOptions = {}): Promise<voi
       },
     })
   );
+  wakeStdinForInk();   // restart a stopped stdin handle (ui/inkStdin.ts)
 
   await waitUntilExit();
 }

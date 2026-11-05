@@ -6,6 +6,7 @@ import React from 'react';
 import { render } from 'ink';
 import { PermissionsBrowser } from '../../ui/components/PermissionsBrowser.js';
 import { ThemeManager } from '@nexus-cortex/cli/dist/themes/ThemeManager.js';
+import { wakeStdinForInk } from '../../ui/inkStdin.js';
 
 export interface UiPermissionsOptions {
   /** Server URL */
@@ -29,6 +30,7 @@ export async function uiPermissions(options: UiPermissionsOptions = {}): Promise
       },
     })
   );
+  wakeStdinForInk();   // restart a stopped stdin handle (ui/inkStdin.ts)
 
   await waitUntilExit();
 }

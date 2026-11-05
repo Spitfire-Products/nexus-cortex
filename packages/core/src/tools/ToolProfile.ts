@@ -19,6 +19,8 @@
  * Resolved FRESH per call (env tier — hot-toggleable via RuntimeConfigRegistry).
  * Unknown values resolve to 'full' (fail-open: never brick the tool surface).
  */
+import { resolveBrowserBackendCached } from '../config/localBrowser.js';
+
 
 export type ToolProfileName = 'full' | 'lean' | 'bash-only' | 'bash-plus' | 'bash-edit';
 
@@ -43,6 +45,15 @@ const BASH_PLUS = new Set(['Bash', 'Read', 'Edit', 'Write', 'ReadImage', ...ALWA
 /** bash-edit: the dsh-Minimal shape — shell + structural editor ONLY (their
  *  bash + str_replace_editor). The deepseek home-door candidate. */
 const BASH_EDIT = new Set(['Bash', 'Edit', 'ReadImage', ...ALWAYS_KEEP]);
+/** CORTEX_ANCHOR_WEB (2026-11-04): the bash-edit narrow door also passes Browse when web tools are enabled — the door's purpose is "act first in
+ *  the task's environment", and a web task's environment is the web. Without it every web task spent 2–4 Bash calls (~1 min: orient, ls,
+ *  `which chromium playwright`) before Browse became available. Inert when ENABLE_WEBTOOLS is off (Browse is stripped first), so the TB4.0
+ *  cells (ENABLE_WEBTOOLS=false) are unchanged. off = the door stays Bash/Edit/ReadImage only. */
+export function anchorWebDoor(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !/^(off|false|0)$/i.test(String(env.CORTEX_ANCHOR_WEB ?? '').trim());
+}
+const WEB_DOOR = new Set(['Browse']);
+const inBashEditDoor = (name: string): boolean => BASH_EDIT.has(name) || (WEB_DOOR.has(name) && anchorWebDoor());
 
 /** ENABLE_WEBTOOLS — the web surface: builtin WebSearch / WebFetch / Browse, the nexus-browser
  *  MCP tools, and the provider-native hosted search tools (web_search / x_search).
@@ -86,6 +97,10 @@ export function isWebToolEnabled(name: string, env: NodeJS.ProcessEnv = process.
   if (mode === 'true') return true;
   if (mode === 'false') return false;
   if (name === 'WebFetch') return true; // auto: fetch is useful keyless (helper-summarizer ladder)
+  // auto: the LOCAL browser chosen at install (NEXUS_BROWSER_MODE=local, installed + ready) is itself a real backend — Browse and the
+  // nexus-browser tools need no search key then (operator 2026-11-03: choosing it at install is the approval). Keyless WebSearch stays
+  // off (DuckDuckGo walls bursts — r-webtools-keyless-ab-2026-08-31); the hosted browser still needs a key.
+  if ((name === 'Browse' || name.startsWith(WEB_MCP_PREFIX)) && resolveBrowserBackendCached(env).using === 'local') return true;
   return hasWebSearchCredential(env);   // auto: search/browse/hosted search need a real backend
 }
 /** Dispatch/assembly face: true when the tool is a web tool that the active mode disables. */
@@ -299,7 +314,7 @@ export function applyToolProfile<T extends { name: string; discoveryTier?: strin
   if (profile === 'full') return tools;
   if (profile === 'bash-only') return tools.filter((t) => BASH_ONLY.has(t.name));
   if (profile === 'bash-plus') return tools.filter((t) => BASH_PLUS.has(t.name));
-  if (profile === 'bash-edit') return tools.filter((t) => BASH_EDIT.has(t.name));
+  if (profile === 'bash-edit') return tools.filter((t) => inBashEditDoor(t.name));
   return tools.filter((t) => t.discoveryTier === 'essential' || ALWAYS_KEEP.has(t.name));
 }
 
@@ -315,7 +330,7 @@ export function isToolAllowedByProfile(
   if (ALWAYS_KEEP.has(name)) return true;
   if (profile === 'bash-only') return BASH_ONLY.has(name);
   if (profile === 'bash-plus') return BASH_PLUS.has(name);
-  if (profile === 'bash-edit') return BASH_EDIT.has(name);
+  if (profile === 'bash-edit') return inBashEditDoor(name);
   return lookupTier(name) === 'essential';
 }
 

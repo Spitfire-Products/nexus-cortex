@@ -5,6 +5,7 @@ import React from 'react';
 import { render } from 'ink';
 import { TmuxBrowser } from '../../ui/components/TmuxBrowser.js';
 import { ThemeManager } from '@nexus-cortex/cli/dist/themes/ThemeManager.js';
+import { wakeStdinForInk } from '../../ui/inkStdin.js';
 
 export interface TmuxBrowserOptions {
   serverUrl?: string;
@@ -22,6 +23,7 @@ export async function tmuxBrowser(options: TmuxBrowserOptions = {}): Promise<voi
       },
     })
   );
+  wakeStdinForInk();   // restart a stopped stdin handle (ui/inkStdin.ts)
 
   await waitUntilExit();
 }

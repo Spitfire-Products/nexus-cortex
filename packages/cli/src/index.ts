@@ -520,6 +520,39 @@ permissions
     });
   });
 
+// 2026-11-02 secrets vault (docs/SECRETS_VAULT_PLAN.md): encrypted ~/.cortex/secrets.enc, unlocked without prompting (CORTEX_SECRETS_KEY /
+// _FILE / OS keychain / owner-only key file). Headless-first: every action is a flag; values come from a masked prompt, stdin or --from-env.
+program
+  .command('secrets [action] [args...]')
+  .description('Encrypted secrets vault: status | init | unlock | list | set NAME | get NAME | delete NAME | bind NAME ENV_VAR | unbind ENV_VAR | import-env | exec [--only A,B] -- <command…>')
+  .option('--stdin', 'set: read the value from stdin')
+  .option('--from-env <VAR>', 'set: copy the value from this environment variable')
+  .option('--provider <id>', 'set: provider id (e.g. deepseek, github)')
+  .option('--type <type>', 'set: secret type (api-key, token, password, …)')
+  .option('--category <c>', 'set: category')
+  .option('--note <text>', 'set: a note')
+  .option('--reveal', 'get: print the value')
+  .option('--tool <name>', 'bind/unbind: only for this tool')
+  .option('--strip', 'import-env: blank the moved keys in ~/.cortex/.env (backup kept)')
+  .option('--passphrase', 'init: protect the vault with a passphrase instead of the keychain / key file')
+  .option('--only <names>', 'exec: inject only these secrets (comma-separated)')
+  .option('--verbose', 'exec: report how many keys were injected (to stderr)')
+  .action(async (action: string | undefined, args: string[], options) => {
+    const { runSecrets } = await import('./commands/secrets/index.js');
+    process.exit(await runSecrets(action ?? 'status', args ?? [], { ...options, json: !!program.opts().json }));
+  });
+
+// Browser backend (operator 2026-11-03): hosted MCP by default; the local @nexus-cortex/browser only when chosen (install = approval).
+program
+  .command('browser [action] [args...]')
+  .description('Which browser the harness drives: status | install [--yes] | use <local|hosted>. Installing the local browser installs everything it needs; otherwise the hosted browser MCP is used')
+  .option('-y, --yes', 'install: choose the local browser explicitly with no prompt (e.g. in an image build)')
+  .option('--json', 'status: machine-readable output')
+  .action(async (action: string | undefined, args: string[], options: { yes?: boolean; json?: boolean }) => {
+    const { runBrowser } = await import('./commands/browser/index.js');
+    process.exit(await runBrowser(action, args ?? [], options));
+  });
+
 // Config commands
 // 2026-10-17 first-run wizard: providers -> keys -> action / helper / mentor / vision / web tools -> write ~/.cortex/.env -> probe.
 // Every question has a flag, so a script/container can run it headless (`--key … --yes`); anything unnamed falls back to the same
@@ -538,6 +571,8 @@ program
   .option('--probe', 'Run the live one-request check per chosen model (default: on interactively, off for a scripted run)')
   .option('--no-probe', 'Skip the live one-request check of each chosen model')
   .option('-y, --yes', 'Write without the confirm prompt')
+  .option('--secrets-to <vault|env>', 'Where API keys go: vault (default, encrypted ~/.cortex/secrets.enc) or env (plaintext ~/.cortex/.env)')
+  .option('--browser <local|hosted>', 'local = install the local browser now, with everything it needs (the choice is the approval); hosted = the hosted browser MCP (default)')
   .action(async (options) => {
     const { runSetup } = await import('./commands/setup/index.js');
     const keys: Record<string, string> = {};
@@ -548,6 +583,8 @@ program
     process.exit(await runSetup({
       probe: options.probe,
       yes: !!options.yes,
+      secretsTo: options.secretsTo === 'env' ? 'env' : 'vault',
+      browser: options.browser === 'local' || options.browser === 'hosted' ? options.browser : undefined,
       providers: options.provider,
       keys,
       action: options.action,
@@ -713,6 +750,9 @@ autoresearch
   .option('--run-cmd <template>', 'NON-CORTEX target: grade a shell command per task in each arm dir ({prompt}/{case} substituted) instead of building+serving a cortex server')
   .option('--build-cmd <cmd>', 'build command run in each arm dir before benching a --run-cmd target (subject to --build-base/--no-build)')
   .option('--accept-exit <codes>', 'comma list of exit codes whose stdout is graded (default 0)', '0')
+  .option('--no-interleave', 'run all base runs, then all candidate runs (default: interleaved per task in seeded random order, so provider drift hits both arms)')
+  .option('--target-effect <pts>', 'run planning: the aggregate effect worth detecting, in score points (default 5)')
+  .option('--power <p>', 'run planning: probability of detecting --target-effect (default 0.8)')
   .action(async (opts) => {
     const globalOpts = program.opts();
     await autoResearchExperiment({ ...opts, json: globalOpts.json });
@@ -771,6 +811,20 @@ autoresearch
   .option('--judge-rubric <text>', 'rubric for --require-judge (default: a generic code-quality rubric)')
   .option('--judge-rubric-file <path>', 'read the judge rubric from a file')
   .option('--judge-model <id>', 'model for the judge (default: --model, else DEFAULT_MODEL_ID)')
+  .option('--protect <globs>', 'comma-separated repo-relative globs no candidate may touch (verifier scripts, graders, benches) — a candidate that does is refused unbenched; the task-sets\' in-repo paths are always protected')
+  .option('--editable <globs>', 'comma-separated globs: every path a candidate changes must match one (else refused unbenched)')
+  .option('--no-confirm', 'skip the confirmation re-bench of each round\'s selected winner on fresh train runs (on by default)')
+  .option('--confirm-mode <mode>', 'how the confirmation run is judged: pooled (default — screening + confirmation p-values combined at the gate\'s bar, fresh effect > 0) | direction (fresh effect > 0, CI low > -margin) | strict (must pass the full gate again)', 'pooled')
+  .option('--confirm-loss-margin <pts>', 'direction mode: largest tolerated loss at the CI low end, in score points (default 2.5)')
+  .option('--target-effect <pts>', 'run planning: the aggregate effect worth detecting, in score points (default 5) — the loop warns when underpowered')
+  .option('--power <p>', 'run planning: probability of detecting --target-effect (default 0.8)')
+  .option('--auto-runs', 'raise runs per arm for later rounds to what --target-effect needs (capped by --max-runs)')
+  .option('--max-runs <n>', 'cap for --auto-runs', '12')
+  .option('--guards <mode>', 'family regression guards: block (default) | warn | off — a candidate is blocked when one task family loses more than the margin with evidence, per step and as a running total from the round-0 base', 'block')
+  .option('--guard-margin <pts>', 'per-step family loss margin, score points (default 2)')
+  .option('--guard-total-margin <pts>', 'running-total family loss margin from the round-0 base, score points (default 5)')
+  .option('--approaches <list>', 'approaches rotated across arms, separated by | (entries may be "slug: text"); default: a built-in list when --width > 1')
+  .option('--no-approaches', 'give every arm the same prompt (no per-arm approach)')
   .action(async (opts) => {
     const globalOpts = program.opts();
     await autoResearchLoop({ ...opts, json: globalOpts.json });

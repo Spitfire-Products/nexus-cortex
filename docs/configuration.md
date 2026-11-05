@@ -4,7 +4,7 @@ Every Nexus Cortex setting is an environment variable, read from the layered `.e
 
 > **Canonical sources:** the dev repo's `.env` (the MASTER, annotated with per-lever `[LEDGER]` notes) is generated into the shipped `.env.defaults` (read live as the default layer), and `packages/core/src/config/SettingsSchema.ts` is the schema (types + the hardcoded floor). This page mirrors them for browsing — if anything here disagrees, those win.
 >
-> **How config resolves (highest → lowest):** a `.env.local` beside any base file → the process environment → `./.env` (current directory) → the package's own `.env` (source checkouts) → `~/.cortex/.env` (your keys + overrides; `cortex setup` / `cortex config set` write here) → feature-payload rules → the lever profile (`CORTEX_PROFILE`, shipped `standard`) → the shipped `.env.defaults` → the hardcoded floor. Every lever reports its resolved value and source (`env`, `profile`, `feature`, `code-default`) in `cortex config get` and `GET /health/config`.
+> **How config resolves (highest → lowest):** a `.env.local` beside any base file → the process environment → the secrets vault (`~/.cortex/secrets.enc`, API keys; [secrets.md](secrets.md)) → `./.env` (current directory) → the package's own `.env` (source checkouts) → `~/.cortex/.env` (your overrides; `cortex setup` writes settings here and keys to the vault, `cortex config set` writes here) → feature-payload rules → the lever profile (`CORTEX_PROFILE`, shipped `standard`) → the shipped `.env.defaults` → the hardcoded floor. Every lever reports its resolved value and source (`env`, `profile`, `feature`, `code-default`) in `cortex config get` and `GET /health/config`.
 
 Per-launch overrides win — e.g. `DEFAULT_MODEL_ID=grok-4.3 PORT=4100 node packages/server/dist/index.js`. Booleans are the literal strings `true`/`false`. Only API keys are required; every other variable has a proven-optimal default.
 
@@ -38,7 +38,7 @@ Set the keys for the providers you use; leave the rest blank. A model is only av
 |----------|---------|------------------------------|
 | `DEFAULT_MODEL_ID` | `deepseek-v4-pro` | Primary model — any registry ID or alias (`cortex models list`). |
 | `HELPER_MODEL_ID` | `deepseek-flash` | Cheaper model for compaction & mentorship. |
-| `WEB_TOOLS_MODEL` | `gemini-2.5-flash` | Model backing `WebSearch`/`WebFetch`; provider auto-detected from the ID prefix. |
+| `WEB_TOOLS_MODEL` | `gemini-2.5-flash` | Model backing `WebSearch`/`WebFetch`; provider auto-detected from the ID prefix. `local-browser` = no provider: DuckDuckGo search + local-browser fetch ([browser.md](browser.md)). |
 
 #### System
 
@@ -101,7 +101,11 @@ Set the keys for the providers you use; leave the rest blank. A model is only av
 | `XAI_API_MODE` | `messages` | xAI request surface: `messages` (CC-style) or `responses` (server-side tools). |
 | `OPENAI_API_MODE` | `chat/completions` | OpenAI request surface: `chat/completions` or `responses` (opt into hosted server-side tools). |
 | `ENABLE_DEFERRED_TOOL_LOADING` | `true` | Load only essential tools up front; discover the rest via `SearchTools` (~77% first-turn input-token cut). |
-| `ENABLE_WEBTOOLS` | `auto` | Web surface mode. `auto`: WebFetch on; WebSearch / Browse / browser-MCP / hosted search on only when a search-capable key is present (Gemini grounding, XAI, OpenAI). `true`: all on. `false`: all off — stripped from every tool surface and refused at dispatch. Bench arms pin `true`/`false` explicitly. |
+| `ENABLE_WEBTOOLS` | `auto` | Web surface mode. `auto`: WebFetch on; WebSearch / Browse / browser-MCP / hosted search on only when a search-capable key is present (Gemini grounding, XAI, OpenAI). `auto` also turns Browse + the browser tools on when the LOCAL browser is installed and chosen. `true`: all on. `false`: all off — stripped from every tool surface and refused at dispatch. Bench arms pin `true`/`false` explicitly. |
+| `NEXUS_BROWSER_MODE` | `hosted` | Browser backend: `hosted` (the hosted nexus-browser MCP) or `local` (the `@nexus-cortex/browser` package — set by `cortex setup --browser local` / `cortex browser install`; falls back to hosted until the install is ready). With `local` and `ENABLE_WEBTOOLS=auto`, Browse + the browser tools are on without a search key. [browser.md](browser.md) |
+| `NEXUS_BROWSER_PROXY_URL` | — | Your own (residential) proxy for bot-walled pages in local mode: `http(s)://[user[:password]@]host:port`; the password may be a vault reference `«secret:NAME»`. Used only for the walled site. |
+| `NEXUS_BROWSER_HOME` | `~/.nexus-cortex/browser` | Where the local browser's tools (Chrome download, Python env, extensions, `install.json`) live. |
+| `CORTEX_MAX_AGENT_DEPTH` | `1` | How deep sub-agents nest. 1 = sub-agents never start sub-agents (not offered Task/Browse/WebSearch; spawns refused). The Browse sub-agent never spawns at any depth. |
 | `ENABLE_PTC` | `false` | Programmatic tool calling (compose tool calls in a script). |
 | `ENABLE_LOCAL_CODE_EXECUTION` | `false` | Allow local code-execution tooling. |
 

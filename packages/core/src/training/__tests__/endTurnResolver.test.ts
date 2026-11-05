@@ -264,10 +264,10 @@ describe('endTurnResolver — R167 informed finish confirmation (HB-FINISH-CONFI
 
 describe('endTurnResolver — R168 verified MEETS (HB-MEETS-CONFIRM)', () => {
   const cfg = { finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5 };
-  it('config: default on, floor 0.5; overridable; clamped', () => {
+  it('config: default OFF since 2026-11-04 (TB4 cells run it false; field read null), floor 0.5; overridable; clamped', () => {
     const d = resolveEndTurnResolverConfig({} as any);
-    expect(d.meetsConfirm).toBe(true); expect(d.meetsConfirmMinRemaining).toBe(0.5);
-    expect(resolveEndTurnResolverConfig({ CORTEX_MEETS_CONFIRM: 'false' } as any).meetsConfirm).toBe(false);
+    expect(d.meetsConfirm).toBe(false); expect(d.meetsConfirmMinRemaining).toBe(0.5);
+    expect(resolveEndTurnResolverConfig({ CORTEX_MEETS_CONFIRM: 'true' } as any).meetsConfirm).toBe(true);
     expect(resolveEndTurnResolverConfig({ CORTEX_MEETS_CONFIRM_MIN_REMAINING: '0.8' } as any).meetsConfirmMinRemaining).toBe(0.8);
     expect(resolveEndTurnResolverConfig({ CORTEX_MEETS_CONFIRM_MIN_REMAINING: '3' } as any).meetsConfirmMinRemaining).toBe(0.5);
   });
@@ -640,5 +640,19 @@ describe('endTurnResolver — R233 v2 floor mode', () => {
     expect(frac).toBe(0.7);
     expect(effectiveMaxRejects(cfg, frac, 0.5)).toBe(6);        // R160 cap intact
     expect(flooredEvidenceCap(cfg.evidenceCap, active)).toBe(1); // evidence cap clamped
+  });
+});
+
+describe('web-answer rubric (CORTEX_RESOLVER_WEB_RULE, 2026-11-04)', () => {
+  it('is appended only when the turn is a web answer', async () => {
+    const m = await import('../endTurnResolver.js');
+    expect(m.resolverSystemPrompt(false, false, undefined, false, [], false, true)).toContain('WEB ANSWER RULE');
+    expect(m.resolverSystemPrompt(false, false, undefined, false, [], false, false)).not.toContain('WEB ANSWER RULE');
+    expect(m.RESOLVER_WEB_ANSWER_CLAUSE).toContain('GTX = GORE-TEX');
+  });
+  it('defaults on; off|false|0 disables', async () => {
+    const m = await import('../endTurnResolver.js');
+    expect(m.resolverWebRuleEnabled({} as NodeJS.ProcessEnv)).toBe(true);
+    for (const v of ['off', 'false', '0']) expect(m.resolverWebRuleEnabled({ CORTEX_RESOLVER_WEB_RULE: v } as NodeJS.ProcessEnv)).toBe(false);
   });
 });

@@ -11,6 +11,7 @@
 
 import React, { useState, useCallback, useMemo } from 'react';
 import { render, Box, Text, useInput } from 'ink';
+import { wakeStdinForInk } from './inkStdin.js';
 import {
   SETTINGS_METADATA,
   type SettingMetadata,
@@ -410,6 +411,7 @@ export async function showConfigMenu(
       />
     );
 
+    wakeStdinForInk();   // fuzzycortex: restart a stopped stdin handle (ui/inkStdin.ts)
     waitUntilExit().catch(() => {
       resolve();
     });

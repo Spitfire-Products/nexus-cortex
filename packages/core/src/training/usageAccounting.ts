@@ -84,6 +84,21 @@ export function usageCost(acc: SessionUsage, p: UsagePrices): { main: number; he
   return { main, helperEst, total: main + helperEst, cacheHitRate: denom > 0 ? acc.cacheReadTokens / denom : 0 };
 }
 
+/** A session ledger priced at a model card's own rates (ModelConfig.cost: inputPerMillion / cachedInputPerMillion / outputPerMillion) —
+ *  2026-11-02: sub-agent reports showed "Input: 0 / Output: 0 / $0.0000" (stream-event counters that never saw usage, fixed Sonnet rates)
+ *  while this exact ledger sat unused beside them. Pure. */
+export function priceLedgerForCard(
+  acc: SessionUsage,
+  cost?: { inputPerMillion?: number; outputPerMillion?: number; cachedInputPerMillion?: number } | null,
+): { inputTokens: number; outputTokens: number; cacheReadTokens: number; estimatedCost: number } {
+  const p: UsagePrices = {
+    inputPerM: cost?.inputPerMillion ?? 0,
+    outputPerM: cost?.outputPerMillion ?? 0,
+    cacheHitPerM: cost?.cachedInputPerMillion ?? cost?.inputPerMillion ?? 0,
+  };
+  return { inputTokens: acc.inputTokens, outputTokens: acc.outputTokens, cacheReadTokens: acc.cacheReadTokens, estimatedCost: usageCost(acc, p).total };
+}
+
 /** R239 / P4 (2026-10-07): the sum of two whole-session ledgers — for the second-attempt chain, whose response carries usage.session
  *  SUMMED over every attempt. Every numeric counter is added (known and unknown top-level keys alike), `helper` is summed field-wise with
  *  `bySurface` merged by key, `subagents` is summed field-wise; any other non-numeric key keeps the LATER ledger's non-null value (the

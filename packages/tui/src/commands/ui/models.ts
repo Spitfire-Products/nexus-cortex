@@ -8,6 +8,7 @@ import { render } from 'ink';
 import { ModelPicker } from '../../ui/components/ModelPicker.js';
 import { ConfigManager } from '@nexus-cortex/cli/dist/config/ConfigManager.js';
 import { ThemeManager } from '@nexus-cortex/cli/dist/themes/ThemeManager.js';
+import { wakeStdinForInk } from '../../ui/inkStdin.js';
 
 export interface UiModelsOptions {
   serverUrl?: string;
@@ -56,6 +57,7 @@ export async function uiModels(options: UiModelsOptions = {}): Promise<void> {
       },
     })
   );
+  wakeStdinForInk();   // restart a stopped stdin handle (ui/inkStdin.ts)
 
   // Wait for user interaction to complete
   await waitUntilExit();

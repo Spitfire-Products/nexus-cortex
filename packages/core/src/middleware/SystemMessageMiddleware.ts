@@ -63,6 +63,11 @@ function resolveOrientPath(projectPath?: string): string | undefined {
   if (existsSync(proj)) return proj;
   const root = (process.env.CORTEX_ROOT ?? '').trim();
   if (root) {
+    // In a source checkout CORTEX_ROOT is the harness monorepo, whose .cortex/orient describes THAT repo (git status included). For any
+    // other project use the generic script the npm packages ship (2026-11-03: a CarMax run from a scratch dir was oriented into the
+    // harness repo and spent turns auditing its dirty files). Published installs have only the generic copy at CORTEX_ROOT/.cortex/orient.
+    const generic = join(root, 'docs', 'prompts', 'orient-scaffold.sh');
+    if (existsSync(generic)) return generic;
     const shipped = join(root, '.cortex', 'orient');
     if (existsSync(shipped)) return shipped;
   }

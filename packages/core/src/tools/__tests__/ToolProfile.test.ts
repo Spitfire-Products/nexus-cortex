@@ -277,3 +277,41 @@ describe('VISION_HELPER_MODEL', () => {
     for (const v of ['false', 'off', 'none', '0']) { process.env.VISION_HELPER_MODEL = v; expect(resolveVisionHelperModel()).toBeNull(); }
   });
 });
+
+// 2026-11-03: the LOCAL browser chosen at install is itself a backend — Browse + nexus-browser tools need no search key then.
+import { localBrowserPackageDir } from '../../config/localBrowser.js';
+import { isWebToolEnabled as webOn } from '../ToolProfile.js';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+describe.skipIf(!localBrowserPackageDir())('ENABLE_WEBTOOLS=auto with the local browser installed', () => {
+  it('keyless: Browse + nexus-browser tools ON when NEXUS_BROWSER_MODE=local and the install is ready; WebSearch stays off', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'nb-'));
+    writeFileSync(join(home, 'install.json'), JSON.stringify({ version: 1, ready: { core: true, sandbox: false } }));
+    const env = { NEXUS_BROWSER_MODE: 'local', NEXUS_BROWSER_HOME: home } as NodeJS.ProcessEnv;
+    await new Promise((r) => setTimeout(r, 5100));   // past the 5 s backend cache from other tests
+    expect(webOn('Browse', env)).toBe(true);
+    expect(webOn('nexus-browser__browse', env)).toBe(true);
+    expect(webOn('WebSearch', env)).toBe(false);
+    rmSync(home, { recursive: true, force: true });
+  }, 15000);
+  it('keyless + hosted mode: Browse stays off (the hosted browser needs a key)', () => {
+    expect(webOn('Browse', { NEXUS_BROWSER_MODE: 'hosted' } as NodeJS.ProcessEnv)).toBe(false);
+  });
+});
+
+import { anchorWebDoor } from '../ToolProfile.js';
+describe('bash-edit door passes Browse when web tools are on (CORTEX_ANCHOR_WEB, 2026-11-04)', () => {
+  const tools = ['Bash', 'Edit', 'ReadImage', 'EndTurn', 'Browse', 'WebFetch', 'Read'].map((name) => ({ name }));
+  it('web on: Browse in the door; WebFetch/Read still lifted later', () => {
+    const prev = process.env.ENABLE_WEBTOOLS; process.env.ENABLE_WEBTOOLS = 'true';
+    try { expect(applyToolProfile(tools, 'bash-edit').map((t) => t.name)).toEqual(['Bash', 'Edit', 'ReadImage', 'EndTurn', 'Browse']); }
+    finally { if (prev === undefined) delete process.env.ENABLE_WEBTOOLS; else process.env.ENABLE_WEBTOOLS = prev; }
+  });
+  it('web off (TB4 cells): unchanged door', () => {
+    const prev = process.env.ENABLE_WEBTOOLS; process.env.ENABLE_WEBTOOLS = 'false';
+    try { expect(applyToolProfile(tools, 'bash-edit').map((t) => t.name)).toEqual(['Bash', 'Edit', 'ReadImage', 'EndTurn']); }
+    finally { if (prev === undefined) delete process.env.ENABLE_WEBTOOLS; else process.env.ENABLE_WEBTOOLS = prev; }
+  });
+  it('off restores the old door', () => { expect(anchorWebDoor({ CORTEX_ANCHOR_WEB: 'off' } as any)).toBe(false); expect(anchorWebDoor({} as any)).toBe(true); });
+});

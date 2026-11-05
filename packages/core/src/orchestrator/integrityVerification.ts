@@ -21,6 +21,8 @@
 export interface IntegrityInput {
   /** WebSearch query strings issued this turn. */
   webQueries: string[];
+  /** Browse delegate task texts this turn: web use for check C, never solution queries (they restate the task by design). */
+  browseTasks?: string[];
   /** Web tool RESULT texts this turn (WebSearch/WebFetch outputs). */
   webContent: string[];
   /** Mutating-tool content this turn (Write.content, Edit.new_string). */
@@ -104,7 +106,7 @@ export function verifyIntegrity(input: IntegrityInput): IntegrityVerdict {
   // C (operator-directed): SHOW YOUR WORK — any web usage this turn demands a
   // sources attestation on EndTurn. Mechanical checks A/B still run above, so
   // the attestation cannot talk its way past a transplant or solution query.
-  const webUsed = input.webQueries.length > 0 || input.webContent.length > 0;
+  const webUsed = input.webQueries.length > 0 || (input.browseTasks?.length ?? 0) > 0 || input.webContent.length > 0;
   if (webUsed) {
     const att = input.sourcesAttestation;
     const attOk = Array.isArray(att) && att.length > 0 &&
@@ -114,7 +116,7 @@ export function verifyIntegrity(input: IntegrityInput): IntegrityVerdict {
     if (!attOk) {
       flags.push({
         check: 'unattested_web_use',
-        detail: `web tools were used this turn (${input.webQueries.length} search(es), ${input.webContent.length} fetch result(s)) with no sources attestation`,
+        detail: `web tools were used this turn (${input.webQueries.length} search(es), ${input.browseTasks?.length ?? 0} browse task(s), ${input.webContent.length} fetch result(s)) with no sources attestation`,
       });
     }
   }

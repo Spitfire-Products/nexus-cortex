@@ -187,10 +187,12 @@ export class OrchestratorClient {
   }
 
   /**
-   * @deprecated Use findInstallRoot() for config, process.cwd() for tool cwd
+   * The project a session belongs to: PROJECT_PATH, else the directory the user is working in — the same rule as the server
+   * (2026-11-02; this returned the install root, so TUI sessions were created/resumed/recorded under omniclaude-v4 whatever the folder).
+   * Shipped config (permission profiles) still resolves through findInstallRoot().
    */
-  static findProjectRoot(_startPath: string): string {
-    return OrchestratorClient.findInstallRoot();
+  static findProjectRoot(startPath: string): string {
+    return process.env.PROJECT_PATH || startPath || process.cwd();
   }
 
   /**
@@ -220,16 +222,20 @@ export class OrchestratorClient {
   private async initializeDirect(): Promise<void> {
     const { createOrchestrator } = await import('@nexus-cortex/core');
 
+    // Same fallback as the shared resolver (themes/colors.ts resolveSessionModel); the TUIs always pass a resolved model.
     const defaultModelId = this.options.defaultModelId ||
                           process.env.DEFAULT_MODEL_ID ||
-                          'grok-4-fast';
+                          'deepseek-flash';
 
-    const installRoot = OrchestratorClient.findInstallRoot();
-    const workingDir = this.options.projectPath || process.cwd();
+    // The project is the directory the user works in — exactly as the server does (PROJECT_PATH || cwd for projectPath AND
+    // workingDirectory). 2026-11-02: this used the INSTALL ROOT as projectPath, so every TUI session's decisions/state pooled in
+    // omniclaude-v4/.cortex whatever the user's folder, and lookup-before-action drew on unrelated projects (operator: TUIs are thin
+    // wrappers; surfaces must stay consistent).
+    const workingDir = process.env.PROJECT_PATH || this.options.projectPath || process.cwd();
 
     this.orchestrator = await createOrchestrator({
       defaultModelId,
-      projectPath: installRoot,
+      projectPath: workingDir,
       workingDirectory: workingDir,
       enableTimeline: true,
       debug: this.options.debug || false,
@@ -243,7 +249,7 @@ export class OrchestratorClient {
       previewRenderer: this.options.previewRenderer
     });
 
-    await this.orchestrator.createSession(installRoot, defaultModelId);
+    await this.orchestrator.createSession(workingDir, defaultModelId);
 
     if (this.options.debug) {
       console.log(' Direct mode initialized');

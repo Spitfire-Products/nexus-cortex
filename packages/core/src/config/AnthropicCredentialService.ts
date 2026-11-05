@@ -331,7 +331,8 @@ export class AnthropicCredentialService {
     }
 
     throw new CredentialError(
-      'No Anthropic credentials found. Set ANTHROPIC_API_KEY (or a gateway ' +
+      (process.env.CORTEX_ANTHROPIC_KEY_NOTE ? process.env.CORTEX_ANTHROPIC_KEY_NOTE + ' ' : '') +
+        'No Anthropic credentials found. Set ANTHROPIC_API_KEY (or a gateway ' +
         'ANTHROPIC_AUTH_TOKEN) environment variable.',
       'NO_CREDENTIALS'
     );

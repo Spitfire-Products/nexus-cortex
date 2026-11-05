@@ -64,7 +64,33 @@ let installed = false;
  * the confirmed bug where the DeepSeek OpenAI-SDK client sent the raw job token to api.deepseek.com
  * because the global patch didn't apply to its calls.
  */
+/**
+ * Streaming header deadline (2026-11-03). A STREAMING provider request answers with headers at once and then streams; one that has not
+ * sent headers after CORTEX_STREAM_HEADER_TIMEOUT_MS (default 120 s; 0 = off) is dead. A DeepSeek browse delegate's request sat with no
+ * response for ~8 min until the delegate's 10-min limit (the client's total timeout derives from max_tokens: 393,216 × 20 ms ≈ 131 min).
+ * Aborting that attempt lets the SDK's own retry send it again. Non-streaming requests are untouched (a long thinking turn legitimately
+ * returns headers only when it is done); once headers arrive the timer is cleared and the body streams as before.
+ */
+export function streamHeaderTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = String(env.CORTEX_STREAM_HEADER_TIMEOUT_MS ?? '').trim();
+  if (raw === '') return 120_000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 120_000;
+}
+function isStreamingBody(body: unknown): boolean {
+  return typeof body === 'string' && /"stream"\s*:\s*true/.test(body);
+}
 export const cortexProxyFetch: typeof fetch = ((input: any, init?: any): Promise<Response> => {
+  const ms = streamHeaderTimeoutMs();
+  if (!(ms > 0) || !isStreamingBody(init?.body)) return proxyFetchCore(input, init);
+  const ctl = new AbortController();
+  const outer: AbortSignal | undefined = init?.signal ?? undefined;
+  if (outer) { if (outer.aborted) ctl.abort(outer.reason); else outer.addEventListener('abort', () => ctl.abort(outer.reason), { once: true }); }
+  const timer = setTimeout(() => ctl.abort(new Error(`no response headers after ${Math.round(ms / 1000)} s (CORTEX_STREAM_HEADER_TIMEOUT_MS)`)), ms);
+  return proxyFetchCore(input, { ...(init || {}), signal: ctl.signal }).finally(() => clearTimeout(timer));
+}) as typeof fetch;
+
+const proxyFetchCore: typeof fetch = ((input: any, init?: any): Promise<Response> => {
   const orig = globalThis.fetch;
   const raw = process.env.CORTEX_PROXY_BASE_URL;
   if (!raw || !raw.trim()) return orig(input, init);

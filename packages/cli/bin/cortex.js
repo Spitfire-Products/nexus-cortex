@@ -119,6 +119,9 @@ const COMMANDER_SUBCOMMANDS = new Set([
   'autoresearch', 'models', 'message', 'mcp', 'config', 'permissions', 'context',
   'tools', 'middleware', 'artifact', 'cache', 'system-messages', 'tmux',
   'update', 'uninstall', 'setup',
+  // 2026-11-02: these five were registered in src/index.ts but missing here, so `cortex secrets set X` (etc.) was sent to the
+  // MODEL as a chat prompt on an auto-started server. tests/binSubcommands.test.ts now fails when the two lists drift.
+  'secrets', 'canon', 'features', 'sessions', 'server', 'browser',
 ]);
 const __firstPositional = args.find((a) => !a.startsWith('-'));
 if (__firstPositional && COMMANDER_SUBCOMMANDS.has(__firstPositional)) {
@@ -182,7 +185,9 @@ const timeoutFlag = getFlagValue('--timeout');
 idleTimeoutFlag = getFlagValue('--idle-timeout');
 const cwdFlag = getFlagValue('--cwd');     // `cortex agent` target directory
 hasFlag('--yolo');                         // accepted but redundant — agent auto-approves by default
-const messageTimeoutMs = timeoutFlag ? parseInt(timeoutFlag, 10) : 600000; // 10 min default for messages
+// 10 min for a message; 30 min for `cortex agent` — an autonomous browsing task routinely runs past 10 min and the CLI then abandoned
+// a turn the server was still working (2026-11-02, operator: raise to 30).
+const messageTimeoutMs = timeoutFlag ? parseInt(timeoutFlag, 10) : (__agentMode ? 1800000 : 600000);
 let prompt = args.join(' ').trim();
 
 // `cortex init` — generate the project CORTEX.md context file (headless parity with the TUI's
@@ -257,7 +262,7 @@ FLAGS:
   --resume ID         Resume a specific session by UUID
   --json              Output full JSON response (for scripting/agents)
   --quiet, -q         Response text only, no session info
-  --timeout MS        Request timeout in ms (default: 600000 = 10 min)
+  --timeout MS        Request timeout in ms (default: 600000 = 10 min; agent: 1800000 = 30 min)
   --idle-timeout SECS Auto-shutdown server after N seconds of inactivity
   --cwd DIR           (agent) Run in DIR — the agent's file tools operate there
   --shutdown          Stop the running server and exit
@@ -387,7 +392,8 @@ async function startServer() {
 // Where the auto-started background server logs to. Honors CORTEX_HOME/HOME so
 // it lands beside the rest of the global config (~/.cortex/server.log).
 function getServerLogPath() {
-  return join(getGlobalCortexDir(), 'server.log');
+  // Per port (2026-11-02): a second server on another PORT used to truncate the first one's log ('w' per spawn). 4000 keeps server.log.
+  return join(getGlobalCortexDir(), BASE_PORT === '4000' ? 'server.log' : `server-${BASE_PORT}.log`);
 }
 
 function getGlobalCortexDir() {
@@ -699,6 +705,10 @@ async function run() {
   const payload = {
     messages: [{ role: 'user', content: prompt }],
   };
+  // The server plans within our timeout (budget visibility, sub-agent limits, forced synthesis) and answers before we give up. Margin =
+  // min(5 min, 15%): a sub-agent may run to 30 s before the deadline, and the final synthesis + EndTurn checks then need a few model calls
+  // (2026-11-03 cars.com: a 2-min margin left a third delegate running when the client gave up at 30 min). Only with a client timeout.
+  if (messageTimeoutMs > 0) payload.turn_deadline_ms = Math.max(60000, messageTimeoutMs - Math.min(300000, Math.floor(messageTimeoutMs * 0.15)));
   if (modelId) {
     payload.model = modelId;
   }
@@ -710,11 +720,15 @@ async function run() {
 
   // --json: raw output
   if (jsonOutput) {
-    // Inject sessionId for agent workflows
-    const raw = await fetchJSON('/sessions');
-    const sessions = raw.sessions || raw;
-    if (Array.isArray(sessions) && sessions.length > 0) {
-      data.sessionId = sessions[0].sessionId;
+    // sessionId for agent workflows: the server names it in the response (2026-11-03). Older servers: best-effort lookup of the
+    // newest session — never fatal, the finished answer is always printed (a 30 s /sessions timeout used to exit and lose it).
+    if (!data.sessionId) {
+      try {
+        const resp = await fetch(`${BASE_URL}/sessions`, { signal: AbortSignal.timeout(30000), dispatcher: LONG_TIMEOUT_DISPATCHER });
+        const raw = resp.ok ? await resp.json() : null;
+        const sessions = raw ? (raw.sessions || raw) : null;
+        if (Array.isArray(sessions) && sessions.length > 0) data.sessionId = sessions[0].sessionId;
+      } catch { /* leave sessionId unset */ }
     }
     console.log(JSON.stringify(data, null, 2));
     return;

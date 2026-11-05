@@ -5,6 +5,9 @@
  * Supports both reading and writing settings while preserving comments and formatting.
  */
 
+import { loadVaultIntoEnv, type VaultStatus } from './secretsVault.js';
+import { installConsoleRedaction } from './logRedaction.js';
+import { isSubscriptionToken, isSubscriptionAuthApproved } from './AnthropicCredentialService.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -170,6 +173,9 @@ export function getEffectiveDefaults(): Readonly<typeof DEFAULT_SETTINGS> {
  *        (the dev/`omniclaude-v4/.env` location); pass the bin's resolved root.
  * @returns the list of files actually loaded (for an [OK]/[WARN] startup log).
  */
+/** The secrets vault's state at the last bootstrapEnv (for a one-line startup notice / `cortex secrets status`). */
+export let vaultStatus: VaultStatus | null = null;
+
 export function bootstrapEnv(packageRoot?: string, opts: { interactive?: boolean } = {}): { loadedFrom: string[] } {
   const cwd = process.cwd();
 
@@ -225,7 +231,24 @@ export function bootstrapEnv(packageRoot?: string, opts: { interactive?: boolean
     if (used || fs.existsSync(file)) loadedFrom.push(file);
   };
 
+  // SECRETS VAULT (2026-11-02, docs/SECRETS_VAULT_PLAN.md): ~/.cortex/secrets.enc, unlocked without prompting (CORTEX_SECRETS_KEY /
+  // CORTEX_SECRETS_KEY_FILE / the OS keychain). Loaded BEFORE the .env files with the same first-wins rule, so precedence is
+  // real env > vault > .env. Never throws, never prompts — a locked or missing vault just contributes nothing.
+  vaultStatus = loadVaultIntoEnv(process.env);
+  // Every console line is secret-masked from here on (2026-11-03: the Anthropic SDK prints raw x-api-key headers under DEBUG=true).
+  installConsoleRedaction(process.env);
+  if (vaultStatus.unlocked) loadedFrom.push(`${vaultStatus.path} (vault: ${vaultStatus.count} key(s), ${vaultStatus.source})`);
   for (const f of userBaseFiles) apply(f, false);   // first-wins, never clobber real env
+  // A Claude SUBSCRIPTION OAuth token filed as ANTHROPIC_API_KEY (2026-11-02: the vault entry was an sk-ant-oat01 token and every Claude call
+  // came back 401 "invalid x-api-key"). Those tokens are restricted to Claude Code / claude.ai (AnthropicCredentialService compliance gate);
+  // take it out of the API-key slot and say why — once at startup, and again in the missing-credentials error.
+  if (isSubscriptionToken(process.env.ANTHROPIC_API_KEY) && !isSubscriptionAuthApproved(process.env)) {
+    delete process.env.ANTHROPIC_API_KEY;
+    process.env.CORTEX_ANTHROPIC_KEY_NOTE = 'ANTHROPIC_API_KEY held a Claude subscription OAuth token (sk-ant-oat01-…, e.g. from `claude setup-token`). ' +
+      'Those work only in Claude Code / claude.ai, so it was ignored. Store a Console API key (sk-ant-api03-…) as ANTHROPIC_API_KEY ' +
+      '(`cortex secrets set ANTHROPIC_API_KEY`), and keep the OAuth token under another name (e.g. CLAUDE_CODE_OAUTH_TOKEN) for `claude -p`.';
+    console.warn(`[cortex] ${process.env.CORTEX_ANTHROPIC_KEY_NOTE}`);
+  }
   // R219 CORTEX_INTERACTIVE_PROFILE (DARK): a named lever profile for INTERACTIVE sessions, layered ABOVE the
   // shipped defaults and BELOW every user layer above — so it fills only levers the user did not set. Off/unset →
   // nothing written (byte-identical). The name may come from a user layer or (future default flip) the shipped file.
@@ -634,6 +657,24 @@ export function mergeWithDefaults(env: EnvironmentVariables): Required<Environme
     CORTEX_TURN_CONTRACT: env.CORTEX_TURN_CONTRACT || process.env.CORTEX_TURN_CONTRACT || D.CORTEX_TURN_CONTRACT,
     CORTEX_SUBAGENT_TIMEOUT_MS: env.CORTEX_SUBAGENT_TIMEOUT_MS || process.env.CORTEX_SUBAGENT_TIMEOUT_MS || D.CORTEX_SUBAGENT_TIMEOUT_MS,
     CORTEX_SUBAGENT_TIMEOUT_MAX_MS: env.CORTEX_SUBAGENT_TIMEOUT_MAX_MS || process.env.CORTEX_SUBAGENT_TIMEOUT_MAX_MS || D.CORTEX_SUBAGENT_TIMEOUT_MAX_MS,
+    CORTEX_BROWSE_TIMEOUT_MS: env.CORTEX_BROWSE_TIMEOUT_MS || process.env.CORTEX_BROWSE_TIMEOUT_MS || D.CORTEX_BROWSE_TIMEOUT_MS,
+    CORTEX_BROWSE_DIRECT_NUDGE_CALLS: env.CORTEX_BROWSE_DIRECT_NUDGE_CALLS || process.env.CORTEX_BROWSE_DIRECT_NUDGE_CALLS || D.CORTEX_BROWSE_DIRECT_NUDGE_CALLS,
+    CORTEX_BROWSE_DIRECT_CONFIRM: env.CORTEX_BROWSE_DIRECT_CONFIRM || process.env.CORTEX_BROWSE_DIRECT_CONFIRM || D.CORTEX_BROWSE_DIRECT_CONFIRM,
+    CORTEX_BROWSE_DIRECT: env.CORTEX_BROWSE_DIRECT || process.env.CORTEX_BROWSE_DIRECT || D.CORTEX_BROWSE_DIRECT,
+    CORTEX_STREAM_HEADER_TIMEOUT_MS: env.CORTEX_STREAM_HEADER_TIMEOUT_MS || process.env.CORTEX_STREAM_HEADER_TIMEOUT_MS || D.CORTEX_STREAM_HEADER_TIMEOUT_MS,
+    CORTEX_MCP_TOOL_TIMEOUT_MS: env.CORTEX_MCP_TOOL_TIMEOUT_MS || process.env.CORTEX_MCP_TOOL_TIMEOUT_MS || D.CORTEX_MCP_TOOL_TIMEOUT_MS,
+    CORTEX_DEBUG_FULL_REQUESTS: env.CORTEX_DEBUG_FULL_REQUESTS || process.env.CORTEX_DEBUG_FULL_REQUESTS || D.CORTEX_DEBUG_FULL_REQUESTS,
+    CORTEX_MEETS_CONFIRM_WEB: env.CORTEX_MEETS_CONFIRM_WEB || process.env.CORTEX_MEETS_CONFIRM_WEB || D.CORTEX_MEETS_CONFIRM_WEB,
+    CORTEX_BROWSE_REVERIFY: env.CORTEX_BROWSE_REVERIFY || process.env.CORTEX_BROWSE_REVERIFY || D.CORTEX_BROWSE_REVERIFY,
+    CORTEX_SUBAGENT_ENDTURN: env.CORTEX_SUBAGENT_ENDTURN || process.env.CORTEX_SUBAGENT_ENDTURN || D.CORTEX_SUBAGENT_ENDTURN,
+    CORTEX_RESOLVER_WEB_EFFORT: env.CORTEX_RESOLVER_WEB_EFFORT || process.env.CORTEX_RESOLVER_WEB_EFFORT || D.CORTEX_RESOLVER_WEB_EFFORT,
+    CORTEX_FINISH_CONFIRM_WEB: env.CORTEX_FINISH_CONFIRM_WEB || process.env.CORTEX_FINISH_CONFIRM_WEB || D.CORTEX_FINISH_CONFIRM_WEB,
+    CORTEX_RESOLVER_WEB_RULE: env.CORTEX_RESOLVER_WEB_RULE || process.env.CORTEX_RESOLVER_WEB_RULE || D.CORTEX_RESOLVER_WEB_RULE,
+    CORTEX_BROWSE_CARRY: env.CORTEX_BROWSE_CARRY || process.env.CORTEX_BROWSE_CARRY || D.CORTEX_BROWSE_CARRY,
+    CORTEX_SCOPE_CHECK: env.CORTEX_SCOPE_CHECK || process.env.CORTEX_SCOPE_CHECK || D.CORTEX_SCOPE_CHECK,
+    CORTEX_BROWSE_PROBE_GUARD: env.CORTEX_BROWSE_PROBE_GUARD || process.env.CORTEX_BROWSE_PROBE_GUARD || D.CORTEX_BROWSE_PROBE_GUARD,
+    CORTEX_ANCHOR_WEB: env.CORTEX_ANCHOR_WEB || process.env.CORTEX_ANCHOR_WEB || D.CORTEX_ANCHOR_WEB,
+    CORTEX_ENDTURN_SOURCES_AUTO: env.CORTEX_ENDTURN_SOURCES_AUTO || process.env.CORTEX_ENDTURN_SOURCES_AUTO || D.CORTEX_ENDTURN_SOURCES_AUTO,
     CORTEX_OUTER_TOOL_TIMEOUT_MS: env.CORTEX_OUTER_TOOL_TIMEOUT_MS || process.env.CORTEX_OUTER_TOOL_TIMEOUT_MS || D.CORTEX_OUTER_TOOL_TIMEOUT_MS,
     CORTEX_API_NETWORK_RETRY_MS: env.CORTEX_API_NETWORK_RETRY_MS || process.env.CORTEX_API_NETWORK_RETRY_MS || D.CORTEX_API_NETWORK_RETRY_MS,
     CORTEX_BUDGET_VISIBILITY: env.CORTEX_BUDGET_VISIBILITY || process.env.CORTEX_BUDGET_VISIBILITY || D.CORTEX_BUDGET_VISIBILITY,
@@ -699,6 +740,7 @@ export function mergeWithDefaults(env: EnvironmentVariables): Required<Environme
     CORTEX_TUI_INCREMENTAL_RENDER: env.CORTEX_TUI_INCREMENTAL_RENDER || process.env.CORTEX_TUI_INCREMENTAL_RENDER || D.CORTEX_TUI_INCREMENTAL_RENDER,
     CORTEX_TUI_MAX_FPS: env.CORTEX_TUI_MAX_FPS || process.env.CORTEX_TUI_MAX_FPS || D.CORTEX_TUI_MAX_FPS,
     CORTEX_TUI_STREAM_VIEWPORT_RESERVE: env.CORTEX_TUI_STREAM_VIEWPORT_RESERVE || process.env.CORTEX_TUI_STREAM_VIEWPORT_RESERVE || D.CORTEX_TUI_STREAM_VIEWPORT_RESERVE,
+    NEXUS_BROWSER_MODE: env.NEXUS_BROWSER_MODE || process.env.NEXUS_BROWSER_MODE || D.NEXUS_BROWSER_MODE,
     CORTEX_TMUX_AUTO_INSTALL: env.CORTEX_TMUX_AUTO_INSTALL || process.env.CORTEX_TMUX_AUTO_INSTALL || D.CORTEX_TMUX_AUTO_INSTALL,
     CORTEX_TMUX_STATIC_URL: env.CORTEX_TMUX_STATIC_URL || process.env.CORTEX_TMUX_STATIC_URL || D.CORTEX_TMUX_STATIC_URL,
     CORTEX_TMUX_HISTORY_LIMIT: env.CORTEX_TMUX_HISTORY_LIMIT || process.env.CORTEX_TMUX_HISTORY_LIMIT || D.CORTEX_TMUX_HISTORY_LIMIT,

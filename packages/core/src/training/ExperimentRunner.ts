@@ -23,7 +23,9 @@
 
 import { ModelRouterMatrix } from './ModelRouterMatrix.js';
 import { ExperimentLedger } from './ExperimentLedger.js';
-import { runBench, type TaskSpec, type HarnessRunner, type BenchSummary } from './BenchRunner.js';
+import { runBench, runBenchPaired, type TaskSpec, type HarnessRunner, type BenchSummary } from './BenchRunner.js';
+import { planRuns, type RunPlan } from './AutoResearchConfirm.js';
+import type { FamilyEffect, GuardVerdict } from './AutoResearchGuards.js';
 import { evaluateExperiment, verifyOnHoldout } from './AutoResearchGate.js';
 import type { ExperimentRecord } from './ExperimentLedger.js';
 import type { ExperimentVerdict } from './AutoResearchStats.js';
@@ -58,6 +60,15 @@ export interface RunExperimentOptions {
    *  Omitted ⇒ falls back to the CORTEX_SUBAGENT_TEMPERATURE / CORTEX_ARM_STRATEGY env stamp. */
   temperature?: number;
   strategy?: string;
+  /** Run base and candidate INTERLEAVED (per task, per run, seeded random order) so
+   *  provider drift hits both arms. Default true; false = all base runs, then all
+   *  candidate runs (the pre-11-03 order). */
+  interleave?: boolean;
+  /** Seed for the interleaving order (default: derived from gate.seed / the tag). */
+  orderSeed?: number;
+  /** Run planning: the aggregate effect worth detecting (score points, default 5) and
+   *  the power wanted (default 0.8). Reported as `runPlan`; never changes the verdict. */
+  plan?: { targetEffect?: number; power?: number };
 }
 
 export interface ExperimentBenchSummaries {
@@ -73,6 +84,21 @@ export interface ExperimentResult {
   /** keep-on-train ∧ fwerAdjusted ∧ keep-on-holdout. FALSE without holdout. */
   mergeEligible: boolean;
   benchSummaries: ExperimentBenchSummaries;
+  /** Runs-per-arm planning from the train arms' observed per-task score SDs: the
+   *  smallest effect these runs can detect, and the runs needed for `plan.targetEffect`. */
+  runPlan?: RunPlan;
+  /** whether the arms ran interleaved */
+  interleaved: boolean;
+  /** per-family train effects + STEP guard verdicts (B4; see AutoResearchGuards) */
+  families: FamilyEffect[];
+  stepGuards: GuardVerdict[];
+}
+
+/** Stable 32-bit hash of a string (FNV-1a) — default interleaving seed from the tag. */
+function hash32(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return h >>> 0;
 }
 
 /**
@@ -101,20 +127,38 @@ export async function runExperiment(
       strategy: opts.strategy,
     });
 
+  const interleave = opts.interleave !== false;
+  const orderSeed = opts.orderSeed ?? ((opts.gate?.seed ?? 0) ^ hash32(opts.experimentTag));
+  /** Bench both arms on one split — interleaved by default, else base then candidate. */
+  const benchBoth = async (split: 'train' | 'holdout', tasks: TaskSpec[]): Promise<[BenchSummary, BenchSummary]> => {
+    if (!interleave) {
+      log(`bench base/${split} @ ${opts.baseRef}`);
+      const b = await benchOpts(split, opts.baseRef, arms.baseRunner, tasks);
+      log(`bench candidate/${split} @ ${opts.candidateRef}`);
+      const c = await benchOpts(split, opts.candidateRef, arms.candidateRunner, tasks);
+      return [b, c];
+    }
+    log(`bench base/${split} @ ${opts.baseRef} + candidate/${split} @ ${opts.candidateRef} (interleaved)`);
+    const r = await runBenchPaired(tasks,
+      { runner: arms.baseRunner, harnessRef: opts.baseRef },
+      { runner: arms.candidateRunner, harnessRef: opts.candidateRef },
+      matrix,
+      {
+        experimentTag: opts.experimentTag, runs, split, modelId: opts.modelId,
+        benchmarkSource: opts.benchmarkSource, temperature: opts.temperature, strategy: opts.strategy,
+        orderSeed: (orderSeed ^ (split === 'holdout' ? 0x9e3779b9 : 0)) >>> 0,
+      });
+    return [r.base, r.candidate];
+  };
+
   // 1. Train arms (drive keep/discard).
-  log(`bench base/train @ ${opts.baseRef}`);
-  const baseTrain = await benchOpts('train', opts.baseRef, arms.baseRunner, opts.trainTasks);
-  log(`bench candidate/train @ ${opts.candidateRef}`);
-  const candTrain = await benchOpts('train', opts.candidateRef, arms.candidateRunner, opts.trainTasks);
+  const [baseTrain, candTrain] = await benchBoth('train', opts.trainTasks);
 
   // 2. Holdout arms (verify generalization), if a holdout set was provided.
   let baseHoldout: BenchSummary | undefined;
   let candHoldout: BenchSummary | undefined;
   if (opts.holdoutTasks && opts.holdoutTasks.length > 0) {
-    log(`bench base/holdout @ ${opts.baseRef}`);
-    baseHoldout = await benchOpts('holdout', opts.baseRef, arms.baseRunner, opts.holdoutTasks);
-    log(`bench candidate/holdout @ ${opts.candidateRef}`);
-    candHoldout = await benchOpts('holdout', opts.candidateRef, arms.candidateRunner, opts.holdoutTasks);
+    [baseHoldout, candHoldout] = await benchBoth('holdout', opts.holdoutTasks);
   }
 
   // 3. Keep/discard gate over the train records.
@@ -154,6 +198,19 @@ export async function runExperiment(
     regressedTasks: gateResult.regressedTasks,
     holdoutVerdict,
     mergeEligible,
+    interleaved: interleave,
+    families: gateResult.families,
+    stepGuards: gateResult.stepGuards,
+    runPlan: (() => {
+      const sd = new Map(baseTrain.tasks.map((t) => [t.taskId, t.scoreSd ?? 0]));
+      const planTasks = candTrain.tasks.map((t) => ({ baseSd: sd.get(t.taskId) ?? 0, candSd: t.scoreSd ?? 0 }));
+      return planRuns(planTasks, {
+        runsPerArm: runs,
+        alphaAdjusted: gateResult.verdict.alphaAdjusted,
+        targetEffect: opts.plan?.targetEffect,
+        power: opts.plan?.power,
+      });
+    })(),
     benchSummaries: {
       base: { train: baseTrain, holdout: baseHoldout },
       candidate: { train: candTrain, holdout: candHoldout },

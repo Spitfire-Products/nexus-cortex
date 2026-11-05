@@ -105,6 +105,10 @@ export function verifyRequirements(input: {
   userTaskText: string;
   /** Did this turn run Edit/Write/Bash/NotebookEdit? */
   turnUsedMutatingTool: boolean;
+  /** Did this turn run Edit/Write/NotebookEdit (a real file change)? Undefined = treat every mutating tool as a file change. */
+  turnEditedFiles?: boolean;
+  /** Raw `open_items` from the EndTurn input — the stated escape for a turn where no check is possible. */
+  openItems?: unknown;
   /** STRICT mode (CORTEX_ENDTURN_REQUIREMENTS=strict): verbatim requirements + run-grounded verification. */
   strict?: boolean;
   /** This turn's tool outputs, joined — the grounding corpus for `verified_how` in strict mode. */
@@ -207,15 +211,20 @@ export function verifyRequirements(input: {
         };
       }
     }
-  // 4d — mutating turn that ran no checks at all.
-  if (input.turnUsedMutatingTool && verification.length === 0) {
+  // 4d — mutating turn that ran no checks at all. A turn whose only "mutating" tool was Bash (a curl, an ls) may take the escape the
+  // nudge offers — an `open_items` line saying why no check applies; a turn that edited files must run a check. (2026-11-03: the CarMax
+  // browse turn ran one curl, was told "you modified files", wrote the open_items line it was told to write and was rejected again.)
+  const editedFiles = input.turnEditedFiles ?? input.turnUsedMutatingTool;
+  const openItems = Array.isArray(input.openItems) ? input.openItems.filter((x) => typeof x === 'string' && x.trim().length >= 10) : [];
+  if (input.turnUsedMutatingTool && verification.length === 0 && (editedFiles || openItems.length === 0)) {
     return {
       ok: false,
-      nudge:
-        'EndTurn REJECTED (verification) — you modified files this turn but `verification` is empty: ' +
-        'no build/test/lint/behavior check was run. Run at least one check that exercises what you ' +
-        'changed and list it with the real result line, or state in `open_items` why no check is ' +
-        'possible. Then call EndTurn again.',
+      nudge: editedFiles
+        ? 'EndTurn REJECTED (verification) — you changed files this turn (Edit/Write) but `verification` is empty: ' +
+          'no build/test/lint/behavior check was run. Run at least one check that exercises what you changed and list it with the ' +
+          'real result line. Then call EndTurn again.'
+        : 'EndTurn REJECTED (verification) — you ran Bash this turn but `verification` is empty. If a command changed something, run ' +
+          'a check of it and list it with the real result line; if nothing needs checking, say why in `open_items`. Then call EndTurn again.',
     };
   }
 

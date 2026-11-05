@@ -7,18 +7,20 @@ cortex setup
 ```
 
 It asks which providers you intend to use, takes their keys, lets you pick the action / helper / mentor models and the web-tools
-backend, writes `~/.cortex/.env`, and verifies each model with one tiny request. Running `cortex` in a terminal with no key found
+backend, stores the keys in the encrypted secrets vault (`~/.cortex/secrets.enc`, see [secrets.md](secrets.md)) and the other settings in
+`~/.cortex/.env`, and verifies each model with one tiny request. Running `cortex` in a terminal with no key found
 starts the same wizard.
 
 Without the wizard, you need **one** provider key, set any of these ways:
 
 ```bash
-cortex config set DEEPSEEK_API_KEY sk-...     # writes ~/.cortex/.env
+cortex secrets set DEEPSEEK_API_KEY           # encrypted vault (masked prompt; or pipe it in)
+cortex config set DEEPSEEK_API_KEY sk-...     # plaintext ~/.cortex/.env
 #   …or open ~/.cortex/.env (created on first run, keys-only, every supported key listed blank) and fill one in
 export DEEPSEEK_API_KEY=sk-...                # …or inject it: the environment always wins over the files
 ```
 
-**Where a key is read from, highest precedence first:** the process environment → `./.env` in the current directory → the
+**Where a key is read from, highest precedence first:** the process environment → the secrets vault → `./.env` in the current directory → the
 package's own `.env` (source checkouts) → `~/.cortex/.env` → the shipped defaults. A `.env.local` beside any of those overrides
 everything. `~/.cortex/.env` ships with every key **blank**, so a secret injected by a container or secrets store is never
 overwritten and nothing needs to be written to disk. If you run `cortex` with no key anywhere and no terminal (a script), it

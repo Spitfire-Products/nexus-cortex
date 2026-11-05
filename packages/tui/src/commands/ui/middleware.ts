@@ -6,6 +6,7 @@ import React from 'react';
 import { render } from 'ink';
 import { MiddlewareDashboard } from '../../ui/components/MiddlewareDashboard.js';
 import { ThemeManager } from '@nexus-cortex/cli/dist/themes/ThemeManager.js';
+import { wakeStdinForInk } from '../../ui/inkStdin.js';
 
 export interface UiMiddlewareOptions {
   /** Server URL */
@@ -29,6 +30,7 @@ export async function uiMiddleware(options: UiMiddlewareOptions = {}): Promise<v
       },
     })
   );
+  wakeStdinForInk();   // restart a stopped stdin handle (ui/inkStdin.ts)
 
   await waitUntilExit();
 }

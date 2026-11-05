@@ -745,6 +745,7 @@ export async function runSystemMessageCommand(config: SystemMessageCommandConfig
       },
     })
   );
+  wakeStdinForInk();   // restart a stopped stdin handle (ui/inkStdin.ts)
 
   // Wait for user to exit
   await waitUntilExit();
@@ -828,3 +829,4 @@ export type {
   ConversationalMessageResponse,
   GeneratedMessageProfile,
 } from './InteractiveMenu.js';
+import { wakeStdinForInk } from '../../ui/inkStdin.js';

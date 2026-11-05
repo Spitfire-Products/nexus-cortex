@@ -26,6 +26,7 @@ import { killGuardSpawnEnv } from '../../utils/killGuard.js';
 import type { ExecutorConfig } from '../../base/ToolRegistry.js';
 import { parseBashFileAccess } from './bashFileAccess.js';
 import { FileReadTracker } from '../file/EditTool.js';
+import { toolChildEnv } from '@nexus-cortex/core';
 
 /**
  * Parameters for the Bash tool
@@ -402,7 +403,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
           stdio: ['ignore', 'pipe', 'pipe'],
           detached: true, // Create process group
           cwd,
-          env: killGuardSpawnEnv(), // HB-KILL-GUARD: pkill/killall/pgrep wrappers first on PATH (undefined = inherit, when off)
+          env: toolChildEnv(killGuardSpawnEnv() ?? process.env, 'Bash'), // HB-KILL-GUARD: pkill/killall/pgrep wrappers first on PATH (undefined = inherit, when off)
         });
 
     // Output tracking
@@ -1195,7 +1196,7 @@ export class ShellTool extends BaseTool<ShellToolParams, ToolResult> {
             stdio: ['ignore', 'pipe', 'pipe'],
             detached: true,
             cwd,
-            env: killGuardSpawnEnv(), // HB-KILL-GUARD
+            env: toolChildEnv(killGuardSpawnEnv() ?? process.env, 'Bash'), // HB-KILL-GUARD
           });
 
       if (!shell.pid) {

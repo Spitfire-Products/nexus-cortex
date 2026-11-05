@@ -1,6 +1,15 @@
 # Internal Browser — Optional Harness Module (Build Plan)
 
-**Status:** PLAN (future work; not commissioned). Authored 2026-08-27.
+**Status (2026-11-01): CORE BUILT + VALIDATED** — `packages/browser` (`@nexus-cortex/browser`, private). Operator: same functionality as the
+browser MCP, reuse its code, keep both surfaces in sync automatically. Design changed from §4's driver extraction to **bundling the Worker's
+own `src/mcp.ts` unchanged** with local shims for its Cloudflare imports (`@cloudflare/puppeteer`, `agents/mcp`, DO SQL, KV, `./sandbox-page`)
+— one source, zero porting. 50/50 tools register; core v1 validation 22/22 over MCP; hosted-vs-local parity identical (tools, schemas,
+results). Sync is automated: `scripts/sync-browser-library.sh` (rebuild → validate → wait for the Worker deploy → parity), started by
+`deploy-nexus-terminal.sh` when a push touches the browser source. OPEN: licensing before publish (the bundle is proprietary Nexus Terminal
+code); harness-native tool registration (Phase 2); the container-only tools (run_code/run_command, Turnstile solver, live_view, proxies).
+Original plan below for history.
+
+**Original status:** PLAN (future work; not commissioned). Authored 2026-08-27.
 **Motivation source:** operator, during the TB2.1 single-provider-key discussion.
 **Gate:** this is a **product** capability, **decoupled from the TB2.1 bench** — TB2.1 needs no
 browse (investigated 2026-08-27: 0/89 tasks require web search/browse; internet is for

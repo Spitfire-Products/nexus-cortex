@@ -12,6 +12,7 @@
 import { spawn } from 'child_process';
 import { BaseTool, type ToolResult } from '../../base/index.js';
 import { SchemaValidator } from '../../utils/SchemaValidator.js';
+import { toolChildEnv } from '@nexus-cortex/core';
 
 /** Maximum output length (30KB) */
 const MAX_OUTPUT_LENGTH = 30_000;
@@ -110,7 +111,7 @@ export class CodeExecuteTool extends BaseTool<CodeExecuteParams> {
       const proc = spawn('node', ['-e', code], {
         timeout,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, NODE_NO_WARNINGS: '1' },
+        env: { ...toolChildEnv(process.env, 'CodeExecute'), NODE_NO_WARNINGS: '1' },
       });
 
       let stdout = '';

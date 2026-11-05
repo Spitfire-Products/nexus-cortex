@@ -137,7 +137,12 @@ export function resolveMentorRoleConfig(
       thinkingSource = sv;
     } else {
       const raw = env.CORTEX_MENTOR_REASONING;
-      thinking = raw === undefined || raw.trim() === '' ? true : !offValue(raw);
+      // The EndTurn resolver defaults to thinking OFF (2026-11-03): full TB4.0 measured thinking-on vs thinking-off as a WASH (12/62 each),
+      // the cell-m-r1 read found the thinking-off resolver the strict judge (0 false accepts), and locally 42% of thinking-on reviews burnt
+      // their whole 20K reasoning allowance, were truncated and re-asked thinking-off (median 124 s, the first call discarded). An explicit
+      // CORTEX_MENTOR_REASONING or CORTEX_ENDTURN_RESOLVER_REASONING still wins; the escalation re-judge still forces reasoning on.
+      const codeDefault = surface !== 'endturn-resolver';
+      thinking = raw === undefined || raw.trim() === '' ? codeDefault : !offValue(raw);
       thinkingSource = raw === undefined || raw.trim() === '' ? 'code-default' : 'CORTEX_MENTOR_REASONING';
     }
   }

@@ -129,7 +129,7 @@ describe('verifyRequirements — Stage 4 table', () => {
       turnUsedMutatingTool: true,
     });
     expect(v.ok).toBe(false);
-    expect(v.nudge).toMatch(/modified files.*verification.*empty/is);
+    expect(v.nudge).toMatch(/changed files.*verification.*empty/is);
   });
 
   it('PASSES a clean attestation', () => {

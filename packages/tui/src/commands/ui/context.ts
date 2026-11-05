@@ -6,6 +6,7 @@ import React from 'react';
 import { render } from 'ink';
 import { ContextViewer } from '../../ui/components/ContextViewer.js';
 import { ThemeManager } from '@nexus-cortex/cli/dist/themes/ThemeManager.js';
+import { wakeStdinForInk } from '../../ui/inkStdin.js';
 
 export interface UiContextOptions {
   /** Session ID */
@@ -38,6 +39,7 @@ export async function uiContext(options: UiContextOptions): Promise<void> {
       },
     })
   );
+  wakeStdinForInk();   // restart a stopped stdin handle (ui/inkStdin.ts)
 
   await waitUntilExit();
 }

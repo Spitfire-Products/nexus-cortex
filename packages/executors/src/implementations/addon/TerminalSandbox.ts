@@ -20,6 +20,7 @@ import { WebSocketServer } from 'ws';
 import { join, dirname } from 'path';
 import { promises as fs } from 'fs';
 import { fileURLToPath } from 'url';
+import { toolChildEnv } from '@nexus-cortex/core';
 
 // ES module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -68,7 +69,7 @@ export class TerminalSandbox {
     this.config = {
       shell: config.shell || process.env.SHELL || '/bin/bash',
       cwd: config.cwd || process.cwd(),
-      env: config.env || process.env as Record<string, string>,
+      env: config.env || toolChildEnv(process.env) as Record<string, string>,
       headed: config.headed ?? false,
       rows: config.rows || 24,
       cols: config.cols || 80

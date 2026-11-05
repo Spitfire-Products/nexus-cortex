@@ -22,6 +22,8 @@
 
 import { ModelRouterMatrix } from './ModelRouterMatrix.js';
 import { classifyTask } from './TaskClassifier.js';
+import { mulberry32 } from './AutoResearchStats.js';
+import { sampleSd } from './AutoResearchConfirm.js';
 import type { NewDeficiency, Severity } from './ResearchBacklog.js';
 
 // ---------------------------------------------------------------------------
@@ -255,6 +257,8 @@ export interface BenchTaskSummary {
   runs: number;
   passRate: number;
   meanScore: number;
+  /** sample SD of the per-run qualitative scores (run-count planning). */
+  scoreSd?: number;
 }
 
 export interface BenchSummary {
@@ -273,59 +277,63 @@ export interface BenchSummary {
  * overridden; taskFingerprint = hash of prompt+verifier so it's the stable
  * comparability key the gate joins on).
  */
-export async function runBench(
-  tasks: TaskSpec[],
-  runner: HarnessRunner,
-  matrix: ModelRouterMatrix,
-  opts: RunBenchOptions,
-): Promise<BenchSummary> {
-  const runs = opts.runs ?? 2;
-  const split = opts.split ?? 'train';
-  const taskSummaries: BenchTaskSummary[] = [];
-  let totalRuns = 0;
-  let seededDeficiencies = 0;
+/** Per-task accumulator shared by runBench and runBenchPaired: one arm × one task. */
+class TaskBench {
+  readonly taskType: string;
+  readonly taskFingerprint: string;
+  private passes = 0;
+  private scores: number[] = [];
+  private sampleFailure: string | undefined;
+  private observedModelId: string | undefined;
 
-  for (const task of tasks) {
-    const taskType = task.taskType ?? classifyTask(task.prompt).taskType;
-    const taskFingerprint = ModelRouterMatrix.fingerprintTask(task.prompt, JSON.stringify(task.verifier));
-    let passes = 0;
-    let scoreSum = 0;
-    let sampleFailure: string | undefined;
-    let observedModelId: string | undefined = opts.modelId;
+  constructor(readonly task: TaskSpec, private readonly runner: HarnessRunner, private readonly matrix: ModelRouterMatrix, private readonly opts: RunBenchOptions) {
+    this.taskType = task.taskType ?? classifyTask(task.prompt).taskType;
+    this.taskFingerprint = ModelRouterMatrix.fingerprintTask(task.prompt, JSON.stringify(task.verifier));
+    this.observedModelId = opts.modelId;
+  }
 
-    for (let i = 0; i < runs; i++) {
-      const res = await runner.run(task.prompt, { model: opts.modelId });
-      const grade = await gradeRun(res.text, task.verifier, opts.judge, { toolUses: res.toolUses });
-      if (!grade.pass && sampleFailure === undefined) sampleFailure = res.text;
-      observedModelId = res.modelId ?? observedModelId;
-      passes += grade.pass ? 1 : 0;
-      scoreSum += grade.qualitativeScore;
-      totalRuns++;
+  /** One run: execute, grade, record to the matrix, notify. */
+  async runOnce(): Promise<void> {
+    const { task, opts } = this;
+    const res = await this.runner.run(task.prompt, { model: opts.modelId });
+    const grade = await gradeRun(res.text, task.verifier, opts.judge, { toolUses: res.toolUses });
+    if (!grade.pass && this.sampleFailure === undefined) this.sampleFailure = res.text;
+    this.observedModelId = res.modelId ?? this.observedModelId;
+    this.passes += grade.pass ? 1 : 0;
+    this.scores.push(grade.qualitativeScore);
 
-      matrix.record({
-        modelId: res.modelId ?? opts.modelId ?? 'unknown',
-        taskType,
-        toolCallCount: res.toolCallCount,
-        inputTokens: res.inputTokens,
-        outputTokens: res.outputTokens,
-        latencyMs: res.latencyMs,
-        pass: grade.pass,
-        qualitativeScore: grade.qualitativeScore,
-        taskFingerprint,
-        experimentTag: opts.experimentTag,
-        split,
-        benchmarkSource: opts.benchmarkSource,
-        ...(opts.harnessRef ? { harnessRef: opts.harnessRef } : {}),
-        ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
-        ...(opts.strategy ? { strategy: opts.strategy } : {}),
-        ...(opts.toolProfile && opts.toolProfile !== 'full' ? { toolProfile: opts.toolProfile } : {}),
-      });
+    this.matrix.record({
+      modelId: res.modelId ?? opts.modelId ?? 'unknown',
+      taskType: this.taskType,
+      toolCallCount: res.toolCallCount,
+      inputTokens: res.inputTokens,
+      outputTokens: res.outputTokens,
+      latencyMs: res.latencyMs,
+      pass: grade.pass,
+      qualitativeScore: grade.qualitativeScore,
+      taskFingerprint: this.taskFingerprint,
+      experimentTag: opts.experimentTag,
+      split: opts.split ?? 'train',
+      benchmarkSource: opts.benchmarkSource,
+      ...(opts.harnessRef ? { harnessRef: opts.harnessRef } : {}),
+      ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+      ...(opts.strategy ? { strategy: opts.strategy } : {}),
+      ...(opts.toolProfile && opts.toolProfile !== 'full' ? { toolProfile: opts.toolProfile } : {}),
+    });
 
-      opts.onRun?.({ taskId: task.id, run: i + 1, pass: grade.pass, qualitativeScore: grade.qualitativeScore });
-    }
+    opts.onRun?.({ taskId: task.id, run: this.scores.length, pass: grade.pass, qualitativeScore: grade.qualitativeScore });
+  }
 
-    const passRate = Math.round((passes / runs) * 1000) / 1000;
-    const meanScore = Math.round((scoreSum / runs) * 100) / 100;
+  /** Summarize (and seed the backlog on a train failure). Returns the seeded count (0|1). */
+  finish(): { summary: BenchTaskSummary; seeded: number } {
+    const { task, opts } = this;
+    const runs = this.scores.length;
+    const split = opts.split ?? 'train';
+    const scoreSum = this.scores.reduce((a, b) => a + b, 0);
+    const passRate = runs ? Math.round((this.passes / runs) * 1000) / 1000 : 0;
+    const meanScore = runs ? Math.round((scoreSum / runs) * 100) / 100 : 0;
+    const scoreSd = Math.round(sampleSd(this.scores) * 100) / 100;
+    let seeded = 0;
 
     // Deterministic backlog seeding: a sub-100% pass-rate is direct evidence of a
     // harness weakness, so seed it here rather than relying on the model to call the
@@ -338,13 +346,13 @@ export async function runBench(
       const sampleWeight = Math.min(1, runs / 3); // 1 run = weak evidence; ~3+ = solid
       const confidence = Math.round(Math.min(0.9, Math.max(0.25, 0.3 + 0.6 * failRate * sampleWeight)) * 100) / 100;
       const severity: Severity = meanScore <= 10 ? 'high' : meanScore < 60 ? 'medium' : 'low';
-      const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '…' : s);
+      const clip = (x: string, n: number) => (x.length > n ? x.slice(0, n) + '…' : x);
       try {
         opts.backlog.add({
           title: `Bench failure: ${task.id}`,
           description:
             `Harness failed benchmark task "${task.id}" (${task.verifier.type} verifier). ` +
-            `passRate=${passes}/${runs}, meanScore=${meanScore}. Prompt: ${clip(task.prompt, 200)}`,
+            `passRate=${this.passes}/${runs}, meanScore=${meanScore}. Prompt: ${clip(task.prompt, 200)}`,
           bugClass: opts.deficiencyBugClass ?? 'Other',
           severity,
           impact: 3,
@@ -352,27 +360,99 @@ export async function runBench(
           confidence,
           discoveredRound: opts.discoveredRound,
           discoveredRef: opts.discoveredRef,
-          affectedModels: observedModelId ? [observedModelId] : undefined,
-          affectedTaskFingerprints: [taskFingerprint],
-          notes: `taskType=${taskType}; split=${split}; sample output: ${clip(sampleFailure ?? '(empty output)', 300)}`,
+          affectedModels: this.observedModelId ? [this.observedModelId] : undefined,
+          affectedTaskFingerprints: [this.taskFingerprint],
+          notes: `taskType=${this.taskType}; split=${split}; sample output: ${clip(this.sampleFailure ?? '(empty output)', 300)}`,
         });
-        seededDeficiencies++;
+        seeded = 1;
       } catch {
         // A backlog write error must never fail the benchmark itself.
       }
     }
 
-    taskSummaries.push({ taskId: task.id, taskFingerprint, taskType, runs, passRate, meanScore });
+    return {
+      summary: { taskId: task.id, taskFingerprint: this.taskFingerprint, taskType: this.taskType, runs, passRate, meanScore, scoreSd },
+      seeded,
+    };
   }
+}
 
+function summarize(opts: RunBenchOptions, benches: TaskBench[]): BenchSummary {
+  const tasks: BenchTaskSummary[] = [];
+  let seededDeficiencies = 0;
+  for (const b of benches) {
+    const { summary, seeded } = b.finish();
+    tasks.push(summary);
+    seededDeficiencies += seeded;
+  }
   return {
     experimentTag: opts.experimentTag,
-    split,
+    split: opts.split ?? 'train',
     harnessRef: opts.harnessRef,
-    totalRuns,
-    tasks: taskSummaries,
+    totalRuns: tasks.reduce((s, t) => s + t.runs, 0),
+    tasks,
     seededDeficiencies,
   };
+}
+
+export async function runBench(
+  tasks: TaskSpec[],
+  runner: HarnessRunner,
+  matrix: ModelRouterMatrix,
+  opts: RunBenchOptions,
+): Promise<BenchSummary> {
+  const runs = opts.runs ?? 2;
+  const benches: TaskBench[] = [];
+  for (const task of tasks) {
+    const b = new TaskBench(task, runner, matrix, opts);
+    for (let i = 0; i < runs; i++) await b.runOnce();
+    benches.push(b);
+  }
+  return summarize(opts, benches);
+}
+
+export interface PairedBenchArm {
+  runner: HarnessRunner;
+  /** this arm's per-arm bench options (harnessRef, strategy, …); the shared fields come
+   *  from the `opts` passed to runBenchPaired. */
+  harnessRef?: string;
+}
+
+/**
+ * Bench a BASE and a CANDIDATE arm INTERLEAVED: for each task and each run index the
+ * two arms run back to back, in a seeded random order. Provider drift (latency, load,
+ * a silent model update, rate limiting) then lands on both arms instead of all on the
+ * one that ran second. Records are identical to two runBench calls (same matrix rows,
+ * same summaries); only the run order differs.
+ */
+export async function runBenchPaired(
+  tasks: TaskSpec[],
+  base: PairedBenchArm,
+  candidate: PairedBenchArm,
+  matrix: ModelRouterMatrix,
+  opts: RunBenchOptions & { orderSeed?: number },
+): Promise<{ base: BenchSummary; candidate: BenchSummary; order: ('base' | 'candidate')[] }> {
+  const runs = opts.runs ?? 2;
+  const rng = mulberry32(opts.orderSeed ?? 0x5eed);
+  const baseOpts: RunBenchOptions = { ...opts, harnessRef: base.harnessRef };
+  const candOpts: RunBenchOptions = { ...opts, harnessRef: candidate.harnessRef };
+  const baseBenches: TaskBench[] = [];
+  const candBenches: TaskBench[] = [];
+  const order: ('base' | 'candidate')[] = [];
+  for (const task of tasks) {
+    const b = new TaskBench(task, base.runner, matrix, baseOpts);
+    const c = new TaskBench(task, candidate.runner, matrix, candOpts);
+    for (let i = 0; i < runs; i++) {
+      const baseFirst = rng() < 0.5;
+      for (const arm of baseFirst ? (['base', 'candidate'] as const) : (['candidate', 'base'] as const)) {
+        order.push(arm);
+        await (arm === 'base' ? b : c).runOnce();
+      }
+    }
+    baseBenches.push(b);
+    candBenches.push(c);
+  }
+  return { base: summarize(baseOpts, baseBenches), candidate: summarize(candOpts, candBenches), order };
 }
 
 /** Validate a parsed task-set JSON value, throwing on malformed entries. */

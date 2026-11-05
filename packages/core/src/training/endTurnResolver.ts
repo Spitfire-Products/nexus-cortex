@@ -160,7 +160,7 @@ export interface EndTurnResolverConfig {
   scopeTask: boolean;
 }
 
-const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, budgetFloorS: 0, budgetFloorMode: 'evidence', finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: true, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', specSamples: 3, specVetoFrac: 0.5, specText: 'shown', derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7, reqLedgerFailVeto: false, reqLedgerFailVetoMax: 2, reqLedgerFailVetoMinRemaining: 0.25, reqLedgerFailJev: 'shadow', reqLedgerFailJevMin: 0.7, verifyScale: false, taskRules: [], scopeTask: false };
+const DEFAULTS: EndTurnResolverConfig = { outputBudgetTokens: 4000, effort: 'max', maxRejects: 2, maxRejectsBudgeted: 6, semantic: true, progressMinCalls: 3, escalateReasoning: true, vetoMode: 'evidence', evidenceCap: 1, budgetFloorS: 0, budgetFloorMode: 'evidence', finishConfirm: true, finishConfirmMinRemaining: 0.3, finishConfirmMax: 1, meetsConfirm: false, meetsConfirmMinRemaining: 0.5, toolRounds: 1, toolRoundBudgetMs: 240_000, toolAutoLoop: false, abstain: false, gapHold: false, gapHoldJev: 'off', gapHoldJevMin: 0.3, specTests: false, specTestsMax: 4, vetoMinRemaining: 0, gapHoldMinIntervalMs: 180_000, gapHoldPlanMaxSimilarity: 0.6, specRepeatMax: 2, specTestsAt: 'finish', specSamples: 3, specVetoFrac: 0.5, specText: 'shown', derivation: 'off', derivationTol: 1e-3, reqLedger: false, reqLedgerMax: 8, reqLedgerHoldMax: 1, reqLedgerJev: true, reqLedgerJevMin: 0.7, reqLedgerFailVeto: false, reqLedgerFailVetoMax: 2, reqLedgerFailVetoMinRemaining: 0.25, reqLedgerFailJev: 'shadow', reqLedgerFailJevMin: 0.7, verifyScale: false, taskRules: [], scopeTask: false };
 
 export function resolveEndTurnResolverConfig(env: NodeJS.ProcessEnv = process.env): EndTurnResolverConfig {
   const n = parseInt((env.CORTEX_ENDTURN_RESOLVER_BUDGET_TOKENS ?? '').trim(), 10);
@@ -322,10 +322,30 @@ export const RESOLVER_SCOPE_TASK_CLAUSE =
   'spans several files is not a gap. Never ask the junior to revert or drop a change that is part of the fix; if you doubt a change is ' +
   "needed, name a CHECK that re-runs the task's own check without it.";
 
-export function resolverSystemPrompt(abstain = false, meetsConfirm = false, investigate?: 'offer' | 'withdraw', verifyScale = false, taskRules: readonly TaskRule[] = [], scopeTask = false): string {
+/** Web-answer rubric (2026-11-04, CORTEX_RESOLVER_WEB_RULE, default on): appended on WEB turns (web results read, no files changed).
+ *  The grader-oriented persona hunts literal mismatches; on a web answer that turned right answers wrong — val-T4 Backcountry: the
+ *  50%-off "Spire GTX" (judged correct in val-T2) was HELD because "'GTX' alone is explicitly NOT sufficient" (a plan step's literal
+ *  GORE-TEX rule), and the agent swapped in a worse shoe; val-T3 Target: a veto on the closest stand-in ended with an empty cart. */
+export const RESOLVER_WEB_ANSWER_CLAUSE =
+  '\n\nWEB ANSWER RULE (this is a web task: the work product is an answer read from web pages; no files were changed): judge whether ' +
+  'the answer is right for the task and supported by the page evidence shown. A GAP must name a stated constraint the evidence shows ' +
+  'unmet (price, rating, size, location, date, count, a required filter), an answer the evidence contradicts, or a required fact with ' +
+  'no evidence at all — and say which page or filter would settle it. Do NOT GAP on wording: a site\'s established name or abbreviation ' +
+  'for a required term satisfies it (e.g. GTX = GORE-TEX, "4 & up" = a rating of at least 4, the store\'s own label for a category), ' +
+  'even when a plan step asked for the literal word. When the exact item the task names does not exist on the site and the answer says ' +
+  'so and gives the closest match, that is a finished answer, not a gap. Never ask the junior to swap a candidate that meets every stated ' +
+  'constraint for one that only matches a word more literally.';
+
+/** CORTEX_RESOLVER_WEB_RULE: off|false|0 drops the web-answer rubric (default on). */
+export function resolverWebRuleEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !/^(off|false|0)$/i.test(String(env.CORTEX_RESOLVER_WEB_RULE ?? '').trim());
+}
+
+export function resolverSystemPrompt(abstain = false, meetsConfirm = false, investigate?: 'offer' | 'withdraw', verifyScale = false, taskRules: readonly TaskRule[] = [], scopeTask = false, webAnswer = false): string {
   const base0 = meetsConfirm ? RESOLVER_SYSTEM.replace(RESOLVER_MEETS_DEFAULT_LINE, RESOLVER_MEETS_CHECK_LINE) : RESOLVER_SYSTEM;
   const base = (verifyScale ? base0 + RESOLVER_SCALE_CLAUSE : base0) + taskRulesJudgeClause(taskRules) // R208 / R211–R214 ('' when none)
-    + (scopeTask ? RESOLVER_SCOPE_TASK_CLAUSE : ''); // CORTEX_LIFT_PLAN_SCOPE=task
+    + (scopeTask ? RESOLVER_SCOPE_TASK_CLAUSE : '') // CORTEX_LIFT_PLAN_SCOPE=task
+    + (webAnswer ? RESOLVER_WEB_ANSWER_CLAUSE : ''); // CORTEX_RESOLVER_WEB_RULE (web turns only)
   const withAbstain = abstain ? base + RESOLVER_ABSTAIN_CLAUSE : base;
   return investigate === 'offer' ? withAbstain + RESOLVER_INVESTIGATE_CLAUSE : investigate === 'withdraw' ? withAbstain + RESOLVER_DECIDE_NOW_CLAUSE : withAbstain;
 }
@@ -648,6 +668,21 @@ export function budgetedVetoEscalation(rejectIndex: number, cap: number, remaini
     `not for re-describing the work. Work it with tools until the task's own criterion is met, or, if it genuinely cannot be met in ` +
     `this box, name the hard limit under open_items and finish.`
   );
+}
+
+/** A MEETS on a WEB turn is evidenced by the web output itself (2026-11-03): the turn read web results (Browse / WebFetch / WebSearch)
+ *  and changed no files. Off with CORTEX_MEETS_CONFIRM_WEB=hold (the turn is then held like any unevidenced MEETS). */
+export function webTurnEvidenced(ev: { webContent: unknown[]; writeInputs: unknown[]; usedFileEditTool?: boolean }, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (/^hold$/i.test(String(env.CORTEX_MEETS_CONFIRM_WEB ?? '').trim())) return false;
+  return ev.webContent.length > 0 && ev.writeInputs.length === 0 && !ev.usedFileEditTool;
+}
+
+/** R167 on WEB turns (2026-11-03): an accept-with-gap finish on a turn that read web results and changed no files stands — the hold's
+ *  "~10 min of the wall budget left (40%)" sent web agents back for another browse pass that did not change the answer (val-W BBB: 4 extra
+ *  delegates after the answer was in hand at 4.8 min). Coding turns keep the hold. CORTEX_FINISH_CONFIRM_WEB=hold restores it. */
+export function webFinishStands(ev: { webContent: unknown[]; writeInputs: unknown[]; usedFileEditTool?: boolean }, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (/^hold$/i.test(String(env.CORTEX_FINISH_CONFIRM_WEB ?? '').trim())) return false;
+  return webTurnEvidenced(ev, {} as NodeJS.ProcessEnv);
 }
 
 /** R167: hold the finish for one informed confirmation? Only after an accept-with-gap / accept-low-confidence verdict —

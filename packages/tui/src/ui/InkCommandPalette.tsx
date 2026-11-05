@@ -14,6 +14,7 @@ import { render, Box, Text, useInput } from 'ink';
 import { CommandSuggestions } from '../ink-ui/components/CommandSuggestions.js';
 import { getSuggestions, type FlatCommand } from '../ink-ui/commands/slashCommands.js';
 import { Colors } from '@nexus-cortex/cli/dist/themes/colors.js';
+import { wakeStdinForInk } from './inkStdin.js';
 
 /**
  * Result from command palette interaction
@@ -160,6 +161,7 @@ export async function showCommandPalette(
         }}
       />
     );
+    wakeStdinForInk();   // restart a stopped stdin handle (ui/inkStdin.ts)
 
     // Handle unexpected exit
     waitUntilExit().catch(() => {

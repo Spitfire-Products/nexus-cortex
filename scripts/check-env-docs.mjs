@@ -24,6 +24,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const INTERNAL = new Set([
   'CORTEX_SUBAGENT',            // marks a spawned sub-agent process
   'CORTEX_AGENT_MODE',          // agent-mode child bootstrap flag
+  'CORTEX_AGENT_DEPTH',         // sub-agent nesting depth, set by the spawner (toolAllowlist.ts; bounded by CORTEX_MAX_AGENT_DEPTH)
+  'CORTEX_BROWSE_AGENT',        // marks the Browse tool's delegate (it may not start another sub-agent)
   'CORTEX_ARM_STRATEGY',        // autoresearch arm label stamped per worker
   'CORTEX_TEST_POST_EXEC_THROW', // test-only fault injection for the tool-loop re-execution guard (reexecutionGuard.integration.test); never a user lever
 ]);

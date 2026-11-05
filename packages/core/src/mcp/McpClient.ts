@@ -102,6 +102,12 @@ export enum McpConnectionStatus {
 /**
  * Minimal MCP Client for connecting to and interacting with MCP servers
  */
+/** Per-call MCP tool timeout (ms): CORTEX_MCP_TOOL_TIMEOUT_MS, default 300000 (the SDK default of 60 s cut off longer server-side tools). */
+export function mcpToolTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(String(env.CORTEX_MCP_TOOL_TIMEOUT_MS ?? '').trim());
+  return Number.isFinite(n) && n >= 1000 ? Math.floor(n) : 300_000;
+}
+
 export class McpClient {
   private client: Client | undefined;
   private transport: Transport | undefined;
@@ -374,10 +380,13 @@ export class McpClient {
     this.assertConnected();
 
     try {
+      // Tool-call limit (2026-11-03): the SDK default is 60 s per request, but servers budget their own tools longer — the nexus-browser
+      // gives browse / solve_captcha 240 s and run_code 300 s — so a slow-but-working challenge solve came back as MCP -32001 at 60 s and
+      // the model retried it (cars.com: 6 browse timeouts in one run). CORTEX_MCP_TOOL_TIMEOUT_MS overrides (default 300000).
       const result = await this.client!.callTool({
         name: toolName,
         arguments: args,
-      });
+      }, undefined, { timeout: mcpToolTimeoutMs() });
       // A successful call means the stream recovered — self-heal the status.
       if (this.status === McpConnectionStatus.RECONNECTING) {
         this.status = McpConnectionStatus.CONNECTED;

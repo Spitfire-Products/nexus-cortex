@@ -9,6 +9,7 @@
  */
 
 import { GoogleGenAI } from '@google/genai';
+import { localBrowserReady, localBrowserFetch, CHALLENGE_TEXT } from './localBrowserBackend.js';
 import { convert } from 'html-to-text';
 import { BaseTool, type ToolResult } from '../../base/index.js';
 import { SchemaValidator } from '../../utils/SchemaValidator.js';
@@ -98,6 +99,10 @@ export interface WebFetchToolResult extends ToolResult {
  * - GitHub blob URL → raw URL conversion
  * - HTML to text conversion
  */
+/** WebFetch answers are WRITTEN BY A MODEL from the page (2026-11-03: Gemini's summary of a dealer page said "19 vehicles" where the page
+ *  listed 21; the agent then spent 15 minutes resolving a "discrepancy" against a correct browser report). Say so on every model-written result. */
+const SUMMARY_NOTE = '[Model-written summary of the fetched page, not its text: exact counts, prices and quotes in it can be wrong. Check them on the page (Browse) before relying on them, and never use this to overturn a browser report.]\n\n';
+
 export class WebFetchTool extends BaseTool<WebFetchToolParams, WebFetchToolResult> {
   private genAI: GoogleGenAI | null = null;
 
@@ -255,6 +260,12 @@ Include up to 20 URLs and instructions directly in the 'prompt' parameter. The t
         }
       }
 
+      if (provider === 'local-browser') {
+        // WEB_TOOLS_MODEL=local-browser: the page comes from the local browser (executeFallback tries it first), summarizing stays
+        // with the harness's own helper model — no outside web-tool provider.
+        return await this.executeFallback(params, url, signal, startTime);
+      }
+
       if (provider === 'openai' && process.env.OPENAI_API_KEY) {
         try {
           const r = await openaiFetch(params.prompt, modelId);
@@ -345,7 +356,7 @@ Include up to 20 URLs and instructions directly in the 'prompt' parameter. The t
       body += `\n\nSources:\n${list}`;
     }
     return {
-      ...this.createSuccessResult(body),
+      ...this.createSuccessResult(SUMMARY_NOTE + body),
       sources: r.sources.map((s) => ({ web: { title: s.title, uri: s.url } })),
       metadata: {
         executionTime: Date.now() - startTime,
@@ -432,7 +443,7 @@ Include up to 20 URLs and instructions directly in the 'prompt' parameter. The t
     }
 
     return {
-      ...this.createSuccessResult(responseText),
+      ...this.createSuccessResult(SUMMARY_NOTE + responseText),
       sources,
       metadata: {
         executionTime: Date.now() - startTime,
@@ -462,33 +473,40 @@ Include up to 20 URLs and instructions directly in the 'prompt' parameter. The t
     const timeout = setTimeout(() => controller.abort(), URL_FETCH_TIMEOUT_MS);
 
     try {
-      const response = await fetch(url, buildBrowserFetchInit(controller.signal));
-
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        throw new Error(
-          `Request failed with status code ${response.status} ${response.statusText}`,
-        );
+      // Plain HTTP first (fast: ~0.2 s); the LOCAL BROWSER when that fails or returns a thin / walled page — a rendered page
+      // (JavaScript, bot walls, sandbox + the user's proxy) with no outside provider. Measured 2026-11-03 (.cortex/bench/
+      // r-web-tools-local-browser-2026-11-03.md): plain HTTP got real content on 1/8 test pages, the local browser on 5/8.
+      let textContent = '';
+      let plainError: Error | null = null;
+      try {
+        const response = await fetch(url, buildBrowserFetchInit(controller.signal));
+        clearTimeout(timeout);
+        if (!response.ok) {
+          throw new Error(`Request failed with status code ${response.status} ${response.statusText}`);
+        }
+        const rawContent = await response.text();
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.toLowerCase().includes('text/html') || contentType === '') {
+          textContent = convert(rawContent, {
+            wordwrap: false,
+            selectors: [
+              { selector: 'a', options: { ignoreHref: true } },
+              { selector: 'img', format: 'skip' },
+            ],
+          });
+        } else {
+          // For other content types (text/plain, JSON, etc.), use raw text
+          textContent = rawContent;
+        }
+      } catch (e) {
+        clearTimeout(timeout);
+        plainError = e as Error;
       }
-
-      const rawContent = await response.text();
-      const contentType = response.headers.get('content-type') || '';
-      let textContent: string;
-
-      // Use html-to-text for HTML content
-      if (contentType.toLowerCase().includes('text/html') || contentType === '') {
-        textContent = convert(rawContent, {
-          wordwrap: false,
-          selectors: [
-            { selector: 'a', options: { ignoreHref: true } },
-            { selector: 'img', format: 'skip' },
-          ],
-        });
-      } else {
-        // For other content types (text/plain, JSON, etc.), use raw text
-        textContent = rawContent;
+      const thin = textContent.trim().length < 500 || (textContent.length < 2000 && CHALLENGE_TEXT.test(textContent));
+      if ((plainError || thin) && localBrowserReady() && /^https?:\/\//i.test(url)) {
+        try { textContent = (await localBrowserFetch(url)).text; plainError = null; } catch { /* keep the plain result / error */ }
       }
+      if (plainError) throw plainError;
 
       // Truncate to max length
       textContent = textContent.substring(0, MAX_CONTENT_LENGTH);
@@ -509,7 +527,7 @@ Include up to 20 URLs and instructions directly in the 'prompt' parameter. The t
             const summary = await this.helperSummarizer(textContent, params.prompt, url);
             if (summary && summary.trim()) {
               return {
-                ...this.createSuccessResult(summary),
+                ...this.createSuccessResult(SUMMARY_NOTE + summary),
                 metadata: {
                   executionTime: Date.now() - startTime,
                   url,
@@ -553,7 +571,7 @@ ${textContent}
       const resultText = result.text || '';
 
       return {
-        ...this.createSuccessResult(resultText),
+        ...this.createSuccessResult(SUMMARY_NOTE + resultText),
         metadata: {
           executionTime: Date.now() - startTime,
           url,

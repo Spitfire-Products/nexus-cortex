@@ -56,17 +56,25 @@ export function applyImageTtlForRequest(
     assistantsAfter[i] = count;
     if (messages[i]!.role === 'assistant') count++;
   }
+  // 2026-11-02: images NESTED in tool_result content (MCP tools: nexus-browser screenshot / computer_use frames arrive as
+  // tool_result.content = [image, text]) were never evicted — every browser screenshot stayed in every later request of a Browse
+  // delegate (36 requests on one healthgrades task). Same TTL, same stub, same no-mutation contract (new arrays, untouched blocks).
+  const hasImage = (b: any): boolean => b?.type === 'image' || (b?.type === 'tool_result' && Array.isArray(b.content) && b.content.some((x: any) => x?.type === 'image'));
+  const evict = (b: any): any => {
+    if (b?.type === 'image') return imageEvictionStub();
+    if (b?.type === 'tool_result' && Array.isArray(b.content) && b.content.some((x: any) => x?.type === 'image')) {
+      return { ...b, content: b.content.map((x: any) => (x?.type === 'image' ? imageEvictionStub() : x)) };
+    }
+    return b;
+  };
   let changed = false;
   const out = messages.map((msg, i) => {
     if (msg.role !== 'user') return msg;
     if (assistantsAfter[i]! < ttl) return msg;
-    if (!msg.content.some((b) => b.type === 'image')) return msg;
+    if (!Array.isArray(msg.content) || !msg.content.some(hasImage)) return msg;
     changed = true;
     // Swap the content ARRAY; never mutate shared blocks (cache contract).
-    return {
-      ...msg,
-      content: msg.content.map((b) => (b.type === 'image' ? imageEvictionStub() : b)),
-    };
+    return { ...msg, content: msg.content.map(evict) };
   });
   return changed ? out : messages;
 }

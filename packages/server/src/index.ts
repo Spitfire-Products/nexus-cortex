@@ -146,18 +146,26 @@ export class CortexV4Server {
       });
     }
 
-    // Idle timeout: reset timer on every request
+    // Idle timeout: idle means NO request in flight for idleTimeoutMs. 2026-11-02: the timer only restarted when a request ARRIVED, so a
+    // long agent turn (one /v1/messages call running minutes) was killed mid-request ("[IDLE] No requests for 120s" → the CLI's
+    // `fetch failed`). Count in-flight requests; restart the timer when each finishes; never shut down while one is running.
     if (this.idleTimeoutMs > 0) {
-      this.app.use((_req, _res, next) => {
+      this.app.use((_req, res, next) => {
+        this.inFlight++;
         this.resetIdleTimer();
+        let done = false;
+        const finish = () => { if (done) return; done = true; this.inFlight = Math.max(0, this.inFlight - 1); this.resetIdleTimer(); };
+        res.on('finish', finish); res.on('close', finish);
         next();
       });
     }
   }
 
+  private inFlight = 0;
   private resetIdleTimer(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = setTimeout(async () => {
+      if (this.inFlight > 0) { this.resetIdleTimer(); return; }   // a request is still running — not idle
       console.log(chalk.yellow(`[IDLE] No requests for ${Math.round(this.idleTimeoutMs / 1000)}s -- shutting down`));
       await this.stop();
       process.exit(0);

@@ -8,6 +8,7 @@ import { render } from 'ink';
 import { SessionBrowser } from '../../ui/components/SessionBrowser.js';
 import { ConfigManager } from '@nexus-cortex/cli/dist/config/ConfigManager.js';
 import { ThemeManager } from '@nexus-cortex/cli/dist/themes/ThemeManager.js';
+import { wakeStdinForInk } from '../../ui/inkStdin.js';
 
 export interface UiSessionsOptions {
   serverUrl?: string;
@@ -50,6 +51,7 @@ export async function uiSessions(options: UiSessionsOptions = {}): Promise<void>
       },
     })
   );
+  wakeStdinForInk();   // restart a stopped stdin handle (ui/inkStdin.ts)
 
   // Wait for user interaction to complete
   await waitUntilExit();

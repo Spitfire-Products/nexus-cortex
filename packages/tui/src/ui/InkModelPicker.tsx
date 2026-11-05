@@ -13,6 +13,7 @@ import { render } from 'ink';
 import { ModelPickerDialog } from '../ink-ui/components/ModelPickerDialog.js';
 import { persistModelForPlatform, type Platform } from '@nexus-cortex/cli/dist/themes/colors.js';
 import type { ModelDisplayInfo, ModelPickerResult } from '@nexus-cortex/core';
+import { wakeStdinForInk } from './inkStdin.js';
 
 // Re-export types for convenience
 export type { ModelDisplayInfo, ModelPickerResult };
@@ -83,6 +84,7 @@ export async function showModelPicker(
         }}
       />
     );
+    wakeStdinForInk();   // restart a stopped stdin handle (ui/inkStdin.ts)
 
     // Handle cleanup on exit
     waitUntilExit().catch(() => {

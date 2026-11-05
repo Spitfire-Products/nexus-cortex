@@ -22,6 +22,8 @@ import {
 } from './requirementsVerification.js';
 import { verifyIntegrity, resolveEndTurnIntegrityMode } from './integrityVerification.js';
 
+import { scopeCheck, scopeCheckEnabled } from '../training/scopeCheck.js';
+
 export interface GateToolResult { tool_use_id: string; tool_name: string; content: any; is_error?: boolean; metadata?: any }
 export interface GateToolUse { id: string; name: string; input: any }
 
@@ -29,6 +31,33 @@ export const MUTATING_TOOLS = ['Edit', 'Write', 'Bash', 'NotebookEdit'];
 export const READISH_TOOLS = ['Read', 'Grep', 'Glob'];
 
 /** Per-turn evidence the EndTurn gates verify against. One instance per user turn. */
+/**
+ * Stage-5 sources, filled by the harness (CORTEX_ENDTURN_SOURCES_AUTO, 2026-11-04). The attestation asks the model to list every web access;
+ * the harness already saw each one (Browse task, WebSearch query, WebFetch URL), and on web tasks the missing list cost a rejected EndTurn
+ * round per task (the ledger's "Stage-5 unattested-web rejections" web tax). When the model gives no valid list, the rows are built from the
+ * turn's own calls and an integrity_flag sources_auto is banked; the transplant and solution-query audits (checks A/B) are unchanged.
+ * off = the model must attest (rejected once otherwise).
+ */
+export function sourcesAutoEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !/^(off|false|0)$/i.test(String(env.CORTEX_ENDTURN_SOURCES_AUTO ?? '').trim());
+}
+export function autoSources(ev: { browseTasks: string[]; webQueries: string[]; webFetchUrls: string[] }): Array<{ accessed: string; purpose: string; used_for: string }> {
+  const rows: Array<{ accessed: string; purpose: string; used_for: string }> = [];
+  for (const t of ev.browseTasks) rows.push({ accessed: `Browse: ${t.replace(/\s+/g, ' ').slice(0, 200)}`, purpose: 'browse the site the task names', used_for: 'the browse report this answer is built from (harness-recorded)' });
+  for (const q of ev.webQueries) rows.push({ accessed: `WebSearch: ${q.slice(0, 200)}`, purpose: 'find pages for the task', used_for: 'search results consulted this turn (harness-recorded)' });
+  for (const u of ev.webFetchUrls) rows.push({ accessed: `WebFetch: ${u.slice(0, 300)}`, purpose: 'read a page for the task', used_for: 'page content consulted this turn (harness-recorded)' });
+  return rows;
+}
+function validSources(v: unknown): boolean {
+  return Array.isArray(v) && v.length > 0 && v.every((r: any) => r && [r.accessed, r.purpose, r.used_for].every((x) => typeof x === 'string' && x.trim().length > 0));
+}
+export function sourcesAutoFilled(given: unknown, ev: { browseTasks: string[]; webQueries: string[]; webFetchUrls: string[] }, env: NodeJS.ProcessEnv = process.env): boolean {
+  return sourcesAutoEnabled(env) && !validSources(given) && autoSources(ev).length > 0;
+}
+export function sourcesOrAuto(given: unknown, ev: { browseTasks: string[]; webQueries: string[]; webFetchUrls: string[] }, env: NodeJS.ProcessEnv = process.env): any {
+  return sourcesAutoFilled(given, ev, env) ? autoSources(ev) : given;
+}
+
 export class TurnEvidence {
   /** Successful tool outputs this turn (quotable observations). */
   outputs: string[] = [];
@@ -37,15 +66,23 @@ export class TurnEvidence {
   /** Bash commands executed this turn — proof a check RAN (not an observation). */
   commands: string[] = [];
   webQueries: string[] = [];
+  /** Browse delegate task texts this turn (web use, but not search queries). */
+  browseTasks: string[] = [];
+  /** WebFetch URLs this turn (for harness-filled sources rows). */
+  webFetchUrls: string[] = [];
   webContent: string[] = [];
   usedTools = false;
   usedMutatingTool = false;
+  /** Edit / Write / NotebookEdit ran (a real file change; Bash alone may have only read or fetched). */
+  usedFileEditTool = false;
   usedReadishTool = false;
   lastCitations: Array<{ reference: string; verbatim_source: string }> | undefined;
   endTurnCalled = false;
   effortTailBounced = false;
   /** Stage 4f: the requirement-coverage check fires at most once per turn. */
   reqCoverageNudged = false;
+  /** Stage 6: the scope check holds at most once per turn (CORTEX_SCOPE_CHECK). */
+  scopeHeld = false;
 
   /** Call once per executed batch with the tool_use blocks (before or after execution). */
   noteToolUses(toolUses: GateToolUse[]): void {
@@ -53,12 +90,17 @@ export class TurnEvidence {
       if (tu.name === 'EndTurn') continue;
       this.usedTools = true;
       if (MUTATING_TOOLS.includes(tu.name)) this.usedMutatingTool = true;
+      if (tu.name === 'Edit' || tu.name === 'Write' || tu.name === 'NotebookEdit') this.usedFileEditTool = true;
       if (READISH_TOOLS.includes(tu.name)) this.usedReadishTool = true;
       const input: any = tu.input ?? {};
       if (tu.name === 'WebSearch') {
         if (typeof input.query === 'string' && input.query) this.webQueries.push(input.query);
+      } else if (tu.name === 'WebFetch') {
+        if (typeof input.url === 'string' && input.url) this.webFetchUrls.push(input.url);
       } else if (tu.name === 'Browse') {
-        if (typeof input.task === 'string' && input.task) this.webQueries.push(input.task);
+        // A Browse task is an instruction to our own browse agent, not a web search: it restates the user's request by design, so the
+        // solution-query check (B) skips it; it still counts as web use for the sources attestation (C). 2026-11-03 (fuzzycortex Porsche).
+        if (typeof input.task === 'string' && input.task) this.browseTasks.push(input.task);
       } else if (tu.name === 'Write') {
         if (typeof input.content === 'string' && input.content) this.writeInputs.push(input.content);
       } else if (tu.name === 'Edit') {
@@ -76,6 +118,10 @@ export class TurnEvidence {
       const txt = typeof tr.content === 'string' ? tr.content : JSON.stringify(tr.content);
       if (!txt) continue;
       this.outputs.push(txt);
+      // MCP / browser results are content-block arrays, usually carrying JSON text: the stringified form escapes every newline and
+      // quote, so an honest multi-line quote of page text could never match (2026-11-03: 8 Stage-2 rejections across the cars.com +
+      // CarMax Browse delegates, one of which then timed out). Also index the decoded text.
+      for (const extra of decodedObservationTexts(tr.content)) if (extra !== txt) this.outputs.push(extra);
       if (tr.tool_name === 'WebSearch' || tr.tool_name === 'WebFetch' || tr.tool_name === 'Browse') this.webContent.push(txt);
     }
   }
@@ -84,6 +130,48 @@ export class TurnEvidence {
   citationCorpus(): string { return [...this.outputs, ...this.writeInputs].join('\n'); }
   /** What a strict `verified_how` may be grounded in: the above + the commands actually run. */
   verificationCorpus(): string { return [...this.outputs, ...this.writeInputs, ...this.commands].join('\n'); }
+}
+
+/** Plain-text views of a tool result for citation grounding: text blocks of a content array (nested tool_result content too) and,
+ *  for any text that is JSON, its string leaves joined by newlines. Image/binary blocks contribute nothing. */
+export function decodedObservationTexts(content: unknown): string[] {
+  const texts: string[] = [];
+  const visit = (c: unknown): void => {
+    if (typeof c === 'string') { texts.push(c); return; }
+    if (Array.isArray(c)) { for (const b of c) visit(b); return; }
+    if (c && typeof c === 'object') {
+      const b = c as { type?: string; text?: unknown; content?: unknown };
+      if (typeof b.text === 'string') texts.push(b.text);
+      else if (b.content !== undefined && b.type !== 'image') visit(b.content);
+    }
+  };
+  visit(content);
+  const out: string[] = [];
+  for (const t of texts) {
+    out.push(t);
+    const trimmed = t.trim();
+    if (trimmed.length > 1 && (trimmed[0] === '{' || trimmed[0] === '[')) {
+      try {
+        const leaves: string[] = [];
+        const walk = (v: unknown): void => {
+          if (typeof v === 'string') leaves.push(v);
+          else if (Array.isArray(v)) v.forEach(walk);
+          else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+        };
+        const parsed = JSON.parse(trimmed);
+        walk(parsed);
+        if (leaves.length) out.push(leaves.join('\n'));
+        // The browser MCP appends a `_quota` meter to every result; models drop it when quoting the JSON (2026-11-03, DeepSeek on
+        // CarMax: 2 of 3 rejected quotes were the result minus `_quota`, character-exact otherwise). Also index the result without it.
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && '_quota' in parsed) {
+          const { _quota: _drop, ...rest } = parsed as Record<string, unknown>;
+          void _drop;
+          out.push(JSON.stringify(rest));
+        }
+      } catch { /* not JSON */ }
+    }
+  }
+  return out;
 }
 
 export interface GateDeps {
@@ -95,6 +183,27 @@ export interface GateDeps {
   /** Effort-tail hooks (CORTEX_EFFORT_TAIL): remaining elevated continuations + arm N more. */
   effortTail?: { remaining: () => number; arm: (turns: number) => void };
   log?: (msg: string) => void;
+}
+
+/** EndTurn's array fields arrive as JSON STRINGS from some models/transports (2026-11-02 fuzzycortex/Sonnet: every field stringified
+ *  on 2 of 5 calls, and `sources` — then missing from the schema — on all of them), so an honest attestation failed Array.isArray in
+ *  Stages 4/5 forever. Parse a string that holds a JSON array back into the array; anything else passes through untouched. */
+const ENDTURN_ARRAY_FIELDS = ['citations', 'verification', 'requirements', 'sources', 'open_items'];
+export function normalizeEndTurnInput(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object') return {};
+  // Read from the ORIGINAL object and copy only when a field needs parsing (a copy would hide getters / non-enumerable fields).
+  let input = raw as Record<string, unknown>;
+  for (const k of ENDTURN_ARRAY_FIELDS) {
+    const v = (raw as Record<string, unknown>)[k];
+    if (typeof v !== 'string') continue;
+    const t = v.trim();
+    if (!t.startsWith('[')) continue;
+    let parsed: unknown; try { parsed = JSON.parse(t); } catch { continue; }
+    if (!Array.isArray(parsed)) continue;
+    if (input === raw) input = { ...(raw as Record<string, unknown>) };
+    input[k] = parsed;
+  }
+  return input;
 }
 
 /**
@@ -128,7 +237,7 @@ export function evaluateEndTurnGates(
         if (deps.debug) log(`[EffortTail] first EndTurn bounced — re-attestation at elevated effort (${tailTurns} continuation(s))`);
         continue;
       }
-      const input: any = etUse?.input ?? {};
+      const input: any = normalizeEndTurnInput(etUse?.input);
       const cits = input.citations;
       ev.lastCitations = Array.isArray(cits) ? cits : undefined; // Stage 3 baseline
       // 4.100.0 grounding corpus (cell-d-k3 distill 2026-09-10, 84 rejected citations audited): observations +
@@ -158,6 +267,8 @@ export function evaluateEndTurnGates(
           verification: input.verification,
           userTaskText: deps.userTaskText,
           turnUsedMutatingTool: ev.usedMutatingTool,
+          turnEditedFiles: ev.usedFileEditTool,
+          openItems: input.open_items,
           strict: resolveEndTurnRequirementsStrict(env),
           toolOutputs: ev.verificationCorpus(),
         });
@@ -182,17 +293,32 @@ export function evaluateEndTurnGates(
       if (accepted && resolveEndTurnIntegrityMode(env)) {
         const s5 = verifyIntegrity({
           webQueries: ev.webQueries,
+          browseTasks: ev.browseTasks,
           webContent: ev.webContent,
           writeInputs: ev.writeInputs,
           userTaskText: deps.userTaskText,
-          sourcesAttestation: input.sources,
+          sourcesAttestation: sourcesOrAuto(input.sources, ev),
         });
+        if (sourcesAutoFilled(input.sources, ev)) deps.recordEvent('integrity_flag', { check: 'sources_auto', detail: `harness filled ${autoSources(ev).length} sources row(s) from this turn's web calls` });
         for (const f of s5.flags) deps.recordEvent('integrity_flag', { check: f.check, detail: f.detail });
         if (!s5.ok) {
           accepted = false;
           tr.is_error = true;
           tr.content = s5.nudge!;
           log(`[Orchestrator] Stage5: EndTurn rejected — ${s5.flags.length} integrity flag(s).`);
+        }
+      }
+      if (accepted && scopeCheckEnabled(env)) { // Stage 6 (CORTEX_SCOPE_CHECK, default on): place-scoped task, unscoped results → hold once
+        const sc = scopeCheck({ taskText: deps.userTaskText, latestOutputs: ev.outputs.slice(-8), alreadyHeld: ev.scopeHeld });
+        if (sc.scope && (sc.scope.places.length || sc.scope.radius)) {
+          deps.recordEvent('scope_check', { places: sc.scope.places.slice(0, 3), radius: sc.scope.radius ?? null, held: !sc.ok, finding: sc.finding?.kind ?? null, text: sc.finding?.text?.slice(0, 160) ?? null });
+        }
+        if (!sc.ok) {
+          accepted = false;
+          ev.scopeHeld = true;
+          tr.is_error = true;
+          tr.content = sc.nudge!;
+          log(`[Orchestrator] Stage6: EndTurn held — scope check (${sc.finding?.kind}).`);
         }
       }
       if (accepted) ev.endTurnCalled = true;

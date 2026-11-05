@@ -129,6 +129,24 @@ export interface EnvironmentVariables {
   CORTEX_TURN_CONTRACT?: string; // '' (shipped door) | 'channel' — boot prompt drops 'prefer acting over deliberating' and asks for ANALYSIS + PLAN + action every turn; length recovery re-issues at the same effort (HB-TURN-CONTRACT)
   CORTEX_SUBAGENT_TIMEOUT_MS?: string; // Task sub-agent wall-clock limit (ms) when no parent turn deadline is set (R133; default 300000)
   CORTEX_SUBAGENT_TIMEOUT_MAX_MS?: string; // upper cap (ms) on the deadline-derived Task sub-agent limit (R133; empty = no cap)
+  CORTEX_BROWSE_TIMEOUT_MS?: string; // Browse delegate wall-clock limit (ms); default 600000 (2026-11-03)
+  CORTEX_BROWSE_DIRECT_NUDGE_CALLS?: string; // direct-mode browser calls per turn before one nudge to delegate the rest; default 15, 0 = off (2026-11-03)
+  CORTEX_BROWSE_DIRECT_CONFIRM?: string; // first direct Browse of a multi-step task answers with the reason to delegate; again = connect; off disables (2026-11-03)
+  CORTEX_BROWSE_DIRECT?: string; // Browse mode "direct": auto (interactive sessions only) | always | never (2026-11-03)
+  CORTEX_STREAM_HEADER_TIMEOUT_MS?: string; // streaming provider request with no response headers after N ms is aborted and retried; default 120000, 0 = off (2026-11-03)
+  CORTEX_MCP_TOOL_TIMEOUT_MS?: string; // per-call MCP tool timeout (ms); default 300000 (SDK default 60 s cut off longer server tools) (2026-11-03)
+  CORTEX_DEBUG_FULL_REQUESTS?: string; // DEBUG=true logs a request summary + new messages; true = full request dumps (2026-11-03)
+  CORTEX_MEETS_CONFIRM_WEB?: string; // a MEETS on a web turn (web output, no file writes) is evidenced by that output; hold = treat it as unevidenced (2026-11-03)
+  CORTEX_BROWSE_REVERIFY?: string; // after a completed browse report, the first re-verification Browse call is answered with the reason not to; allow disables (2026-11-03)
+  CORTEX_SUBAGENT_ENDTURN?: string; // EndTurn review inside sub-agents: mechanical (default) = resolver off, mechanical gates kept | off = no EndTurn gates | full = inherit (2026-11-03)
+  CORTEX_RESOLVER_WEB_EFFORT?: string; // EndTurn resolver judge effort on web-only turns (web results, no file writes); empty = the resolver's effort (2026-11-03)
+  CORTEX_FINISH_CONFIRM_WEB?: string; // R167 finish-confirm on WEB turns (web results, no file writes): default = an accept-with-gap finish stands; hold = held once like coding turns (2026-11-03)
+  CORTEX_RESOLVER_WEB_RULE?: string; // EndTurn judge web-answer rubric on WEB turns (web results, no file writes): a GAP must name an unmet stated constraint / contradicted answer / missing fact; no wording vetoes (site synonyms like GTX = GORE-TEX satisfy a term), a stated closest match is finished; off = grader persona only (2026-11-04)
+  CORTEX_BROWSE_CARRY?: string; // Follow-up Browse after a COMPLETED report this turn: the delegate gets the earlier task, its report excerpt and the URL it ended on, starts there and does only what the new task adds (skipped when the new task names a different site); off = fresh start (2026-11-04)
+  CORTEX_SCOPE_CHECK?: string; // EndTurn Stage 6 scope check: a task that names a place (ZIP / near X / within N mi) whose newest result set is unscoped (a SELECTED Nationwide / All distances choice, or a 5,000+ main count) is held once — apply the scope on the source or say it cannot be; zero model calls; also in sub-agents; inert on tasks with no place; off = no check (2026-11-04)
+  CORTEX_BROWSE_PROBE_GUARD?: string; // first-Browse probe guard (2026-11-03)
+  CORTEX_ANCHOR_WEB?: string; // bash-edit door + Browse when web tools are on (2026-11-04)
+  CORTEX_ENDTURN_SOURCES_AUTO?: string; // Stage-5 sources filled from the turn's web calls (2026-11-04)
   CORTEX_OUTER_TOOL_TIMEOUT_MS?: string; // floor (ms) for the outer per-batch tool abort: deadline = max(computed, floor + grace); empty = no floor
   CORTEX_API_NETWORK_RETRY_MS?: string; // wall-clock budget (ms) for network-class API fault retries (R150; default 600000; 0 = attempt-capped legacy)
   CORTEX_BUDGET_VISIBILITY?: string; // 'false' silences the per-10%-band WALL BUDGET line and the continue-with-budget nudge (R151; default on when a turn deadline exists)
@@ -194,6 +212,7 @@ export interface EnvironmentVariables {
   CORTEX_TUI_INCREMENTAL_RENDER?: string; // 'false' = Ink erase-and-rewrite of the whole dynamic region every frame (pre-4.129 behaviour); default on = Ink incrementalRendering (only changed lines rewritten) — R265
   CORTEX_TUI_MAX_FPS?: string; // Ink render throttle for the neoncortex/cortex-cli TUIs (frames per second; default 20; 0 = unthrottled) — R265
   CORTEX_TUI_STREAM_VIEWPORT_RESERVE?: string; // lines reserved for input/status/indicator; the live streaming turn is capped to (rows − reserve) tail lines so the dynamic region never exceeds the terminal (default 10; 0 = no cap) — R265
+  NEXUS_BROWSER_MODE?: string; // 'hosted' (default: the hosted nexus-browser MCP) | 'local' (the @nexus-cortex/browser library on this machine — set by `cortex setup` / `cortex browser install|use`; falls back to hosted unless the local install is ready)
   CORTEX_TMUX_AUTO_INSTALL?: string; // 'false' disables the R138 tmux self-install on the first persistent request (default on: apt-get/apk/dnf/yum/brew, then CORTEX_TMUX_STATIC_URL, then R134 degrade)
   CORTEX_TMUX_STATIC_URL?: string; // URL of a prebuilt tmux binary dropped into ~/.local/bin/tmux by the R138 self-install when package managers fail (unset = skipped)
   CORTEX_TMUX_HISTORY_LIMIT?: string; // scrollback lines per harness-created tmux pane (R141; default 50000)
@@ -564,6 +583,24 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_TURN_CONTRACT: '',
   CORTEX_SUBAGENT_TIMEOUT_MS: '',
   CORTEX_SUBAGENT_TIMEOUT_MAX_MS: '',
+  CORTEX_BROWSE_TIMEOUT_MS: '',
+  CORTEX_BROWSE_DIRECT_NUDGE_CALLS: '',
+  CORTEX_BROWSE_DIRECT_CONFIRM: '',
+  CORTEX_BROWSE_DIRECT: '',
+  CORTEX_STREAM_HEADER_TIMEOUT_MS: '',
+  CORTEX_MCP_TOOL_TIMEOUT_MS: '',
+  CORTEX_DEBUG_FULL_REQUESTS: '',
+  CORTEX_MEETS_CONFIRM_WEB: '',
+  CORTEX_BROWSE_REVERIFY: '',
+  CORTEX_SUBAGENT_ENDTURN: '',
+  CORTEX_RESOLVER_WEB_EFFORT: '',
+  CORTEX_FINISH_CONFIRM_WEB: '',
+  CORTEX_RESOLVER_WEB_RULE: '',
+  CORTEX_BROWSE_CARRY: '',
+  CORTEX_SCOPE_CHECK: '',
+  CORTEX_BROWSE_PROBE_GUARD: '',
+  CORTEX_ANCHOR_WEB: '',
+  CORTEX_ENDTURN_SOURCES_AUTO: '',
   CORTEX_OUTER_TOOL_TIMEOUT_MS: '',
   CORTEX_API_NETWORK_RETRY_MS: '',
   CORTEX_BUDGET_VISIBILITY: '',
@@ -629,6 +666,7 @@ export const DEFAULT_SETTINGS: Required<Omit<EnvironmentVariables,
   CORTEX_TUI_INCREMENTAL_RENDER: '',
   CORTEX_TUI_MAX_FPS: '',
   CORTEX_TUI_STREAM_VIEWPORT_RESERVE: '',
+  NEXUS_BROWSER_MODE: '',
   CORTEX_TMUX_AUTO_INSTALL: '',
   CORTEX_TMUX_STATIC_URL: '',
   CORTEX_TMUX_HISTORY_LIMIT: '',
@@ -1158,6 +1196,150 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     default: ''
   },
   {
+    key: 'CORTEX_BROWSE_TIMEOUT_MS',
+    displayName: 'Browse delegate timeout (ms)',
+    description: 'Browse delegate wall-clock limit (ms) when the call names no timeout_ms; default 600000 (10 min). A parent turn deadline still caps it.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_BROWSE_DIRECT_NUDGE_CALLS',
+    displayName: 'Direct-browse nudge (calls)',
+    description: 'After this many nexus-browser calls in one turn in Browse mode "direct", the model is told once to hand the rest of the task to the browse sub-agent. Default 15; 0 = off.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_BROWSE_DIRECT_CONFIRM',
+    displayName: 'Direct-browse confirm',
+    description: 'The first Browse mode "direct" request of a multi-step task in a turn is answered with the reason to delegate instead of a browser; asking again connects. Default on; off disables.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_BROWSE_DIRECT',
+    displayName: 'Direct browsing',
+    description: 'Browse mode "direct": auto (default) = offered only in interactive sessions — headless runs get the delegate, and a stray direct call runs as one; always; never.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_STREAM_HEADER_TIMEOUT_MS',
+    displayName: 'Stream header timeout (ms)',
+    description: 'A streaming provider request that has sent no response headers after this many ms is aborted and the SDK retries it. Default 120000; 0 = off. Non-streaming requests are unaffected.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_MCP_TOOL_TIMEOUT_MS',
+    displayName: 'MCP tool timeout (ms)',
+    description: 'Per-call MCP tool timeout. Default 300000 — the SDK default of 60 s cut off server tools that budget longer (nexus-browser browse / solve_captcha 240 s, run_code 300 s).',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_DEBUG_FULL_REQUESTS',
+    displayName: 'Full request dumps (debug)',
+    description: 'With DEBUG=true, log the FULL provider request every round (old behaviour). Default off: a one-line summary plus only the new messages; the canonical session record (.cortex/sessions) holds the content.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_MEETS_CONFIRM_WEB',
+    displayName: 'MEETS hold on web turns',
+    description: 'Default: when a turn read web results and changed no files, the judge-accepted (MEETS) finish stands — the web output is its evidence. hold = hold it once like a MEETS no command backed.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_BROWSE_REVERIFY',
+    displayName: 'Browse re-verification guard',
+    description: 'After a browse agent returned a COMPLETED report this turn, the first Browse call that reads as re-verification gets the reason not to instead of a new delegate; asking again runs it. allow = off.',
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_SUBAGENT_ENDTURN',
+    displayName: 'Subagent Endturn',
+    description: "EndTurn inside sub-agents: mechanical = resolver judge OFF (the parent reviews the result), mechanical gates kept; off = no EndTurn gates at all; full = inherit the parent's.",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_RESOLVER_WEB_EFFORT',
+    displayName: 'Resolver Web Effort',
+    description: "Judge effort on web-only turns (web results, no file writes); empty = CORTEX_ENDTURN_RESOLVER_EFFORT.",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_FINISH_CONFIRM_WEB',
+    displayName: 'Finish confirm on web turns',
+    description: "R167 finish-confirm on WEB turns (web results, no file writes): default = an accept-with-gap finish stands; hold = held once like coding turns.",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_RESOLVER_WEB_RULE',
+    displayName: 'Judge web-answer rule',
+    description: "EndTurn judge web-answer rubric on WEB turns (web results, no file writes): a GAP must name an unmet stated constraint / contradicted answer / missing fact; no wording vetoes (site synonyms like GTX = GORE-TEX satisfy a term), a stated closest match is finished; off = grader persona only (2026-11-04).",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_BROWSE_CARRY',
+    displayName: 'Browse carry-forward',
+    description: "Follow-up Browse after a COMPLETED report this turn: the delegate gets the earlier task, its report excerpt and the URL it ended on, starts there and does only what the new task adds (skipped when the new task names a different site); off = fresh start (2026-11-04).",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_SCOPE_CHECK',
+    displayName: 'EndTurn scope check',
+    description: "EndTurn Stage 6 scope check: a task that names a place (ZIP / near X / within N mi) whose newest result set is unscoped (a SELECTED Nationwide / All distances choice, or a 5,000+ main count) is held once — apply the scope on the source or say it cannot be; zero model calls; also in sub-agents; inert on tasks with no place; off = no check (2026-11-04).",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_BROWSE_PROBE_GUARD',
+    displayName: 'Browse probe guard',
+    description: "The turn's first Browse call that only asks whether the site loads / what it shows is answered once with the reason to send the whole task; re-sending runs it; off disables.",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_ANCHOR_WEB',
+    displayName: 'Anchor web door',
+    description: "The bash-edit turn-1 door also passes Browse when web tools are enabled (inert when ENABLE_WEBTOOLS is off); off = Bash/Edit/ReadImage only.",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
+    key: 'CORTEX_ENDTURN_SOURCES_AUTO',
+    displayName: 'EndTurn sources auto-fill',
+    description: "Stage-5: when the model gives no valid sources list, the harness fills the rows from the turn's own web calls (Browse/WebSearch/WebFetch) instead of rejecting; checks A/B unchanged; off = the model must attest.",
+    type: 'string',
+    category: 'training',
+    default: ''
+  },
+  {
     key: 'CORTEX_BUDGET_VISIBILITY',
     displayName: 'Wall-budget visibility',
     description: 'When a turn deadline exists, append a one-line WALL BUDGET reminder (total / elapsed / remaining) to the tool result each time elapsed crosses a 10 percent band, and arm the open-items continue nudge (R151, HB-BUDGET-VISIBILITY). Default on; "false" disables.',
@@ -1508,6 +1690,15 @@ export const SETTINGS_METADATA: SettingMetadata[] = [
     type: 'string',
     category: 'runtime',
     default: ''
+  },
+  {
+    key: 'NEXUS_BROWSER_MODE',
+    displayName: 'Browser backend',
+    description: 'hosted = the hosted nexus-browser MCP (default; nothing to install). local = the @nexus-cortex/browser library on this machine, chosen in cortex setup or with cortex browser install (which installs everything it needs). local falls back to hosted until its install is ready.',
+    type: 'choice',
+    category: 'runtime',
+    choices: ['hosted', 'local'],
+    default: '',
   },
   {
     key: 'CORTEX_TMUX_AUTO_INSTALL',

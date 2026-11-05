@@ -118,3 +118,68 @@ describe('runExperiment — single-experiment measurement core', () => {
     expect(msgs.some(m => /gate/.test(m))).toBe(true);
   });
 });
+
+describe('runExperiment — interleaving (B5) and run planning', () => {
+  let root: string;
+  beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'exprun-il-')); });
+  afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
+
+  /** Two IDENTICAL arms on a drifting provider: the first half of all calls (any arm)
+   *  score 100, the second half 25. Only the run order separates the arms. */
+  function driftingArms(totalCalls: number): ExperimentArms & { calls: string[] } {
+    const calls: string[] = [];
+    const mk = (name: string): HarnessRunner => ({
+      async run(): Promise<HarnessRunResult> {
+        calls.push(name);
+        const early = calls.length <= totalCalls / 2;
+        return { text: early ? 'alpha beta gamma delta' : 'alpha', inputTokens: 1, outputTokens: 1, toolCallCount: 0, latencyMs: 1 };
+      },
+    });
+    return { baseRunner: mk('base'), candidateRunner: mk('cand'), calls };
+  }
+
+  it('sequential order turns provider drift into a fake effect; interleaving cancels it', async () => {
+    const opts = { baseRef: 'b', candidateRef: 'c', branch: 'x', trainTasks: TRAIN, runs: 6, gate: { seed: 3 } };
+    const seq = driftingArms(24);
+    const rs = await runExperiment(new ModelRouterMatrix(path.join(root, 's')), new ExperimentLedger(path.join(root, 's')), seq,
+      { ...opts, experimentTag: 'seq', interleave: false });
+    const il = driftingArms(24);
+    const ri = await runExperiment(new ModelRouterMatrix(path.join(root, 'i')), new ExperimentLedger(path.join(root, 'i')), il,
+      { ...opts, experimentTag: 'il' });
+    expect(rs.interleaved).toBe(false);
+    expect(seq.calls.slice(0, 12).every((c) => c === 'base')).toBe(true);
+    expect(rs.verdict.effect).toBeLessThan(-50);            // identical arms, "candidate is worse"
+    expect(ri.interleaved).toBe(true);
+    expect(Math.abs(ri.verdict.effect)).toBeLessThan(20);   // drift shared by both arms
+    expect(ri.verdict.decision).not.toBe('keep');
+    // same records either way: 2 tasks × 6 runs per arm
+    expect(il.calls.filter((c) => c === 'base').length).toBe(12);
+    expect(il.calls.filter((c) => c === 'cand').length).toBe(12);
+  });
+
+  it('interleaving order is seeded (reproducible) and mixes who goes first', async () => {
+    const order = async () => {
+      const a = driftingArms(1000);
+      await runExperiment(new ModelRouterMatrix(fs.mkdtempSync(path.join(root, 'o'))), new ExperimentLedger(fs.mkdtempSync(path.join(root, 'l'))), a,
+        { experimentTag: 'ord', baseRef: 'b', candidateRef: 'c', branch: 'x', trainTasks: TRAIN, runs: 8, gate: { seed: 9 } });
+      return a.calls;
+    };
+    const first = await order();
+    expect(await order()).toEqual(first);
+    const pairsBaseFirst = first.filter((c, i) => i % 2 === 0 && c === 'base').length;
+    expect(pairsBaseFirst).toBeGreaterThan(0);
+    expect(pairsBaseFirst).toBeLessThan(16);
+  });
+
+  it('reports a run plan from the observed per-task spread', async () => {
+    let k = 0;
+    const noisy: HarnessRunner = { async run() { k++; return { text: k % 2 ? 'alpha beta gamma delta' : 'alpha', inputTokens: 1, outputTokens: 1, toolCallCount: 0, latencyMs: 1 }; } };
+    const res = await runExperiment(new ModelRouterMatrix(root), new ExperimentLedger(root), { baseRunner: noisy, candidateRunner: noisy },
+      { experimentTag: 'plan', baseRef: 'b', candidateRef: 'c', branch: 'x', trainTasks: TRAIN, runs: 3, gate: { seed: 1 }, plan: { targetEffect: 5 } });
+    expect(res.runPlan).toBeDefined();
+    expect(res.runPlan!.runsPerArm).toBe(3);
+    expect(res.runPlan!.adequate).toBe(false);
+    expect(res.runPlan!.requiredRunsPerArm).toBeGreaterThan(3);
+    expect(res.benchSummaries.base.train.tasks[0]!.scoreSd).toBeGreaterThan(0);
+  });
+});

@@ -50,6 +50,14 @@ function sourceForms(src: string): string[] {
   // if there is an arrow anywhere, also try just the part after the LAST arrow (cmd → output)
   const lastArrow = src.split(/→|=>|->/).pop()?.trim() ?? '';
   if (lastArrow && lastArrow !== src && lastArrow.length >= MIN_SOURCE_LEN) forms.push(lastArrow);
+  // A `label: "value"` wrapper around a verbatim value (2026-11-03: `h1: "Used Honda and Nissan at …"` quoted from the JSON output
+  // `"h1":"Used Honda and Nissan at …"`): also try the value alone, with and without its quotes. The value must still be verbatim.
+  const kv = src.match(/^\s*["']?[\w .()-]{1,40}["']?\s*[:=]\s*(.+)$/);
+  if (kv) {
+    const v = (kv[1] ?? "").trim();
+    const unq = v.replace(/^["'](.*)["'],?$/, '$1');
+    for (const f of [v, unq]) if (f !== src && f.length >= MIN_SOURCE_LEN) forms.push(f);
+  }
   return forms;
 }
 
@@ -81,6 +89,8 @@ export function verifyCitationsGrounded(
   const haystack = normalize(toolOutputs);
   const ungrounded: CitationEvidence[] = [];
   const present = (f: string) => haystack.includes(normalize(f));
+  let squeezedHaystack: string | undefined;
+  const squeezed = (): string => (squeezedHaystack ??= haystack.replace(/\s+/g, ''));
 
   for (const c of citations) {
     const raw = c?.verbatim_source ?? '';
@@ -88,6 +98,9 @@ export function verifyCitationsGrounded(
     if (src.length < MIN_SOURCE_LEN) continue; // too short to verify meaningfully
     // grounded if the source — or its de-annotated form (raw output after a `$ cmd →` wrapper) — is present
     if (sourceForms(src).some(present)) continue;
+    // Spacing-only differences (2026-11-03: a quoted page line "today· Grand Rapids" vs the output's "today·Grand Rapids"): compare with
+    // all whitespace removed. Every other character must still match in order, so an invented quote still fails.
+    if (src.length >= MIN_SOURCE_LEN * 2 && squeezed().includes(src.replace(/\s+/g, ''))) continue;
     if (opts.linewise) {
       const lines = String(raw).split(/\r?\n/).map(normalize).filter((l) => l.length >= MIN_SOURCE_LEN);
       if (lines.length >= 2 && lines.every((l) => sourceForms(l).some(present))) continue;

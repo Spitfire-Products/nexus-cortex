@@ -1,3 +1,4 @@
+import { toolChildEnv } from '@nexus-cortex/core';
 /**
  * GitPolicy — single source of truth for git/PR access control + safe subprocess wiring.
  *
@@ -182,7 +183,7 @@ export class GitPolicy {
    * The token rides in env only — never on argv or in a URL.
    */
   subprocessEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-    const env: NodeJS.ProcessEnv = { ...base };
+    const env: NodeJS.ProcessEnv = toolChildEnv(base);   // vault keys stay out of git/gh; this policy's own token is added below
     if (this.token) {
       env.GH_TOKEN = this.token;
       env.GITHUB_TOKEN = this.token;

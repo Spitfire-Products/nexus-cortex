@@ -1,6 +1,6 @@
 {
   "name": "@nexus-cortex/core",
-  "version": "4.130.0",
+  "version": "4.131.0",
   "description": "Core orchestration library implementing Claude CLI architecture patterns",
   "type": "module",
   "main": "./dist/index.js",
@@ -38,7 +38,8 @@
     "test": "vitest",
     "test:ci": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "sync:secret-types": "node scripts/sync-spa-secret-types.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.20.9",
@@ -48,8 +49,8 @@
     "@gradio/client": "^2.3.1",
     "@growthbook/growthbook": "1.8.0",
     "@modelcontextprotocol/sdk": "^1.20.2",
-    "@nexus-cortex/executors": "4.130.0",
-    "@nexus-cortex/types": "4.130.0",
+    "@nexus-cortex/executors": "4.131.0",
+    "@nexus-cortex/types": "4.131.0",
     "@types/uuid": "^10.0.0",
     "ajv": "^8.12.0",
     "chokidar": "^3.6.0",

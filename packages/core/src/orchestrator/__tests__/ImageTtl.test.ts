@@ -69,3 +69,17 @@ describe('applyImageTtlForRequest', () => {
     expect(JSON.stringify(imageEvictionStub())).toBe(JSON.stringify(imageEvictionStub()));
   });
 });
+
+describe('nested tool_result images (2026-11-02, MCP screenshots)', () => {
+  it('evicts an image inside a tool_result after the TTL, without mutating the input', () => {
+    const img = { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'AAAA' } } as any;
+    const tr = { type: 'tool_result', tool_use_id: 't1', content: [img, { type: 'text', text: 'meta' }] } as any;
+    const msgs: any[] = [{ role: 'user', content: [tr] }, { role: 'assistant', content: [{ type: 'text', text: 'a' }] }, { role: 'assistant', content: [{ type: 'text', text: 'b' }] }];
+    const out = applyImageTtlForRequest(msgs as any, 2);
+    const nested = (out[0] as any).content[0].content;
+    expect(nested[0].type).toBe('text');
+    expect(nested[1].text).toBe('meta');
+    expect(tr.content[0]).toBe(img);   // input untouched
+    expect(applyImageTtlForRequest(msgs as any, 3)).toBe(msgs);   // inside the TTL → unchanged
+  });
+});

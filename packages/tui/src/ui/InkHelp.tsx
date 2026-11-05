@@ -12,6 +12,7 @@ import { keymapKey } from '@nexus-cortex/core';
 import { render, Box, Text, useInput } from 'ink';
 import { slashCommandRegistry } from '@nexus-cortex/core';
 import { Colors } from '@nexus-cortex/cli/dist/themes/colors.js';
+import { wakeStdinForInk } from './inkStdin.js';
 
 /**
  * Interactive help component - shows all commands from unified registry
@@ -134,6 +135,7 @@ export async function showHelp(): Promise<void> {
         }}
       />
     );
+    wakeStdinForInk();   // restart a stopped stdin handle (ui/inkStdin.ts)
 
     waitUntilExit().catch(() => {
       resolve();

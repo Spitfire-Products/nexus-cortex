@@ -1656,9 +1656,13 @@ Give concise, actionable guidance in plain text with these labeled parts:
     progressSummary?: string;
     /** R165: 'on' = one thinking-on escalation call (per-surface reasoning forced on for this call only). */
     reasoning?: 'on';
+    /** Per-call judge effort (2026-11-03: web-only turns may be judged at lower effort — CORTEX_RESOLVER_WEB_EFFORT). Default: the resolver config's. */
+    effort?: string;
     /** R170: EVIDENCE blocks from earlier investigation rounds + whether INVESTIGATE is offered / withdrawn this call. */
     evidenceRounds?: string[];
     investigate?: 'offer' | 'withdraw';
+    /** 2026-11-04: a WEB turn (web results read, no files changed) — appends the web-answer rubric (CORTEX_RESOLVER_WEB_RULE). */
+    webAnswer?: boolean;
   }): Promise<string> {
     const ctx: EndTurnResolverContext = {
       evidenceRounds: context.evidenceRounds, // R170
@@ -1677,8 +1681,8 @@ Give concise, actionable guidance in plain text with these labeled parts:
     return this.generateGuidance(
       {
         surface: 'endturn-resolver',
-        mentor: resolveMentorRoleConfig('endturn-resolver', roleEnv, { modelId: context.helperModelId, effort: cfg.effort, outputBudgetTokens: cfg.outputBudgetTokens }),
-        persona: resolverSystemPrompt(cfg.abstain, cfg.meetsConfirm, context.investigate, cfg.verifyScale, cfg.taskRules, cfg.scopeTask), // R168 / R170 / R208 / R211–R214 / scope=task
+        mentor: resolveMentorRoleConfig('endturn-resolver', roleEnv, { modelId: context.helperModelId, effort: context.effort || cfg.effort, outputBudgetTokens: cfg.outputBudgetTokens }),
+        persona: resolverSystemPrompt(cfg.abstain, cfg.meetsConfirm, context.investigate, cfg.verifyScale, cfg.taskRules, cfg.scopeTask, !!context.webAnswer), // R168 / R170 / R208 / R211–R214 / scope=task / web rule
         task: (context.investigate === 'offer' ? 'Adjudicate whether the work product meets the task requirements, investigating first if the evidence does not settle it. First line VERDICT: INVESTIGATE (with CHECK:/READ: lines)' : 'Adjudicate whether the work product meets the task requirements. First line VERDICT: ') +
           (context.investigate === 'offer' ? ' or ' : '') + (cfg.abstain ? 'MEETS|GAP|RETIRE; ' : 'MEETS|GAP; ') +
           'if GAP, a terse numbered fix plan' + (cfg.meetsConfirm ? '; if MEETS, the proving CHECK lines' : '') + (cfg.abstain ? '; if RETIRE, one line on why it is unclosable.' : '.'), // R170 fix 4.117.1

@@ -17,3 +17,7 @@ export { applyFeaturePayload, featureAppliedKeys, featurePayloadHash, canonicalJ
 // 2026-10-17 cortex setup — the pure plan half of the first-run wizard (providers -> keys -> roles -> web tools)
 export * from './setupPlan.js';
 
+export * from './secretsVault.js';
+export * from './secretProviders.js';
+export * from './localBrowser.js';
+export { installConsoleRedaction, redactLogText } from './logRedaction.js';

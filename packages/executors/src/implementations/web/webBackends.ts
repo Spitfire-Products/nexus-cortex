@@ -17,8 +17,10 @@
  */
 
 import { convert as htmlToText } from 'html-to-text';
+import { localBrowserReady, localBrowserFetch } from './localBrowserBackend.js';
 
-export type WebProvider = 'anthropic' | 'xai' | 'openai' | 'google' | 'deepseek' | 'fallback';
+// 'local-browser' (2026-11-03): WEB_TOOLS_MODEL=local-browser — search/fetch through the local @nexus-cortex/browser, no outside provider.
+export type WebProvider = 'anthropic' | 'xai' | 'openai' | 'google' | 'deepseek' | 'local-browser' | 'fallback';
 
 export interface BackendResult {
   /** Combined text body */
@@ -33,6 +35,7 @@ export interface BackendResult {
 export function resolveProvider(modelId: string | undefined): WebProvider {
   if (!modelId) return 'fallback';
   const id = modelId.toLowerCase();
+  if (id === 'local-browser' || id === 'browser') return 'local-browser';
   if (id.startsWith('claude-') || id.startsWith('claude_')) return 'anthropic';
   if (id.startsWith('grok-') || id.startsWith('grok_')) return 'xai';
   if (id.startsWith('gemini-') || id.startsWith('gemma-')) return 'google';
@@ -523,7 +526,7 @@ export function getWebToolsModel(): string {
 // The WebSearch tool also takes `providers: [...]` per call. Each keyed provider is queried in parallel; the merged answer shows every
 // provider's section plus the sources two or more providers agree on. Cost = the sum of the providers' per-search prices; latency = the slowest.
 
-export type KeyedWebProvider = Exclude<WebProvider, 'fallback'>;
+export type KeyedWebProvider = Exclude<WebProvider, 'fallback' | 'local-browser'>;
 /** The model each provider's search runs on (the WEB_TOOLS_MODEL auto-pick defaults). */
 export const WEB_PROVIDER_MODELS: Record<KeyedWebProvider, string> = {
   google: 'gemini-2.5-flash',
@@ -643,7 +646,10 @@ export async function runWebSearch(query: string): Promise<BackendResult> {
   const modelId = getWebToolsModel();
   const provider = resolveProvider(modelId);
 
-  if (provider !== 'fallback' && getApiKey(provider)) {
+  // WEB_TOOLS_MODEL=local-browser searches through the plain DuckDuckGo HTML page below — measured 2026-11-03 (.cortex/bench/
+  // r-web-tools-local-browser-2026-11-03.md): a headless browser on a search engine is bot-walled or mis-localized (Bing 2/8, Google
+  // blocked, DuckDuckGo-in-browser 0/8) while the plain HTML page found the canonical source on 7/8 at 0.55 s. Only FETCH uses the browser.
+  if (provider !== 'fallback' && provider !== 'local-browser' && getApiKey(provider)) {
     try {
       switch (provider) {
         case 'anthropic':
@@ -677,7 +683,7 @@ export async function runWebFetch(prompt: string, urls: string[]): Promise<Backe
   const modelId = getWebToolsModel();
   const provider = resolveProvider(modelId);
 
-  if (provider !== 'fallback' && getApiKey(provider)) {
+  if (provider !== 'fallback' && provider !== 'local-browser' && getApiKey(provider)) {
     try {
       switch (provider) {
         case 'anthropic':
@@ -700,6 +706,12 @@ export async function runWebFetch(prompt: string, urls: string[]): Promise<Backe
   // Direct fetch each URL in the prompt; concatenate results.
   if (urls.length === 0) {
     throw new Error('No URLs supplied for direct fetch fallback');
+  }
+  // The local browser first when installed and chosen: rendered pages (JavaScript, bot walls), no outside provider.
+  if (localBrowserReady()) {
+    const parts: string[] = []; const sources: Array<{ url: string }> = [];
+    for (const u of urls) { try { const r = await localBrowserFetch(u); parts.push(r.text); sources.push({ url: u }); } catch (err: any) { console.warn(`[web-tools] local-browser fetch failed for ${u}: ${err.message}`); } }
+    if (parts.length === urls.length) return { text: parts.join('\n\n---\n\n'), sources, backend: 'local-browser' };
   }
 
   const parts: string[] = [];

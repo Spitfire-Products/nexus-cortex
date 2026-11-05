@@ -499,6 +499,14 @@ export class SlashCommandRegistry {
       ],
     });
 
+    // 2026-11-02 secrets vault (docs/SECRETS_VAULT_PLAN.md): the interactive face of ~/.cortex/secrets.enc; headless = `cortex secrets …`
+    this.register({
+      name: 'secrets',
+      category: 'config',
+      description: 'Encrypted secrets vault: add, edit, reveal, bind, import (values never reach the model)',
+      usage: '/secrets',
+    });
+
     // Config commands
     this.register({
       name: 'config',

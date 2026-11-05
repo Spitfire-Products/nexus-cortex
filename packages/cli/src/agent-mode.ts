@@ -25,7 +25,7 @@ import {
   createOrchestrator,
 } from '@nexus-cortex/core';
 import { materializeAgentSystemPrompt } from './agentSystemPrompt.js';
-import { delegateAnchorEnv, delegateMcpEnv } from '@nexus-cortex/core';
+import { delegateAnchorEnv, delegateMcpEnv, priceLedgerForCard } from '@nexus-cortex/core';
 import type {
   OrchestratorConfig,
   CortexOrchestrator,
@@ -67,6 +67,10 @@ const toolUsage: Map<string, ToolUsageSummary> = new Map();
 const filesRead: Set<string> = new Set();
 const filesModified: Set<string> = new Set();
 const responseParts: string[] = [];
+// What a sub-agent had when it was cut off (2026-11-03): text streamed in the unfinished request, and its last EndTurn attempt (a
+// gate-rejected or never-adjudicated answer). A timeout used to return only the tool list — 4 of 8 Browse delegates lost minutes of work.
+let inFlightText = '';
+let lastEndTurnDraft: Record<string, unknown> | undefined;
 
 // ============================================
 // IPC MESSAGE HANDLING
@@ -421,6 +425,7 @@ async function executeTask(prompt: string): Promise<SubAgentResult> {
           // Accumulate text
           if (chunk.delta) {
             accumulatedText += chunk.delta;
+            inFlightText += chunk.delta;
           }
           break;
 
@@ -461,6 +466,7 @@ async function executeTask(prompt: string): Promise<SubAgentResult> {
       }
     }
 
+    inFlightText = '';
     // Store accumulated text
     if (accumulatedText) {
       responseParts.push(accumulatedText);
@@ -501,6 +507,7 @@ function trackToolUsage(toolUse: unknown): void {
 
   const tu = toolUse as { name?: string; input?: Record<string, unknown>; id?: string };
   const toolName = tu.name ?? 'unknown';
+  if (/^(EndTurn|end_turn)$/.test(toolName) && tu.input && typeof tu.input === 'object') lastEndTurnDraft = tu.input;
 
   // Update usage stats
   const existing = toolUsage.get(toolName) ?? {
@@ -542,14 +549,56 @@ function trackToolUsage(toolUse: unknown): void {
 /**
  * Build the final result
  */
+/** The unfinished work of a sub-agent that was stopped (timeout / interrupt / error), for the parent to use or re-verify. */
+function describePartial(): string {
+  const parts: string[] = [];
+  const d = lastEndTurnDraft;
+  if (d) {
+    const lines: string[] = ['PARTIAL RESULT (unverified — the sub-agent was stopped before its answer was accepted). Its last EndTurn draft:'];
+    const parse = (v: unknown): unknown => { if (typeof v !== 'string') return v; try { return JSON.parse(v); } catch { return v; } };
+    if (typeof d.summary === 'string' && d.summary) lines.push(`Summary: ${d.summary}`);
+    const cits = parse(d.citations);
+    if (Array.isArray(cits)) for (const c of cits.slice(0, 12)) {
+      const r = c as { reference?: unknown; verbatim_source?: unknown };
+      lines.push(`- ${String(r.reference ?? '')}: ${String(r.verbatim_source ?? '').slice(0, 400)}`);
+    }
+    const open = parse(d.open_items);
+    if (Array.isArray(open) && open.length) lines.push(`Open items: ${open.map(String).join(' | ').slice(0, 800)}`);
+    if (typeof d.self_review === 'string' && d.self_review) lines.push(`Self-review: ${d.self_review.slice(0, 600)}`);
+    parts.push(lines.join('\n'));
+  }
+  if (inFlightText.trim()) parts.push(`Text in progress when stopped:\n${inFlightText.trim().slice(-3000)}`);
+  return parts.join('\n\n');
+}
+
+/** The completed sub-agent's grounded evidence: its accepted EndTurn's citations (each verbatim_source was checked against its tool output). */
+function describeEvidence(): string {
+  const d = lastEndTurnDraft; if (!d) return '';
+  const parse = (v: unknown): unknown => { if (typeof v !== 'string') return v; try { return JSON.parse(v); } catch { return v; } };
+  const cits = parse(d.citations);
+  if (!Array.isArray(cits) || !cits.length) return '';
+  const lines = ['EVIDENCE (verbatim from the pages, as this agent\'s accepted answer cited them — quote these in your own answer):'];
+  for (const c of cits.slice(0, 15)) {
+    const r = c as { reference?: unknown; verbatim_source?: unknown };
+    const src = String(r.verbatim_source ?? '').trim(); if (!src) continue;
+    const line = `- ${String(r.reference ?? '').slice(0, 160)}: ${src.slice(0, 600)}`;
+    if (lines.join('\n').length + line.length > 3500) break;   // the parent keeps the LAST 8000 chars: the answer must stay inside them
+    lines.push(line);
+  }
+  return lines.length > 1 ? lines.join('\n') : '';
+}
+
 function buildResult(status: SubAgentResult['status']): SubAgentResult {
   const endTime = new Date();
   const durationMs = endTime.getTime() - startTime.getTime();
 
-  // Estimate cost (Claude Sonnet rates)
-  const inputRate = 3.0 / 1_000_000;
-  const outputRate = 15.0 / 1_000_000;
-  const estimatedCost = inputTokens * inputRate + outputTokens * outputRate;
+  // Tokens + cost from the orchestrator's EXACT ledger, priced at this model card's rates (library: priceLedgerForCard). The stream-event
+  // counters above stay only as a fallback — they missed usage on these transports (reports showed 0 tokens / $0).
+  let ledger: any; try { ledger = orchestrator?.getSessionUsage?.(); } catch { ledger = undefined; }
+  let card: any; try { card = orchestrator?.getCurrentModel?.(); } catch { card = undefined; }
+  const priced = ledger && (ledger.inputTokens || ledger.outputTokens) ? priceLedgerForCard(ledger, card?.cost) : null;
+  if (priced) { inputTokens = priced.inputTokens; outputTokens = priced.outputTokens; cacheHits = priced.cacheReadTokens; }
+  const estimatedCost = priced ? priced.estimatedCost : inputTokens * (3.0 / 1_000_000) + outputTokens * (15.0 / 1_000_000);
 
   // Build summary
   const summaryParts: string[] = [];
@@ -558,6 +607,15 @@ function buildResult(status: SubAgentResult['status']): SubAgentResult {
   if (toolUsage.size > 0) summaryParts.push(`Tools: ${Array.from(toolUsage.keys()).join(', ')}`);
   if (filesModified.size > 0) summaryParts.push(`Modified ${filesModified.size} file(s)`);
 
+  const partial = status === 'completed' ? '' : describePartial();
+  if (partial && !responseParts.includes(partial)) responseParts.push(partial);
+  // A COMPLETED sub-agent's evidence travels with its answer (2026-11-03, fuzzycortex Porsche run): only the prose answer used to reach the
+  // parent, so the parent's citations of what the delegate saw ("Cayenne (21)") were "not found in this turn's output" and it sent ANOTHER
+  // delegate just to fetch quotable strings. The accepted EndTurn's citations are verbatim tool output — append them to the final answer.
+  if (status === 'completed') {
+    const ev = describeEvidence();
+    if (ev && responseParts.length && !responseParts[responseParts.length - 1]!.includes(ev)) responseParts[responseParts.length - 1] += `\n\n${ev}`;
+  }
   const lastResponse = responseParts[responseParts.length - 1] ?? '';
   if (lastResponse) {
     const snippet = lastResponse.length > 500 ? lastResponse.slice(0, 500) + '...' : lastResponse;

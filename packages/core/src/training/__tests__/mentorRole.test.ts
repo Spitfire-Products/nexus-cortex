@@ -3,12 +3,17 @@ import { resolveMentorRoleConfig, describeMentorWire, mentorWireHint, reasoningA
 
 describe('mentorRole — the mentor as a first-class resolved role', () => {
   it('planner surfaces think by default at the surface effort; model from MENTORSHIP_HELPER_MODEL', () => {
-    const c = resolveMentorRoleConfig('endturn-resolver', { MENTORSHIP_HELPER_MODEL: 'deepseek-v4-pro' } as any, { effort: 'max', outputBudgetTokens: 4000 });
+    const c = resolveMentorRoleConfig('lift-plan', { MENTORSHIP_HELPER_MODEL: 'deepseek-v4-pro' } as any, { effort: 'max', outputBudgetTokens: 4000 });
     expect(c.modelId).toBe('deepseek-v4-pro');
     expect(c.thinking).toBe(true);
     expect(c.effort).toBe('max');
     expect(c.thinkingSource).toBe('code-default');
     expect(describeMentorWire(c)).toEqual({ model: 'deepseek-v4-pro', thinking: true, effort: 'max', budget: 4000 });
+  });
+  it('the EndTurn resolver is thinking-OFF by default (2026-11-03); an explicit global or per-surface switch still wins', () => {
+    expect(resolveMentorRoleConfig('endturn-resolver', {} as any, { effort: 'max' }).thinking).toBe(false);
+    expect(resolveMentorRoleConfig('endturn-resolver', { CORTEX_MENTOR_REASONING: 'on' } as any, { effort: 'max' }).thinking).toBe(true);
+    expect(resolveMentorRoleConfig('endturn-resolver', { CORTEX_ENDTURN_RESOLVER_REASONING: 'on' } as any, { effort: 'max' }).thinking).toBe(true);
   });
   it('CORTEX_MENTOR_REASONING=none reproduces the pre-4.103.0 thinking-off baseline for planners', () => {
     const c = resolveMentorRoleConfig('lift-plan', { CORTEX_MENTOR_REASONING: 'none' } as any, { effort: 'max' });

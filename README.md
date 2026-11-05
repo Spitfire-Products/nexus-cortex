@@ -27,7 +27,8 @@ cortex setup
 
 `cortex setup` is the first-run wizard: pick the providers you intend to use, paste their API keys, then choose the **action**
 model (does the work), a cheap **helper** (compaction, summaries), the stronger **mentor** (plans and judges finishes), the vision
-hand-off and the web-tools backend. It writes everything to `~/.cortex/.env`, then sends one tiny request to each chosen model so
+hand-off and the web-tools backend. It stores the keys in an encrypted vault (`~/.cortex/secrets.enc`; [docs/secrets.md](docs/secrets.md))
+and the settings in `~/.cortex/.env`, then sends one tiny request to each chosen model so
 you know it works before you start. One DeepSeek key is enough: the defaults run every role on `deepseek-flash`.
 
 Running `cortex` before setup in a terminal starts the wizard for you. Prefer to script it? One provider key is all it takes:
@@ -61,6 +62,8 @@ and web page reads via WebFetch. Web **search** and **browse** turn on when a se
 | Run a one-shot agent | `cortex agent "…"`  (auto-approves tools, fresh session, self-stops on idle) |
 | Generate project context (`CORTEX.md`) | `cortex init` |
 | Add an MCP server | `cortex mcp init` then `cortex mcp enable <name>`  (the browser already works zero-config) |
+| Browser: hosted (default) or on this machine | `cortex browser status` · `cortex browser install` · `cortex browser use hosted\|local` — [docs/browser.md](docs/browser.md) |
+| Encrypted secrets (API keys, tokens) | `cortex secrets set NAME` · `/secrets` in the TUIs — [docs/secrets.md](docs/secrets.md) |
 | Stop the background server | `cortex --shutdown` |
 | Update to the latest version | `cortex update` |
 | Uninstall | `cortex uninstall`  (or `npm uninstall -g nexus-cortex`) |
@@ -103,7 +106,7 @@ the profile and the model weights date.
 
 - **Every major provider, one harness.** The five major labs — **Anthropic, OpenAI, Google/Gemini, xAI, and DeepSeek** — are proven end-to-end. A dozen more (Cloudflare Workers AI, Zhipu/GLM, Qwen, Moonshot/Kimi, MiniMax, Mercury) are wired through the same adapter layer. <!--AUTO-COUNT:models-->122<!--/AUTO-COUNT--> models across <!--AUTO-COUNT:providers-->12<!--/AUTO-COUNT--> providers in all — switch mid-session, route from benchmark history, or mix providers across sub-agents. Run `cortex models list` for the live set.
 - **Headless and scriptable by design.** No UI required. Pipe JSON, resume sessions by ID, and chain multi-turn agent workflows — the server is a *stateful agent*, not a stateless endpoint. Drop it in a container with secrets in the environment and it's a true one-shot: `npm i -g nexus-cortex` → `cortex "…"`.
-- **An embeddable engine, not a closed app.** The orchestrator, adapters, <!--AUTO-COUNT:tools-->52<!--/AUTO-COUNT--> built-in tools, and middleware are a clean TypeScript library you build on.
+- **An embeddable engine, not a closed app.** The orchestrator, adapters, <!--AUTO-COUNT:tools-->53<!--/AUTO-COUNT--> built-in tools, and middleware are a clean TypeScript library you build on.
 - **A real harness, batteries included.** Parallel sub-agents (`Task`) with per-agent permissions, MCP tool integration (incl. a zero-config headless browser), a sandboxed-artifact toolset (run + inspect real web apps), git/PR tooling, a policy-based permission engine, token-budget + prompt-cache context management, and append-only JSONL sessions with file checkpoints.
 - **Portable agent memory (canon).** Sessions live in a provider-neutral canonical JSONL store — the pattern the field now calls *portable agent memory* / *cross-harness handoff*. History is written once, lossless and append-only, and translated per provider at the edge: switch models mid-session, keep prompt caches warm, and carry context across harnesses. A git-backed backend (`GitHistoryStore`) makes that store a repo you own, and it keeps itself current: `cortex config set CANON_AUTO_SYNC true` syncs after every turn (debounced), `cortex canon watch` captures sessions any other harness writes on disk. See **[Canon](docs/CANON.md)**.
 - **A built-in improvement loop (opt-in).** Build a baseline and a candidate, benchmark both on a graded task set, and gate a keep/discard decision with real statistics — driving the harness's own self-improvement (inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch)).

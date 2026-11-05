@@ -173,6 +173,17 @@ export function loadPersistedModelForPlatform(platform: Platform): string | null
 }
 
 /**
+ * The model a session on this surface starts with — ONE resolution for every wrapper (library-first, 2026-11-02: each TUI resolved it on
+ * its own and fuzzycortex's header and status line disagreed). Order: an explicit request (flag / API) > this surface's persisted last-used
+ * model > the legacy flat persisted model > DEFAULT_MODEL_ID > the shipped fallback.
+ */
+export function resolveSessionModel(requested: string | null | undefined, platform: Platform): string {
+  if (requested) return requested;
+  const config = loadCortexConfig();
+  return getPlatformSettings(config, platform).defaultModel || config.defaultModel || process.env.DEFAULT_MODEL_ID || 'deepseek-flash';
+}
+
+/**
  * Save default model for a specific platform
  */
 export function persistModelForPlatform(platform: Platform, modelId: string): boolean {

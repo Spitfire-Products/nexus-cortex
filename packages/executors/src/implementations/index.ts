@@ -25,6 +25,7 @@ export * from './historical/index.js';
 
 // Canon store operations (cross-harness memory rail)
 export * from './canon/index.js';
+export * from './secrets/index.js';
 
 // MCP operations
 export * from './mcp/index.js';

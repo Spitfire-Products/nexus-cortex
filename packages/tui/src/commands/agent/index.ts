@@ -747,6 +747,7 @@ export async function runAgentCommand(config: AgentCommandConfig): Promise<void>
       },
     })
   );
+  wakeStdinForInk();   // restart a stopped stdin handle (ui/inkStdin.ts)
 
   // Wait for user to exit
   await waitUntilExit();
@@ -859,3 +860,4 @@ export type {
   ConversationalAgentResponse,
   EditAssistantFn,
 } from './InteractiveAgentMenu.js';
+import { wakeStdinForInk } from '../../ui/inkStdin.js';

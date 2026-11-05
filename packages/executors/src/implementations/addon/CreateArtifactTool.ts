@@ -1,5 +1,5 @@
 import { BaseTool } from '../../base/BaseTool.js';
-import { resolveCortexStateDir, harnessScratchBase } from '@nexus-cortex/core';
+import { resolveCortexStateDir, harnessScratchBase, toolChildEnv } from '@nexus-cortex/core';
 import type { ToolResult } from '../../base/ToolResult.js';
 import { spawn, ChildProcess } from 'child_process';
 import { promises as fs } from 'fs';
@@ -898,6 +898,7 @@ if __name__ == '__main__':
       await tmuxManager.sendKeys(tmuxSessionId, command);
     } else {
       detachedProcess = spawn('bash', ['-c', command], {
+        env: toolChildEnv(process.env, 'CreateArtifactTool'),
         cwd: artifactPath,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: true,
@@ -1060,6 +1061,7 @@ if __name__ == '__main__':
 
         // Start new process
         const newProcess = spawn(command, [fileName], {
+          env: toolChildEnv(process.env, 'CreateArtifactTool'),
           cwd: artifactPath,
           stdio: ['pipe', 'pipe', 'pipe']
         });
@@ -1182,7 +1184,7 @@ if __name__ == '__main__':
     signal: AbortSignal
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     return new Promise((resolve) => {
-      const child = spawn(command, args, { cwd });
+      const child = spawn(command, args, { cwd, env: toolChildEnv(process.env, 'CreateArtifactTool') });
 
       let stdout = '';
       let stderr = '';

@@ -50,6 +50,7 @@ import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import type { AgentDefinition, SubAgentResult } from './SubAgentTypes.js';
 import { resolveHerdrReporting, sanitizeHerdrAgentName, sanitizeHerdrSummary, HERDR_SOURCE, HERDR_DISPLAY_SOURCE } from './herdrReporter.js';
+import { childAgentDepth } from './toolAllowlist.js';
 
 export type SubAgentRuntime = 'process' | 'herdr';
 export type SubAgentRuntimeLever = 'auto' | SubAgentRuntime;
@@ -277,7 +278,7 @@ export async function runDelegateInHerdr(opts: HerdrDelegateOptions): Promise<He
     CORTEX_AGENT_ID: agentId,
     CORTEX_HERDR_AGENT_NAME: name,
     CORTEX_TURN_DEADLINE_MS: String(opts.timeoutMs),
-  }, opts.envOverrides ?? {});
+  }, opts.envOverrides ?? {}, { CORTEX_AGENT_DEPTH: childAgentDepth() });   // bounded nesting (toolAllowlist.ts), after the overrides
   const task: DelegateTaskFile = {
     agentId,
     agentDefinition: opts.agentDef,

@@ -37,7 +37,7 @@ import { useTerminalSize } from './hooks/useTerminalSize.js';
 // import { useHistory } from './hooks/useHistoryManager.js';
 import { useReactApprovalHandler } from './hooks/useReactApprovalHandler.js';
 import { StreamingState, MessageType, type HistoryItem, type HistoryItemWithoutId } from './cortex-types.js';
-import { Colors, setTheme, getThemeNames, getThemeDefinition, initializeTheme, persistModel, loadPersistedModel, type ThemeName } from '@nexus-cortex/cli/dist/themes/colors.js';
+import { Colors, setTheme, getThemeNames, getThemeDefinition, initializeTheme, persistModel, resolveSessionModel, type ThemeName } from '@nexus-cortex/cli/dist/themes/colors.js';
 import { ApprovalDialog } from './components/ApprovalDialog.js';
 import { InlineThinkingDisplay } from './components/ThinkingDisplay.js';
 import { StreamDisplay } from './components/StreamDisplay.js';
@@ -52,6 +52,7 @@ import { SystemMessageStore } from '@nexus-cortex/core/system-messages/SystemMes
 import type { ModelDisplayInfo, InteractiveMenuDefinition, MenuResult } from '@nexus-cortex/core';
 import { MentorshipConfigService, slashCommandRegistry, keymapFooterHint, keymapKey } from '@nexus-cortex/core';
 import { ModelPickerDialog } from './components/ModelPickerDialog.js';
+import { SecretsDialog } from './components/SecretsDialog.js';
 import { MenuRenderer } from './components/MenuRenderer.js';
 import { SubAgentPanel, createSubAgentStateManager, type SubAgentState } from './components/SubAgentPanel.js';
 import type { SubAgentEvent } from '@nexus-cortex/core';
@@ -1505,6 +1506,7 @@ export const CortexApp: React.FC<CortexAppProps> = ({
 
   // Model picker state
   const [showModelPicker, setShowModelPicker] = useState(false);
+  const [showSecrets, setShowSecrets] = useState(false);   // /secrets — the vault dialog (values never enter the transcript)
   const [availableModels, setAvailableModels] = useState<ModelDisplayInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
 
@@ -1691,8 +1693,7 @@ export const CortexApp: React.FC<CortexAppProps> = ({
     const initClient = async () => {
       try {
         // Priority: CLI arg > persisted model > env var > fallback
-        const persistedModel = loadPersistedModel();
-        const effectiveModelId = modelId || persistedModel || process.env.DEFAULT_MODEL_ID || 'grok-code-fast-1';
+        const effectiveModelId = resolveSessionModel(modelId, 'neoncortex');   // library resolver (shared with fuzzycortex)
 
         const orchestratorClient = new OrchestratorClient({
           mode: 'direct',
@@ -1863,6 +1864,11 @@ export const CortexApp: React.FC<CortexAppProps> = ({
       }
 
       case 'm':
+      case 'secrets': {
+        setShowSecrets(true);
+        return { handled: true };
+      }
+
       case 'model': {
         // /model picker - open interactive model picker
         if (subcommand === 'picker' || subcommand === 'pick') {
@@ -3040,6 +3046,14 @@ export const CortexApp: React.FC<CortexAppProps> = ({
           />
         )}
 
+        {/* Secrets Dialog (/secrets) — only value-free notices reach the transcript */}
+        {showSecrets && (
+          <SecretsDialog
+            onClose={() => setShowSecrets(false)}
+            onNotice={(text) => addItem({ type: MessageType.Info, infoContent: `🔐 ${text}` }, Date.now())}
+          />
+        )}
+
         {/* Model Picker Dialog */}
         {showModelPicker && (
           <ModelPickerDialog
@@ -3242,7 +3256,7 @@ export const CortexApp: React.FC<CortexAppProps> = ({
       {/* Input - enabled during streaming to allow message queuing */}
       <EnhancedInput
         onSubmit={handleSubmit}
-        disabled={!!pendingApproval || showThemePicker || showModelPicker || showSessionPicker || showSystemMessageManager}
+        disabled={!!pendingApproval || showThemePicker || showModelPicker || showSecrets || showSessionPicker || showSystemMessageManager}
         placeholder={streamingState === StreamingState.Streaming ? "Type next message (will queue)..." : undefined}
         userMessages={userMessages}
         prefillValue={streamingState === StreamingState.Idle ? nextActionPrediction : null}

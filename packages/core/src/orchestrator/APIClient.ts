@@ -12,7 +12,9 @@
 // SDKs, which can't take an explicit fetch) AND provides the standalone proxy fetch we pass
 // explicitly to every OpenAI/Anthropic client + raw provider fetch (deterministic routing).
 import { cortexProxyFetch } from './cortexProxyFetch.js';
+import { describeChatRequest } from './requestDebugLog.js';
 import { looksLikeLeakedDsml, recoverDsmlToolCalls } from './dsmlRecovery.js';
+import { repairToolJson } from '../utils/repairToolJson.js';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -270,6 +272,13 @@ export class APIClient {
           return parsed;
         }
       } catch { /* continue */ }
+    }
+
+    // Structural repair (2026-11-04): mismatched/missing/stray braces, raw newlines in strings.
+    const structural = repairToolJson(trimmed);
+    if (structural) {
+      console.log(`[APIClient] Repaired malformed tool-argument JSON (${raw.length} chars)`);
+      return structural;
     }
 
     throw new Error(`Cannot repair truncated JSON (${raw.length} chars)`);
@@ -604,6 +613,7 @@ export class APIClient {
       ? { 'anthropic-beta': betaFeatures.join(',') }
       : undefined;
 
+    logAnthropicPayload(anthropicRequest, request.modelId, false);
     const response = await this.anthropicClient.messages.create(anthropicRequest, { headers });
 
     return {
@@ -1871,6 +1881,7 @@ export class APIClient {
         ? { 'anthropic-beta': betaFeatures.join(',') }
         : undefined;
 
+      logAnthropicPayload(anthropicRequest, request.modelId, true);
       const stream = this.anthropicClient.messages.stream(anthropicRequest, { headers });
 
       // Capture 'this' context before entering async generator
@@ -2502,7 +2513,7 @@ export class APIClient {
     const chunks = async function* () {
       try {
       if (process.env.DEBUG === 'true' || process.env.DEBUG_THINKING === 'true') {
-        console.log(`[DEBUG APIClient] OpenAI request:`, JSON.stringify(openaiRequest, null, 2));
+        console.log(`[DEBUG APIClient] OpenAI request:`, describeChatRequest(openaiRequest));   // summary + new messages (requestDebugLog.ts)
       }
 
       const stream = await client.chat.completions.create(openaiRequest) as any;
@@ -2601,6 +2612,8 @@ export class APIClient {
                 };
               } catch (error) {
                 console.error(`[APIClient] Failed to parse tool arguments (${toolCall.arguments.length} chars): ${toolCall.arguments.slice(0, 200)}...`);
+                // Full text for diagnosis (2026-11-04: the 200-char prefix hid why repair failed).
+                if (process.env.DEBUG === 'true') console.error(`[APIClient] Unparsed tool arguments (full, ≤6000): ${toolCall.arguments.slice(0, 6000)}`);
               }
             }
           }
@@ -3898,4 +3911,27 @@ export class APIClient {
       finalMessage
     };
   }
+}
+
+
+/** DEBUG_PAYLOAD=1|2 for the ANTHROPIC Messages path (2026-11-02: only the xAI-messages and chat builders had it, so Sonnet's requests
+ *  were invisible). Logs sizes per section, image count, and a hash of the cacheable PREFIX (system + tools) — consecutive requests with
+ *  different prefix hashes are cache breakers. Never throws. */
+function logAnthropicPayload(req: any, modelId: string, streaming: boolean): void {
+  const mode = process.env.DEBUG_PAYLOAD; if (mode !== '1' && mode !== '2' && mode !== '3') return;
+  try {
+    const sys = JSON.stringify(req.system ?? ''); const tools = JSON.stringify(req.tools ?? []); const msgs = JSON.stringify(req.messages ?? []);
+    const images = (msgs.match(/"type":"image"/g) || []).length;
+    let h = 0; const pre = sys + tools; for (let i = 0; i < pre.length; i++) h = (h * 31 + pre.charCodeAt(i)) | 0;
+    console.error(`[DEBUG_PAYLOAD-anthropic${streaming ? '-stream' : ''}] model=${modelId} total=${sys.length + tools.length + msgs.length}B sys=${sys.length}B tools=${(req.tools || []).length}/${tools.length}B msgs=${(req.messages || []).length}/${msgs.length}B images=${images} prefixHash=${(h >>> 0).toString(16)}`);
+    if (mode === '3') {   // system-prompt anatomy: each heading / XML-ish section with the bytes until the next one
+      const text = typeof req.system === 'string' ? req.system : Array.isArray(req.system) ? req.system.map((b: any) => b?.text ?? '').join('\n') : '';
+      const marks: Array<{ at: number; label: string }> = [];
+      const re = /^(#{1,3} .{0,80}|<[a-zA-Z_-]{3,40}>)/gm; let m: RegExpExecArray | null;
+      while ((m = re.exec(text))) marks.push({ at: m.index, label: m[1] ?? "" });
+      const rows = marks.map((mk, i) => `${(marks[i + 1]?.at ?? text.length) - mk.at}B ${mk.label}`);
+      console.error(`[DEBUG_PAYLOAD-anthropic] system anatomy (${text.length}B, first heading at ${marks[0]?.at ?? -1}): ${rows.join(' | ').slice(0, 6000)}`);
+    }
+    if (mode === '2') console.error(`[DEBUG_PAYLOAD-anthropic] per-msg: ${(req.messages || []).map((m: any, i: number) => `${i}:${m.role}=${JSON.stringify(m).length}B`).join(' ')}`);
+  } catch { /* diagnostics only */ }
 }

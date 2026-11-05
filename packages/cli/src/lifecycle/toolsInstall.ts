@@ -42,6 +42,8 @@ export const TOOLS_MANIFEST: ToolManifest = {
       // built by cortex-tools' macOS job from the SAME pinned commit: upstream's own macOS tarball is the v0.3.0 TAG, which predates
       // --explain/--stdin/--rg-json (both report 0.3.0 — the sha pin below is what tells them apart)
       'darwin-arm64': { url: `${CT}/sgrep-0.3.0-aarch64-darwin`, sha256: '4605e996e88d8455244dfc767ab0f58494a0dcf0a403902aec36927cc16bc975', kind: 'bin' },
+      // Intel macOS (minimum macOS 11.0), cross-compiled by cortex-tools' macOS job from the same pin (targets=macos-x64, 2026-11-05)
+      'darwin-x64': { url: `${CT}/sgrep-0.3.0-x86_64-darwin`, sha256: '85e837d7f3550680aabdd1259eee32cf78fe307fe4a62fb0b16c3da001348de7', kind: 'bin' },
     },
   },
   rg: {

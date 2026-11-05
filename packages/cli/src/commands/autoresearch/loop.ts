@@ -13,16 +13,49 @@
  *      --missing-provider-key-policy semantics).
  *   3. Mutate each arm: --fixer-cmd (any transformer; sees CORTEX_ARM_INDEX/MODEL/STRATEGY
  *      in its environment), else the LLM `cortex autoresearch fix --model <arm model>`.
- *   4. Commit each candidate (no change → that arm is skipped).
+ *   4. Commit each candidate (no change → that arm is skipped). EVAL GUARD (core EvalGuard.ts):
+ *      the task-sets were sealed into a private copy at loop start and every experiment
+ *      grades against it; in-repo task-sets are hidden from the Fixer's worktree; a
+ *      candidate that touches a protected path (the task-sets, --protect) or strays outside
+ *      --editable is refused unbenched (skipped: 'eval-guard').
  *   5. Run `cortex autoresearch experiment` per arm (base vs candidate, FWER-adjusted with
  *      --n-family = the number of arms launched) and read the verdicts.
  *   6. ACCEPT = mergeEligible when a holdout is given (keep + FWER + holdout-verified); with
  *      no holdout, accept = keep-on-train (logged as UNVERIFIED — provide --holdout-set for
  *      the overfitting guard). The WINNER is the gate-accepted arm with the highest effect;
  *      with --require-judge the judge reviews accepted arms in effect order until one is
- *      approved. On accept: advance base to the winner + anchor the loop branch to it.
+ *      approved. CONFIRM (default on, --no-confirm to skip): the selected winner is
+ *      re-benched base vs candidate on FRESH train runs in a separate store (no pooling with
+ *      the screening records) with a new gate seed — choosing the best of N noisy arms
+ *      inflates its effect (winner's curse) and FWER does not remove that bias. The fresh
+ *      run is judged by core decideConfirmation (--confirm-mode, default 'pooled': the
+ *      screening and confirmation p-values Stouffer-combined at the gate's own bar, plus a
+ *      fresh effect > 0 — protects against lucky winners without demanding significance
+ *      twice). One confirmation per round. A winner that passes screening but fails
+ *      confirmation is a NEAR-MISS: its commit is kept under
+ *      refs/autoresearch/near-miss/<branch>/r<round>-a<arm> and a row goes to
+ *      <store>/.cortex/autoresearch-near-misses.jsonl, so it can be re-tested with more
+ *      runs. On accept: advance base to the winner + anchor the loop branch to it.
  *      Losing/rejected arms are dropped.
+ *   GUARDS (B4, core AutoResearchGuards, --guards block|warn|off, default block): a gain on
+ *      the aggregate must not hide a loss in one task family. A candidate is blocked when a
+ *      family's loss is material AND evident (estimate < -margin and its one-sided upper
+ *      bound < 0, alpha split across families) — per STEP (vs its base, --guard-margin 2)
+ *      and as a running TOTAL from the round-0 base (Σ of merged steps' family effects,
+ *      --guard-total-margin 5). The confirmation run's own family effects are checked too
+ *      and are what the running total records.
+ *   APPROACHES + ATTEMPTS (B6, approachPlan.ts): with --width > 1 each arm's prompt names a
+ *      different approach from a rotating queue; the Fixer may declare known flaws in
+ *      .autoresearch-flaws (read + removed before commit; such an arm is benched, never
+ *      merged); every arm that does not merge is kept under refs/autoresearch/attempts/…
+ *      with a row in <store>/.cortex/autoresearch-attempts.jsonl saying why.
+ *   RUNS: every experiment reports a run plan (core planRuns: the smallest effect its runs
+ *      can detect, and the runs per arm needed for --target-effect). The loop warns when
+ *      underpowered; --auto-runs raises the runs for later rounds (capped by --max-runs).
  *   7. Stop on: success metric met, max rounds, max consecutive stale rounds, or a dry backlog.
+ *      The success metric reads TRAIN scores (the confirmation's when it ran), never the
+ *      holdout: holdout results only gate the merge, so repeated rounds cannot steer the
+ *      loop toward the holdout (adaptive overfitting).
  *
  * GIT SAFETY: all work happens in throwaway worktrees off a dedicated loop branch
  * (`autoresearch/loop-*`). The user's branch and working tree are never touched. Accepted
@@ -30,13 +63,20 @@
  * worktree removal; the operator merges the loop branch when satisfied.
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { ResearchBacklog } from '@nexus-cortex/core';
+import {
+  ResearchBacklog, checkCandidateChanges, decideConfirmation, describeViolations, protectGlobFor, sealTaskSet, taskIdsIn,
+  stepGuards, totalGuards, recordDrift, describeGuardBlocks,
+  type ConfirmMode, type DriftLedger, type ExperimentVerdict, type FamilyEffect, type GuardVerdict, type GuardViolation,
+  type RunPlan, type SealedSet,
+} from '@nexus-cortex/core';
 import { ThemeManager } from '../../themes/ThemeManager.js';
 import { resolveRepoDir, resolveTaskSet } from './repoResolve.js';
 import { planArms, parseMissingKeyPolicy, type ArmAssignment } from './armPlan.js';
+import { DEFAULT_APPROACHES, FLAWS_FILE, approachesForRound, fixerPrompt, parseApproaches, type Approach } from './approachPlan.js';
+
 
 export interface AutoResearchLoopOptions {
   repo?: string;
@@ -78,6 +118,36 @@ export interface AutoResearchLoopOptions {
   judgeRubricFile?: string;
   /** judge model (default: the loop --model, else DEFAULT_MODEL_ID). */
   judgeModel?: string;
+  /** Comma-separated globs (repo-relative) no candidate may touch — verifier scripts,
+   *  graders, bench harnesses. The task-sets' in-repo paths are always protected. */
+  protect?: string;
+  /** Comma-separated globs; when set, every changed path must match one. */
+  editable?: string;
+  /** Re-bench the selected winner on fresh train runs before merging (default true;
+   *  commander's --no-confirm sets false). */
+  confirm?: boolean;
+  /** pooled (default) | direction | strict — see core decideConfirmation. */
+  confirmMode?: string;
+  /** 'direction' mode: the fresh CI low must exceed -margin (score points, default 2.5). */
+  confirmLossMargin?: string;
+  /** run planning: the aggregate effect worth detecting (score points, default 5). */
+  targetEffect?: string;
+  /** run planning: the power wanted (default 0.8). */
+  power?: string;
+  /** raise runs per arm for later rounds to the planned requirement (capped by maxRuns). */
+  autoRuns?: boolean;
+  /** cap for --auto-runs (default 12). */
+  maxRuns?: string;
+  /** family regression guards: block (default) | warn | off */
+  guards?: string;
+  /** per-step family loss margin, score points (default 2) */
+  guardMargin?: string;
+  /** running-total family loss margin from the round-0 base (default 5) */
+  guardTotalMargin?: string;
+  /** Approaches rotated across arms, `|`-separated (`slug: text` entries allowed).
+   *  Default: the built-in list when --width > 1, none at width 1. commander's
+   *  --no-approaches sets false. */
+  approaches?: string | boolean;
 }
 
 /** Default judge rubric used when --require-judge is set without an explicit
@@ -130,6 +200,24 @@ function spawnAsync(
   });
 }
 
+/** The confirmation re-bench of a round's selected winner. */
+interface ConfirmResult {
+  /** true = the winner survived its confirmation (core decideConfirmation) */
+  confirmed: boolean;
+  mode: ConfirmMode;
+  /** the fresh run's own gate decision: 'keep' | 'discard' | 'pending' | 'no-verdict' */
+  decision: string;
+  effect?: number;
+  pValue?: number;
+  ciLow?: number;
+  combinedP?: number;
+  reason: string;
+  runs: number;
+  trainSummary?: any;      // candidate train BenchSummary of the confirmation run
+  /** per-family effects of the confirmation run (what the drift ledger records) */
+  families?: FamilyEffect[];
+}
+
 /** One arm's outcome within a round. */
 interface ArmResult {
   arm: number;
@@ -137,8 +225,18 @@ interface ArmResult {
   strategy?: string;
   candDir?: string;
   candRef?: string;
-  /** 'fixer-failed' | 'no-change' | 'no-verdict' when the arm produced no verdict. */
+  /** 'fixer-failed' | 'no-change' | 'eval-guard' | 'no-verdict' when the arm produced no verdict. */
   skipped?: string;
+  /** eval-guard violations (paths the candidate may not touch). */
+  violations?: GuardViolation[];
+  /** experiment tag of the screening run. */
+  tag?: string;
+  /** family guard verdicts (step + total) that blocked or warned on this arm */
+  guardBlocks?: GuardVerdict[];
+  /** the approach this arm was given (B6) */
+  approach?: string;
+  /** flaws the Fixer declared for its change (B6) — benched, never merged */
+  flaws?: string[];
   reason?: string;
   exitCode?: number | null;
   res?: any;               // parsed experiment verdict JSON
@@ -179,12 +277,76 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
   const successMetric = options.successMetric
     ? { taskId: options.successMetric.split(':')[0]!, threshold: Number(options.successMetric.split(':')[1]) }
     : undefined;
+  const splitList = (s?: string) => s?.split(',').map((x) => x.trim()).filter(Boolean);
+
+  // ---- Eval guard: seal the task-sets, hide in-repo copies, protect paths ------
+  const sealDir = mkdtempSync(join(tmpdir(), 'arseal-'));
+  let trainSet: SealedSet;
+  let holdoutSet: SealedSet | undefined;
+  try {
+    trainSet = sealTaskSet(resolveTaskSet(options.taskSet!, repo), sealDir, 'train', repo);
+    holdoutSet = options.holdoutSet ? sealTaskSet(resolveTaskSet(options.holdoutSet, repo), sealDir, 'holdout', repo) : undefined;
+  } catch (e) {
+    console.error(theme.colors.error(`Error: cannot read task-set: ${(e as Error).message}`));
+    process.exit(1); return;
+  }
+  const sealedSets = [trainSet, holdoutSet].filter((x): x is SealedSet => !!x);
+  const hiddenPaths = sealedSets.map((x) => x.inRepo).filter((x): x is string => !!x);
+  const guard = {
+    protect: [...sealedSets.filter((x) => x.inRepo).map((x) => protectGlobFor(x.inRepo!, x.isDir)), ...(splitList(options.protect) ?? [])],
+    editable: splitList(options.editable) ?? [],
+  };
+  emit({
+    event: 'eval_seal',
+    train: { source: trainSet.source, sha256: trainSet.sha256, inRepo: trainSet.inRepo ?? null },
+    ...(holdoutSet ? { holdout: { source: holdoutSet.source, sha256: holdoutSet.sha256, inRepo: holdoutSet.inRepo ?? null } } : {}),
+    protect: guard.protect, editable: guard.editable,
+  });
+  if (holdoutSet?.inRepo) {
+    const msg = `eval-guard: the holdout set is inside the repo (${holdoutSet.inRepo}) — it is hidden from the Fixer's worktree and protected, but still readable from git history; keep it outside the repo for real secrecy`;
+    log(msg); emit({ event: 'warning', message: msg });
+  }
+  if (successMetric && !taskIdsIn(trainSet.sealed).has(successMetric.taskId)) {
+    const msg = `--success-metric task '${successMetric.taskId}' is not in the train set — the success stop reads train scores only (never the holdout), so it will never fire`;
+    log(msg); emit({ event: 'warning', message: msg });
+  }
+
+  // ---- Confirmation + run planning ------------------------------------------
+  const confirmMode = (options.confirmMode ?? 'pooled') as ConfirmMode;
+  if (!['pooled', 'direction', 'strict'].includes(confirmMode)) {
+    console.error(theme.colors.error(`Error: --confirm-mode must be pooled | direction | strict (got '${options.confirmMode}')`));
+    process.exit(1); return;
+  }
+  const confirmLossMargin = options.confirmLossMargin != null ? Number(options.confirmLossMargin) : undefined;
+  const maxRuns = Number(options.maxRuns ?? '12');
+  let runsPerArm = Number(options.runs ?? '3');
+  const nearMissLog = join(store, '.cortex', 'autoresearch-near-misses.jsonl');
+  const guardMode = options.guards ?? 'block';
+  if (!['block', 'warn', 'off'].includes(guardMode)) {
+    console.error(theme.colors.error(`Error: --guards must be block | warn | off (got '${options.guards}')`));
+    process.exit(1); return;
+  }
+  const guardOpts = {
+    margin: options.guardMargin != null ? Number(options.guardMargin) : undefined,
+    totalMargin: options.guardTotalMargin != null ? Number(options.guardTotalMargin) : undefined,
+  };
+  // B6: distinct approaches per arm (rotating queue); losing attempts are kept.
+  const approaches: Approach[] = options.approaches === false ? []
+    : typeof options.approaches === 'string' && options.approaches.trim() ? parseApproaches(options.approaches)
+    : [];  // filled below once the width is known
+  const attemptsLog = join(store, '.cortex', 'autoresearch-attempts.jsonl');
+  const attempts: Record<string, unknown>[] = [];
+  /** Per-family drift from the round-0 base: Σ of merged steps' family effects. */
+  const drift: DriftLedger = new Map();
+  /** Step + total guard verdicts for one measurement; [] when guards are off. */
+  const guardCheck = (families: FamilyEffect[] | undefined): GuardVerdict[] =>
+    guardMode === 'off' || !families?.length ? [] : [...stepGuards(families, guardOpts), ...totalGuards(drift, families, guardOpts)];
+  const nearMisses: Record<string, unknown>[] = [];
 
   // ---- Multi-provider arm plan (width 1 = classic single-arm loop) ------------
   let policy;
   try { policy = parseMissingKeyPolicy(options.missingProviderKeyPolicy); }
   catch (e) { console.error(theme.colors.error(`Error: ${(e as Error).message}`)); process.exit(1); return; }
-  const splitList = (s?: string) => s?.split(',').map((x) => x.trim()).filter(Boolean);
   const plan = planArms({
     width: Number(options.width ?? '1'),
     baseModel: options.model,
@@ -194,6 +356,10 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
     policy,
   });
   const width = plan.arms.length;
+  if (options.approaches !== false && !approaches.length && width > 1) approaches.push(...DEFAULT_APPROACHES);
+  if (approaches.length && width > approaches.length) {
+    log(`approaches: width ${width} > ${approaches.length} approaches — some arms in a round share one`);
+  }
   if (width > 1 || plan.notes.length) {
     emit({ event: 'arm_plan', width, arms: plan.arms, notes: plan.notes });
     for (const n of plan.notes) log(`arm-plan: ${n}`);
@@ -219,59 +385,184 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
 
   if (!json) console.log(`\n ${theme.colors.highlight('Auto-research loop')}  repo=${repo}  branch=${branch}  base=${baseRef.slice(0, 8)}  width=${width}  max=${maxRounds}\n`);
 
+  /** `cortex autoresearch experiment` args for base vs one candidate, graded against the
+   *  SEALED task-sets. `holdout:false` = train only (the confirmation run). */
+  const experimentArgs = (a: { tag: string; candDir: string; candRef: string; store: string; nFamily: number; holdout: boolean; strategy?: string; seed?: number }): string[] => {
+    const args = ['autoresearch', 'experiment',
+      '--experiment-tag', a.tag,
+      '--base-dir', baseDir, '--candidate-dir', a.candDir,
+      '--base-ref', git(['rev-parse', '--short', 'HEAD'], baseDir), '--candidate-ref', a.candRef,
+      '--task-set', trainSet.sealed, '--no-build',
+      '--n-family', String(a.nFamily),
+      '--cortex-dir', a.store, '--runs', String(runsPerArm), '--json'];
+    if (options.targetEffect) args.push('--target-effect', options.targetEffect);
+    if (options.power) args.push('--power', options.power);
+    if (a.holdout && holdoutSet) args.push('--holdout-set', holdoutSet.sealed);
+    if (a.seed != null) args.push('--seed', String(a.seed));
+    if (options.model) args.push('--model', options.model);
+    if (options.temperature) args.push('--temperature', options.temperature);
+    if (a.strategy) args.push('--strategy', a.strategy);
+    if (options.runCmd) {
+      args.push('--run-cmd', options.runCmd, '--accept-exit', options.acceptExit ?? '0');
+      if (options.buildCmd) args.push('--build-cmd', options.buildCmd);
+    }
+    return args;
+  };
+
+  /** Re-bench the selected winner on FRESH train runs in a private store (so the gate sees
+   *  only the new records) with a new seed; it must KEEP again. Never throws. */
+  const confirmWinner = async (w: ArmResult, r: number): Promise<ConfirmResult> => {
+    const confirmStore = mkdtempSync(join(tmpdir(), 'arconfirm-'));
+    try {
+      const args = experimentArgs({ tag: `${w.tag}-confirm`, candDir: w.candDir!, candRef: w.candRef!, store: confirmStore, nFamily: 1, holdout: false, strategy: w.strategy, seed: 7919 * r + w.arm });
+      emit({ event: 'confirm_start', round: r, arm: w.arm, candidateRef: w.candRef });
+      const exp = await spawnAsync('node', [self, ...args], { stdio: 'capture' });
+      let res: any;
+      try { res = JSON.parse(exp.stdout); } catch { res = undefined; }
+      if (!res?.verdict) {
+        const reason = String(res?.error ?? ((exp.stderr || '').trim().split('\n').filter(Boolean).slice(-3).join(' ') || `exit ${exp.status}`)).slice(0, 500);
+        return { confirmed: false, mode: confirmMode, decision: 'no-verdict', reason, runs: runsPerArm };
+      }
+      const fresh = res.verdict as ExperimentVerdict;
+      const d = decideConfirmation(w.res.verdict as ExperimentVerdict, fresh, { mode: confirmMode, lossMargin: confirmLossMargin });
+      // The fresh run's own family effects must not show an evident family loss either.
+      const families: FamilyEffect[] | undefined = res.families;
+      const blocks = guardCheck(families).filter((g) => g.blocked);
+      const guardFail = guardMode === 'block' && blocks.length > 0;
+      return {
+        confirmed: d.confirmed && !guardFail, mode: d.mode, decision: fresh.decision, effect: fresh.effect, pValue: fresh.pValue,
+        ciLow: fresh.ciLow, combinedP: d.combinedP,
+        reason: guardFail ? `${d.reason}; GUARD on fresh run: ${describeGuardBlocks(blocks)}` : d.reason,
+        runs: runsPerArm, trainSummary: res.benchSummaries?.candidate?.train, families,
+      };
+    } finally {
+      rmSync(confirmStore, { recursive: true, force: true });
+    }
+  };
+
+  /** A winner that passed screening (and the judge) but not its confirmation: keep its
+   *  commit under a ref and log a row, so it can be re-tested with more runs. */
+  const recordNearMiss = (w: ArmResult, r: number, c: ConfirmResult): void => {
+    const ref = `refs/autoresearch/near-miss/${branch}/r${r}-a${w.arm}`;
+    try { git(['update-ref', ref, w.candRef!]); } catch { /* best effort; the row still records the sha */ }
+    const sha = (() => { try { return git(['rev-parse', w.candRef!]); } catch { return w.candRef; } })();
+    const recommended = Math.max(runsPerArm * 2, w.res?.runPlan?.requiredRunsPerArm ?? 0);
+    const row = {
+      ts: new Date().toISOString(), branch, round: r, arm: w.arm, model: w.model ?? null,
+      ref, candidateSha: sha, baseRef,
+      screening: { decision: w.res?.verdict?.decision, effect: w.res?.verdict?.effect, pValue: w.res?.verdict?.pValue, ciLow: w.res?.verdict?.ciLow, ciHigh: w.res?.verdict?.ciHigh, alphaAdjusted: w.res?.verdict?.alphaAdjusted, mergeEligible: !!w.res?.mergeEligible },
+      confirmation: { mode: c.mode, decision: c.decision, effect: c.effect, pValue: c.pValue, ciLow: c.ciLow, combinedP: c.combinedP, reason: c.reason, runs: c.runs },
+      runPlan: w.res?.runPlan ?? null,
+      retest: `cortex autoresearch experiment --base-ref ${baseRef} --candidate-ref ${ref} --runs ${recommended} …  (check out both refs as worktrees; graded against the same task-set)`,
+    };
+    try {
+      mkdirSync(join(store, '.cortex'), { recursive: true });
+      appendFileSync(nearMissLog, JSON.stringify(row) + '\n');
+    } catch (e) { log(`near-miss log write failed: ${(e as Error).message}`); }
+    nearMisses.push({ round: r, arm: w.arm, ref, candidateSha: sha, effect: w.res?.verdict?.effect, confirmEffect: c.effect });
+    emit({ event: 'near_miss', round: r, arm: w.arm, ref, candidateSha: sha, log: nearMissLog });
+    log(`r${r}: near-miss kept → ${ref} (row in ${nearMissLog})`);
+  };
+
+  /** Keep a non-merged arm's commit under refs/autoresearch/attempts/… and log why. */
+  const recordAttempt = (a: ArmResult, r: number, status: string): void => {
+    const ref = `refs/autoresearch/attempts/${branch}/r${r}-a${a.arm}`;
+    try { git(['update-ref', ref, a.candRef!]); } catch { /* best effort */ }
+    let shortstat = '';
+    try { shortstat = git(['diff', '--shortstat', `${a.candRef}~1`, a.candRef!]); } catch { /* */ }
+    const row = {
+      ts: new Date().toISOString(), branch, round: r, arm: a.arm, model: a.model ?? null, approach: a.approach ?? null,
+      status, ref, candidateRef: a.candRef, baseRef, diff: shortstat,
+      ...(a.res?.verdict ? { verdict: { decision: a.res.verdict.decision, effect: a.res.verdict.effect, pValue: a.res.verdict.pValue, mergeEligible: !!a.res.mergeEligible } } : {}),
+      ...(a.flaws ? { flaws: a.flaws } : {}),
+      ...(a.violations ? { violations: a.violations } : {}),
+      ...(a.guardBlocks ? { guardBlocks: a.guardBlocks } : {}),
+      ...(a.reason ? { reason: a.reason } : {}),
+    };
+    try {
+      mkdirSync(join(store, '.cortex'), { recursive: true });
+      appendFileSync(attemptsLog, JSON.stringify(row) + '\n');
+    } catch (e) { log(`attempts log write failed: ${(e as Error).message}`); }
+    attempts.push({ round: r, arm: a.arm, status, ref });
+    emit({ event: 'attempt_kept', round: r, arm: a.arm, status, ref });
+  };
+
   /** Run one arm: worktree → fixer → commit → experiment. Never throws. */
-  const runArm = async (assign: ArmAssignment, r: number, goal: string): Promise<ArmResult> => {
-    const out: ArmResult = { arm: assign.arm, model: assign.model, strategy: assign.strategy };
+  const runArm = async (assign: ArmAssignment, r: number, goal: string, approach?: Approach): Promise<ArmResult> => {
+    const strategy = [assign.strategy, approach && `approach:${approach.slug}`].filter(Boolean).join('+') || undefined;
+    const out: ArmResult = { arm: assign.arm, model: assign.model, strategy, ...(approach ? { approach: approach.slug } : {}) };
+    const prompt = fixerPrompt(goal, approach, width);
     const candDir = addWorktree(baseRef);
     out.candDir = candDir;
+
+    // Hide in-repo task-sets from the Fixer (restored to the base version before commit).
+    const hidden = hiddenPaths.filter((p) => existsSync(join(candDir, p)));
+    for (const p of hidden) rmSync(join(candDir, p), { recursive: true, force: true });
 
     // 3. Mutate (fixer). Single-arm keeps today's interactive stdio; parallel arms are quiet.
     const fixerStdio: 'inherit' | 'ignore' = json || width > 1 ? 'ignore' : 'inherit';
     emit({ event: 'fix', round: r, arm: assign.arm, model: assign.model, fixer: options.fixerCmd ? 'command' : 'llm' });
     if (options.fixerCmd) {
-      const cmd = options.fixerCmd.replace(/\{prompt\}/g, shQuote(goal));
+      const cmd = options.fixerCmd.replace(/\{prompt\}/g, shQuote(prompt));
       const env: NodeJS.ProcessEnv = {
         ...process.env,
         CORTEX_ARM_INDEX: String(assign.arm),
+        CORTEX_FLAWS_FILE: join(candDir, FLAWS_FILE),
         ...(assign.model ? { CORTEX_ARM_MODEL: assign.model } : {}),
-        ...(assign.strategy ? { CORTEX_ARM_STRATEGY: assign.strategy } : {}),
+        ...(strategy ? { CORTEX_ARM_STRATEGY: strategy } : {}),
+        ...(approach ? { CORTEX_ARM_APPROACH: approach.slug } : {}),
       };
       const f = width > 1
         ? await spawnAsync('sh', ['-c', cmd], { cwd: candDir, env, stdio: fixerStdio })
         : { status: sh(cmd, candDir).status, stdout: '', stderr: '' };
       if (f.status !== 0) { out.skipped = 'fixer-failed'; out.exitCode = f.status; return out; }
     } else {
-      const fixArgs = [self, 'autoresearch', 'fix', '--cwd', candDir, '--prompt', goal, '--json'];
+      const fixArgs = [self, 'autoresearch', 'fix', '--cwd', candDir, '--prompt', prompt, '--json'];
       if (assign.model) fixArgs.push('--model', assign.model);
       const f = await spawnAsync('node', fixArgs, { stdio: fixerStdio });
       if (f.status !== 0) { out.skipped = 'fixer-failed'; out.exitCode = f.status; return out; }
     }
 
-    // 4. Commit candidate (no change → skip this arm).
+    // 4. Restore the hidden task-sets, then commit the candidate (no change → skip this arm)
+    // unless the eval guard refuses it.
+    // A hidden task-set that exists again after the Fixer ran was WRITTEN by it (it could not
+    // see the original) — tampering, refused below like any protected-path change.
+    const recreated: GuardViolation[] = hiddenPaths
+      .filter((p) => existsSync(join(candDir, p)))
+      .map((path) => ({ path, rule: 'protected' as const }));
+    for (const p of hiddenPaths) rmSync(join(candDir, p), { recursive: true, force: true });
+    if (hidden.length) git(['checkout', 'HEAD', '--', ...hidden], candDir);
+    // Declared flaws (B6): read and remove the Fixer's flaws file before commit.
+    const flawsPath = join(candDir, FLAWS_FILE);
+    if (existsSync(flawsPath)) {
+      try {
+        const lines = readFileSync(flawsPath, 'utf8').split('\n').map((l) => l.replace(/^[-*\s]+/, '').trim()).filter(Boolean);
+        if (lines.length) out.flaws = lines.slice(0, 20).map((l) => l.slice(0, 300));
+      } catch { /* unreadable → treated as no declaration */ }
+      rmSync(flawsPath, { force: true });
+    }
     git(['add', '-A'], candDir);
     const dirty = spawnSync('git', ['-C', candDir, 'diff', '--cached', '--quiet']).status !== 0;
-    if (!dirty) { out.skipped = 'no-change'; return out; }
-    git(['commit', '-q', '-m', `autoresearch loop r${r}${width > 1 ? `a${assign.arm}` : ''}: ${goal.slice(0, 60)}`], candDir);
+    if (!dirty && !recreated.length) { out.skipped = 'no-change'; return out; }
+    const changed = git(['diff', '--cached', '--name-only', '--no-renames'], candDir).split('\n').filter(Boolean);
+    // Commit before the guard so a refused candidate is kept as evidence (attempts ref).
+    git(['commit', '-q', '--allow-empty', '-m', `autoresearch loop r${r}${width > 1 ? `a${assign.arm}` : ''}: ${goal.slice(0, 60)}`], candDir);
     out.candRef = git(['rev-parse', '--short', 'HEAD'], candDir);
+    const checked = checkCandidateChanges(changed, guard);
+    const verdict = { ok: checked.ok && !recreated.length, violations: [...recreated, ...checked.violations] };
+    if (!verdict.ok) {
+      out.skipped = 'eval-guard';
+      out.violations = verdict.violations;
+      out.reason = `refused unbenched: ${describeViolations(verdict.violations)}`;
+      emit({ event: 'eval_guard', round: r, arm: assign.arm, model: assign.model, violations: verdict.violations });
+      return out;
+    }
 
     // 5. Experiment base vs candidate (subprocess → JSON verdict). FWER-adjusted with the
     // real family width so N parallel arms don't inflate the false-keep rate.
     const tag = width > 1 ? `loop-r${r}a${assign.arm}` : `loop-r${r}`;
-    const expArgs = ['autoresearch', 'experiment',
-      '--experiment-tag', tag,
-      '--base-dir', baseDir, '--candidate-dir', candDir,
-      '--base-ref', git(['rev-parse', '--short', 'HEAD'], baseDir), '--candidate-ref', out.candRef,
-      '--task-set', resolveTaskSet(options.taskSet!, repo), '--no-build',
-      '--n-family', String(width),
-      '--cortex-dir', store, '--runs', options.runs ?? '3', '--json'];
-    if (options.holdoutSet) expArgs.push('--holdout-set', resolveTaskSet(options.holdoutSet, repo));
-    if (options.model) expArgs.push('--model', options.model);
-    if (options.temperature) expArgs.push('--temperature', options.temperature);
-    if (assign.strategy) expArgs.push('--strategy', assign.strategy);
-    if (options.runCmd) {
-      expArgs.push('--run-cmd', options.runCmd, '--accept-exit', options.acceptExit ?? '0');
-      if (options.buildCmd) expArgs.push('--build-cmd', options.buildCmd);
-    }
+    out.tag = tag;
+    const expArgs = experimentArgs({ tag, candDir, candRef: out.candRef, store, nFamily: width, holdout: true, strategy });
     emit({ event: 'experiment', round: r, arm: assign.arm, model: assign.model, candidateRef: out.candRef });
     const exp = await spawnAsync('node', [self, ...expArgs], { stdio: 'capture' });
     try { out.res = JSON.parse(exp.stdout); } catch {
@@ -296,6 +587,19 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
     }
     const keep = out.res.verdict?.decision === 'keep';
     out.gateAccepted = options.holdoutSet ? !!out.res.mergeEligible : keep;
+    // B4 family guards (step + running total from the round-0 base).
+    const blocks = guardCheck(out.res.families).filter((g) => g.blocked);
+    if (blocks.length) {
+      out.guardBlocks = blocks;
+      emit({ event: 'guard', round: r, arm: assign.arm, mode: guardMode, blocks });
+      log(`r${r}${width > 1 ? ` a${assign.arm}` : ''}: family guard ${guardMode === 'block' ? 'BLOCKS' : 'warns'}: ${describeGuardBlocks(blocks)}`);
+      if (guardMode === 'block') out.gateAccepted = false;
+    }
+    if (out.flaws?.length) {
+      emit({ event: 'flaws', round: r, arm: assign.arm, flaws: out.flaws, gateWouldAccept: out.gateAccepted });
+      log(`r${r}${width > 1 ? ` a${assign.arm}` : ''}: Fixer declared ${out.flaws.length} flaw(s) — held for review, not merged`);
+      out.gateAccepted = false;
+    }
     emit({ event: 'gate', round: r, arm: assign.arm, model: assign.model, decision: out.res.verdict?.decision, effect: out.res.verdict?.effect, mergeEligible: !!out.res.mergeEligible, accepted: out.gateAccepted });
     return out;
   };
@@ -315,7 +619,8 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
 
       // 2-5. Fan out the arms (width 1 = the classic single-candidate round).
       log(`r${r}: fixing${width > 1 ? ` ×${width} arms` : ''} → ${goal!.slice(0, 80)}`);
-      const results = await Promise.all(plan.arms.map((a) => runArm(a, r, goal!)));
+      const roundApproaches = approachesForRound(approaches, r, plan.arms.length);
+      const results = await Promise.all(plan.arms.map((a, i) => runArm(a, r, goal!, roundApproaches[i])));
 
       for (const a of results.filter((x) => x.skipped)) {
         log(`r${r}${width > 1 ? ` a${a.arm}` : ''}: ${a.skipped}${a.reason ? ` (${a.reason})` : ''} → skip`);
@@ -339,6 +644,13 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
           });
           emit({ event: 'round_done', round: r, merged: false, skipped: 'no-verdict', reason: failedNoVerdict[0]!.reason, exitCode: failedNoVerdict[0]!.exitCode ?? null });
         } else {
+          const guarded = results.filter((a) => a.skipped === 'eval-guard');
+          if (guarded.length) {
+            rounds.push({
+              round: r, accepted: false, skipped: 'eval-guard', reason: guarded[0]!.reason,
+              ...(width > 1 ? { arms: results.map(armHistory) } : { violations: guarded[0]!.violations }),
+            });
+          }
           emit({ event: 'round_done', round: r, merged: false, skipped: first.skipped });
         }
         for (const a of results) { if (a.candDir) removeWorktree(a.candDir); }
@@ -353,6 +665,7 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
       // Fail-closed: a judge that errors or returns no parseable verdict blocks
       // that candidate (approve defaults to false).
       let winner: ArmResult | undefined;
+      const judgeRejected = new Set<number>();
       if (options.requireJudge) {
         for (const cand of acceptedArms) {
           const baseShort = git(['rev-parse', '--short', 'HEAD'], baseDir);
@@ -371,15 +684,34 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
           emit({ event: 'judge', round: r, arm: cand.arm, approve, score: jv?.score, confidence: jv?.confidence });
           log(`r${r}${width > 1 ? ` a${cand.arm}` : ''}: judge ${approve ? theme.colors.success('APPROVE') : theme.colors.error('reject')}${jv?.score != null ? ` (score ${jv.score})` : ''}`);
           if (approve) { winner = cand; break; }
+          judgeRejected.add(cand.arm);
         }
       } else {
         winner = acceptedArms[0];
       }
+
+      // 5c. Confirmation on fresh data (default on). ONE confirmation per round: the
+      // selected winner only, so the confirmation is a single pre-registered test.
+      let confirm: ConfirmResult | undefined;
+      let notConfirmedArm: number | undefined;
+      if (winner && options.confirm !== false) {
+        log(`r${r}${width > 1 ? ` a${winner.arm}` : ''}: confirming on fresh train runs`);
+        confirm = await confirmWinner(winner, r);
+        const ok = confirm.confirmed;
+        emit({ event: 'confirm', round: r, arm: winner.arm, mode: confirm.mode, decision: confirm.decision, effect: confirm.effect, pValue: confirm.pValue, ...(confirm.combinedP != null ? { combinedP: confirm.combinedP } : {}), reason: confirm.reason, confirmed: ok });
+        log(`r${r}: confirm ${ok ? theme.colors.success('CONFIRMED') : theme.colors.error('NOT CONFIRMED')} (${confirm.reason})`);
+        if (!ok) {
+          recordNearMiss(winner, r, confirm);
+          notConfirmedArm = winner.arm;
+          winner = undefined;
+        }
+      }
       const accept = !!winner;
 
+      // Success metric = TRAIN score (the confirmation's when it ran), never the holdout.
       const candScore = (() => {
-        const src = winner ?? acceptedArms[0] ?? verdictArms[0];
-        const s = src?.res?.benchSummaries?.candidate?.holdout ?? src?.res?.benchSummaries?.candidate?.train;
+        if (!winner) return undefined;
+        const s = confirm?.trainSummary ?? winner.res?.benchSummaries?.candidate?.train;
         const t = s?.tasks?.find((x: any) => x.taskId === successMetric?.taskId);
         return t?.meanScore;
       })();
@@ -387,9 +719,42 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
       rounds.push({
         round: r, candRef: lead.candRef, decision: lead.res?.verdict?.decision, effect: lead.res?.verdict?.effect,
         mergeEligible: lead.res?.mergeEligible, accepted: accept, candScore,
+        ...(confirm ? { confirm: { confirmed: confirm.confirmed, mode: confirm.mode, decision: confirm.decision, effect: confirm.effect, pValue: confirm.pValue, ...(confirm.combinedP != null ? { combinedP: confirm.combinedP } : {}), reason: confirm.reason, runs: confirm.runs } } : {}),
+        ...(lead.res?.runPlan ? { runPlan: lead.res.runPlan } : {}),
+        ...(lead.guardBlocks ? { guardBlocks: lead.guardBlocks } : {}),
         ...(width > 1 ? { winnerArm: winner?.arm, arms: results.map(armHistory) } : {}),
       });
       log(`r${r}: ${lead.res?.verdict?.decision?.toUpperCase()} effect ${lead.res?.verdict?.effect}  ${accept ? theme.colors.success('ACCEPT') : theme.colors.error('reject')}${options.holdoutSet ? '' : ' (train-only, UNVERIFIED — pass --holdout-set)'}${width > 1 && winner ? ` (arm ${winner.arm}${winner.model ? ` · ${winner.model}` : ''})` : ''}`);
+
+      // Run planning: warn when the screening runs cannot see --target-effect; with
+      // --auto-runs, raise the runs for LATER rounds (never mid-round) up to --max-runs.
+      const roundPlan: RunPlan | undefined = lead.res?.runPlan;
+      if (roundPlan && !roundPlan.adequate) {
+        const msg = `r${r}: underpowered — ${roundPlan.runsPerArm} runs/arm detect ≥ ${roundPlan.detectableEffect} pts at power ${roundPlan.power}; +${roundPlan.targetEffect} needs ${roundPlan.requiredRunsPerArm}/arm`;
+        log(msg); emit({ event: 'power_warning', round: r, runPlan: roundPlan });
+        if (options.autoRuns && runsPerArm < maxRuns) {
+          const next = Math.min(maxRuns, roundPlan.requiredRunsPerArm);
+          if (next > runsPerArm) {
+            log(`r${r}: --auto-runs → ${next} runs/arm from round ${r + 1}${next === maxRuns && roundPlan.requiredRunsPerArm > maxRuns ? ` (capped by --max-runs; ${roundPlan.requiredRunsPerArm} needed)` : ''}`);
+            emit({ event: 'runs_changed', round: r, from: runsPerArm, to: next, required: roundPlan.requiredRunsPerArm });
+            runsPerArm = next;
+          }
+        }
+      }
+
+      // B6: keep every arm that did not merge (its commit under a ref + a row with why).
+      for (const a of results) {
+        if (!a.candRef || a === winner) continue;
+        const status = a.skipped === 'eval-guard' ? 'eval-guard'
+          : a.skipped === 'no-verdict' ? 'no-verdict'
+          : a.flaws?.length ? 'declared-flaws'
+          : a.guardBlocks?.length && guardMode === 'block' ? 'guard-blocked'
+          : a.arm === notConfirmedArm ? 'not-confirmed'
+          : judgeRejected.has(a.arm) ? 'judge-rejected'
+          : !a.gateAccepted ? `gate-${a.res?.verdict?.decision ?? 'none'}`
+          : 'outranked';
+        recordAttempt(a, r, status);
+      }
 
       // 6. Advance or discard.
       if (accept && winner) {
@@ -397,6 +762,8 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
         removeWorktree(baseDir);                           // old base
         for (const a of results) { if (a !== winner && a.candDir && !options.keepWorktrees) removeWorktree(a.candDir); }
         baseDir = winner.candDir!; baseRef = winner.candRef!; stale = 0;
+        // The drift ledger records the unbiased measurement: the confirmation's when it ran.
+        recordDrift(drift, confirm?.families ?? winner.res?.families ?? []);
         if (defId) { if (options.holdoutSet) backlog.markVerified(defId, `loop-r${r}`); else backlog.markFixed(defId, winner.candRef!); }
         emit({ event: 'round_done', round: r, merged: true, ref: winner.candRef, ...(width > 1 ? { arm: winner.arm, model: winner.model } : {}) });
         if (successMetric && candScore != null && candScore >= successMetric.threshold) { stop = 'success'; break; }
@@ -411,15 +778,18 @@ export async function autoResearchLoop(options: AutoResearchLoopOptions): Promis
     // Anchor the final result on the loop branch, then clean every loop worktree.
     try { git(['branch', '-f', branch, baseRef]); } catch { /* */ }
     for (const w of worktrees) removeWorktree(w);
+    rmSync(sealDir, { recursive: true, force: true });
   }
 
   emit({ event: 'stop', reason: stop });
   const failedArms = rounds.filter(r => r.failed).map(r => ({ round: r.round, reason: r.reason, exitCode: r.exitCode }));
-  const out = { repo, branch, finalRef: baseRef, rounds: rounds.length, merges: rounds.filter(r => r.accepted).length, failures: failedArms.length, failedArms, stop, ...(width > 1 ? { width } : {}), history: rounds };
+  const out = { repo, branch, finalRef: baseRef, rounds: rounds.length, merges: rounds.filter(r => r.accepted).length, failures: failedArms.length, failedArms, nearMisses, attempts, runsPerArm,
+    drift: Object.fromEntries([...drift].map(([f, d]) => [f, { effect: d.effect, se: Math.round(Math.sqrt(d.variance) * 100) / 100, steps: d.steps }])), stop, ...(width > 1 ? { width } : {}), history: rounds };
   if (json) { console.log(JSON.stringify(out, null, 2)); return; }
   console.log();
   console.log(` ${theme.colors.highlight('Loop done')}  stop=${stop}  rounds=${rounds.length}  merges=${out.merges}`);
   console.log(theme.colors.muted(` Result on branch ${branch} → ${baseRef.slice(0, 8)}. Merge it when satisfied:  git -C ${repo} merge ${branch}`));
+  if (nearMisses.length) console.log(theme.colors.muted(` ${nearMisses.length} near-miss(es) kept for re-testing: refs/autoresearch/near-miss/${branch}/*  (rows: ${nearMissLog})`));
   console.log();
 }
 
@@ -431,6 +801,10 @@ function armHistory(a: ArmResult): Record<string, unknown> {
     ...(a.candRef ? { candRef: a.candRef } : {}),
     ...(a.skipped ? { skipped: a.skipped } : {}),
     ...(a.reason ? { reason: a.reason } : {}),
+    ...(a.violations ? { violations: a.violations } : {}),
+    ...(a.guardBlocks ? { guardBlocks: a.guardBlocks } : {}),
+    ...(a.approach ? { approach: a.approach } : {}),
+    ...(a.flaws ? { flaws: a.flaws } : {}),
     ...(a.res ? { decision: a.res.verdict?.decision, effect: a.res.verdict?.effect, mergeEligible: a.res.mergeEligible } : {}),
     ...(a.gateAccepted != null ? { gateAccepted: a.gateAccepted } : {}),
   };

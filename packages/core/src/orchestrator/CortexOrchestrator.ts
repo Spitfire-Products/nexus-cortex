@@ -10,6 +10,9 @@
 
 import { liftPlanAllowedInSession } from '../config/interactiveProfile.js';
 import { featureAppliedKeys } from '../config/featurePayload.js';
+import { maskToolResults, maskSecretText } from '../config/secretsVault.js';
+import { resolveBrowserBackend } from '../config/localBrowser.js';
+import { normalizeMcpSchema } from '../mcp/mcpSchemaCompat.js';
 import { v4 as uuidv4 } from 'uuid';
 
 // Phase 1.5 Week 1: Multi-Provider
@@ -31,7 +34,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'node:child_process';
 import { ENV_RECON_COMMAND, resolveLiftPlanConfig, parsePlannerResponse, bankPlanText } from '../training/liftPlanner.js';
 import { clipIn, FULL_CAPS, HINTS, resolveInventory, resolveInventoryPath } from '../training/steerInputs.js';
-import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetFloorActive, applyBudgetFloor, flooredEvidenceCap, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, buildFinishConfirmMessage, buildMeetsConfirmMessage, gapHoldable, parseSpecChecks, groundSpecCheck, specFailFraction, applyVetoFloor, holdProgressed, planSimilarity, specCheckEvidence, specBlockForJudge, dropSpecEchoes, specBlockForWriter, vetoMessageLead, RESOLVER_SCALE_CLAUSE } from '../training/endTurnResolver.js';
+import { resolveEndTurnResolverConfig, parseResolverVerdict, effectiveMaxRejects, budgetFloorActive, applyBudgetFloor, flooredEvidenceCap, budgetedVetoEscalation, decideVetoAction, type VetoAction, shouldFinishConfirm, webTurnEvidenced, webFinishStands, resolverWebRuleEnabled, buildFinishConfirmMessage, buildMeetsConfirmMessage, gapHoldable, parseSpecChecks, groundSpecCheck, specFailFraction, applyVetoFloor, holdProgressed, planSimilarity, specCheckEvidence, specBlockForJudge, dropSpecEchoes, specBlockForWriter, vetoMessageLead, RESOLVER_SCALE_CLAUSE } from '../training/endTurnResolver.js';
 import { jevAvailable, jevNoul, buildGapHoldState, GAP_HOLD_QUESTIONS } from '../training/jevGate.js'; // R173b
 import { resolveAcceptGateConfig, buildAcceptGateState, decideAcceptGate, decisionNoul, formatAcceptGateHoldMessage, isAcceptClass, ACCEPT_GATE_QUESTIONS } from '../training/acceptGate.js'; // R260
 import { resolveFrameConfig, FRAME_CONTRACT, FRAME_TOOL_NAME } from '../frames/frameConfig.js'; // R179
@@ -78,20 +81,23 @@ import type { AgentDefinition, SubAgentResult, ISubAgentEventEmitter } from './S
 
 // Phase 1: Tool Architecture Refactor - Unified Tool Registry
 import { toolFactory } from '../tools/ToolFactory.js';
-import { resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveLiftPlan, resolveEndTurnResolver, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, applyToolProfile, webToolBlocked, resolveVisionHelperModel, resolveVisionHandoffMax, resolveSliceNudge, resolveSliceBlock, resolveSliceBlockAt, resolveSliceBlockMax, anchorAppliesToProcess } from '../tools/ToolProfile.js';
+import { applyToolProfile, resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveLiftPlan, resolveEndTurnResolver, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, webToolBlocked, resolveVisionHelperModel, resolveVisionHandoffMax, resolveSliceNudge, resolveSliceBlock, resolveSliceBlockAt, resolveSliceBlockMax, anchorAppliesToProcess } from '../tools/ToolProfile.js';
 import { sliceReadFile, decideSliceBlock, sliceReadStep } from './sliceBlock.js';
 import type { ChunkRead } from '../training/chunkReadProgression.js';
-import { TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
+import { normalizeEndTurnInput, TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
 import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage, memoryIndexLine, upsertMemoryIndex, scaleEstimateToRequestView, approxCharsOf, anchoredRequestEstimate, resolveCompactionHandoffQA, resolveHandoffQAMaxQuestions, runHandoffQA, type HandoffQAResult } from './compactionResume.js';
 import { resolveCompactionTargetTokens } from './compactionTarget.js'; // R256
 import { resolveToolResultPruneGate, pruneGateTokens, CompactionThrashTracker } from './contextPressure.js'; // R258
 import { renderResumeMemoryPrompt, buildRebuildInstructions, resolveCheckpointBand, resolveRearmBand } from './compactionResumeTemplate.js';
 import { resolveTurnStatusMode, turnStatusActive, buildTurnStatusLine, appendStatusToNewestToolResult, type StatusShell } from './turnStatus.js';
+import { browseCarryEnabled, browseCarryBlock, browseCarryApplies, lastUrlIn, sawBotWall, sawScriptedBrowser, BROWSER_WALL_LINE, countDirectBrowserCalls, directBrowseLine, directBrowseNudgeThreshold, looksMultiStepBrowseTask, directConfirmEnabled, DIRECT_CONFIRM_TEXT, browseDirectAvailable, withoutBrowseDirect, WEB_TOOL_NAMES, SOURCES_REMINDER_LINE, looksLikeReverification, reverifyGuardEnabled, REVERIFY_TEXT, REVERIFY_MAX, reverifyKey, subAgentEndTurnEnv, looksLikeProbe, probeGuardEnabled, PROBE_TEXT } from './browserWallNudge.js';
+import { resolveEndTurnIntegrityMode } from './integrityVerification.js';
+import { isEssentialMcpTool } from '../mcp/essentialMcpTools.js';
 import { resolveCortexStateDir, cortexStatePath, resolveWorkspaceClean, cortexProjectDir } from '../utils/stateDir.js';
 import { collectWorkspaceDelta, detectCheckCommand, runCheck, resolveJudgeGroundingConfig, classifyCheckRun, isInvestigateCommandAllowed, specCheckParses, readFileSlice, formatEvidenceRound } from '../training/judgeEvidence.js';
 import { resolveMentorRoleConfig, describeMentorWire, describeMentorDelivery, mentorSurfaceTimeoutMs, type MentorCallMeta } from '../training/mentorRole.js';
 import { resolveOuterToolDeadlineMs, resolveOuterToolTimeoutFloorMs } from './outerToolTimeout.js';
-import { resolveSubAgentTimeoutMs } from './subAgentTimeout.js';
+import { resolveSubAgentTimeoutMs, browseDelegateTimeoutMs } from './subAgentTimeout.js';
 import { resolveHerdrReporting, HerdrReporter, sanitizeHerdrAgentName, type HerdrState } from './herdrReporter.js';
 import { runDelegateInHerdr, readSubAgentRuntimeLever, resolveSubAgentRuntime, type SubAgentRuntime } from './HerdrSubAgentRunner.js';
 import { randomBytes } from 'crypto';
@@ -132,7 +138,7 @@ import { classifyTask } from '../training/TaskClassifier.js';
 import { closestToolMatches } from './toolNameMatcher.js';
 import { classifyApiError } from './apiErrorClassifier.js';
 import { pinStaticSystemPrompt } from './staticSystemPromptPin.js';
-import { applyAllowlistKeepingCore } from './toolAllowlist.js';
+import { filterAgentTools, isBlockedBaseToolCall, isBrowseAgent, mayNotSpawn, agentDepth, maxAgentDepth } from './toolAllowlist.js';
 import { hasVisibleAssistantText, shouldForceSynthesis } from './assistantTextPresence.js';
 import { resolveTurnContractEnforce, checkTurnFormat, buildFormatRejectMessage, resolveActionPlanFields, ACTION_PLAN_TOOLS, planFieldsMissing, stripPlanFields, buildPlanFieldsRejectMessage } from './turnContractValidator.js'; // HB-TURN-CONTRACT-ENFORCE / R172
 import { computeToolBudgetSignal, isToolProgressStalled } from './toolBudgetSignal.js';
@@ -424,6 +430,11 @@ export interface SendMessageOptions {
    */
   jsonSchema?: object;
 
+  /** This request's wall-clock budget (ms). Wins over loopControl / CORTEX_TURN_DEADLINE_MS for this turn, so a client with its own
+   *  timeout (cortex agent --timeout) gets the deadline machinery — budget visibility, residual-derived sub-agent limits, forced synthesis
+   *  — instead of being cut off with no answer (2026-11-03: DeepSeek CarMax r3/r4 had the right answer in hand and were killed at 30 min). */
+  turnDeadlineMs?: number;
+
   /** Abort signal for cancelling long-running operations (e.g., ESC key in CLI) */
   abortSignal?: AbortSignal;
 
@@ -548,6 +559,28 @@ export interface ModelSwitchResult {
  * Phase 2.2: Timeline, compaction, checkpoints
  * Phase 2.3: Historical retrieval
  */
+/**
+ * In an agent that may not spawn (the browse agent, or one at CORTEX_MAX_AGENT_DEPTH), a tool result that asks to start another
+ * sub-agent becomes an error and nothing is spawned — the one choke point every spawning tool (Browse, Task, WebSearch interactive,
+ * any future one) passes through (operator 2026-11-03).
+ */
+function refuseSpawnInBrowseAgent<R>(result: R): R {
+  const r = result as unknown as { metadata?: Record<string, unknown> } | null;
+  if (!mayNotSpawn() || !r?.metadata?.shouldSpawnSubAgent) return result;
+  const msg = isBrowseAgent()
+    ? 'The browse agent cannot start another sub-agent. Use the nexus-browser__* tools directly.'
+    : `Sub-agents may nest at most ${maxAgentDepth()} level(s) deep and this agent is at depth ${agentDepth()}: do the work yourself with the tools you have.`;
+  return { ...(result as object), success: false, llmContent: `Error: ${msg}`, returnDisplay: `Error: ${msg}`, error: msg,
+    metadata: { ...r.metadata, shouldSpawnSubAgent: false, refusedByAgentPolicy: true } } as unknown as R;
+}
+
+/** Appends the user's original request to a browse delegate's task (once; trimmed) so its scope rules have the real scope to keep. */
+export function withUserRequest(taskPrompt: string, userText: string): string {
+  const u = (userText || '').trim();
+  if (!u || taskPrompt.includes(u.slice(0, 120))) return taskPrompt;
+  return `${taskPrompt}\n\n---\nThe user's original request (your result must satisfy its scope — place, filters, dates — even when the task above does not repeat it):\n${u.slice(0, 1500)}`;
+}
+
 export class CortexOrchestrator {
   // ============================================
   // STATE
@@ -644,6 +677,10 @@ export class CortexOrchestrator {
   // Until the first executed tool call, requests present only the anchor
   // profile's schemas; the lift happens at the first tool_result boundary.
   private anchorLifted = false;
+  /** The model of the turn in progress (2026-11-02). The server passes the model PER REQUEST (options.modelId) and never sets
+   *  currentModelId, so a sub-agent with model 'inherit' (the Browse delegate) fell back to the server default — Sonnet's Browse ran on
+   *  deepseek-flash. Inherit resolves to this first. */
+  private turnModelId: string | null = null;
   /** The active model card's anchorProfile (captured at request assembly) —
    *  env CORTEX_TOOL_ANCHOR still overrides inside resolveToolAnchor. */
   private cardAnchorProfile: string | null = null;
@@ -839,6 +876,8 @@ export class CortexOrchestrator {
     // choke point, but MCP tools (nexus-browser__*) join the list HERE, past it —
     // strip them at this seam too so the web surface is gone from every request.
     tools = tools.filter((t) => !webToolBlocked(t.name));
+    // Browse mode "direct" is for a person watching; headless sessions get the delegate only (browserWallNudge.ts browseDirectAvailable).
+    if (!browseDirectAvailable(this.approvalMode.autoApproveActions)) tools = tools.map((t) => (t.name === 'Browse' ? withoutBrowseDirect(t) : t));
     if (!resolveHeadlessDropAskUser(process.env, model?.headlessDropAskUser)) return tools; // card > env > false
     if (!this.approvalMode.autoApproveActions) return tools; // interactive: keep it
     return tools.filter((t) => t.name !== 'AskUserQuestion');
@@ -1381,7 +1420,7 @@ export class CortexOrchestrator {
     const store = this.getDecisionStore();
     const sessionId = this.currentSessionId ?? 'unknown';
     try {
-      const etInput = toolUses.find((t) => t.id === et.tool_use_id || t.name === 'EndTurn')?.input ?? {};
+      const etInput = normalizeEndTurnInput(toolUses.find((t) => t.id === et.tool_use_id || t.name === 'EndTurn')?.input);   // stringified arrays parsed (endTurnGates.ts)
       // HB-JUDGE-GROUNDING (2026-09-10): the LATEST outputs (the checks it ran before finishing), not the
       // oldest 4K; plus the deliverable itself (workspace delta) and, when an evident check entry point
       // exists, a real check result — the evidence the judge prompt already promises.
@@ -1477,6 +1516,8 @@ export class CortexOrchestrator {
       const t0 = Date.now();
       const evidenceRounds: string[] = []; // R170
       let judgeEnvReport = ''; // the ENVIRONMENT REPORT the judge last saw (banked on the event — it is not in the session record)
+      // Web-only turns (web results, no file writes) can be judged at lower effort: a review took 67–133 s at max (CORTEX_RESOLVER_WEB_EFFORT).
+      const webJudgeEffort = webTurnEvidenced(ev) ? String(process.env.CORTEX_RESOLVER_WEB_EFFORT ?? '').trim() : '';
       const judgeOnce = (reasoning?: 'on', investigate?: 'offer' | 'withdraw') => withTimeout(
         this.helperMiddleware!.evaluateEndTurn({
           task,
@@ -1492,6 +1533,8 @@ export class CortexOrchestrator {
           evidenceRounds: evidenceRounds.length ? evidenceRounds.slice() : undefined, // R170
           investigate,
           helperModelId: this.config.reactiveMentorship?.helperModelId,
+          ...(webJudgeEffort ? { effort: webJudgeEffort } : {}),
+          webAnswer: webTurnEvidenced(ev) && resolverWebRuleEnabled(), // CORTEX_RESOLVER_WEB_RULE (2026-11-04)
         }),
         reasoning === 'on' ? mentorSurfaceTimeoutMs('endturn-resolver', Math.max(timeoutMs, 180000)) : timeoutMs,
       );
@@ -1743,7 +1786,7 @@ export class CortexOrchestrator {
         et.is_error = true;
         et.content = acceptGateHold.message;
         console.warn(`[EndTurnResolver] R260 ACCEPT-GATE HOLD — finish held (${this.acceptGateHolds}/${agc.max})`);
-      } else if ((action === 'accept-with-gap' || action === 'accept-low-confidence') &&
+      } else if ((action === 'accept-with-gap' || action === 'accept-low-confidence') && !webFinishStands(ev) &&
                  shouldFinishConfirm({ action, remainingFrac: resolverRemainingFrac, confirmsUsed: this.finishConfirms, cfg })) {
         // R167 HB-FINISH-CONFIRM: the judge would accept with a gap and budget remains — hold ONCE with an informed
         // confirmation (zero model calls): budget left, the reviewer's gap plan, the junior's own open_items. The next
@@ -1766,7 +1809,10 @@ export class CortexOrchestrator {
       } else if (action === 'accept' && verdict.meets) {
         // R168 HB-MEETS-CONFIRM: a MEETS stands only when a proving check passed. Otherwise, with budget left, hold ONCE
         // (shared counter with R167) showing what was (not) verified; the next EndTurn stands.
-        const evidencePassed = namedPassed > 0 || (!!checkResult && /→ PASSED/.test(checkResult));
+        // A web turn's proof is the browser output the judge just read: no command can re-prove "the page shows X" (2026-11-03,
+        // multi-site browser runs: the hold told a correct Parkers answer "named NO command", and the agent spent a whole extra Browse
+        // delegate producing citable output). Web evidence + no file writes = evidenced (webTurnEvidenced; CORTEX_MEETS_CONFIRM_WEB).
+        const evidencePassed = namedPassed > 0 || (!!checkResult && /→ PASSED/.test(checkResult)) || webTurnEvidenced(ev);
         if (cfg.meetsConfirm && !evidencePassed) this.judgeMeetsUnevidenced = true; // let the budget-continue / surrender nudges see this finish
         if (shouldFinishConfirm({ action, remainingFrac: resolverRemainingFrac, confirmsUsed: this.finishConfirms, cfg, meets: true, evidencePassed })) {
           this.finishConfirms += 1;
@@ -1877,6 +1923,20 @@ export class CortexOrchestrator {
     return applyToolProfile(tools, anchor);
   }
 
+
+  /** Refusal text for a tool the guard blocks. While the turn-1 anchor is armed and the tool WILL be available once it lifts, say so —
+   *  2026-11-02: Sonnet's first call was Browse; "not available under the active tool profile (bash-edit). Use the tools offered" read as
+   *  "there is no browser", and it did the whole task with curl, never calling Browse after the lift. */
+  private profileRefusal(name: string): string {
+    const profile = this.effectiveGuardProfile();
+    const anchorArmed = !this.anchorLifted && anchorAppliesToProcess(process.env) && !!resolveToolAnchor(process.env, this.cardAnchorProfile);
+    if (anchorArmed && isToolAllowedByProfile(name, (n) => toolFactory.getTool(n)?.discoveryTier, resolveToolProfile())) {
+      return `Tool '${name}' is available, but not yet: this session opens with ${profile} only (the orient step). Make one Bash call to ` +
+        `orient (e.g. pwd && ls), then call ${name} again — the full tool set, including ${name}, is offered from your next turn on.`;
+    }
+    return `Tool '${name}' is not available under the active tool profile (${profile}). Use the tools offered in this session.`;
+  }
+
   /** The profile the dispatch guard enforces RIGHT NOW: the anchor while
    *  armed (pre-lift calls to hidden tools are refused like any hidden
    *  tool), the session profile after. */
@@ -1899,6 +1959,10 @@ export class CortexOrchestrator {
   private checkpointManager?: CheckpointManager;
   private fileCheckpointManager?: FileCheckpointManager; // Created in createSession() with sessionId
   private mcpAutoInject: boolean = false;
+  /** Browse mode:'direct' (2026-11-03): MCP servers connected mid-session for the MAIN model — pinned like CORTEX_MCP_AUTOCONNECT ones. */
+  private directPinnedServers = new Set<string>();
+  /** This turn's tool array, so tools connected mid-turn (Browse direct) are usable before the next user message. */
+  private currentTurnTools: CanonicalTool[] | null = null;
 
   // Phase 2.7: Cache metrics tracking
   private cacheMetricsAccumulator: CacheMetricsAccumulator = new CacheMetricsAccumulator();
@@ -2016,7 +2080,8 @@ export class CortexOrchestrator {
           const extras = [...this.getMcpManagementTools(), ...this.getContextManagementTools()];
           const seen = new Set<string>();
           const catalogVision = (this.getModel(this.currentModelId ?? '') as { vision?: boolean } | undefined)?.vision === true;
-          return [...toolFactory.getAllTools(), ...extras]
+          // The catalog obeys the agent's allowlist too: a restricted delegate must not DISCOVER tools it may not use (2026-11-03).
+          return [...this.applyBaseToolAllowlist(toolFactory.getAllTools()), ...extras]
             .filter((t) => endTurnGateOn || t.name !== 'EndTurn')
             .filter((t) => catalogVision || !!resolveVisionHelperModel(process.env) || t.name !== 'ReadImage')
             .filter((t) => (seen.has(t.name) ? false : (seen.add(t.name), true)))
@@ -2187,6 +2252,7 @@ export class CortexOrchestrator {
       }
       modelId = recommended;
     }
+    this.turnModelId = modelId ?? null;   // the model THIS turn runs (a sub-agent 'inherit' follows it — see turnModelId)
 
     const model = this.getModel(modelId);
 
@@ -2220,6 +2286,7 @@ export class CortexOrchestrator {
     const allTools = this.stripHeadlessOnlyTools(options.tools !== undefined
       ? [...factoryTools, ...mcpTools, ...mcpManagementTools, ...contextManagementTools, ...options.tools]
       : [...factoryTools, ...mcpTools, ...mcpManagementTools, ...contextManagementTools], model);
+    this.currentTurnTools = allTools;   // Browse direct appends the browser tools here mid-turn
     // Phase 2.3: Inject server-side tools when enabled and model supports them
     // R20: provider-aware — XAI gets web/x/code; OpenAI gets web/code/file/image
     // (Responses API hosted tools); other providers stay client-only.
@@ -2877,7 +2944,8 @@ export class CortexOrchestrator {
     // loop detection, the consecutive-error breaker, and MAX_TOOL_ITERATIONS.
     const TOOL_BUDGET_HARD = TOOL_BUDGET_SOFT > 0 ? TOOL_BUDGET_SOFT * 2 : Infinity; // force-synthesis cap
     // #2 (2026-09-04): per-turn wall-clock budget (opt-in — 0 disables, no behaviour change when unset).
-    const TURN_DEADLINE_MS = loopDefaults.turnDeadlineMs;
+    const TURN_DEADLINE_MS = Number.isFinite(options.turnDeadlineMs) && (options.turnDeadlineMs as number) > 0 ? (options.turnDeadlineMs as number) : loopDefaults.turnDeadlineMs;
+    if (this.config.debug && TURN_DEADLINE_MS > 0) console.log(`[Orchestrator] turn deadline ${TURN_DEADLINE_MS}ms (${Number(options.turnDeadlineMs) > 0 ? 'request' : 'config/env'})`);
     const loopStartMs = Date.now();
     this.turnLoopStartMs = loopStartMs; this.turnDeadlineMsActive = TURN_DEADLINE_MS; // R133: sub-agent timeouts read the residual
     this.herdrTurnLabel = `turn:${Math.floor(this.turnNumber / 2) + 1}`; this.herdrReport('working', this.herdrTurnLabel); // R145
@@ -3751,7 +3819,8 @@ export class CortexOrchestrator {
 
         try {
           this.herdrReport('working', `tool:${toolUseBlocks[0]?.name ?? 'batch'}`); // R145
-          const toolResults = await this.handleToolCalls(toolUseBlocks, abortController.signal, structuredOutputState);
+          // Secrets vault Phase 2: stored values never reach the model or the screen («secret:NAME»); identity without a vault.
+          const toolResults = maskToolResults(await this.handleToolCalls(toolUseBlocks, abortController.signal, structuredOutputState));
           this.testPostExecThrow(); // test-only fault injection for the re-execution guard (inert in prod)
           clearTimeout(timeoutId);
           notePollResults(exactRepeatTracker, toolUseBlocks, toolResults); // R137: poll repeats count only on identical STALLED output
@@ -4094,6 +4163,9 @@ export class CortexOrchestrator {
       }
       // HB-COMPUTE-NUDGE (CORTEX_COMPUTE_NUDGE, dark): after a heavily-reasoned step, 'compute/test instead' at the same tail.
       this.injectComputeNudge(toolCallIteration, false);
+      this.injectBrowserWallNudge(toolResults, toolCallIteration, false, toolUseBlocks);
+      this.injectDirectBrowseNudge(toolCallIteration, false, toolUseBlocks);
+      this.injectSourcesReminder(toolResults);
       // HB-TURN-STATUS (CORTEX_TURN_STATUS, dark): clock + context + bg shells at the TAIL of this round's newest tool_result.
       this.injectTurnStatus(loopStartMs, TURN_DEADLINE_MS, effectiveModel, toolCallIteration);
 
@@ -4837,6 +4909,7 @@ export class CortexOrchestrator {
     if (!modelId) {
       throw new Error('No model specified and no current model set');
     }
+    this.turnModelId = modelId;
 
     // Central lookup — includes the back-compat alias fallback (deprecated
     // names like deepseek-chat resolve to their successor cards).
@@ -4919,6 +4992,7 @@ export class CortexOrchestrator {
     const allTools = this.stripHeadlessOnlyTools(options.tools !== undefined
       ? [...factoryTools, ...mcpTools, ...mcpManagementTools, ...contextManagementTools, ...options.tools]
       : [...factoryTools, ...mcpTools, ...mcpManagementTools, ...contextManagementTools], model);
+    this.currentTurnTools = allTools;   // Browse direct appends the browser tools here mid-turn
 
     // Phase 2.3: Inject server-side tools when enabled and model supports them
     // R20: provider-aware (streaming path mirror of non-streaming injection above).
@@ -5449,7 +5523,8 @@ export class CortexOrchestrator {
     let pendingGateRequest = false; // Stage-1: a reminder was appended; run one continuation with NO tool batch
     const streamEndTurnGateEnabled = process.env.CORTEX_ENDTURN_GATE === 'true';
     // #2 (2026-09-04): per-turn wall-clock budget (opt-in — 0 disables; streaming parity with non-stream).
-    const TURN_DEADLINE_MS = loopDefaults.turnDeadlineMs;
+    const TURN_DEADLINE_MS = Number.isFinite(options.turnDeadlineMs) && (options.turnDeadlineMs as number) > 0 ? (options.turnDeadlineMs as number) : loopDefaults.turnDeadlineMs;
+    if (this.config.debug && TURN_DEADLINE_MS > 0) console.log(`[Orchestrator] turn deadline ${TURN_DEADLINE_MS}ms (${Number(options.turnDeadlineMs) > 0 ? 'request' : 'config/env'})`);
     const loopStartMs = Date.now();
     this.turnLoopStartMs = loopStartMs; this.turnDeadlineMsActive = TURN_DEADLINE_MS; // R133: sub-agent timeouts read the residual
     this.herdrTurnLabel = `turn:${Math.floor(this.turnNumber / 2) + 1}`; this.herdrReport('working', this.herdrTurnLabel); // R145
@@ -5856,7 +5931,8 @@ export class CortexOrchestrator {
       try {
         // Execute tools (reuse existing method)
         this.herdrReport('working', `tool:${toolUseBlocks[0]?.name ?? 'batch'}`); // R145
-        const toolResults = await this.handleToolCalls(toolUseBlocks, abortController.signal, structuredOutputState);
+        // Secrets vault Phase 2: stored values never reach the model or the screen («secret:NAME»); identity without a vault.
+        const toolResults = maskToolResults(await this.handleToolCalls(toolUseBlocks, abortController.signal, structuredOutputState));
         this.testPostExecThrow(); // test-only fault injection for the re-execution guard (inert in prod)
         clearTimeout(timeoutId);
         notePollResults(streamRepeatTracker, toolUseBlocks, toolResults); // R137 (streaming parity)
@@ -6141,6 +6217,9 @@ export class CortexOrchestrator {
         }
         // HB-COMPUTE-NUDGE (streaming parity).
         this.injectComputeNudge(toolCallIteration, true);
+        this.injectBrowserWallNudge(toolResults, toolCallIteration, true, toolUseBlocks);
+        this.injectDirectBrowseNudge(toolCallIteration, true, toolUseBlocks);
+        this.injectSourcesReminder(toolResults);
         // HB-TURN-STATUS (streaming parity): same tail, same carrier.
         this.injectTurnStatus(loopStartMs, TURN_DEADLINE_MS, effectiveModel, toolCallIteration);
 
@@ -7010,8 +7089,46 @@ export class CortexOrchestrator {
     return this.getFrameRunner().step({ action: input, task: this.lastRealUserText(), elapsedMs, deadlineMs: this.turnDeadlineMsActive, cwd: this.config.workingDirectory || process.cwd(), sessionId: this.currentSessionId ?? 'session', signal, predictorModel: 'generator' });
   }
 
+  /**
+   * Browse mode:"direct": connect the nexus-browser MCP server (local or hosted per NEXUS_BROWSER_MODE — the registry entry decides)
+   * into this session, pin its tools (essential tier) and append them to the current turn so the model can call them immediately.
+   */
+  private async enableBrowserDirect(url?: string): Promise<{ text: string; isError: boolean }> {
+    if (!this.mcpManager) return { text: 'Direct browsing needs MCP, which is disabled in this session. Use Browse without mode (a browse agent does the task).', isError: true };
+    if (isNarrowProfile() || resolveFrameConfig(process.env).frame === 'terminus') return { text: 'Direct browsing is not available in this tool profile. Use Browse without mode.', isError: true };
+    const name = 'nexus-browser';
+    try {
+      const connected = this.mcpManager.getServerInfo().some((s) => s.name === name && s.status === 'connected');
+      if (!connected) {
+        const def = this.getMcpServerRegistry()?.getServer(name);
+        if (!def) return { text: 'nexus-browser is not in the MCP registry.', isError: true };
+        this.mcpManager.addServerConfig(name, this.registryDefinitionToConfig(def));
+        await this.mcpManager.connectToServer(name);
+        await this.mcpManager.discoverAll();
+      }
+      this.directPinnedServers.add(name);
+      this.mcpAutoInject = true;
+      const tools = this.getMcpToolsAsCanonical().filter((t) => (t.metadata as { serverName?: string } | undefined)?.serverName === name);
+      if (!tools.length) return { text: 'Connected to nexus-browser but it reported no tools.', isError: true };
+      if (this.currentTurnTools) {
+        const have = new Set(this.currentTurnTools.map((t) => t.name));
+        for (const t of tools) if (!have.has(t.name)) this.currentTurnTools.push(t);
+      }
+      const backend = resolveBrowserBackend().using;
+      const first = tools.find((t) => /__browse$/.test(t.name))?.name ?? `${name}__browse`;
+      return { text: `Browser connected for you to drive directly (${backend}). ${tools.length} tools are now available, e.g. ${tools.slice(0, 8).map((t) => t.name).join(', ')}, … ` +
+        `Next: call ${first}({ url${url ? `: ${JSON.stringify(url)}` : ''} }), then scan / get_content / click / type, and close_session when done. ` +
+        `Before you report a result, check it fits the task's scope and scale: if the task names a place, store or other filter, confirm on the page that ` +
+        `the RESULTS are limited to it (a distance / "this store" filter, the result cards' locations) — a location in the header is not proof, and a ` +
+        `total equal to the site-wide filter counts is unfiltered.`, isError: false };
+    } catch (e) {
+      return { text: `Could not connect the browser: ${String((e as Error)?.message ?? e).slice(0, 300)}. Use Browse without mode (a browse agent) instead.`, isError: true };
+    }
+  }
+
   private applyBaseToolAllowlist<T extends { name: string }>(tools: T[]): T[] {
-    return applyAllowlistKeepingCore(tools, this.config.allowedBaseTools); // R266: SearchTools + EndTurn always survive
+    // R266: SearchTools + EndTurn always survive; the browse agent never gets a sub-agent-spawning tool (toolAllowlist.ts).
+    return filterAgentTools(tools, this.config.allowedBaseTools);
   }
 
   /**
@@ -8413,6 +8530,7 @@ export class CortexOrchestrator {
     if (def.command) config.command = def.command;
     if (def.defaultArgs) config.args = def.defaultArgs;
     if (def.defaultEnv) config.env = def.defaultEnv;
+    if (def.connectTimeoutMs) config.timeout = def.connectTimeoutMs;
     return config;
   }
 
@@ -8445,6 +8563,65 @@ export class CortexOrchestrator {
     signal: AbortSignal,
     structuredOutputState?: StructuredOutputTurnState
   ): Promise<Array<{ tool_use_id: string; tool_name: string; content: string; is_error?: boolean; metadata?: any }>> {
+    // Agent tool policy at EXECUTION: a base tool outside this agent's allowlist (or a spawning tool inside the browse agent) is refused even if the
+    // model calls it unoffered — the offered list and the SearchTools catalog already exclude it (filterAgentTools). 2026-11-03.
+    {
+      const baseNames = toolFactory.getAllTools().map((t) => t.name);
+      const refused = toolUseBlocks.filter((t) => isBlockedBaseToolCall(t.name, baseNames, this.config.allowedBaseTools));
+      if (refused.length) {
+        const rest = toolUseBlocks.filter((t) => !refused.includes(t));
+        const restResults = rest.length ? await this.handleToolCalls(rest, signal, structuredOutputState) : [];
+        const msg = (n: string) => `${n} is not available to this agent${isBrowseAgent() ? ' (the browse agent cannot start another sub-agent: use the nexus-browser__* tools directly)' : mayNotSpawn() ? ` (sub-agents nest at most ${maxAgentDepth()} level(s) deep)` : ''}. Use only the tools you were given.`;
+        return [...refused.map((t) => ({ tool_use_id: t.id, tool_name: t.name, content: msg(t.name), is_error: true, metadata: { refusedByAgentPolicy: true } })), ...restResults];
+      }
+    }
+    // Re-verification of a completed browse report → one explanation instead of a delegate (browserWallNudge.ts REVERIFY_TEXT).
+    // Probe-first: the turn's first Browse call only asks whether the site loads → one explanation (browserWallNudge.ts PROBE_TEXT).
+    if (!this.browseCompletedThisTurn && !this.probeExplained && probeGuardEnabled()) {
+      const probes = toolUseBlocks.filter((t) => t.name === 'Browse' && looksLikeProbe(t.input?.task));
+      if (probes.length) {
+        this.probeExplained = true;
+        const store = this.getDecisionStore();
+        if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'steering_injected', detail: { kinds: ['browse_probe'], task: String(probes[0]!.input?.task ?? '').slice(0, 200) } }).catch(() => {});
+        const rest = toolUseBlocks.filter((t) => !probes.includes(t));
+        const restResults = rest.length ? await this.handleToolCalls(rest, signal, structuredOutputState) : [];
+        return [...probes.map((t) => ({ tool_use_id: t.id, tool_name: t.name, content: PROBE_TEXT, is_error: false, metadata: { browseProbe: true } })), ...restResults];
+      }
+    }
+    // Each NEW verification-shaped task is explained once (2026-11-03 val-W BBB: after the one-shot guard the agent re-worded four more
+    // passes); re-sending the SAME task runs it; at most REVERIFY_MAX explanations per turn, so the agent can never be stuck.
+    if (this.browseCompletedThisTurn && this.reverifyExplained.size < REVERIFY_MAX && reverifyGuardEnabled()) {
+      const rev = toolUseBlocks.filter((t) => t.name === 'Browse' && looksLikeReverification(t.input?.task) && !this.reverifyExplained.has(reverifyKey(t.input?.task)));
+      if (rev.length) {
+        for (const t of rev) this.reverifyExplained.add(reverifyKey(t.input?.task));
+        const store = this.getDecisionStore();
+        if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'steering_injected', detail: { kinds: ['browse_reverify'], task: String(rev[0]!.input?.task ?? '').slice(0, 200) } }).catch(() => {});
+        const rest = toolUseBlocks.filter((t) => !rev.includes(t));
+        const restResults = rest.length ? await this.handleToolCalls(rest, signal, structuredOutputState) : [];
+        return [...rev.map((t) => ({ tool_use_id: t.id, tool_name: t.name, content: REVERIFY_TEXT, is_error: false, metadata: { browseReverify: true } })), ...restResults];
+      }
+    }
+    // Browse mode:"direct" — the MAIN model drives the browser itself (the SPA's browse anchor-lift pattern): connect nexus-browser into
+    // THIS session and put its tools in the current turn, instead of dispatching a browse sub-agent. 2026-11-03.
+    {
+      // Headless: direct is withheld — a stray direct call is not intercepted here and runs as a delegate (executor site below).
+      const direct = browseDirectAvailable(this.approvalMode.autoApproveActions)
+        ? toolUseBlocks.filter((t) => t.name === 'Browse' && t.input?.mode === 'direct') : [];
+      if (direct.length) {
+        const rest = toolUseBlocks.filter((t) => !direct.includes(t));
+        const alreadyConnected = this.directPinnedServers.has('nexus-browser');
+        if (!alreadyConnected && !this.directConfirmAsked && directConfirmEnabled() && looksMultiStepBrowseTask(direct[0]!.input?.task)) {
+          this.directConfirmAsked = true;
+          const store = this.getDecisionStore();
+          if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'steering_injected', detail: { kinds: ['direct_browse_confirm'] } }).catch(() => {});
+          const restResults = rest.length ? await this.handleToolCalls(rest, signal, structuredOutputState) : [];
+          return [...direct.map((t) => ({ tool_use_id: t.id, tool_name: t.name, content: DIRECT_CONFIRM_TEXT, is_error: false, metadata: { browseDirect: 'confirm' } })), ...restResults];
+        }
+        const content = await this.enableBrowserDirect(direct[0]!.input?.url);
+        const restResults = rest.length ? await this.handleToolCalls(rest, signal, structuredOutputState) : [];
+        return [...direct.map((t, i) => ({ tool_use_id: t.id, tool_name: t.name, content: i === 0 ? content.text : 'Already handled by the first direct Browse call.', is_error: content.isError, metadata: { browseDirect: true } })), ...restResults];
+      }
+    }
     // HB-TURN-CONTRACT-ENFORCE: a batch the loop rejected on format carries the re-prompt back as error results; nothing runs.
     if (this.pendingFormatReject) {
       const rej = this.pendingFormatReject; this.pendingFormatReject = null;
@@ -8551,7 +8728,7 @@ export class CortexOrchestrator {
           models: taskTools.map(t => String((t.input as any)?.model ?? 'inherit')),
           turn: this.turnNumber,
           // R133 HB-SUBAGENT-TIMEOUT: the resolved per-dispatch timeout + the parent's residual budget at dispatch
-          timeoutMs: taskTools.map(t => this.resolveSubAgentTimeoutFor(t.input).timeoutMs),
+          timeoutMs: taskTools.map(t => this.resolveSubAgentTimeoutFor(t.input, t.name).timeoutMs),
           remainingMs: this.remainingTurnMs(),
         },
       }).catch(() => {});
@@ -8708,7 +8885,7 @@ export class CortexOrchestrator {
           results.push({
             tool_use_id: toolUse.id,
             tool_name: toolUse.name,
-            content: `Tool '${toolUse.name}' is not available under the active tool profile (${this.effectiveGuardProfile()}). Use the tools offered in this session.`,
+            content: this.profileRefusal(toolUse.name),
             is_error: true,
           });
           continue;
@@ -8967,9 +9144,10 @@ export class CortexOrchestrator {
               // Execute regular executor tool
               result = await this.executorRegistry.execute(
                 toolUse.name,
-                toolUse.input,
+                this.executorInputFor(toolUse),
                 signal
               );
+              result = refuseSpawnInBrowseAgent(result);   // the browse agent may not start another sub-agent (toolAllowlist.ts)
 
               // Sub-Agent Spawning (Task, Browse, etc. — any tool emitting
               // shouldSpawnSubAgent). The dispatch gate is the metadata
@@ -8990,7 +9168,16 @@ export class CortexOrchestrator {
 
                   // Extract agent definition from metadata
                   const agentDef: AgentDefinition = result.metadata.agentDefinition;
-                  const taskPrompt: string = result.metadata.taskPrompt;
+                  let taskPrompt: string = result.metadata.taskPrompt;
+                  // CORTEX_BROWSE_CARRY (2026-11-04): a follow-up Browse after a COMPLETED report starts where that pass ended (browserWallNudge.ts).
+                  if (agentDef.name === 'browse-agent') {
+                    if (this.lastBrowseReport && browseCarryEnabled() && browseCarryApplies(this.lastBrowseReport, taskPrompt)) {
+                      taskPrompt = browseCarryBlock(this.lastBrowseReport, /^Start at: /.test(taskPrompt)) + taskPrompt;
+                      const store = this.getDecisionStore();
+                      if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'steering_injected', detail: { kinds: ['browse_carry'], url: lastUrlIn(this.lastBrowseReport.report) ?? null } }).catch(() => {});
+                    }
+                    this.lastBrowseTask = String(result.metadata.taskPrompt);
+                  }
                   // Per-fork env overrides let Browse enable MCP_AUTO_INJECT
                   // for its subagent without affecting the parent process.
                   const envOverrides: Record<string, string> | undefined = result.metadata.envOverrides;
@@ -9009,8 +9196,8 @@ export class CortexOrchestrator {
                       resolvedModelId = this.currentModelId || this.config.defaultModelId;
                     }
                   } else {
-                    // No model or 'inherit' - use parent's current model
-                    resolvedModelId = this.currentModelId || this.config.defaultModelId;
+                    // No model or 'inherit' - use the model of the turn in progress (the request's), else the parent's current model
+                    resolvedModelId = this.turnModelId || this.currentModelId || this.config.defaultModelId;
                   }
 
                   if (this.config.debug) {
@@ -9027,7 +9214,7 @@ export class CortexOrchestrator {
                   // R133 HB-SUBAGENT-TIMEOUT: derive the child's limit from the parent's remaining turn budget (or the
                   // Task `timeout_ms`), and hand the child the SAME limit as its own turn deadline — it otherwise inherits
                   // the parent's full CORTEX_TURN_DEADLINE_MS via process.env and never converges before the kill.
-                  const { timeoutMs, source: timeoutSource } = this.resolveSubAgentTimeoutFor(toolUse.input);
+                  const { timeoutMs, source: timeoutSource } = this.resolveSubAgentTimeoutFor(toolUse.input, toolUse.name);
                   if (this.config.debug) console.log(`[SubAgent] timeout ${timeoutMs}ms (${timeoutSource})`);
                   // R147 HB-HERDR-DELEGATES: runtime = herdr pane or forked IPC child (lever / Task `runtime`).
                   const subAgentResult = await this.dispatchSubAgent(processManager, toolUse.input, agentDef, taskPrompt, {
@@ -9176,7 +9363,7 @@ export class CortexOrchestrator {
     toolUse: { id: string; name: string; input: any },
     signal: AbortSignal,
   ): Promise<{ tool_use_id: string; tool_name: string; content: string; is_error?: boolean; metadata?: any }> {
-    const result = await this.executeSingleToolCall(toolUse, signal);
+    const result = await this.executeSingleToolCall(toolUse, signal);   // masked at the top of processToolTraining
     return await this.processToolTraining(toolUse, result);
   }
 
@@ -9254,7 +9441,7 @@ export class CortexOrchestrator {
         return {
           tool_use_id: toolUse.id,
           tool_name: toolUse.name,
-          content: `Tool '${toolUse.name}' is not available under the active tool profile (${this.effectiveGuardProfile()}). Use the tools offered in this session.`,
+          content: this.profileRefusal(toolUse.name),
           is_error: true,
         };
       }
@@ -9288,7 +9475,7 @@ export class CortexOrchestrator {
       }
 
       // Execute the tool (using executor registry)
-      const result = await this.executorRegistry.execute(toolUse.name, toolUse.input, signal);
+      const result = refuseSpawnInBrowseAgent(await this.executorRegistry.execute(toolUse.name, this.executorInputFor(toolUse), signal));   // the browse agent may not start another sub-agent
 
       // Handle any sub-agent-spawning tool (Task, Browse, etc.). The dispatch
       // gate is the metadata contract, not the tool name — that way Browse and
@@ -9312,7 +9499,7 @@ export class CortexOrchestrator {
           const resolved = this.modelAliasResolver.resolve(agentDef.model, { strict: false });
           resolvedModelId = resolved?.modelId || this.currentModelId || this.config.defaultModelId;
         } else {
-          resolvedModelId = this.currentModelId || this.config.defaultModelId;
+          resolvedModelId = this.turnModelId || this.currentModelId || this.config.defaultModelId;
         }
 
         if (this.config.debug) {
@@ -9325,7 +9512,7 @@ export class CortexOrchestrator {
 
         try {
           // R133 HB-SUBAGENT-TIMEOUT: see the handleToolCalls site — residual-derived limit, mirrored into the child's turn deadline.
-          const { timeoutMs, source: timeoutSource } = this.resolveSubAgentTimeoutFor(toolUse.input);
+          const { timeoutMs, source: timeoutSource } = this.resolveSubAgentTimeoutFor(toolUse.input, toolUse.name);
           if (this.config.debug) console.log(`[SubAgent] timeout ${timeoutMs}ms (${timeoutSource})`);
           // R147 HB-HERDR-DELEGATES: runtime = herdr pane or forked IPC child (lever / Task `runtime`).
           const subAgentResult = await this.dispatchSubAgent(processManager, toolUse.input, agentDef, taskPrompt, {
@@ -9494,12 +9681,15 @@ export class CortexOrchestrator {
     // R266: a server named in CORTEX_MCP_AUTOCONNECT was asked for explicitly (the Browse delegate's
     // envOverrides) — its tools are ESSENTIAL so the deferred filter cannot strip them; other MCP tools
     // keep no tier (deferred as before).
-    const pinnedServers = new Set((process.env.CORTEX_MCP_AUTOCONNECT ?? '').split(',').map((x) => x.trim()).filter(Boolean));
+    const pinnedServers = new Set([...(process.env.CORTEX_MCP_AUTOCONNECT ?? '').split(',').map((x) => x.trim()).filter(Boolean), ...this.directPinnedServers]);
     return mcpTools.map(tool => ({
       name: prefixMcpToolName(tool.serverName, tool.name),
       description: tool.description || `MCP tool from ${tool.serverName}`,
-      schema: tool.inputSchema || { type: 'object', properties: {} },
-      ...(pinnedServers.has(tool.serverName) ? { discoveryTier: 'essential' as const } : {}),
+      schema: normalizeMcpSchema(tool.inputSchema || { type: 'object', properties: {} }),   // tuple items → providers reject (mcpSchemaCompat.ts)
+      // Only a server's ESSENTIAL set is pinned (2026-11-02): pinning all 50 nexus-browser tools sent ~49k chars of schemas on EVERY
+      // delegate request; the rest stay deferred and discoverable via SearchTools (the canonical progressive-discovery form the MCP
+      // server itself uses). Servers without a curated set keep the old all-pinned behaviour.
+      ...(pinnedServers.has(tool.serverName) && isEssentialMcpTool(tool.serverName, tool.name) ? { discoveryTier: 'essential' as const } : {}),
       metadata: {
         source: 'mcp',
         serverName: tool.serverName,
@@ -9877,14 +10067,17 @@ export class CortexOrchestrator {
   }
 
   /** R133: the sub-agent timeout for one Task/Browse tool input (`timeout_ms` request → residual deadline → env → 5 min). */
-  private resolveSubAgentTimeoutFor(input: unknown): { timeoutMs: number; source: string } {
-    const requested = Number((input as { timeout_ms?: unknown } | undefined)?.timeout_ms);
+  private resolveSubAgentTimeoutFor(input: unknown, toolName?: string): { timeoutMs: number; source: string } {
+    let requested = Number((input as { timeout_ms?: unknown } | undefined)?.timeout_ms);
+    // Browse delegates get their own default (2026-11-03): 4 of 8 cars.com/CarMax delegates hit the generic 5-min limit mid-task
+    // (~1.1M input tokens each, nothing usable returned); the ones that finished took 3–4 min. A parent deadline still caps it.
+    if (!(Number.isFinite(requested) && requested > 0) && toolName === 'Browse') requested = browseDelegateTimeoutMs(process.env);
     return resolveSubAgentTimeoutMs({ requestedMs: Number.isFinite(requested) && requested > 0 ? requested : undefined, remainingMs: this.remainingTurnMs() });
   }
 
   /** R133: per-block lookup for resolveOuterToolDeadlineMs — a sub-agent-spawning block contributes its resolved timeout. */
   private subAgentBlockTimeoutMs = (block: { name?: string; input?: unknown }): number | undefined =>
-    block?.name === 'Task' || block?.name === 'Browse' ? this.resolveSubAgentTimeoutFor(block.input).timeoutMs : undefined;
+    block?.name === 'Task' || block?.name === 'Browse' ? this.resolveSubAgentTimeoutFor(block.input, block.name).timeoutMs : undefined;
 
   /**
    * R147 HB-HERDR-DELEGATES: herdr delegates are possible only inside a herdr pane (HERDR_ENV=1 +
@@ -9924,8 +10117,15 @@ export class CortexOrchestrator {
     taskPrompt: string,
     options: { modelOverride: string; timeoutMs: number; maxTurns: number; envOverrides: Record<string, string>; toolUseId: string },
   ): Promise<SubAgentResult> {
+    // EndTurn review inside sub-agents (2026-11-03, multi-site browser pass): the resolver judge took 90 of 296 task-minutes INSIDE browse
+    // delegates (67–133 s per review, holds, 5 timeouts at the 10-min cap) while the parent reviews the delegate's result anyway.
+    options = { ...options, envOverrides: { ...subAgentEndTurnEnv(), ...options.envOverrides } };
     const { runtime, reason } = await this.resolveSubAgentRuntimeFor(input);
     if (this.config.debug) console.log(`[SubAgent] runtime ${runtime} (${reason})`);
+    // The browse agent always sees the USER's request, not only the parent's paraphrase (2026-11-03, Sonnet CarMax): a follow-up Browse
+    // call ("open the URL in a fresh browser and report") dropped "near Kentwood", so that delegate kept no scope and the final answer
+    // hedged between 20 (25 mi) and the nationwide 14,332. The parent's task still says WHAT to do; the request says what must hold.
+    if (agentDef.name === 'browse-agent') taskPrompt = withUserRequest(taskPrompt, this.lastRealUserText());
     // R266b: the delegate inherits the parent's approval mode — auto-approving parents (headless, one-shot, TUI yolo)
     // must not leave a child blocked on an approval the operator never sees; interactive parents keep the IPC forward.
     const permissionMode: 'auto' | 'interactive' = this.approvalMode?.autoApproveActions === true ? 'auto' : 'interactive';
@@ -9964,6 +10164,10 @@ export class CortexOrchestrator {
 
   private formatSubAgentResultForLLM(result: SubAgentResult): string {
     const lines: string[] = [];
+    if (result.agentName === 'browse-agent' && result.status === 'completed') {
+      this.browseCompletedThisTurn = true;
+      this.lastBrowseReport = { task: this.lastBrowseTask, report: String(result.fullResponse || result.summary || '') }; // CORTEX_BROWSE_CARRY
+    }
 
     // Header
     lines.push(`# Sub-Agent Result: ${result.agentName}`);
@@ -10019,7 +10223,7 @@ export class CortexOrchestrator {
     lines.push(`- Input: ${result.cost.inputTokens.toLocaleString()}`);
     lines.push(`- Output: ${result.cost.outputTokens.toLocaleString()}`);
     if (result.cost.cacheHits > 0) {
-      lines.push(`- Cache Hits: ${result.cost.cacheHits}`);
+      lines.push(`- Cache-read tokens: ${result.cost.cacheHits.toLocaleString()}`);
     }
     lines.push(`- Estimated Cost: $${result.cost.estimatedCost.toFixed(4)}`);
     lines.push('');
@@ -10037,11 +10241,13 @@ export class CortexOrchestrator {
     if (result.fullResponse) {
       lines.push('## Full Response');
       lines.push('');
-      const maxLen = 5000;
+      // Keep the END (2026-11-02): fullResponse is the sub-agent's text across ALL its turns — narration first, the answer last. Keeping the
+      // first 5000 chars dropped the answer itself (fuzzycortex: "the browser sub-agent's report was cut off partway"). Drop early narration.
+      const maxLen = 8000;
       if (result.fullResponse.length > maxLen) {
-        lines.push(result.fullResponse.slice(0, maxLen));
+        lines.push(`... (${result.fullResponse.length - maxLen} chars of earlier narration omitted — the sub-agent's final answer follows)`);
         lines.push('');
-        lines.push(`... (truncated, ${result.fullResponse.length - maxLen} chars omitted)`);
+        lines.push(result.fullResponse.slice(-maxLen));
       } else {
         lines.push(result.fullResponse);
       }
@@ -10551,7 +10757,7 @@ export class CortexOrchestrator {
    * Banks one effort_ramp event when the ramp hands back to the configured effort (and at the first ramped call).
    */
   private nextRampEffort(startTurn = false): ReasoningEffortLevel | undefined {
-    if (startTurn) { this.effortRampCallIndex = 0; this.effortRampCalls = 0; this.computeNudgeLastRound = -1_000_000; this.computeNudgeFired = 0; }
+    if (startTurn) { this.effortRampCallIndex = 0; this.effortRampCalls = 0; this.computeNudgeLastRound = -1_000_000; this.computeNudgeFired = 0; this.browserWallNudged = false; this.directBrowseCalls = 0; this.directBrowseNudged = false; this.directConfirmAsked = false; this.sourcesReminded = false; this.browseCompletedThisTurn = false; this.lastBrowseReport = null; this.lastBrowseTask = ''; this.reverifyExplained = new Set(); this.probeExplained = false; }
     try {
       const cfg = resolveEffortRamp();
       if (!cfg.enabled) return undefined;
@@ -10623,6 +10829,67 @@ export class CortexOrchestrator {
    * append one 'compute/test instead of deliberating' line to the tail of the newest tool_result (the HB-TURN-STATUS carrier —
    * earlier request prefixes stay byte-identical). Cooldown + per-turn cap; one compute_nudge event per firing. Fail-open.
    */
+  private browserWallNudged = false;
+  private directBrowseCalls = 0;
+  private directBrowseNudged = false;
+  private directConfirmAsked = false;
+  private sourcesReminded = false;
+  private browseCompletedThisTurn = false;
+  /** CORTEX_BROWSE_CARRY: the last COMPLETED browse delegate's task + report this turn (reset per turn). */
+  private lastBrowseReport: { task: string; report: string } | null = null;
+  private lastBrowseTask = '';
+  private reverifyExplained = new Set<string>();
+  private probeExplained = false;
+
+  /** A Browse call naming mode "direct" where direct is withheld (headless) runs as a delegate — same task, no error round-trip. Used by
+   *  EVERY executor call site (2026-11-03: the batch path still passed mode:"direct" through and the executor answered with an error). */
+  private executorInputFor(toolUse: { name: string; input?: any }): any {
+    if (toolUse.name === 'Browse' && toolUse.input?.mode === 'direct' && !browseDirectAvailable(this.approvalMode.autoApproveActions)) {
+      const { mode: _m, ...rest } = toolUse.input; void _m;
+      return rest;
+    }
+    return toolUse.input;
+  }
+
+  /** Stage 5 needs `sources` after web use; say so at the first web result of the turn instead of after a rejected EndTurn. */
+  private injectSourcesReminder(toolResults: Array<{ tool_name?: string }>): void {
+    try {
+      if (this.sourcesReminded || !resolveEndTurnIntegrityMode(process.env)) return;
+      if (!toolResults.some((r) => WEB_TOOL_NAMES.includes(String(r.tool_name)))) return;
+      if (!appendStatusToNewestToolResult(this.messageHistory as any[], SOURCES_REMINDER_LINE)) return;
+      this.invalidateTailUnitConversions();
+      this.sourcesReminded = true;
+    } catch { /* fail-open */ }
+  }
+
+  /** Long direct browsing → once per turn, steer the rest of the task to the browse sub-agent (browserWallNudge.ts directBrowseLine). */
+  private injectDirectBrowseNudge(round: number, streaming: boolean, toolUses: Array<{ name?: string; input?: unknown }> = []): void {
+    try {
+      if (this.directBrowseNudged || process.env.CORTEX_BROWSE_AGENT === 'true') return;
+      this.directBrowseCalls += countDirectBrowserCalls(toolUses);
+      const threshold = directBrowseNudgeThreshold();
+      if (threshold <= 0 || this.directBrowseCalls < threshold || webToolBlocked('Browse')) return;
+      if (!appendStatusToNewestToolResult(this.messageHistory as any[], directBrowseLine(this.directBrowseCalls))) return;
+      this.invalidateTailUnitConversions(); // R221 safety net
+      this.directBrowseNudged = true;
+      const store = this.getDecisionStore();
+      if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'steering_injected', detail: { kinds: ['direct_browse_long'], calls: this.directBrowseCalls, iteration: round, streaming } }).catch(() => {});
+    } catch { /* fail-open */ }
+  }
+  /** Browser-wall nudge (browserWallNudge.ts): once per turn, when a Bash/WebFetch result is a bot-check page and Browse is enabled. */
+  private injectBrowserWallNudge(toolResults: Array<{ tool_name?: string; content?: unknown }>, round: number, streaming: boolean, toolUses: Array<{ name?: string; input?: unknown }> = []): void {
+    try {
+      if (this.browserWallNudged || webToolBlocked('Browse')) return;
+      const trigger = sawBotWall(toolResults) ? 'wall' : sawScriptedBrowser(toolUses) ? 'scripted_browser' : null;
+      if (!trigger) return;
+      if (!appendStatusToNewestToolResult(this.messageHistory as any[], BROWSER_WALL_LINE)) return;
+      this.invalidateTailUnitConversions(); // R221 safety net
+      this.browserWallNudged = true;
+      const store = this.getDecisionStore();
+      if (store) void store.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'steering_injected', detail: { kinds: ['browser_wall'], trigger, iteration: round, streaming } }).catch(() => {});
+    } catch { /* fail-open */ }
+  }
+
   private injectComputeNudge(round: number, streaming: boolean): void {
     try {
       const cfg = resolveComputeNudge();
@@ -10910,6 +11177,9 @@ export class CortexOrchestrator {
     toolUse: { id: string; name: string; input: any },
     result: { tool_use_id: string; tool_name: string; content: string; is_error?: boolean; metadata?: any },
   ): Promise<typeof result> {
+    // Secrets vault Phase 2: mask FIRST — every tool path funnels through here, and the decision store below persists errorSnippet
+    // (later re-injected into prompts as priors) and training records. Identity without a vault.
+    result = maskToolResults([result])[0]!;
     this.applySliceNudge(toolUse, result); // universal post-execution hook: every path funnels through processToolTraining
     const store = this.getDecisionStore();
     if (!store) return result;
@@ -11588,7 +11858,7 @@ export class CortexOrchestrator {
                 if (process.env.DEBUG === 'true') {
                   console.log(`[Orchestrator] R30 recovery: found persisted sub-agent result for tool_use_id=${toolUse.id}`);
                 }
-                const formatted = this.formatSubAgentResultForLLM(persisted);
+                const formatted = maskSecretText(this.formatSubAgentResultForLLM(persisted));   // secrets vault Phase 2
                 return {
                   type: 'tool_result',
                   toolResult: {
@@ -12282,7 +12552,7 @@ export class CortexOrchestrator {
       'Session & History': [
         'ListSessions', 'LoadSession', 'SearchConversationHistory',
         'GetConversationSegment', 'ListCompactionBoundaries', 'RequestHistoricalContext',
-        'CanonListSessions', 'CanonPullSession',
+        'CanonListSessions', 'CanonPullSession', 'SecretsList',
       ],
       'Sandbox & Artifacts': [
         'CreateArtifactTool', 'InteractWithSandbox', 'ModifySandbox',

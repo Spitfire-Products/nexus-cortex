@@ -20,6 +20,7 @@
 
 import type { ModelRouterMatrix } from './ModelRouterMatrix.js';
 import { ExperimentLedger, type ExperimentRecord } from './ExperimentLedger.js';
+import { familyEffects, stepGuards, describeGuardBlocks, type FamilyEffect, type GuardVerdict } from './AutoResearchGuards.js';
 import { regressionScan, toTaskResult, type TaskComparison, type RegressionReport } from './VersionComparison.js';
 import { decideExperiment, type GateOptions, type ExperimentVerdict, type TaskArms } from './AutoResearchStats.js';
 
@@ -48,6 +49,11 @@ export interface EvaluateResult {
   /** regressed task fingerprints — populated even on a 'keep' so the caller can
    *  see collateral damage. A keep with regressions is a caller red flag. */
   regressedTasks: string[];
+  /** per-family effects (TaskClassifier families) with SEs — B4 guards */
+  families: FamilyEffect[];
+  /** STEP guard verdicts at the default margin; callers with their own margin re-run
+   *  stepGuards(families, …). A blocked family means this candidate hurt that family. */
+  stepGuards: GuardVerdict[];
 }
 
 /**
@@ -94,9 +100,13 @@ export function evaluateExperiment(
   //    that flagged in the reason — the loop should not silently merge collateral
   //    damage even when the aggregate effect is positive.
   const regressedTasks = regression.regressions.map(r => r.taskFingerprint);
-  const reason = verdict.decision === 'keep' && regressedTasks.length > 0
+  const families = familyEffects(arms, { seed: input.gate?.seed, minRunsPerArm: input.gate?.minRunsPerArm });
+  const guards = stepGuards(families);
+  const blocks = describeGuardBlocks(guards);
+  let reason = verdict.decision === 'keep' && regressedTasks.length > 0
     ? `${verdict.reason} | WARNING: ${regressedTasks.length} task(s) regressed: ${regressedTasks.join(', ')}`
     : verdict.reason;
+  if (blocks) reason += ` | GUARD: ${blocks}`;
 
   const record = ledger.decide(experimentTag, {
     decision: verdict.decision,
@@ -108,7 +118,7 @@ export function evaluateExperiment(
     reason,
   })!;
 
-  return { record, verdict, regression, regressedTasks };
+  return { record, verdict, regression, regressedTasks, families, stepGuards: guards };
 }
 
 /**

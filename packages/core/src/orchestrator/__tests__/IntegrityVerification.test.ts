@@ -86,3 +86,28 @@ describe('EndTurn Stage 5 integrity', () => {
     }
   });
 });
+
+describe('Browse tasks are web use, not solution queries (2026-11-03)', () => {
+  it('a Browse task that restates the user task is not flagged as a solution query, but still needs sources', async () => {
+    const { verifyIntegrity } = await import('../integrityVerification.js');
+    const task = 'can you look up how many used porsche cayennes are available in the Newport Beach Orange county ca porsche dealership';
+    const v = verifyIntegrity({ webQueries: [], browseTasks: [`Go to the dealer site and ${task} — report the count`], webContent: ['report'], writeInputs: [], userTaskText: task });
+    expect(v.flags.some((f) => f.check === 'solution_query')).toBe(false);
+    expect(v.flags.some((f) => f.check === 'unattested_web_use')).toBe(true);
+  });
+});
+
+describe('Stage-5 sources filled by the harness (CORTEX_ENDTURN_SOURCES_AUTO, 2026-11-04)', () => {
+  it('missing sources + web calls → rows built from the calls; a valid list from the model is kept; off restores the rejection', async () => {
+    const { sourcesOrAuto, sourcesAutoFilled } = await import('../endTurnGates.js');
+    const { verifyIntegrity } = await import('../integrityVerification.js');
+    const ev = { browseTasks: ['Go to bbb.org and find the best rated accredited charity near 12023'], webQueries: [], webFetchUrls: ['https://www.bbb.org/search'] };
+    const rows = sourcesOrAuto(undefined, ev, {} as any);
+    expect(rows).toHaveLength(2);
+    expect(sourcesAutoFilled(undefined, ev, {} as any)).toBe(true);
+    expect(verifyIntegrity({ webQueries: [], browseTasks: ev.browseTasks, webContent: ['r'], writeInputs: [], userTaskText: 't', sourcesAttestation: rows }).ok).toBe(true);
+    const own = [{ accessed: 'x', purpose: 'y', used_for: 'z' }];
+    expect(sourcesOrAuto(own, ev, {} as any)).toBe(own);
+    expect(sourcesOrAuto(undefined, ev, { CORTEX_ENDTURN_SOURCES_AUTO: 'off' } as any)).toBeUndefined();
+  });
+});

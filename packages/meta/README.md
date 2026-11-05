@@ -39,6 +39,7 @@ cortex setup
 ```
 
 The wizard asks which providers you use, takes their API keys, lets you pick the action / helper / mentor models and the web-tools
-backend, writes `~/.cortex/.env` and verifies each model with one request. Running `cortex` with no key in a terminal starts it for you.
+backend, stores the keys in an encrypted vault (`~/.cortex/secrets.enc`; `cortex secrets`, `/secrets`) and the settings in
+`~/.cortex/.env`, and verifies each model with one request. Running `cortex` with no key in a terminal starts it for you.
 The shipped defaults run every role on `deepseek-flash` with the `standard` lever profile (the harness's proven steering and
 failure-path levers). Full docs: https://github.com/Spitfire-Products/nexus-cortex#readme

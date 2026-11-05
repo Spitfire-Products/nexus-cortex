@@ -556,7 +556,7 @@ The 'prompt' parameter guides what to extract — use it to focus on specific se
 
   {
     name: 'Browse',
-    description: 'Drive a headless browser via a nexus-browser subagent. Use for interactive page work (click, form-fill, login), JS-rendered SPA scraping, or anti-bot bypass. For static text search prefer WebSearch; for plain URL reads prefer WebFetch. TASK INTEGRITY: browse for documentation and data your task legitimately needs — never to retrieve a task\'s published solution or reference implementation; deliverables must derive from work executed in this workspace.',
+    description: 'The web browser for this session. Use it whenever the task is to navigate to, open, visit or look at a website or web app and report or act on what is there — JavaScript apps, live dashboards and chat panels, logged-in pages, clicking, typing, filling forms. It gets past bot checks (a Cloudflare "Just a moment…" page, 403s) that block curl, wget and WebFetch. Do not script your own browser (playwright, puppeteer, a raw chromium) through Bash — this tool is that browser, already set up. For a quick static read of a plain page WebFetch is cheaper; for finding pages, WebSearch. TASK INTEGRITY: browse for documentation and data your task legitimately needs — never to retrieve a task\'s published solution or reference implementation; deliverables must derive from work executed in this workspace. Default mode delegates the whole task to a browse sub-agent (only the result enters your context) — use it for any multi-page or multi-step task; mode "direct" connects the nexus-browser tools into your own session for short step-by-step work. Give the browse agent the WHOLE task in ONE call — the goal, every constraint (place, filters, dates) and the result you need; do not split it into probe calls ("does the site load?" then "now filter"): each call starts a fresh browser, and the agent handles bot walls and detours itself and reports them. Its report carries its evidence; call again only to close a gap it names, and then restate the whole task. Before reporting a result, check it fits the task\'s scope and scale (a count for one store or area must come from results filtered to it, not a site-wide total).',
     schema: {
       type: 'object',
       properties: {
@@ -571,6 +571,11 @@ The 'prompt' parameter guides what to extract — use it to focus on specific se
         model: {
           type: 'string',
           description: "Optional model override. Defaults to parent's current model. Accepts Claude aliases (sonnet, opus, haiku), 'inherit', or any registered model ID (e.g. deepseek-v4-pro, grok-4.3) for cross-provider dispatch."
+        },
+        mode: {
+          type: 'string',
+          enum: ['delegate', 'direct'],
+          description: 'How to browse. "delegate" (default): a browse sub-agent does the whole task and returns the result — your context only sees the outcome. "direct": you drive the browser yourself — the ~43 nexus-browser tools (browse, scan, click, type, get_content, …) are connected into YOUR session for the rest of it; use only for SHORT interactive work — a page or two, a quick check, a step you must watch. Any task that spans several pages or steps (search, set filters, compare, a multi-step form) goes to "delegate": every page you read in direct mode stays in your context and is re-sent on every later request.'
         }
       },
       required: ['task']
@@ -1105,11 +1110,7 @@ Use plan mode for tasks with genuine ambiguity — multiple reasonable architect
 
 - citations: list EACH specific reference in your draft with the exact verbatim source you copied it from this turn. If you cannot produce the verbatim source, the reference is unverified — delete it from your answer and do not list it (quote the code instead of asserting a coordinate). Inventing one is a failed answer, exactly like a non-matching edit old_string.
 - verification: list each build/test/lint command you actually ran with the real result line you saw. Do not list a command you did not run.
-- sources: {
--   type: 'array',
--   description: 'REQUIRED under the integrity gate whenever web tools were used this turn: one row per access — what you looked up, why, and how it informed work you executed yourself. { accessed, purpose, used_for }.',
--   items: { type: 'object', properties: { accessed: { type: 'string' }, purpose: { type: 'string' }, used_for: { type: 'string' } } }
-- },
+- sources: REQUIRED whenever web tools (Browse, WebFetch, WebSearch) were used this turn — an ARRAY with one row per access: { accessed (url/query), purpose (why you needed it), used_for (how it informed the answer or the work you executed) }.
 - requirements: re-read the ORIGINAL task statement and list each requirement it states, with what in your artifact satisfies it and the command/observation that proves it (or the literal "UNVERIFIED"). Copy each requirement in the task's OWN words (not a paraphrase) and make verified_how a PASTED output line, e.g. {requirement: "write the answer to /app/move.txt", satisfied_by: "/app/move.txt written", verified_how: "$ cat /app/move.txt → Nf3"} — a sentence like "ran it and it worked" is rejected. Finishing without checking the artifact against the stated task is the most common failed answer.
 - self_review: re-read your draft as a skeptical reviewer — what you did NOT check, what is assumed/possibly wrong, what one more tool call would verify. This pass exists to catch your own mistakes before they ship.
 - summary / open_items: what you delivered and any gaps — do not hide them.
@@ -1118,6 +1119,11 @@ After EndTurn returns, act on your own self_review, then produce your final plai
     schema: {
       type: 'object',
       properties: {
+        sources: {
+          type: 'array',
+          description: 'REQUIRED whenever web tools (Browse, WebFetch, WebSearch) were used this turn: one row per access. Pass a JSON array, not a string.',
+          items: { type: 'object', properties: { accessed: { type: 'string' }, purpose: { type: 'string' }, used_for: { type: 'string' } }, required: ['accessed', 'purpose', 'used_for'] },
+        },
         citations: {
           type: 'array',
           description: "Every specific reference in your draft (file:line, line numbers, URLs, API/function signatures, quotes). One entry each with the exact transcribed source. Empty array = you cited none.",
@@ -2250,6 +2256,21 @@ Query forms: keyword search ("notebook jupyter"), category filter ("execution"),
     },
     category: 'base',
     discoveryTier: 'essential',
+    metadata: {
+      immutable: true,
+      executionEnvironment: 'client',
+      version: '1.0.0'
+    }
+  },
+
+  {
+    name: 'SecretsList',
+    description: `List the secrets stored in the user's encrypted secrets vault (~/.cortex/secrets.enc) — names, provider, type, and which environment variables each is bound to. NEVER returns values.
+
+The harness already uses provider API keys from the vault for its own model calls. Your shell and other tool processes see a vault secret ONLY when the user has bound it (\`cortex secrets bind NAME ENV_VAR\`); stored values in any tool output appear as «secret:NAME». Use this when a command fails for missing credentials: tell the user which secret to bind (or to add one with /secrets) instead of asking them to paste a key into the chat.`,
+    schema: { type: 'object', properties: {} },
+    category: 'base',
+    discoveryTier: 'standard',
     metadata: {
       immutable: true,
       executionEnvironment: 'client',

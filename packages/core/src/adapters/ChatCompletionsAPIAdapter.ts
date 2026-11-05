@@ -20,6 +20,7 @@
  * - Most OpenAI-compatible APIs
  */
 
+import { repairToolJson } from '../utils/repairToolJson.js';
 import {
   FormatAdapter,
   CanonicalTool,
@@ -401,9 +402,11 @@ export class ChatCompletionsAPIAdapter implements FormatAdapter {
     } catch (error) {
       // Try to extract parameters from XML-formatted arguments
       // Some models (e.g., xAI reasoning models) emit XML parameter tags
-      input = this.tryParseXmlArguments(toolCall.function.arguments);
+      // Structural repair first (2026-11-04: DeepSeek drops/adds a brace in nested tool args), then the XML fallback.
+      input = repairToolJson(toolCall.function.arguments) ?? this.tryParseXmlArguments(toolCall.function.arguments);
       if (Object.keys(input).length === 0) {
         console.error(`Failed to parse tool arguments: ${toolCall.function.arguments.substring(0, 200)}`);
+        if (process.env.DEBUG === 'true') console.error(`Unparsed tool arguments (full, ≤6000): ${toolCall.function.arguments.substring(0, 6000)}`);
       }
     }
 

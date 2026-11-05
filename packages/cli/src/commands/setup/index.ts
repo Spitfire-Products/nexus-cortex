@@ -14,10 +14,11 @@
  * one-request-per-model check (the interactive wizard probes by default, a scripted run does not — no surprise network calls).
  */
 import inquirer from 'inquirer';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
 import {
   ModularModelRegistry, SettingsLoader, getGlobalConfigDir, getGlobalEnvPath, validateSetting, keysOnlyStub,
+  Vault, openVaultNonInteractive, initVaultDefault, vaultPath, providerForName,
   providerChoices, suggestRoles, webChoices, planToEnv, summaryLines, resolveSetupAnswers,
   type SetupAnswers, type ModelCardSummary, type EnvironmentVariables,
 } from '@nexus-cortex/core';
@@ -42,6 +43,10 @@ export interface SetupOptions {
   /** print the env lines that WOULD be written (secrets masked) and exit — no write, no probe */
   print?: boolean;
   json?: boolean;
+  /** where API keys / tokens go: 'vault' (default — the encrypted ~/.cortex/secrets.enc) or 'env' (plaintext ~/.cortex/.env, the old way) */
+  secretsTo?: 'vault' | 'env';
+  /** 'local' = install the local browser now (everything it needs; choosing it is the approval) · 'hosted' = the hosted browser MCP */
+  browser?: 'local' | 'hosted';
 }
 
 const fmtPrice = (m: ModelCardSummary) => (m.inputCost || m.outputCost) ? `$${m.inputCost}/$${m.outputCost} per M` : 'price n/a';
@@ -83,6 +88,72 @@ function writePlan(env: Record<string, string>): { ok: boolean; failed: string[]
   return { ok: failed.length === 0, failed };
 }
 
+const SECRET_KEY = /(_API_KEY|_API_TOKEN|_OAUTH_TOKEN|_SECRET|_TOKEN)$/;
+
+/** Split a plan into secrets (keys / tokens) and plain settings. */
+function splitSecrets(env: Record<string, string>): { secrets: Record<string, string>; settings: Record<string, string> } {
+  const secrets: Record<string, string> = {}; const settings: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) (SECRET_KEY.test(k) ? secrets : settings)[k] = v;
+  return { secrets, settings };
+}
+
+interface SecretWrite { ok: boolean; where: 'vault' | 'env'; path: string; source?: string; created?: boolean; blanked: string[]; error?: string }
+
+/**
+ * Secrets vault Phase 3: keys go to the encrypted vault (~/.cortex/secrets.enc), not the plaintext .env. No vault yet → create one the
+ * zero-friction way (OS keychain, else an owner-only key file). A locked (passphrase) vault → ask at a terminal; a script must provide
+ * CORTEX_SECRETS_KEY or choose --secrets-to env. A plaintext copy of the same key left in ~/.cortex/.env is blanked (it would only go
+ * stale: the vault ranks above the .env file).
+ */
+async function writeSecrets(secrets: Record<string, string>, opts: SetupOptions, interactive: boolean): Promise<SecretWrite> {
+  if (Object.keys(secrets).length === 0) return { ok: true, where: opts.secretsTo === 'env' ? 'env' : 'vault', path: vaultPath(), blanked: [] };
+  if (opts.secretsTo === 'env') { const w = writePlan(secrets); return { ok: w.ok, where: 'env', path: getGlobalEnvPath(), blanked: [], error: w.error ?? (w.ok ? undefined : w.failed.join(', ')) }; }
+  let vault: Vault | null = null; let created = false;
+  try {
+    let r = openVaultNonInteractive();
+    if (!r.status.exists) { initVaultDefault(); created = true; r = openVaultNonInteractive(); }
+    vault = r.vault;
+    if (!vault && r.status.exists && interactive) {
+      const { pass } = await inquirer.prompt<{ pass: string }>([{ type: 'password', name: 'pass', mask: '*', message: 'The secrets vault is locked — its passphrase / key:' }]);
+      vault = Vault.open(pass.trim(), 'passphrase');
+    }
+    if (!vault) return { ok: false, where: 'vault', path: vaultPath(), blanked: [], error: `the secrets vault ${vaultPath()} is locked — set CORTEX_SECRETS_KEY (or CORTEX_SECRETS_KEY_FILE) to its key, run setup at a terminal to be asked for it, or pass --secrets-to env to write the keys to ${getGlobalEnvPath()} instead` };
+    for (const [k, v] of Object.entries(secrets)) vault.set(k, v, providerForName(k) ? { provider: providerForName(k)!.id } : {});
+  } catch (e) {
+    return { ok: false, where: 'vault', path: vaultPath(), blanked: [], error: String((e as Error).message) };
+  }
+  // Blank stale plaintext copies in ~/.cortex/.env (other lines untouched).
+  const blanked: string[] = []; const envPath = getGlobalEnvPath();
+  try {
+    if (existsSync(envPath)) {
+      const lines = readFileSync(envPath, 'utf-8').split('\n').map((l) => {
+        const m = l.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+        if (m && m[1]! in secrets && m[2]!.replace(/#.*$/, '').trim().replace(/^["']|["']$/g, '')) { blanked.push(m[1]!); return `${m[1]}=   # moved to the secrets vault`; }
+        return l;
+      });
+      if (blanked.length) writeFileSync(envPath, lines.join('\n'), 'utf-8');
+    }
+  } catch { /* read-only home — the vault still wins on precedence */ }
+  return { ok: true, where: 'vault', path: vault.file, source: vault.source, created, blanked };
+}
+
+const secretLine = (w: SecretWrite, n: number): string => n === 0 ? '' : w.where === 'env'
+  ? `${n} key(s) to ${w.path} (plaintext — \`cortex secrets import-env --strip\` moves them into the encrypted vault)`
+  : `${n} key(s) to the encrypted secrets vault ${w.path}${w.created ? ' (created; ' : ' ('}unlocks via ${w.source ?? 'its key'})${w.blanked.length ? `; blanked the old plaintext copies in ${getGlobalEnvPath()}: ${w.blanked.join(', ')}` : ''}`;
+
+/** The browser choice: 'local' installs the local browser now (the choice is the approval); 'hosted' records the hosted MCP. */
+async function applyBrowserChoice(choice: 'local' | 'hosted' | undefined, approved: boolean, out: (s?: string) => void): Promise<{ ok: boolean; message: string } | null> {
+  if (!choice) return null;
+  if (choice === 'hosted') {
+    new SettingsLoader(getGlobalConfigDir()).setMultiple({ NEXUS_BROWSER_MODE: 'hosted' } as Partial<EnvironmentVariables>);
+    process.env.NEXUS_BROWSER_MODE = 'hosted';
+    return { ok: true, message: 'Browser: the hosted browser MCP (NEXUS_BROWSER_MODE=hosted).' };
+  }
+  out('Installing the local browser…');
+  const { installLocalBrowser } = await import('../browser/index.js');
+  return installLocalBrowser({ approved, out: (s) => out(s) });
+}
+
 interface ProbeResult { model: string; ok: boolean; ms: number; detail: string }
 
 async function probeModels(ids: string[], out: (s?: string) => void): Promise<ProbeResult[]> {
@@ -118,7 +189,7 @@ const RECIPE = [
   '               --action deepseek-flash --helper deepseek-flash \\',
   '               --mentor deepseek-v4-pro --vision deepseek-flash --web auto --yes',
   '  cortex setup --print --key DEEPSEEK_API_KEY=sk-...          # show the env lines, write nothing',
-  '  cortex config set DEEPSEEK_API_KEY sk-...                   # or one setting at a time',
+  '  cortex secrets set DEEPSEEK_API_KEY                          # or one key at a time (masked prompt / stdin; encrypted vault)',
 ];
 
 export async function runSetup(opts: SetupOptions = {}): Promise<number> {
@@ -158,22 +229,28 @@ export async function runSetup(opts: SetupOptions = {}): Promise<number> {
     const answers = resolved.answers;
     const env = planToEnv(answers);
 
+    const { secrets, settings } = splitSecrets(env);
+    const secretsWhere = opts.secretsTo === 'env' ? getGlobalEnvPath() : vaultPath();
     if (opts.print) {
       if (opts.json) {
-        out(JSON.stringify({ write: false, path: getGlobalEnvPath(), env: Object.fromEntries(Object.entries(env).map(([k, v]) => [k, maskSecret(k, v)])) }, null, 2));
+        out(JSON.stringify({ write: false, path: getGlobalEnvPath(), secretsPath: secretsWhere, env: Object.fromEntries(Object.entries(env).map(([k, v]) => [k, maskSecret(k, v)])) }, null, 2));
         return 0;
       }
       out(`# would write to ${getGlobalEnvPath()}`);
-      for (const [k, v] of Object.entries(env)) out(`${k}=${maskSecret(k, v)}`);
+      for (const [k, v] of Object.entries(settings)) out(`${k}=${maskSecret(k, v)}`);
+      if (Object.keys(secrets).length) { out(`# keys would go to ${secretsWhere}`); for (const [k, v] of Object.entries(secrets)) out(`${k}=${maskSecret(k, v)}`); }
       return 0;
     }
 
-    const wrote = writePlan(env);
+    const sw = await writeSecrets(secrets, opts, interactive);
+    if (!sw.ok) { out(`[cortex] Failed to store the keys: ${sw.error}`); return 1; }
+    const wrote = writePlan(settings);
     if (!wrote.ok) {
       out(`[cortex] Failed to write${wrote.error ? `: ${wrote.error}` : `: ${wrote.failed.join(', ')}`}`);
       return 1;
     }
     for (const [k, v] of Object.entries(env)) process.env[k] = v;
+    const browserMsg = await applyBrowserChoice(opts.browser, true, out);
 
     const probes = opts.probe ? await probeModels([...new Set([answers.action, answers.helper, answers.mentor, ...(answers.vision ? [answers.vision] : [])])], out) : [];
     const bad = probes.filter((p) => !p.ok);
@@ -182,15 +259,18 @@ export async function runSetup(opts: SetupOptions = {}): Promise<number> {
       out(JSON.stringify({
         write: true,
         path: getGlobalEnvPath(),
+        secrets: { where: sw.where, path: sw.path, names: Object.keys(secrets), created: !!sw.created, blanked: sw.blanked },
         env: Object.fromEntries(Object.entries(env).map(([k, v]) => [k, maskSecret(k, v)])),
-        answers,
+        answers: { ...answers, keys: Object.fromEntries(Object.entries(answers.keys).map(([k, v]) => [k, maskSecret(k, v)])) },
         probes,
         ok: bad.length === 0,
       }, null, 2));
       return bad.length ? 1 : 0;
     }
 
-    out(`[OK] Saved ${Object.keys(env).length} settings to ${getGlobalEnvPath()}`);
+    out(`[OK] Saved ${Object.keys(settings).length} settings to ${getGlobalEnvPath()}`);
+    if (Object.keys(secrets).length) out(`[OK] Saved ${secretLine(sw, Object.keys(secrets).length)}`);
+    if (browserMsg) out(`[${browserMsg.ok ? 'OK' : 'cortex'}] ${browserMsg.message}`);
     out('');
     for (const l of summaryLines(answers, byId)) out('  ' + l);
     out('');
@@ -206,7 +286,7 @@ export async function runSetup(opts: SetupOptions = {}): Promise<number> {
 
   // ── Interactive path ───────────────────────────────────────────────────────────────────────────
   out('');
-  out('cortex setup — configure providers, keys and model roles (writes ' + getGlobalEnvPath() + ')');
+  out('cortex setup — configure providers, keys and model roles (settings → ' + getGlobalEnvPath() + (opts.secretsTo === 'env' ? '' : '; keys → the encrypted secrets vault') + ')');
   out('');
 
   // 1. providers
@@ -219,18 +299,24 @@ export async function runSetup(opts: SetupOptions = {}): Promise<number> {
 
   // 2. keys
   const existingLoader = new SettingsLoader(getGlobalConfigDir());
+  // The vault counts as "already set" even when this entry point did not load it into the environment.
+  const inVault = new Set(openVaultNonInteractive().vault?.names() ?? []);
   const keys: Record<string, string> = {};
+  const present = new Set<string>();
   for (const p of chosenRows) {
     if (!p.keyEnv) continue;
-    const existing = (process.env[p.keyEnv] ?? existingLoader.get(p.keyEnv as keyof EnvironmentVariables) ?? '').trim();
+    const existing = (process.env[p.keyEnv] || existingLoader.get(p.keyEnv as keyof EnvironmentVariables) || (inVault.has(p.keyEnv) ? '(in the secrets vault)' : '')).trim();
     const { value } = await inquirer.prompt<{ value: string }>([{
       type: 'password', name: 'value', mask: '*',
       message: existing ? `${p.keyEnv} (${p.label}) — a value is already set; enter to keep it, or paste a new one:` : `${p.keyEnv} (${p.label}):`,
       validate: (v: string) => (v.trim() || existing ? true : `A ${p.label} key is needed to use its models (leave the provider unselected to skip)`),
     }]);
-    keys[p.keyEnv] = value.trim() || existing;
+    // Only a key the user typed is written; keeping an existing one writes nothing (it already resolves — from the real
+    // environment, the vault or the .env — and copying it would put e.g. a platform secret into a plaintext file).
+    if (value.trim()) keys[p.keyEnv] = value.trim();
+    else if (existing) present.add(p.keyEnv);
   }
-  const keyEnvsPresent = new Set(Object.keys(keys).filter((k) => keys[k]));
+  const keyEnvsPresent = new Set([...Object.keys(keys).filter((k) => keys[k]), ...present]);
 
   // 3-6. roles
   const suggested = suggestRoles(chosenRows)!;
@@ -253,22 +339,41 @@ export async function runSetup(opts: SetupOptions = {}): Promise<number> {
     choices: web.map((w) => ({ name: w.label, value: w.value })), default: web[0]!.value,
   }]);
 
+  // 8. browser (only when the optional local browser package is on this machine; otherwise the hosted browser MCP, no question)
+  let browserChoice: 'local' | 'hosted' | undefined = opts.browser;
+  if (!browserChoice) {
+    const { loadBrowserPackage } = await import('../browser/index.js');
+    const pkg = await loadBrowserPackage();
+    if (pkg) {
+      const plan = pkg.installPlan();
+      const { local } = await inquirer.prompt<{ local: boolean }>([{ type: 'confirm', name: 'local', default: false,
+        message: `Run the browser on this machine (the local @nexus-cortex/browser) instead of the hosted browser MCP?${plan.steps.length ? ` It installs everything it needs now (about ${plan.approxMB} MB: ${plan.steps.length} step${plan.steps.length === 1 ? '' : 's'}).` : ' (already installed)'}` }]);
+      browserChoice = local ? 'local' : 'hosted';
+    }
+  }
+
   const answers: SetupAnswers = { keys, action, helper, mentor, vision, webToolsModel };
   out(''); for (const l of summaryLines(answers, byId)) out('  ' + l); out('');
   if (!opts.yes) {
-    const { ok } = await inquirer.prompt<{ ok: boolean }>([{ type: 'confirm', name: 'ok', message: `Write these to ${getGlobalEnvPath()}?`, default: true }]);
+    const { ok } = await inquirer.prompt<{ ok: boolean }>([{ type: 'confirm', name: 'ok', message: `Write these (settings → ${getGlobalEnvPath()}${Object.keys(keys).length ? `, keys → ${opts.secretsTo === 'env' ? getGlobalEnvPath() : 'the encrypted secrets vault'}` : ''})?`, default: true }]);
     if (!ok) { out('[cortex] Nothing written.'); return 1; }
   }
 
   // 8. write through the canonical settings writer (validated against the schema)
   const env = planToEnv(answers);
-  const wrote = writePlan(env);
+  const { secrets, settings } = splitSecrets(env);
+  const sw = await writeSecrets(secrets, opts, true);
+  if (!sw.ok) { out(`[cortex] Failed to store the keys: ${sw.error}`); return 1; }
+  const wrote = writePlan(settings);
   if (!wrote.ok) {
     out(`[cortex] Failed to write${wrote.error ? `: ${wrote.error}` : `: ${wrote.failed.join(', ')}`}`);
     return 1;
   }
   for (const [k, v] of Object.entries(env)) process.env[k] = v;
-  out(`[OK] Saved ${Object.keys(env).length} settings to ${getGlobalEnvPath()}`);
+  out(`[OK] Saved ${Object.keys(settings).length} settings to ${getGlobalEnvPath()}`);
+  if (Object.keys(secrets).length) out(`[OK] Saved ${secretLine(sw, Object.keys(secrets).length)}`);
+  const browserMsg = await applyBrowserChoice(browserChoice, true, out);
+  if (browserMsg) out(`[${browserMsg.ok ? 'OK' : 'cortex'}] ${browserMsg.message}`);
 
   // 9. probe (interactive: ON unless --no-probe)
   if (opts.probe === false) { out('[cortex] Probe skipped (--no-probe). Try: cortex "hello"'); return 0; }

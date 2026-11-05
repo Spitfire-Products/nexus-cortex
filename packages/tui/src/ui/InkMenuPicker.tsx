@@ -10,6 +10,7 @@
 
 import React from 'react';
 import { render } from 'ink';
+import { wakeStdinForInk } from './inkStdin.js';
 import { MenuRenderer } from '../ink-ui/components/MenuRenderer.js';
 import type { InteractiveMenuDefinition, MenuResult } from '@nexus-cortex/core';
 
@@ -68,6 +69,7 @@ export async function showInteractiveMenu(
       />
     );
 
+    wakeStdinForInk();   // fuzzycortex: restart a stopped stdin handle (ui/inkStdin.ts)
     // Handle cleanup on exit
     waitUntilExit().catch(() => {
       resolve({

@@ -6,6 +6,7 @@
  *
  * Phase 2.5 Day 4.5: MCP Auto-Injection System
  */
+import { resolveBrowserBackend } from '../config/localBrowser.js';
 
 export type McpServerCategory =
   | 'filesystem'
@@ -37,6 +38,9 @@ export interface McpServerDefinition {
 
   /** Default command arguments */
   defaultArgs?: string[];
+
+  /** Connect (initialize) timeout in ms; McpClient defaults to 10 s. */
+  connectTimeoutMs?: number;
 
   /** Transport type (default 'stdio'). Use 'http' for hosted MCP servers. */
   transport?: 'stdio' | 'http' | 'sse';
@@ -74,6 +78,19 @@ export interface McpServerDefinition {
  *
  * Manages known MCP servers and provides search/discovery functionality.
  */
+/**
+ * NEXUS_BROWSER_MODE=local + a ready local install → the nexus-browser entry runs the @nexus-cortex/browser library as a stdio MCP server
+ * (same tools, same schemas); anything else → the hosted http entry unchanged (config/localBrowser.ts).
+ */
+function withBrowserBackend(def: McpServerDefinition): McpServerDefinition {
+  const b = resolveBrowserBackend();
+  if (b.using !== 'local' || !b.serverJs) return def;
+  // connectTimeoutMs (2026-11-03): a cold local server (node + SQLite + sandbox) can take >10 s to answer initialize — CarMax's
+  // Browse mode:"direct" failed at exactly 10 s with MCP -32001 while the delegate's own connect had succeeded minutes earlier.
+  return { ...def, transport: 'stdio', command: process.execPath, defaultArgs: [b.serverJs], url: undefined, headers: undefined, connectTimeoutMs: 60_000,
+    description: `${def.description} — LOCAL: the @nexus-cortex/browser library on this machine (NEXUS_BROWSER_MODE=local).` };
+}
+
 export class McpServerRegistry {
   private servers: Map<string, McpServerDefinition> = new Map();
 
@@ -263,14 +280,15 @@ export class McpServerRegistry {
    * Get server definition by name
    */
   getServer(name: string): McpServerDefinition | undefined {
-    return this.servers.get(name);
+    const def = this.servers.get(name);
+    return def && name === 'nexus-browser' ? withBrowserBackend(def) : def;
   }
 
   /**
    * Get all registered servers
    */
   getAllServers(): McpServerDefinition[] {
-    return Array.from(this.servers.values());
+    return Array.from(this.servers.values()).map((d) => (d.name === 'nexus-browser' ? withBrowserBackend(d) : d));
   }
 
   /**

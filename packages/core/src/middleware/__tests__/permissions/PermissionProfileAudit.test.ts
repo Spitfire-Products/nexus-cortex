@@ -29,7 +29,7 @@ const EXECUTOR_REGISTRY_TOOLS = [
   'InspectSandbox', 'InteractWithSandbox', 'KillShell',
   'ListCompactionBoundaries', 'ListSessions', 'LoadSession',
   'ModifySandbox', 'NotebookEdit', 'PRAgent', 'Read',
-  'RequestHistoricalContext', 'SearchConversationHistory', 'SearchTools',
+  'RequestHistoricalContext', 'SearchConversationHistory', 'SearchTools', 'SecretsList',
   'Skill', 'SlashCommand', 'StopSandbox', 'Task', 'TmuxSession',
   'TodoCreate', 'TodoList', 'TodoUpdate', 'WebFetch', 'WebSearch',
   'WorkspaceManager', 'Write',
@@ -56,6 +56,7 @@ const PROD_READ_ONLY_TOOLS = [
   'GetConversationSegment', 'ListCompactionBoundaries',
   'TodoList', 'SearchTools', 'MemoryRecall',
   'CanonListSessions',
+  'SecretsList',
 ];
 
 // Approval handlers that can run safely without an interactive TTY.

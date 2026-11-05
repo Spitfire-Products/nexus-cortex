@@ -44,8 +44,11 @@ describe('BrowseTool', () => {
       expect(r.metadata?.agentDefinition).toBeDefined();
       expect((r.metadata?.agentDefinition as any).name).toBe('browse-agent');
       expect((r.metadata?.agentDefinition as any).systemPrompt).toContain('nexus-browser');
+      // 2026-11-03: the delegate checks scope + scale before reporting (CarMax: a site-wide 14,296 reported as one store's stock)
+      expect((r.metadata?.agentDefinition as any).systemPrompt).toContain('Check the answer before you report it');
+      expect((r.metadata?.agentDefinition as any).systemPrompt).toMatch(/header is a preference, not proof/);
       // Critical: env override must enable MCP for the subagent only
-      expect(r.metadata?.envOverrides).toEqual({ MCP_AUTO_INJECT: 'true', CORTEX_MCP_AUTOCONNECT: 'nexus-browser', CORTEX_TOOL_ANCHOR: 'none' });
+      expect(r.metadata?.envOverrides).toEqual({ MCP_AUTO_INJECT: 'true', CORTEX_MCP_AUTOCONNECT: 'nexus-browser', CORTEX_TOOL_ANCHOR: 'none', CORTEX_BROWSE_AGENT: 'true', CORTEX_PROMPT_MASS: 'minimal' });
     });
 
     it('threads starting URL into taskPrompt when provided', async () => {
@@ -90,7 +93,7 @@ describe('BrowseTool', () => {
     it('produces the exact dispatch contract orchestrator expects', () => {
       const r = buildBrowseSubagentDispatch('test task', 'https://x.com', 'display label');
       expect(r.metadata?.shouldSpawnSubAgent).toBe(true);
-      expect(r.metadata?.envOverrides).toEqual({ MCP_AUTO_INJECT: 'true', CORTEX_MCP_AUTOCONNECT: 'nexus-browser', CORTEX_TOOL_ANCHOR: 'none' });
+      expect(r.metadata?.envOverrides).toEqual({ MCP_AUTO_INJECT: 'true', CORTEX_MCP_AUTOCONNECT: 'nexus-browser', CORTEX_TOOL_ANCHOR: 'none', CORTEX_BROWSE_AGENT: 'true', CORTEX_PROMPT_MASS: 'minimal' });
       expect(r.metadata?.taskPrompt).toBe('Start at: https://x.com\n\ntest task');
       expect(r.metadata?.agentName).toBe('browse-agent');
     });

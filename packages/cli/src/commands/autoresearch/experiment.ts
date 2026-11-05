@@ -65,6 +65,11 @@ export interface AutoResearchExperimentOptions {
    *  CORTEX_SUBAGENT_TEMPERATURE / CORTEX_ARM_STRATEGY env stamp when omitted. */
   temperature?: string;
   strategy?: string;
+  /** commander's --no-interleave sets false: run all base, then all candidate runs. */
+  interleave?: boolean;
+  /** run planning: the effect worth detecting (score points) and the power wanted. */
+  targetEffect?: string;
+  power?: string;
 }
 
 function num(v: string | undefined): number | undefined {
@@ -170,6 +175,8 @@ export async function autoResearchExperiment(options: AutoResearchExperimentOpti
       gate: { alpha: num(options.alpha), seed: num(options.seed), minRunsPerArm: num(options.minRuns) },
       epsilon: num(options.epsilon),
       onProgress: log,
+      interleave: options.interleave !== false,
+      plan: { targetEffect: num(options.targetEffect), power: num(options.power) },
     });
 
     const out = {
@@ -179,6 +186,10 @@ export async function autoResearchExperiment(options: AutoResearchExperimentOpti
       holdoutVerdict: result.holdoutVerdict,
       regressedTasks: result.regressedTasks,
       mergeEligible: result.mergeEligible,
+      interleaved: result.interleaved,
+      runPlan: result.runPlan,
+      families: result.families,
+      stepGuards: result.stepGuards,
       benchSummaries: result.benchSummaries,
       cortexDir,
       jsonlPaths: {
@@ -196,7 +207,14 @@ export async function autoResearchExperiment(options: AutoResearchExperimentOpti
     console.log(` ${theme.colors.highlight('Decision')}    ${dc(v.decision.toUpperCase())}   effect ${v.effect >= 0 ? '+' : ''}${v.effect}  CI [${v.ciLow ?? '—'}, ${v.ciHigh ?? '—'}]  p=${v.pValue ?? '—'} vs ${v.alphaAdjusted ?? '—'} (N=${num(options.nFamily) ?? 1})`);
     console.log(` ${theme.colors.highlight('Holdout')}     ${result.holdoutVerdict ? result.holdoutVerdict.decision.toUpperCase() + ` (effect ${result.holdoutVerdict.effect >= 0 ? '+' : ''}${result.holdoutVerdict.effect})` : theme.colors.muted('not provided → not verifiable')}`);
     if (result.regressedTasks.length) console.log(` ${theme.colors.error('Regressions')} ${result.regressedTasks.length}: ${result.regressedTasks.join(', ')}`);
+    const famBlocks = result.stepGuards.filter((g) => g.blocked);
+    if (famBlocks.length) console.log(` ${theme.colors.error('Guard')}       ${famBlocks.map((g) => `${g.family} ${g.effect} (upper ${g.upper})`).join(', ')}`);
     console.log(` ${theme.colors.highlight('Mergeable')}   ${result.mergeEligible ? theme.colors.success('YES') : theme.colors.muted('no')}`);
+    const rp = result.runPlan;
+    if (rp) {
+      const line = ` ${theme.colors.highlight('Runs')}        ${rp.runsPerArm}/arm detect ≥ ${rp.detectableEffect} pts (power ${rp.power}); +${rp.targetEffect} needs ${rp.requiredRunsPerArm}/arm`;
+      console.log(rp.adequate ? line : theme.colors.error(`${line} — UNDERPOWERED`));
+    }
     console.log(theme.colors.muted(` artifact → ${cortexDir}/.cortex/{router-matrix,experiments,research-backlog}.jsonl`));
     console.log();
 

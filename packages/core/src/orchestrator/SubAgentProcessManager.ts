@@ -40,6 +40,7 @@ import {
 } from './SubAgentIPC.js';
 import type { ApprovalHandler } from '../middleware/contracts/MiddlewareContracts.js';
 import { resolveWorkspaceClean, resolveCortexStateDir } from '../utils/stateDir.js';
+import { childAgentDepth } from './toolAllowlist.js';
 
 // ============================================
 // TYPES
@@ -207,6 +208,7 @@ export class SubAgentProcessManager implements ISubAgentManager {
         ...(options.envOverrides || {}),
         CORTEX_AGENT_MODE: 'true',
         CORTEX_AGENT_ID: agentId,
+        CORTEX_AGENT_DEPTH: childAgentDepth(),   // bounded nesting (toolAllowlist.ts); after the overrides, so a tool cannot reset it
       },
     });
 

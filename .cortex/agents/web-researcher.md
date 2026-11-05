@@ -1,8 +1,7 @@
 ---
 name: web-researcher
-description: Research agent that gathers competitive intelligence, visual references, and design patterns from live websites. Equipped with Browse, WebSearch, WebFetch, and screenshot tools.
+description: Research agent that gathers competitive intelligence, visual references, and design patterns from live websites. Equipped with the nexus-browser MCP tools (driven directly), WebSearch, WebFetch, and screenshot tools.
 tools:
-  - Browse
   - WebSearch
   - WebFetch
   - Read

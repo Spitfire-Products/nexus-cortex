@@ -20,6 +20,12 @@
  */
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 300_000;
 export const MIN_SUBAGENT_TIMEOUT_MS = 60_000;
+/** Browse delegate default (CORTEX_BROWSE_TIMEOUT_MS overrides); multi-step site tasks outrun the generic 5 min. */
+export const DEFAULT_BROWSE_TIMEOUT_MS = 600_000;
+export function browseDelegateTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(String(env.CORTEX_BROWSE_TIMEOUT_MS ?? '').trim() || 0);
+  return Number.isFinite(n) && n > 0 ? Math.max(MIN_SUBAGENT_TIMEOUT_MS, Math.floor(n)) : DEFAULT_BROWSE_TIMEOUT_MS;
+}
 /** Margin kept between the child's limit and the parent's remaining budget so the parent can still report. */
 export const SUBAGENT_DEADLINE_MARGIN_MS = 30_000;
 /** Fraction of the parent's remaining turn budget a child may consume. */

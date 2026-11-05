@@ -8,6 +8,7 @@ import { existsSync, statSync, writeFileSync, unlinkSync, mkdirSync, chmodSync }
 import { join } from 'path';
 import { tmpdir, homedir } from 'os';
 import * as crypto from 'crypto';
+import { toolChildEnv } from '@nexus-cortex/core';
 
 const execAsync = promisify(exec);
 
@@ -33,7 +34,7 @@ export type TmuxExecFn = (bin: string, args: string[], opts?: TmuxExecOptions) =
 export const defaultTmuxExec: TmuxExecFn = (bin, args, opts) =>
   new Promise((resolve, reject) => {
     let timedOut = false;
-    const child = execFile(bin, args, { maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+    const child = execFile(bin, args, { maxBuffer: 16 * 1024 * 1024, env: toolChildEnv(process.env, 'TmuxSession') }, (error, stdout, stderr) => {
       if (timer) clearTimeout(timer);
       if (timedOut) {
         const err: any = new Error(`${bin} ${args.slice(0, 2).join(' ')} did not return within ${opts?.timeoutMs}ms`);
@@ -80,7 +81,7 @@ export const defaultTmuxInstallExec: TmuxInstallExecFn = (bin, args, opts) =>
     };
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, DEBIAN_FRONTEND: 'noninteractive' } });
+      child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], env: { ...toolChildEnv(process.env), DEBIAN_FRONTEND: 'noninteractive' } });
     } catch (err: any) {
       stderr = String(err?.message ?? err);
       resolve({ code: null, stdout, stderr });

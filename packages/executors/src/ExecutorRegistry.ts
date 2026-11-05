@@ -74,6 +74,7 @@ import {
   CanonListSessionsToolExecutor,
   CanonPullSessionToolExecutor,
 } from './implementations/canon/index.js';
+import { SecretsListToolExecutor } from './implementations/secrets/index.js';
 
 import {
   // Extension operations
@@ -173,6 +174,7 @@ export class ExecutorRegistry implements IExecutorRegistry {
 
     // Canon store operations (cross-harness memory rail)
     this.register(new CanonListSessionsToolExecutor(this.config));
+    this.register(new SecretsListToolExecutor(this.config));   // secrets vault Phase 2 (names/bindings only)
     this.register(new CanonPullSessionToolExecutor(this.config));
 
     // MCP operations

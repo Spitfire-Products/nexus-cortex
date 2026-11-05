@@ -264,6 +264,22 @@ Key options:
   (default: the tuned anti-gaming / anti-unsafe rubric).
 - `--judge-model <id>` — judge model (default: `--model`, else `$DEFAULT_MODEL_ID`).
 - `--keep-worktrees` — do not remove rejected candidate worktrees (debugging).
+- `--protect <globs>` — comma-separated repo-relative globs no candidate may touch (verifier
+  scripts, graders, bench harnesses, the `--run-cmd` script). A candidate that changes one is
+  **refused unbenched** (`skipped: 'eval-guard'`). The task-sets' in-repo paths are always
+  protected.
+- `--editable <globs>` — optional allowlist: every path a candidate changes must match one.
+- `--no-confirm` — skip the confirmation re-bench of each round's winner (on by default).
+- `--confirm-mode <pooled|direction|strict>` / `--confirm-loss-margin <pts>` — how the
+  confirmation run is judged (default `pooled`; see step 6a).
+- `--target-effect <pts>` (5) / `--power <p>` (0.8) — run planning; the loop warns when the
+  runs per arm cannot detect the target effect.
+- `--auto-runs` / `--max-runs <n>` (12) — raise runs per arm for later rounds to what the
+  target effect needs.
+- `--approaches <list>` / `--no-approaches` — approaches rotated across arms (`|`-separated,
+  `slug: text` allowed); default a built-in list of six when `--width` > 1 (see step 3).
+- `--guards <block|warn|off>` (block) / `--guard-margin <pts>` (2) / `--guard-total-margin <pts>`
+  (5) — task-family regression guards (see step 5b below).
 
 Each round:
 
@@ -273,7 +289,24 @@ Each round:
    per the arm plan.
 3. **Mutate** each arm: `--fixer-cmd` (any transformer; per-arm `CORTEX_ARM_*` env), else
    the LLM `cortex autoresearch fix --model <arm model>`.
-4. **Commit** each candidate (no change -> that arm is skipped).
+   - **Distinct approaches** (B6). With `--width` > 1, each arm's prompt names a different
+     approach from a rotating queue (root-cause, boundary, restructure, algorithm,
+     configuration, recovery — or `--approaches`): no two arms of a round share one, and later
+     rounds continue the rotation. Arms that differ only by model tend to converge on one idea.
+     The approach slug joins the arm's strategy label (`CORTEX_ARM_APPROACH` for `--fixer-cmd`).
+   - **Declared flaws** (B6). The prompt asks the Fixer to list known flaws of its change in
+     `.autoresearch-flaws` at the worktree root (`CORTEX_FLAWS_FILE`). The loop reads and
+     removes the file before commit; an arm that declares flaws is benched (so the record
+     shows whether it would have won) but is **never merged** — it is held for review.
+4. **Eval guard + commit.** At loop start the train/holdout task-sets are **sealed**: copied
+   once into a private temp dir, sha256-fingerprinted (`eval_seal` event), and every
+   experiment grades against those copies — editing the in-repo task-set changes nothing the
+   gate reads. A task-set inside the repo is **hidden** from each candidate worktree while the
+   Fixer runs and restored to the base version before commit. The candidate's changed paths
+   are then checked against the protected globs and the `--editable` allowlist; a violation
+   refuses the arm before it is benched (`eval_guard` event). No change -> the arm is skipped.
+   Hiding is best-effort secrecy: the files remain in git history, and the LLM Fixer is not an
+   OS sandbox — **keep the holdout outside the repo** (the loop warns when it is inside).
 5. **Experiment** (`cortex autoresearch experiment`) base vs candidate per arm, each with
    `--n-family <width>` -> read the verdicts. An arm that produced no verdict is recorded
    as a reasoned no-verdict skip (missing key, crash, bad task-set) rather than a silent
@@ -283,10 +316,72 @@ Each round:
    gate-accepted arm with the highest effect. **With `--require-judge`, the judge reviews
    accepted arms in effect order until one is approved** (`accept = gate-accept ∧
    judge-approve`) — the judge reads the diff and rejects eval-gaming / unsafe code the
-   metric cannot see, fail-closed. On accept: advance base to the winner and anchor the
-   loop branch to it; losing arms are dropped. On reject: drop the worktrees.
+   metric cannot see, fail-closed.
+5b. **Family guards** (B4; core `AutoResearchGuards`; `--guards block|warn|off`). A gain on the
+   aggregate must not hide a loss in one task family (the TaskClassifier families T1–T5 /
+   GENERAL). Per family the gate result carries the effect, its SE (sample variances,
+   Welch–Satterthwaite df) and a one-sided upper bound at α split across the families. A
+   family **blocks** the candidate when its loss is **material and evident**: estimate below
+   −margin AND upper bound below 0.
+   - **Step:** this candidate vs its base, `--guard-margin` (2 points).
+   - **Running total:** the sum of the family's effect over every merged round plus this one,
+     i.e. the drift from the round-0 base, `--guard-total-margin` (5 points). It is built from
+     each step's own interleaved measurement (the confirmation's when it ran), so it needs no
+     extra runs and no comparison across time. It catches a family worn down in steps that are
+     each under the step margin.
+
+   Why not a plain point-estimate rule: under model variance (per-family SE ≈ 5) "estimate
+   < −2" blocks about a third of no-change families. Measured on 3 families × 2 tasks with
+   per-run SD 12: no-change false blocks 3.1% / 3.9% / 4.3% at 3 / 4 / 8 runs; a real 10-point
+   loss in one family is caught 26% of the time at 4 runs and 56% at 8. Small losses need
+   runs — the run plan (6b) says how many. The family effects and blocks are in the round
+   history (`guardBlocks`) and the loop summary (`drift`); `guard` events are emitted.
+6a. **Confirm** (default on; `--no-confirm` skips). The selected winner is re-benched base vs
+   candidate on **fresh train runs** in a separate, temporary store (so the gate sees only the
+   new records, not the screening ones) with a new gate seed. Picking the best of N noisy arms
+   inflates its measured effect (the winner's curse); the FWER correction controls false keeps
+   but not that bias. One confirmation per round — the selected winner only. How the fresh run
+   is judged (`--confirm-mode`, core `decideConfirmation`):
+
+   | mode | rule | false merge, no real gain | real gain merged (80% / 50% gate power) |
+   |---|---|---|---|
+   | (no confirm) | — | 0.050 | 0.77 / 0.49 |
+   | `strict` | fresh run must pass the full gate again | 0.005 | 0.69 / 0.35 |
+   | `direction` | fresh effect > 0 and CI low > −`--confirm-loss-margin` (2.5) | 0.028 | 0.77 / 0.49 |
+   | **`pooled`** (default) | Stouffer-combined screening + confirmation p clears the gate's own bar, and fresh effect > 0 | **0.019** | **0.77 / 0.47** |
+
+   (z-approximation, 200k simulated 3-arm rounds, α 0.05 Šidák-adjusted.) `strict` asks for
+   significance twice and throws away real gains under model variance; `pooled` keeps the
+   protection against lucky winners at almost no cost in power.
+
+   **Stage consistency** (`pooled` and `direction`): the fresh effect must also not be
+   significantly *below* the screening effect — shortfall z = (e₁ − e₂)/√(se₁² + se₂²) ≤ 2.576.
+   Without it, an extreme screening result can carry a fresh run whose effect has vanished
+   (seen end to end: screening +39 at p 0.0005, fresh +0.75 at p 0.056, pooled z 3.45). That
+   is a candidate behaving differently between the stages (state, time, flakiness), not noise.
+   Simulated cost: ≤ 0.008 power, no change in false merges.
+
+   A winner that passes screening but fails confirmation is a **near-miss**: its commit is
+   kept under `refs/autoresearch/near-miss/<branch>/r<round>-a<arm>` and a row (screening +
+   confirmation verdicts, run plan, a re-test hint with more runs) is appended to
+   `<cortex-dir>/.cortex/autoresearch-near-misses.jsonl`, so a good change can be re-tested
+   instead of vanishing. On accept: advance base to the winner and anchor the loop branch to
+   it. **Every arm that did not merge is kept** (B6): its commit under
+   `refs/autoresearch/attempts/<branch>/r<round>-a<arm>` (eval-guard refusals included, as
+   tamper evidence) and a row in `<cortex-dir>/.cortex/autoresearch-attempts.jsonl` with its
+   status — `eval-guard`, `no-verdict`, `declared-flaws`, `guard-blocked`, `not-confirmed`,
+   `judge-rejected`, `gate-discard`/`gate-pending`, or `outranked` — plus its approach, model,
+   verdict, flaws and diff size. The worktrees are removed; the refs keep the code.
+6b. **Run planning.** Every experiment reports `runPlan` (core `planRuns`, from the observed
+   per-task score SDs): the smallest effect its runs per arm can detect at the gate's own bar
+   and `--power` (0.8), and the runs per arm needed to detect `--target-effect` (5 points).
+   The loop warns when a round is underpowered (`power_warning`); `--auto-runs` raises the
+   runs for later rounds to the requirement, capped by `--max-runs` (12).
 7. **Stop** on: success metric met, max rounds, max consecutive stale rounds, or a dry
-   backlog.
+   backlog. The success metric reads **train** scores (the confirmation's when it ran) and
+   **never the holdout** — holdout results only gate the merge, so repeated rounds cannot
+   steer the loop toward the holdout. The loop warns when the `--success-metric` task is not
+   in the train set.
 
 > **The hosted MCP turns the judge gate ON by default** (`start_autoresearch_campaign`
 > defaults `requireJudge:true`); the CLI keeps it opt-in via `--require-judge`. See §8.
@@ -463,6 +558,12 @@ The gate (`decideExperiment`) turns the per-task base-vs-candidate run arrays in
 - **KEEP** if `ciLow > 0` AND `pValue <= alphaAdjusted` (a real, significant gain).
 - **DISCARD** otherwise.
 
+**Run order.** Base and candidate run **interleaved** — for each task and run index the two
+arms run back to back in a seeded random order — so provider drift (latency, load, rate
+limits, a silent model update) lands on both arms instead of all on the arm that ran second.
+`cortex autoresearch experiment --no-interleave` restores the old all-base-then-all-candidate
+order.
+
 **`mergeEligible` = keep (on train) AND `fwerAdjusted` AND holdout-verified.** A keep that
 introduced task regressions is flagged in the reason so the loop does not silently merge
 collateral damage.
@@ -504,6 +605,11 @@ also adds a `child_process` exfiltration backdoor) passes the statistical gate w
   generalize to held-out tasks it never saw — that is the structural defense.
 - **No held-out evidence -> unverifiable -> not mergeable.** With no holdout records the
   holdout verdict is null and the candidate cannot merge.
+- **The holdout only gates.** In the loop, holdout results decide merge eligibility and
+  nothing else — not the stop rule, not the Fixer's goal, not the choice between arms.
+  Every extra use of a fixed holdout leaks information about it (adaptive data analysis).
+- **The Fixer cannot reach the grader.** Sealed task-sets, hidden in-repo copies, and the
+  `--protect` / `--editable` refusal (see the loop's step 4).
 - **Raw delta never keeps.** Only the Monte-Carlo gate (via `ExperimentLedger.decide`) can
   set a non-`pending` decision; a raw `delta > 0` must never set `keep`.
 

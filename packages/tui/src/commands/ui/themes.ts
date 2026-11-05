@@ -7,6 +7,7 @@ import React from 'react';
 import { render } from 'ink';
 import { ThemePicker } from '../../ui/components/ThemePicker.js';
 import { ThemeManager } from '@nexus-cortex/cli/dist/themes/ThemeManager.js';
+import { wakeStdinForInk } from '../../ui/inkStdin.js';
 
 export interface UiThemesOptions {
   json?: boolean;
@@ -44,6 +45,7 @@ export async function uiThemes(options: UiThemesOptions = {}): Promise<void> {
       },
     })
   );
+  wakeStdinForInk();   // restart a stopped stdin handle (ui/inkStdin.ts)
 
   // Wait for user interaction to complete
   await waitUntilExit();

@@ -7,6 +7,7 @@ import { render } from 'ink';
 import { ConfigWizard } from '../../ui/components/ConfigWizard.js';
 import { ThemeManager } from '@nexus-cortex/cli/dist/themes/ThemeManager.js';
 import { CLIConfig } from '@nexus-cortex/cli/dist/config/ConfigManager.js';
+import { wakeStdinForInk } from '../../ui/inkStdin.js';
 
 export interface UiConfigOptions {
   /** JSON output format (not applicable for interactive component) */
@@ -32,6 +33,7 @@ export async function uiConfig(_options: UiConfigOptions = {}): Promise<void> {
       },
     })
   );
+  wakeStdinForInk();   // restart a stopped stdin handle (ui/inkStdin.ts)
 
   await waitUntilExit();
 }

@@ -50,6 +50,8 @@ export const whitelistPolicy: PermissionPolicy = {
       // the local session directory (no arbitrary-path writes).
       'CanonListSessions',
       'CanonPullSession',
+      // Secrets vault: names / providers / bindings only — never values.
+      'SecretsList',
     ];
 
     if (whitelistTools.includes(context.toolName)) {

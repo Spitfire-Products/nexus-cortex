@@ -6,6 +6,15 @@ import { Router, Request, Response } from 'express';
 import { createOrchestrator, DEFAULT_SETTINGS, type OrchestratorConfig, type CortexOrchestrator, toolFactory, resolveSecondAttemptConfig, runWithAttempts } from '@nexus-cortex/core';
 
 // Read lazily — ESM hoists imports before index.ts sets process.env.PROJECT_ROOT
+/** The response names the session that answered (2026-11-03). `cortex agent --json` used to find it by listing EVERY session in the
+ *  store and taking the newest — slow on a big global store (1,861 sessions: >30 s, the CLI gave up and the finished answer was lost)
+ *  and wrong when two processes share a store. */
+function withSessionId<T extends object>(response: T, orchestrator: CortexOrchestrator): T & { sessionId?: string } {
+  const r = response as T & { sessionId?: string };
+  if (r.sessionId) return r;
+  try { return { ...r, sessionId: orchestrator.getSessionId() }; } catch { return r; }
+}
+
 function getProjectRoot(): string {
   return process.env.PROJECT_ROOT || process.cwd();
 }
@@ -113,7 +122,10 @@ messagesRouter.post('/v1/messages', async (req: Request, res: Response, next) =>
     if (top_p !== undefined) parameters.topP = top_p;
     if (reasoning_effort !== undefined) parameters.reasoningEffort = reasoning_effort;
 
+    // turn_deadline_ms: the client's own time budget for this request (cortex agent sends its --timeout minus a margin).
+    const turnDeadline = Number((req.body as { turn_deadline_ms?: unknown })?.turn_deadline_ms);
     const messageOptions = {
+      ...(Number.isFinite(turnDeadline) && turnDeadline > 0 ? { turnDeadlineMs: Math.floor(turnDeadline) } : {}),
       modelId: model,
       system,
       ...(toolsToUse !== undefined && { tools: toolsToUse }),
@@ -173,11 +185,11 @@ messagesRouter.post('/v1/messages', async (req: Request, res: Response, next) =>
           return attempt;
         },
       });
-      res.json(response);
+      res.json(withSessionId(response, orchestrator));
     } else {
       // Non-streaming request
       const response = await orchestrator.sendMessage(turnContent, messageOptions);
-      res.json(response);
+      res.json(withSessionId(response, orchestrator));
     }
   } catch (error) {
     next(error);

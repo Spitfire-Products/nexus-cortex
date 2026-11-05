@@ -2,6 +2,7 @@ import React from 'react';
 import { render } from 'ink';
 import { ApprovalDialog } from '../ink-ui/components/ApprovalDialog.js';
 import type { PendingApproval } from '../ink-ui/hooks/useReactApprovalHandler.js';
+import { wakeStdinForInk } from './inkStdin.js';
 
 export type ApprovalResult = 'approve' | 'deny' | 'yolo';
 
@@ -43,6 +44,7 @@ export async function showApprovalDialog(
         }}
       />
     );
+    wakeStdinForInk();   // restart a stopped stdin handle (ui/inkStdin.ts)
 
     waitUntilExit().catch(() => {
       clear();
