@@ -32,7 +32,9 @@ vi.mock('child_process', () => {
         reject(e);
       }
     });
-  return { execFile, execSync: vi.fn() };
+  // exec / spawn: the import graph reaches utils/TmuxManager.ts (via @nexus-cortex/core's toolChildEnv since the 11-03 secrets vault), which
+  // promisifies `exec` at module load — the mock must define it or the whole file fails to load (CI 2026-11-05). PRAgent never calls them.
+  return { execFile, execSync: vi.fn(), exec: vi.fn(), spawn: vi.fn() };
 });
 
 import { PRAgentToolExecutor } from '../../implementations/agent/PRAgentTool.js';
