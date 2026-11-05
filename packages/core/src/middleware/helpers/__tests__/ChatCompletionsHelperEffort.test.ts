@@ -84,11 +84,18 @@ describe('HelperModelMiddleware.generateGuidance carries the resolved mentor rol
       expect(captured[0].reasoning_effort).toBeUndefined();
     } finally { delete process.env.CORTEX_MENTOR_REASONING; }
   });
-  it('planner surface by default → reasoning_effort=max on the wire', async () => {
+  it('EndTurn resolver: thinking-OFF by default (2026-11-03, TB4.0 cells ran it off; local thinking-on reviews took 50–124 s), on → reasoning_effort=max', async () => {
     const mw = await mk(); captured.length = 0;
     const mentor = resolveMentorRoleConfig('endturn-resolver', process.env, { modelId: 'deepseek-flash', effort: 'max' });
     await mw.generateGuidance({ surface: 'endturn-resolver', persona: 'p', task: 't', outputBudgetTokens: 100, mentor }, 'body', 'deepseek-flash');
-    expect(captured[0].reasoning_effort).toBe('max');
+    expect(captured[0].reasoning_effort).toBeUndefined();
+    process.env.CORTEX_ENDTURN_RESOLVER_REASONING = 'on';
+    try {
+      captured.length = 0;
+      const on = resolveMentorRoleConfig('endturn-resolver', process.env, { modelId: 'deepseek-flash', effort: 'max' });
+      await mw.generateGuidance({ surface: 'endturn-resolver', persona: 'p', task: 't', outputBudgetTokens: 100, mentor: on }, 'body', 'deepseek-flash');
+      expect(captured[0].reasoning_effort).toBe('max');
+    } finally { delete process.env.CORTEX_ENDTURN_RESOLVER_REASONING; }
   });
   it('the consult stays thinking-off by default and opts in via CORTEX_MENTOR_CONSULT_REASONING=on', async () => {
     const mw = await mk(); captured.length = 0;

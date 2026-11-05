@@ -77,7 +77,11 @@ describe('HelperModelMiddleware.resolveRoleModelId (wired)', () => {
     provider = 'deepseek';
     expect(mw.resolveRoleModelId('deepseek-flash')).toBe('deepseek-flash');
     provider = 'anthropic';
-    expect(mw.resolveRoleModelId('deepseek-v4-pro')).toBe('deepseek-v4-pro');
+    // an explicit, non-default id is kept as is …
+    expect(mw.resolveRoleModelId('gpt-4.1-mini')).toBe('gpt-4.1-mini');
+    // … while deepseek-v4-pro is now a SHIPPED default (MENTORSHIP_HELPER_MODEL written back from the TB4.0 cells, 2026-11-04), so it
+    // follows the action provider like deepseek-flash does
+    expect(mw.resolveRoleModelId('deepseek-v4-pro')).toBe('claude-haiku-4-5');
   });
 
   it('on: no resolver bound / resolver throws → unchanged', () => {
