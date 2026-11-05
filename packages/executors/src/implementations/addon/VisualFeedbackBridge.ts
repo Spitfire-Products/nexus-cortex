@@ -492,26 +492,37 @@ export class VisualFeedbackBridge {
       throw new Error('Browser not initialized');
     }
 
-    const snapshot = await this.page.accessibility.snapshot();
-
+    // 2026-11-06: page.accessibility was removed from Playwright (the 1.64.1 pin broke the build on it, and installs that resolved a newer
+    // Playwright already failed here at runtime). The bridge is Chromium-only, so read Chrome's own accessibility tree over CDP; fall back
+    // to Playwright's ariaSnapshot() (YAML) when CDP is unavailable.
     const roles: string[] = [];
     const labels: string[] = [];
-
-    const traverse = (node: any) => {
-      if (!node) return;
-      if (node.role) roles.push(node.role);
-      if (node.name) labels.push(node.name);
-      if (node.children) {
-        node.children.forEach(traverse);
+    let structure: unknown;
+    try {
+      const cdp = await this.page.context().newCDPSession(this.page);
+      const { nodes } = (await cdp.send('Accessibility.getFullAXTree')) as { nodes: Array<{ ignored?: boolean; role?: { value?: string }; name?: { value?: string } }> };
+      await cdp.detach().catch(() => undefined);
+      const visible = nodes.filter((n) => !n.ignored);
+      for (const n of visible) {
+        const role = n.role?.value; const name = n.name?.value;
+        if (role && role !== 'none' && role !== 'generic') roles.push(role);
+        if (name) labels.push(name);
       }
-    };
-
-    traverse(snapshot);
+      structure = visible.map((n) => ({ role: n.role?.value, name: n.name?.value }));
+    } catch {
+      const yaml = await this.page.locator('body').ariaSnapshot();
+      for (const line of yaml.split('\n')) {
+        const m = /^\s*-\s+([a-z]+)(?:\s+"([^"]*)")?/.exec(line);
+        if (m?.[1]) roles.push(m[1]);
+        if (m?.[2]) labels.push(m[2]);
+      }
+      structure = yaml;
+    }
 
     return {
       roles: Array.from(new Set(roles)),
       labels: Array.from(new Set(labels)),
-      structure: snapshot
+      structure
     };
   }
 
