@@ -48,6 +48,7 @@ const SECRET_PATTERNS: [RegExp, string][] = [
   [/github_pat_[A-Za-z0-9_]{20,}/g, '[redacted:ghpat]'],
   [/hf_[A-Za-z0-9]{20,}/g, '[redacted:hf]'],
   [/AIza[A-Za-z0-9_-]{20,}/g, '[redacted:aiza]'],
+  [/AQ\.[A-Za-z0-9_-]{30,}/g, '[redacted:google-aq]'],   // Google's newer API key format (2026-11-06 Gemini rotation)
   [/xai-[A-Za-z0-9]{20,}/g, '[redacted:xai]'],
   [/nar_[A-Za-z0-9]{16,}/g, '[redacted:nar]'],
   [/gsk_[A-Za-z0-9]{20,}/g, '[redacted:gsk]'],

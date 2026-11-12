@@ -233,14 +233,19 @@ export function hasArchiveExclusion(storePath: string): boolean {
 export function ensureArchiveExclusion(storePath: string, label: string): boolean {
   if (isScopedStore(storePath) || !headHasArchive(storePath)) return false;
   if (hasArchiveExclusion(storePath)) {
-    // Flagged but not applied (a half-failed run left archive/ on disk): re-stat + reapply drops it.
-    if (!fs.existsSync(`${storePath}/archive`)) return false;
+    // Flagged but not applied: (a) a half-failed run left archive/ ON DISK, or (b) a run killed between
+    // `sparse-checkout set` and `reapply` (2026-11-11) left archive/ entries in the index WITHOUT the skip-worktree
+    // bit while the files are gone from disk — `git status` then lists every one as deleted and every later archive
+    // run aborts on the "dirty" tree. Re-stat + reapply fixes both (it only flags/drops paths the exclusion covers).
     const g = (args: string[]) => execFileSync('git', ['-C', storePath, ...args], {
-      encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 256 * 1024 * 1024,
     });
+    const onDisk = fs.existsSync(`${storePath}/archive`);
+    const unflagged = !onDisk && g(['ls-files', '-t', '--', 'archive/']).split('\n').some((l) => l.startsWith('H '));
+    if (!onDisk && !unflagged) return false;
     try { g(['update-index', '-q', '--refresh', '--ignore-missing']); } catch { /* some entries differ — harmless */ }
     g(['sparse-checkout', 'reapply']);
-    console.log(`[${label}] archive/ exclusion reapplied — removed the archived files still on disk`);
+    console.log(`[${label}] archive/ exclusion reapplied — ${onDisk ? 'removed the archived files still on disk' : 'flagged the archived index entries a killed run left unflagged'}`);
     return true;
   }
   execFileSync('git', ['-C', storePath, 'sparse-checkout', 'set', '--no-cone', ...ARCHIVE_EXCLUSION_PATTERNS], {

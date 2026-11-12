@@ -15,6 +15,7 @@
  * @module canon/canonPull
  */
 import { defaultCanonStore } from './storePath.js';
+import { sidecarFiles } from './sidecar.js';
 import { requireCanonRepo, redactRepoUrl, canonGit, atomicClone, gitAuthArgs } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -176,8 +177,7 @@ export function discoverCanonSessions(store: string): CanonSession[] {
     const bytes = parts.reduce((n, p) => n + fs.statSync(p).size, 0);
     if (bytes === 0) continue; // empty canon mains (telemetry-only grok sessions) — nothing to pull
     let title: string | undefined;
-    const eventsPath = logical.replace(/\.jsonl$/, '.events.jsonl');
-    if (fs.existsSync(eventsPath)) {
+    for (const eventsPath of sidecarFiles(logical)) {
       for (const line of fs.readFileSync(eventsPath, 'utf8').split('\n')) {
         if (!line.trim()) continue;
         try { const r = JSON.parse(line); if (r.type === 'ai-title' && r.aiTitle) title = r.aiTitle; } catch { /* skip */ }

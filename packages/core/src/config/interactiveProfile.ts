@@ -43,7 +43,7 @@
  *                second-attempt chain, web tools / git context / slash hint off). For users reproducing published numbers with
  *                the Harbor executor (docs/REPRODUCING_BENCH_RESULTS.md); not meant for a human-driven session.
  */
-export type InteractiveProfileName = 'off' | 'bench-lite' | 'standard' | 'bench-tb4' | 'tools-only';
+export type InteractiveProfileName = 'off' | 'bench-lite' | 'standard' | 'bench-tb4' | 'tools-only' | 'user-fast' | 'user-hybrid' | 'user-careful';
 export const PROFILE_ENV = 'CORTEX_PROFILE';
 export const LEGACY_PROFILE_ENV = 'CORTEX_INTERACTIVE_PROFILE';
 
@@ -172,10 +172,79 @@ export const BENCH_TB4_LEVERS: ReadonlyArray<ProfileLever> = (() => {
   return [...STANDARD_LEVERS.filter((l) => !extra.has(l.key)), ...BENCH_TB4_EXTRA_LEVERS];
 })();
 
+/** USER PROFILES (2026-11-12, operator: "user installs of the library should have a different lever stack than the bench harness … they
+ *  need web_tools and mcp's active and the tools that are excluded for the bench runs" and "the 3 tools-only+guards / hybrid / standard + MCP
+ *  and web profiles [should] be fixed when set" while every other lever stays mutable). Evidence: holdout-8 (.bench/eval/om2w, 11-05/06) —
+ *  models driving the tools directly ~1 min/task vs 6.5–9.8 min/task through `standard` (planner + judge reviews + Browse delegate), which
+ *  lifted deepseek-flash 4/8 → 7/8 (audited). All three keep the Bash+Edit turn-1 frame and its tool lift (operator: "the bash+edit narrow
+ *  frame is fine"), the failure-path guards, MCP tools injected and web tools on, and NO second attempt (3x cost, the selector loses ~8
+ *  passes/arm on TB4). LOCKED: a user profile's levers win over values that came from .env FILES (e.g. a stale full-ledger
+ *  ~/.cortex/.env); the real process environment and .env.local still win (explicit, per-launch overrides). Levers a profile does not name
+ *  stay mutable. The bench never uses these: the Harbor adapter pins `standard` when an arm names no profile. */
+export const USER_GUARD_LEVERS: ReadonlyArray<ProfileLever> = [
+  { key: 'CORTEX_LOOP_TOOL_BLOCK', value: 'true', why: 'guard: a detected tool loop is blocked + redirected' },
+  { key: 'CORTEX_EMPTY_TURN_CONTINUE', value: 'true', why: 'guard: an empty reasoning-only turn continues with tools' },
+  { key: 'CORTEX_NEARDUP_BREAKER', value: 'true', why: 'guard: near-duplicate retry loops are broken' },
+  { key: 'CORTEX_POLL_GUARD', value: 'true', why: 'guard: busy-wait polling nudge' },
+  { key: 'CORTEX_SURRENDER_NUDGE', value: 'true', why: 'guard: a finish that lists remaining steps is told to execute them' },
+  { key: 'CORTEX_BASH_PIPEFAIL', value: 'true', why: 'guard: a failing command in a pipe is a failure' },
+  { key: 'MAX_CONSECUTIVE_ERRORS', value: '6', why: 'guard: three failing diagnostic probes are normal debugging' },
+  { key: 'CORTEX_WALL_DROP', value: 'on', why: 'reasoning-exhaustion wall recovery (failure path only)' },
+  { key: 'CORTEX_WALL_SUMMARY', value: 'on', why: 'reasoning-exhaustion wall recovery (failure path only)' },
+  { key: 'CORTEX_REASONING_EXHAUST_BACKOFF', value: 'false', why: 'keeps the effort (cache key) after a wall' },
+  { key: 'CORTEX_WALL_RETRY_LADDER', value: '65536,16384', why: 'reasoning-exhaustion wall: smaller max_tokens retry rungs' },
+  { key: 'CORTEX_WALL_FORCE_ACTION_AT', value: '2', why: 'from the second wall the retry forces a tool call' },
+  { key: 'CORTEX_OUTER_TOOL_TIMEOUT_MS', value: '600000', why: 'outer per-batch tool abort floor (long builds are not killed)' },
+];
+export const USER_SURFACE_LEVERS: ReadonlyArray<ProfileLever> = [
+  { key: 'MCP_AUTO_INJECT', value: 'true', why: 'tools of the MCP servers a user connects reach the model (the bench keeps false)' },
+  { key: 'ENABLE_WEBTOOLS', value: 'true', why: 'web search/fetch on regardless of key detection (the bench pins false)' },
+  { key: 'CORTEX_TOOL_ANCHOR', value: 'bash-edit', why: 'Bash+Edit turn-1 frame, lifted to the full tool set after the first action' },
+  { key: 'CORTEX_SECOND_ATTEMPT', value: '0', why: 'no second attempt (3x cost; selection loses passes)' },
+  { key: 'CORTEX_SUBAGENT_ENDTURN', value: 'mechanical', why: 'no judge review inside sub-agents' },
+];
+const JUDGE_ON: ReadonlyArray<ProfileLever> = [
+  { key: 'CORTEX_ENDTURN_RESOLVER', value: 'true', why: 'second-model finish review (resolver-k5 +17pp)' },
+  { key: 'CORTEX_ENDTURN_RESOLVER_ABSTAIN', value: 'true', why: 'the judge may retire a task it cannot close (same passes, ~30% cheaper)' },
+  { key: 'CORTEX_ENDTURN_RESOLVER_REASONING', value: 'none', why: 'thinking-on judges false-accept 50–56% vs ~20% thinking-off (cell-n-r1)' },
+  { key: 'CORTEX_MENTOR_REASONING', value: 'none', why: 'planner/mentor thinking off: thinking-on lost on the hard core (cell-n-r1/r3) and costs 50–75 s per call' },
+  { key: 'CORTEX_LIFT_PLAN', value: 'true', why: 'one plan of attack after the first tool result' },
+  { key: 'CORTEX_LIFT_PLAN_INTERACTIVE', value: 'true', why: 'the plan also runs in human-driven sessions (operator: the frame gets a plan and a tool lift)' },
+];
+const BROWSER_DIRECT: ReadonlyArray<ProfileLever> = [
+  { key: 'CORTEX_BROWSE_TOOL', value: 'off', why: 'no Browse delegate: the main model drives the browser tools itself (the delegate was most of the holdout-8 time)' },
+  { key: 'CORTEX_MCP_AUTOCONNECT', value: 'nexus-browser', why: 'browser tools in the main session from turn 1 (local library or hosted MCP, per NEXUS_BROWSER_MODE)' },
+];
+/** user-fast = tools-only + guards: the model and its tools, every reviewer off. */
+export const USER_FAST_LEVERS: ReadonlyArray<ProfileLever> = [
+  ...USER_GUARD_LEVERS, ...USER_SURFACE_LEVERS, ...BROWSER_DIRECT,
+  { key: 'CORTEX_ENDTURN_RESOLVER', value: 'false', why: 'no finish review' },
+  { key: 'CORTEX_ENDTURN_GATE', value: 'false', why: 'no mandatory EndTurn attestation' },
+  { key: 'CORTEX_ENDTURN_REQUIREMENTS', value: 'false', why: 'no requirements attestation' },
+  { key: 'CORTEX_ENDTURN_INTEGRITY', value: 'false', why: 'no sources/integrity attestation' },
+  { key: 'CORTEX_SCOPE_CHECK', value: 'off', why: 'no scope hold' },
+  { key: 'CORTEX_LIFT_PLAN', value: 'false', why: 'no planner call' },
+  { key: 'CORTEX_LIFT_NUDGE', value: 'false', why: 'no lift reminder' },
+  { key: 'MENTORSHIP_ENABLED', value: 'false', why: 'no mentor helper model' },
+  { key: 'CORTEX_DEADLINE_EXIT_MENTOR', value: 'false', why: 'no deadline mentor call' },
+];
+/** user-hybrid = tools-only speed on web turns (browser in the main session, no judge on web-evidenced finishes) + the measured reviewers on
+ *  code/file work (plan of attack, judge with abstain, EndTurn gate as shipped). */
+export const USER_HYBRID_LEVERS: ReadonlyArray<ProfileLever> = [
+  ...STANDARD_LEVERS.filter((l) => !USER_GUARD_LEVERS.some((g) => g.key === l.key)), ...USER_GUARD_LEVERS, ...USER_SURFACE_LEVERS, ...BROWSER_DIRECT, ...JUDGE_ON,
+  { key: 'CORTEX_ENDTURN_RESOLVER_WEB', value: 'off', why: 'no judge review of a web-evidenced finish (web results read, no file writes)' },
+];
+/** user-careful = standard + MCP + web: the full measured pipeline (Browse delegate, judge on every tool-using finish, plan of attack). */
+export const USER_CAREFUL_LEVERS: ReadonlyArray<ProfileLever> = [
+  ...STANDARD_LEVERS.filter((l) => !USER_GUARD_LEVERS.some((g) => g.key === l.key)), ...USER_GUARD_LEVERS, ...USER_SURFACE_LEVERS, ...JUDGE_ON,
+];
+/** Profiles whose levers are LOCKED once selected (win over .env file values; real env + .env.local still win). */
+export const LOCKED_PROFILES: ReadonlySet<InteractiveProfileName> = new Set(['user-fast', 'user-hybrid', 'user-careful']);
+
 /** 'container' = the hosted sandbox images' pre-existing CORTEX_PROFILE value (a preconfigured one-shot marker, no reader until 4.125.0);
  *  it means the shipped set there, so it resolves to `standard` — otherwise every hosted MCP / autoresearch session silently ran `off`. */
 const ALIASES: Readonly<Record<string, InteractiveProfileName>> = { container: 'standard' };
-const KNOWN: ReadonlySet<string> = new Set(['off', 'bench-lite', 'standard', 'bench-tb4', 'tools-only']);
+const KNOWN: ReadonlySet<string> = new Set(['off', 'bench-lite', 'standard', 'bench-tb4', 'tools-only', 'user-fast', 'user-hybrid', 'user-careful']);
 
 /** Profile name from CORTEX_PROFILE, else the legacy CORTEX_INTERACTIVE_PROFILE. Unset / blank / unknown → off (an unknown name never arms anything). */
 export function resolveInteractiveProfileName(env: NodeJS.ProcessEnv = process.env): InteractiveProfileName {
@@ -205,6 +274,9 @@ export function profileLevers(name: InteractiveProfileName): ReadonlyArray<Profi
   if (name === 'standard') return STANDARD_LEVERS;
   if (name === 'bench-tb4') return BENCH_TB4_LEVERS;
   if (name === 'tools-only') return TOOLS_ONLY_LEVERS;
+  if (name === 'user-fast') return USER_FAST_LEVERS;
+  if (name === 'user-hybrid') return USER_HYBRID_LEVERS;
+  if (name === 'user-careful') return USER_CAREFUL_LEVERS;
   return [];
 }
 
@@ -215,6 +287,8 @@ export interface InteractiveProfileResolution {
   apply: Record<string, string>;
   /** Profile levers left alone because the user set them. */
   explicit: string[];
+  /** LOCKED profiles: levers whose .env-file value the profile replaced (shown in the effective-config dump). */
+  lockedOver?: string[];
 }
 
 const isSet = (v: string | undefined): boolean => v !== undefined && v.trim() !== '';
@@ -225,14 +299,22 @@ export function resolveInteractiveProfile(
   opts: { interactive: boolean },
   /** Profile name when env does not carry one (the shipped `.env.defaults` value, read before that file is applied). */
   fallbackName?: string,
+  /** Keys present in the REAL process environment before any .env file was applied. For a LOCKED profile only these count as explicit;
+   *  values that came from .env files are overridden. Omitted = every set key counts as explicit (the unlocked behaviour). */
+  realEnvKeys?: ReadonlySet<string>,
 ): InteractiveProfileResolution {
   const named = (env[PROFILE_ENV] ?? '').trim() !== '' || (env[LEGACY_PROFILE_ENV] ?? '').trim() !== '';
   const name = resolveInteractiveProfileName(!named && fallbackName !== undefined ? { [PROFILE_ENV]: fallbackName } : env);
   const out: InteractiveProfileResolution = { name, interactive: opts.interactive, apply: {}, explicit: [] };
   if (!profileAppliesTo(name, opts.interactive)) return out;
+  const locked = LOCKED_PROFILES.has(name) && realEnvKeys !== undefined;
   for (const l of profileLevers(name)) {
-    if (isSet(env[l.key])) out.explicit.push(l.key);
-    else out.apply[l.key] = l.value;
+    const explicit = locked ? (realEnvKeys!.has(l.key) && isSet(env[l.key])) : isSet(env[l.key]);
+    if (explicit) out.explicit.push(l.key);
+    else {
+      if (locked && isSet(env[l.key]) && env[l.key] !== l.value) (out.lockedOver ??= []).push(l.key);
+      out.apply[l.key] = l.value;
+    }
   }
   return out;
 }
@@ -243,8 +325,10 @@ export function applyInteractiveProfile(
   env: NodeJS.ProcessEnv,
   opts: { interactive: boolean },
   fallbackName?: string,
+  realEnvKeys?: ReadonlySet<string>,
 ): InteractiveProfileResolution {
-  const r = resolveInteractiveProfile(env, opts, fallbackName);
+  const r = resolveInteractiveProfile(env, opts, fallbackName, realEnvKeys);
+  if (r.lockedOver?.length) env.CORTEX_PROFILE_LOCKED_OVER = r.lockedOver.join(',');
   const keys = Object.keys(r.apply);
   if (keys.length === 0) return r;
   for (const k of keys) env[k] = r.apply[k];

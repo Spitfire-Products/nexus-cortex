@@ -21,6 +21,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 import type { CanonSession } from './canonPull.js';
+import { isSidecarName, sidecarFiles } from './sidecar.js';
 
 /** Where an archived session's bytes live: git blob ids in the store (part order), plus the events sidecar. */
 export interface ArchivedSessionRef {
@@ -28,7 +29,8 @@ export interface ArchivedSessionRef {
   /** Repo path of the logical session under archive/ (e.g. archive/2026-08/canon/claude-code/<dir>/<id>.jsonl). */
   path: string;
   blobs: string[];
-  sidecarBlob?: string;
+  /** The events sidecar's blob ids in part order (one entry for an unsplit sidecar). */
+  sidecarBlobs?: string[];
   /** False when any of the session's blobs is not in the local object store (partial clone) — never fetched here. */
   local: boolean;
 }
@@ -73,17 +75,18 @@ export function discoverArchivedCanonSessions(
   const liveRels = new Set(live);
   type Group = { bucket: string; parts: Array<{ name: string; sha: string; size: number }>; sidecar?: string };
   const groups = new Map<string, Group>(); // key = rel under canon/ (logical .jsonl)
-  const sidecars = new Map<string, { bucket: string; sha: string }>();
+  const sidecars = new Map<string, { bucket: string; sha: string; parts: { name: string; sha: string }[] }>();
   for (const line of out.split('\n')) {
     const m = line.match(/^\d{6} blob ([0-9a-f]{40,64})\t(.+)$/);
     if (!m) continue;
     const pm = m[2]!.match(/^archive\/(\d{4}-\d{2})\/canon\/(.+)$/);
     if (!pm) continue;
     const [bucket, rest] = [pm[1]!, pm[2]!];
-    if (rest.endsWith('.events.jsonl')) {
-      const logical = rest.replace(/\.events\.jsonl$/, '.jsonl');
-      const cur = sidecars.get(logical);
-      if (!cur || bucket > cur.bucket) sidecars.set(logical, { bucket, sha: m[1]! });
+    if (isSidecarName(rest)) {
+      const logical = rest.replace(/\.events\.jsonl(\.part-\d{4})?$/, '.jsonl');
+      const cur = sidecars.get(logical); const part = { name: rest, sha: m[1]! };
+      if (!cur || bucket > cur.bucket) sidecars.set(logical, { bucket, sha: m[1]!, parts: [part] });
+      else if (bucket === cur.bucket) cur.parts.push(part);
       continue;
     }
     const cm = rest.match(/^(.*\.jsonl)\.part-\d{4}$/);
@@ -95,9 +98,11 @@ export function discoverArchivedCanonSessions(
     else if (bucket === g.bucket) g.parts.push(part);
   }
 
+  // Split sidecars: parts in order; the title lookup reads the LAST part (the newest ai-title record lives at the end).
+  for (const sc of sidecars.values()) { sc.parts.sort((x, y) => x.name.localeCompare(y.name)); sc.sha = sc.parts[sc.parts.length - 1]!.sha; }
   const sizes = localBlobSizes(store, [
     ...[...groups.values()].flatMap((g) => g.parts.map((p) => p.sha)),
-    ...[...sidecars.values()].map((sc) => sc.sha),
+    ...[...sidecars.values()].flatMap((sc) => sc.parts.map((p) => p.sha)),
   ]);
   for (const g of groups.values()) for (const p of g.parts) p.size = sizes.get(p.sha) ?? -1;
 
@@ -124,7 +129,7 @@ export function discoverArchivedCanonSessions(
       }
     }
     const repoPath = `archive/${g.bucket}/canon/${rel}`;
-    const archived: ArchivedSessionRef = { store, path: repoPath, blobs: g.parts.map((p) => p.sha), sidecarBlob: side?.sha, local };
+    const archived: ArchivedSessionRef = { store, path: repoPath, blobs: g.parts.map((p) => p.sha), sidecarBlobs: side ? side.parts.map((p) => p.sha) : undefined, local };
     sessions.push({
       uuid, rel, bytes, title, harness: rel.split('/')[0] ?? '?',
       parts: g.parts.map((p) => `archive/${g.bucket}/canon/${p.name}`),
@@ -147,11 +152,10 @@ export async function* sessionLines(s: CanonSession): AsyncGenerator<string> {
 /** Stream the events sidecar's lines (nothing when the session has none). */
 export async function* sidecarLines(s: CanonSession): AsyncGenerator<string> {
   if (s.archived) {
-    if (s.archived.sidecarBlob) yield* blobLines(s.archived.store, s.archived.sidecarBlob);
+    for (const sha of s.archived.sidecarBlobs ?? []) yield* blobLines(s.archived.store, sha);
     return;
   }
-  const sidecar = s.parts[0]!.replace(/\.part-\d{4}$/, '').replace(/\.jsonl$/, '.events.jsonl');
-  if (fs.existsSync(sidecar)) yield* linesOf(fs.createReadStream(sidecar));
+  for (const f of sidecarFiles(s.parts[0]!)) yield* linesOf(fs.createReadStream(f));
 }
 
 async function* linesOf(input: NodeJS.ReadableStream): AsyncGenerator<string> {

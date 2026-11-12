@@ -21,6 +21,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { CanonSession } from './canonPull.js';
 import { sessionLines, sidecarLines } from './canonArchiveRead.js';
+import { sidecarFiles } from './sidecar.js';
 
 export interface TouchedIndex {
   /** session REL (unique — uuids repeat across dual-lineage copies) → absolute file path → touch count */
@@ -185,12 +186,13 @@ export async function buildTouchedIndex(
     // Archived sessions (read from git, canonArchiveRead.ts) sign by blob id — immutable, so scanned once per machine.
     let sig: string;
     if (s.archived) {
-      sig = 'v6|blob|' + s.archived.blobs.join('|') + '|' + (s.archived.sidecarBlob ?? '0');
+      sig = 'v6|blob|' + s.archived.blobs.join('|') + '|' + (s.archived.sidecarBlobs?.join(',') || '0');
     } else {
       const logicalAbs = s.parts[0]!.replace(/\.part-\d{4}$/, '');
-      const sidecar = logicalAbs.replace(/\.jsonl$/, '.events.jsonl');
-      let sidecarSig = '0:0';
-      try { const st = fs.statSync(sidecar); sidecarSig = `${st.size}:${Math.round(st.mtimeMs)}`; } catch { /* none */ }
+      const sides = sidecarFiles(logicalAbs);
+      const sidecarSig = sides.length
+        ? sides.map((f) => { const st = fs.statSync(f); return `${st.size}:${Math.round(st.mtimeMs)}`; }).join(',')
+        : '0:0';
       sig = 'v6|' + s.parts
         .map((p) => { const st = fs.statSync(p); return `${st.size}:${Math.round(st.mtimeMs)}`; })
         .join('|') + '|' + sidecarSig;

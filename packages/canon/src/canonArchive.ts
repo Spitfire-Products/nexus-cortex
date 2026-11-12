@@ -86,6 +86,9 @@ async function canonArchiveUnlocked(opts: CanonArchiveOptions): Promise<number> 
   const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
   const store = opts.store;
 
+  // Heal a half-applied archive/ exclusion FIRST (a killed earlier run): otherwise its unflagged archive/ entries read as
+  // deletions below and every run aborts forever. Safe here: this runs under the store lock, so no sync is mid-flight.
+  if (!opts.dryRun) ensureArchiveExclusion(store, 'canon-archive');
   // Dirty worktree = a sync may be mid-flight (the watcher) — never race it.
   if (git(store, ['status', '--porcelain']).trim()) {
     console.error('[canon-archive] store has uncommitted changes (a sync may be running) — aborting; retry when clean');

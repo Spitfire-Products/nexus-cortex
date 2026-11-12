@@ -21,7 +21,7 @@ export interface GetMcpConfigOutput {
     name: string;
     status: 'enabled' | 'disabled';
     description?: string;
-    transport?: 'stdio' | 'http';
+    transport?: 'stdio' | 'http' | 'inprocess';
     command?: string;
     args?: string[];
     env?: Record<string, string>;

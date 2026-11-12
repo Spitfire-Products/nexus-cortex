@@ -2,10 +2,18 @@
   "$schema": "https://unpkg.com/@changesets/config@3.0.0/schema.json",
   "changelog": "@changesets/cli/changelog",
   "commit": false,
-  "fixed": [["@nexus-cortex/*", "nexus-cortex"]],
+  "fixed": [
+    [
+      "@nexus-cortex/*",
+      "nexus-cortex"
+    ]
+  ],
   "linked": [],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": []
+  "ignore": [
+    "@nexus-cortex/browser",
+    "@nexus-cortex/desktop"
+  ]
 }

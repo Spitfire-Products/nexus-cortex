@@ -18,9 +18,11 @@
  * @module canon/canonTranslate
  */
 import { defaultCanonStore } from './storePath.js';
+import { sidecarFiles } from './sidecar.js';
 import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, guardedPush, atomicClone, requireFullSurfaceStore, withStoreLock } from './canonRepo.js';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
+import { StringDecoder } from 'node:string_decoder';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 
@@ -137,18 +139,23 @@ function finalizeOutput(destAbs: string, tmpAbs: string) {
     fs.renameSync(tmpAbs, destAbs);
     return;
   }
-  // split at line boundaries into parts; remove single-file form + extra parts
-  const content = fs.readFileSync(tmpAbs, 'utf8');
-  let offset = 0, part = 0;
-  while (offset < content.length) {
-    let end = Math.min(offset + PART_BYTES, content.length);
-    if (end < content.length) {
-      const nl = content.lastIndexOf('\n', end);
-      if (nl > offset) end = nl + 1;
+  // split at line boundaries into parts; remove single-file form + extra parts. STREAMED (2026-11-11): a > 512 MB output (the 824 MB
+  // faee1cf3 session's sidecar) cannot be one V8 string. Same cut rule as before — the last '\n' at or before offset + PART_BYTES,
+  // counted in chars — so parts are identical to the old whole-string split.
+  const fd = fs.openSync(tmpAbs, 'r'); const dec = new StringDecoder('utf8'); const block = Buffer.allocUnsafe(8 * 1024 * 1024);
+  let buf = '', part = 0;
+  const cut = (final: boolean) => {
+    while (buf.length > PART_BYTES || (final && buf.length > 0)) {
+      let end = buf.length;
+      if (buf.length > PART_BYTES) { const nl = buf.lastIndexOf('\n', PART_BYTES); end = nl > 0 ? nl + 1 : PART_BYTES; }   // no newline in range: cut at PART_BYTES, as the old split did
+      fs.writeFileSync(`${destAbs}.part-${String(part).padStart(4, '0')}`, buf.slice(0, end));
+      buf = buf.slice(end); part++;
     }
-    fs.writeFileSync(`${destAbs}.part-${String(part).padStart(4, '0')}`, content.slice(offset, end));
-    offset = end; part++;
-  }
+  };
+  try {
+    for (;;) { const n = fs.readSync(fd, block, 0, block.length, null); if (n === 0) break; buf += dec.write(block.subarray(0, n)); cut(false); }
+    buf += dec.end(); cut(true);
+  } finally { fs.closeSync(fd); }
   for (const p of staleParts()) {
     const idx = Number(p.slice(-4));
     if (idx >= part) fs.unlinkSync(p);
@@ -257,7 +264,14 @@ async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-co
     ref: '', line: 0, turn: -1,
   };
   let msgCount = 0;
-  const events: string[] = [];
+  // Sidecar lines STREAM to <events>.tmp (2026-11-11): holding them as an array, then join()ing a second copy, ran V8 out of heap
+  // (~2.5 GB) on the 824 MB faee1cf3 session, whose api-request-blob records alone are > 1 GB. Same push/length surface as before.
+  const eventsTmp = eventsAbs + '.tmp';
+  let eventsFd: number | null = null; let eventsN = 0;
+  const events = {
+    push(l: string) { if (eventsFd === null) { fs.mkdirSync(path.dirname(eventsTmp), { recursive: true }); eventsFd = fs.openSync(eventsTmp, 'w'); } fs.writeSync(eventsFd, l + '\n'); eventsN++; },
+    get length() { return eventsN; },
+  };
   const fileErrors: string[] = [];
   if (DRY) {
     st.files++;
@@ -708,8 +722,14 @@ async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-co
     return;
   }
   finalizeOutput(destAbs, tmpAbs);
-  if (events.length) fs.writeFileSync(eventsAbs, events.join('\n') + '\n');
-  else if (fs.existsSync(eventsAbs)) fs.unlinkSync(eventsAbs);
+  if (events.length) {
+    // Chunk-aware like the main file: a sidecar > 50 MB becomes .part-NNNN files (GitHub's 100 MB cap; sidecar.ts resolves both).
+    fs.closeSync(eventsFd!); eventsFd = null;
+    finalizeOutput(eventsAbs, eventsTmp);
+  } else {
+    if (fs.existsSync(eventsAbs)) fs.unlinkSync(eventsAbs);
+    for (const p of sidecarFiles(destAbs)) fs.unlinkSync(p);
+  }
   // projection: canon IS the nexus-cortex dialect — materialize by reference
   writeIfChanged(path.join(STORE, 'projections', 'nexus-cortex', lf.rel + '.ref'), destRel + '\n');
   errors.push(...fileErrors);

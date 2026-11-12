@@ -7,7 +7,7 @@ import os from 'os';
 import path from 'path';
 import { webcrypto } from 'crypto';
 import {
-  createVault, Vault, deriveKey, encryptValue, decryptValue, loadVaultIntoEnv, openVaultNonInteractive, maskSecrets,
+  createVault, initVaultDefault, writeVaultFile, readVaultFile, Vault, deriveKey, encryptValue, decryptValue, loadVaultIntoEnv, openVaultNonInteractive, maskSecrets,
   toolChildEnv, maskSecretText, maskToolResults, describeVaultForAgent, _resetVaultSessionForTests,
   PBKDF2_ITERATIONS, VAULT_ID, type EncryptedSecret,
 } from './secretsVault.js';
@@ -171,5 +171,30 @@ describe('Phase 2 — tool processes and tool output', () => {
     expect(d.unlocked).toBe(true); expect(d.secrets.map((s) => s.name)).toEqual(['P2_BOUND', 'P2_REAL', 'P2_VAULT_ONLY']);
     expect(d.secrets.find((s) => s.name === 'P2_BOUND')!.boundAs).toEqual(['$GH_TOKEN']);
     for (const val of ['vault-only-value-123', 'ghp_bound_value_789', 'master-p2-xyz', 'vault-copy-of-real-456']) expect(text).not.toContain(val);
+  });
+});
+
+// 2026-11-12 (operator: "make sure that cortex update doesnt remove or overwrite the nexus-cortex secrets vault")
+describe('the vault is never overwritten', () => {
+  it('createVault refuses an existing vault and leaves it byte-identical', () => {
+    createVault('first', file); const v = Vault.open('first', 'env', file); v.set('A_KEY', 'value-a', {});
+    const before = fs.readFileSync(file);
+    expect(() => createVault('second', file)).toThrow(/already exists/);
+    expect(fs.readFileSync(file).equals(before)).toBe(true);
+    expect(Vault.open('first', 'env', file).get('A_KEY')).toBe('value-a');
+  });
+  it('every rewrite keeps the previous version as <vault>.bak (owner-only)', () => {
+    createVault('k', file); const v = Vault.open('k', 'env', file); v.set('ONE', '1', {});
+    const prev = fs.readFileSync(file); v.set('TWO', '2', {});
+    expect(fs.readFileSync(file + '.bak').equals(prev)).toBe(true);
+    expect((fs.statSync(file + '.bak').mode & 0o077)).toBe(0);
+    expect(readVaultFile(file + '.bak')?.secrets.TWO).toBeUndefined();
+  });
+  it('initVaultDefault reuses an existing key file instead of writing a new key', () => {
+    process.env.CORTEX_HOME = dir; const cd = path.join(dir, '.cortex'); fs.mkdirSync(cd);
+    fs.writeFileSync(path.join(cd, 'vault.key'), 'kept-key\n', { mode: 0o600 });
+    try { initVaultDefault({}); } finally { delete process.env.CORTEX_HOME; }
+    expect(fs.readFileSync(path.join(cd, 'vault.key'), 'utf8')).toBe('kept-key\n');
+    expect(() => Vault.open('kept-key', 'key-file', path.join(cd, 'secrets.enc'))).not.toThrow();
   });
 });

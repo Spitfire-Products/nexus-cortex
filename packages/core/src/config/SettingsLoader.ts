@@ -234,6 +234,8 @@ export function bootstrapEnv(packageRoot?: string, opts: { interactive?: boolean
   // SECRETS VAULT (2026-11-02, docs/SECRETS_VAULT_PLAN.md): ~/.cortex/secrets.enc, unlocked without prompting (CORTEX_SECRETS_KEY /
   // CORTEX_SECRETS_KEY_FILE / the OS keychain). Loaded BEFORE the .env files with the same first-wins rule, so precedence is
   // real env > vault > .env. Never throws, never prompts — a locked or missing vault just contributes nothing.
+  // 2026-11-12: snapshot the REAL environment before the vault + .env files fill it — a LOCKED user profile only yields to these keys.
+  const realEnvKeys = new Set(Object.keys(process.env).filter((k) => (process.env[k] ?? '').trim() !== ''));
   vaultStatus = loadVaultIntoEnv(process.env);
   // Every console line is secret-masked from here on (2026-11-03: the Anthropic SDK prints raw x-api-key headers under DEBUG=true).
   installConsoleRedaction(process.env);
@@ -258,7 +260,7 @@ export function bootstrapEnv(packageRoot?: string, opts: { interactive?: boolean
   if (!userNamed && defaultsPath) {
     try { const d = parseEnvFile(fs.readFileSync(defaultsPath, 'utf-8')); shippedProfile = d.CORTEX_PROFILE || d.CORTEX_INTERACTIVE_PROFILE; } catch { /* no profile */ }
   }
-  applyInteractiveProfile(process.env, { interactive: opts.interactive ?? isInteractiveSession() }, shippedProfile);
+  applyInteractiveProfile(process.env, { interactive: opts.interactive ?? isInteractiveSession() }, shippedProfile, realEnvKeys);
   // R262 FEATURE PAYLOAD LAYER: GrowthBook-format rules (CORTEX_FEATURES_FILE / CORTEX_FEATURES_JSON), evaluated offline,
   // fill only levers no user layer set — ABOVE the profile (a rule may take a profile-filled key) and the shipped
   // defaults, BELOW every user layer. No payload / CORTEX_FEATURES=off → nothing written (byte-identical).

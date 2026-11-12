@@ -1823,3 +1823,11 @@ Test: a scripted turn that sleeps past the TTL on a short-TTL provider — cache
 | R219 | HB-TUI-PROFILE — bench gains not in the TUIs; GOAL = pleasing human-navigable UX/UI in both TUIs (CC = visual standard; other harnesses may reveal more navigable patterns) | open, def-5b721c3810 | interactive lever profile + TUI-Bench arena |
 | R221–R227 | prompt-caching audit (wall-drop stale cache, tools churn, injected content lost, accounting, provider controls, Gemini gaps, mentor cleanup) | open | .cortex/research/caching-audit-2026-10-02.md; R221 before the full TB4.0 run |
 
+
+## DELTA 2026-11-11 — local cortex-delegate field report (macbook, cb403053 cipher arc; detail in market-research re/cbmask/FINDINGS.md)
+| item | finding | next |
+|---|---|---|
+| HB-COLDSTART-RACE | 3 concurrent `cortex --new` cold-starts race the server auto-spawn: ports 4000–4003 pile up and 2 of 3 clients die on the 15 s wait | a spawn lock (lockfile/flock around auto-start; losers attach to the winner's port) |
+| HB-MODEL-IDS-FROM-HEALTH | delegates passed model ids that the running server did not serve | resolve/validate model ids from the server's `/health` before the first turn; fail loud on an unknown id |
+| HB-PLAN-SHAPE-DEADEND | local delegates given a statistics-first plan converged on dead ends and ended turns WITHOUT the deliverable; a directed symbol-level hunt solved the same task in ~10 tool calls | finish-gate: refuse end-of-turn without the named deliverable; planner prefers directed (symbol/anchor-first) search over survey-first statistics for RE-style tasks |
+| HB-ORPHAN-SERVER-RUN | killing the cortex CLI client does NOT cancel the server-side agent run: ~2 h after the clients were killed, a gpt-6-luna delegate still alive in the cortex server (npm-installed node_modules/@nexus-cortex/server/dist/index.js) wrote stale output over a TRACKED file (re/cbmask/FINDINGS.md); CORTEX_TURN_DEADLINE_MS did not stop it; the teardown pkill used the monorepo path packages/server/dist/index.js, which does not match the installed one | (a) client disconnect/kill cancels or time-boxes the server run; (b) delegates run in an isolated scratch dir by default so a late write cannot land in a tracked tree; (c) cortex-delegate skill teardown kills by the INSTALLED path (or a pid file / `cortex server stop`) |

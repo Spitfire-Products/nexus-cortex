@@ -93,11 +93,27 @@ export function writeVaultFile(v: VaultFile, file = vaultPath()): void {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(v, null, 1), { mode: 0o600 });
+  // 2026-11-12 (operator: an update must never remove or overwrite the vault): keep the previous version as <vault>.bak before replacing it
+  try { if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.bak`), fs.chmodSync(`${file}.bak`, 0o600); } catch { /* best effort */ }
   fs.renameSync(tmp, file);   // atomic replace — a crash never leaves a half-written vault
 }
+/** Create a NEW vault. Never replaces an existing one: the file is linked into place, which fails atomically when it exists. */
 export function createVault(master: string, file = vaultPath()): VaultFile {
+  if (fs.existsSync(file)) throw new Error(`a vault already exists at ${file} — refusing to overwrite it`);
   const v: VaultFile = { version: 1, id: VAULT_ID, check: encryptValue(deriveKey(master), CHECK_PLAINTEXT), secrets: {}, bindings: [] };
-  writeVaultFile(v, file); return v;
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const tmp = `${file}.${process.pid}.new`;
+  fs.writeFileSync(tmp, JSON.stringify(v, null, 1), { mode: 0o600 });
+  try { fs.linkSync(tmp, file); }
+  catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'EEXIST') throw new Error(`a vault already exists at ${file} — refusing to overwrite it`);
+    // filesystems without hard links: exclusive create ('wx' fails when the file exists)
+    try { fs.writeFileSync(file, JSON.stringify(v, null, 1), { mode: 0o600, flag: 'wx' }); }
+    catch (e2) { if ((e2 as NodeJS.ErrnoException).code === 'EEXIST') throw new Error(`a vault already exists at ${file} — refusing to overwrite it`); throw e2; }
+  }
+  finally { try { fs.unlinkSync(tmp); } catch { /* gone */ } }
+  return v;
 }
 
 /** An open vault: values are decrypted only on request and never logged. */
@@ -164,7 +180,8 @@ export function initVaultDefault(env: NodeJS.ProcessEnv = process.env): { where:
   if (fs.existsSync(vaultPath())) throw new Error(`a vault already exists at ${vaultPath()}`);
   const given = resolveMasterSecret(env);
   let master: string; let where: UnlockSource;
-  if (given && (given.source === 'env' || given.source === 'env-file')) { master = given.master; where = given.source; }
+  // reuse ANY key that already exists (env, key file, keychain entry) — never replace a stored key with a new one (2026-11-12)
+  if (given && given.source !== 'passphrase') { master = given.master; where = given.source; }
   else {
     master = newMasterSecret();
     if (keychainSet(master)) where = 'keychain';

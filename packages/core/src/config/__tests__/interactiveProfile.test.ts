@@ -16,6 +16,7 @@ vi.mock('os', async (importOriginal) => {
 import {
   BENCH_LITE_LEVERS, BENCH_LITE_DEFERRED, STANDARD_LEVERS, STANDARD_EXTRA_LEVERS, BENCH_TB4_LEVERS, resolveInteractiveProfileName, resolveInteractiveProfile,
   applyInteractiveProfile, isInteractiveSession, liftPlanAllowedInSession, profileAppliedKeys, profileAppliesTo,
+  USER_FAST_LEVERS, USER_HYBRID_LEVERS, USER_CAREFUL_LEVERS, LOCKED_PROFILES, profileLevers,
 } from '../interactiveProfile.js';
 import { bootstrapEnv, getGlobalEnvPath } from '../SettingsLoader.js';
 import { collectEffectiveConfig } from '../effectiveConfig.js';
@@ -283,5 +284,82 @@ describe('tools-only profile (2026-11-06)', () => {
     const r = m.resolveInteractiveProfile({ CORTEX_PROFILE: 'tools-only', CORTEX_ENDTURN_RESOLVER: 'true' } as any, { interactive: false });
     expect(r.apply.CORTEX_ENDTURN_RESOLVER).toBeUndefined();
     expect(r.explicit).toContain('CORTEX_ENDTURN_RESOLVER');
+  });
+});
+
+describe('user profiles (2026-11-12): user-fast / user-hybrid / user-careful, LOCKED once set', () => {
+  const val = (ls: ReadonlyArray<{ key: string; value: string }>, k: string) => ls.find((l) => l.key === k)?.value;
+  it('each profile names every lever once and carries the user surface', () => {
+    for (const ls of [USER_FAST_LEVERS, USER_HYBRID_LEVERS, USER_CAREFUL_LEVERS]) {
+      const keys = ls.map((l) => l.key);
+      expect(new Set(keys).size).toBe(keys.length);
+      expect(val(ls, 'MCP_AUTO_INJECT')).toBe('true');
+      expect(val(ls, 'ENABLE_WEBTOOLS')).toBe('true');
+      expect(val(ls, 'CORTEX_TOOL_ANCHOR')).toBe('bash-edit');
+      expect(val(ls, 'CORTEX_SECOND_ATTEMPT')).toBe('0');
+      expect(val(ls, 'CORTEX_LOOP_TOOL_BLOCK')).toBe('true');
+    }
+    expect(val(USER_FAST_LEVERS, 'CORTEX_ENDTURN_RESOLVER')).toBe('false');
+    expect(val(USER_FAST_LEVERS, 'CORTEX_BROWSE_TOOL')).toBe('off');
+    expect(val(USER_HYBRID_LEVERS, 'CORTEX_ENDTURN_RESOLVER')).toBe('true');
+    expect(val(USER_HYBRID_LEVERS, 'CORTEX_ENDTURN_RESOLVER_WEB')).toBe('off');
+    expect(val(USER_HYBRID_LEVERS, 'CORTEX_BROWSE_TOOL')).toBe('off');
+    expect(val(USER_CAREFUL_LEVERS, 'CORTEX_BROWSE_TOOL')).toBeUndefined();
+    expect(val(USER_CAREFUL_LEVERS, 'CORTEX_ENDTURN_RESOLVER_REASONING')).toBe('none');
+    for (const n of ['user-fast', 'user-hybrid', 'user-careful'] as const) {
+      expect(resolveInteractiveProfileName({ CORTEX_PROFILE: n })).toBe(n);
+      expect(LOCKED_PROFILES.has(n)).toBe(true);
+      expect(profileAppliesTo(n, false)).toBe(true);
+      expect(profileLevers(n).length).toBeGreaterThan(10);
+    }
+  });
+  it('LOCKED: a .env-file value is replaced; a real-env value still wins; standard stays unlocked', () => {
+    const fileEnv = { CORTEX_PROFILE: 'user-hybrid', MCP_AUTO_INJECT: 'false', ENABLE_WEBTOOLS: 'false' } as NodeJS.ProcessEnv;
+    const r = resolveInteractiveProfile(fileEnv, { interactive: true }, undefined, new Set(['CORTEX_PROFILE']));
+    expect(r.apply.MCP_AUTO_INJECT).toBe('true');
+    expect(r.lockedOver).toEqual(expect.arrayContaining(['MCP_AUTO_INJECT', 'ENABLE_WEBTOOLS']));
+    const r2 = resolveInteractiveProfile(fileEnv, { interactive: true }, undefined, new Set(['CORTEX_PROFILE', 'MCP_AUTO_INJECT']));
+    expect(r2.explicit).toContain('MCP_AUTO_INJECT');
+    expect(r2.apply.MCP_AUTO_INJECT).toBeUndefined();
+    const std = resolveInteractiveProfile({ CORTEX_PROFILE: 'standard', CORTEX_WALL_DROP: 'off' }, { interactive: true }, undefined, new Set(['CORTEX_PROFILE']));
+    expect(std.explicit).toContain('CORTEX_WALL_DROP');   // unlocked: any set value wins, as before
+    expect(std.lockedOver).toBeUndefined();
+  });
+  describe('bootstrapEnv', () => {
+    let home: string; let pkgRoot: string;
+    const keys = ['CORTEX_PROFILE', 'CORTEX_INTERACTIVE_PROFILE', 'CORTEX_INTERACTIVE_PROFILE_APPLIED', 'CORTEX_PROFILE_LOCKED_OVER',
+      ...new Set([...USER_HYBRID_LEVERS, ...USER_FAST_LEVERS].map((l) => l.key))];
+    const saved: Record<string, string | undefined> = {};
+    beforeEach(() => {
+      for (const k of keys) { saved[k] = process.env[k]; delete process.env[k]; }
+      home = fs.mkdtempSync(path.join(tmpdir(), 'up-home-')); pkgRoot = fs.mkdtempSync(path.join(tmpdir(), 'up-pkg-'));
+      process.env.__R219_HOME__ = home; process.env.CORTEX_PROFILE = '';   // blank real env: the repo ./.env profile line cannot leak in
+      fs.writeFileSync(path.join(pkgRoot, '.env.defaults'), 'MCP_AUTO_INJECT=false\nENABLE_WEBTOOLS=auto\n');
+    });
+    afterEach(() => {
+      delete process.env.__R219_HOME__;
+      for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+      for (const d of [home, pkgRoot]) fs.rmSync(d, { recursive: true, force: true });
+    });
+    const writeGlobal = (body: string) => { fs.mkdirSync(path.dirname(getGlobalEnvPath()), { recursive: true }); fs.writeFileSync(getGlobalEnvPath(), body); };
+    it('user-hybrid in ~/.cortex/.env overrides stale file levers and reports them', () => {
+      writeGlobal('CORTEX_INTERACTIVE_PROFILE=user-hybrid\nMCP_AUTO_INJECT=false\nENABLE_WEBTOOLS=false\nCORTEX_FREE_LEVER=kept\n');
+      bootstrapEnv(pkgRoot, { interactive: false });
+      expect(process.env.MCP_AUTO_INJECT).toBe('true');
+      expect(process.env.ENABLE_WEBTOOLS).toBe('true');
+      expect(process.env.CORTEX_ENDTURN_RESOLVER_WEB).toBe('off');
+      expect((process.env.CORTEX_PROFILE_LOCKED_OVER ?? '').split(',')).toEqual(expect.arrayContaining(['MCP_AUTO_INJECT', 'ENABLE_WEBTOOLS']));
+      expect(process.env.CORTEX_FREE_LEVER).toBe('kept');   // levers the profile does not name stay mutable
+      delete process.env.CORTEX_FREE_LEVER;
+    });
+    it('a real-env value wins over the locked profile; .env.local still overrides', () => {
+      process.env.MCP_AUTO_INJECT = 'false';
+      writeGlobal('CORTEX_INTERACTIVE_PROFILE=user-fast\n');
+      fs.writeFileSync(path.join(pkgRoot, '.env.local'), 'ENABLE_WEBTOOLS=false\n');
+      bootstrapEnv(pkgRoot, { interactive: false });
+      expect(process.env.MCP_AUTO_INJECT).toBe('false');
+      expect(process.env.ENABLE_WEBTOOLS).toBe('false');
+      expect(process.env.CORTEX_ENDTURN_RESOLVER).toBe('false');
+    });
   });
 });

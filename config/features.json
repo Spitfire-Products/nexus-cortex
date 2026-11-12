@@ -531,6 +531,15 @@
         "kind": "value"
       }
     },
+    "CORTEX_ENDTURN_RESOLVER_WEB": {
+      "defaultValue": "on",
+      "rules": [],
+      "meta": {
+        "what": "off = the EndTurn judge skips WEB-evidenced finishes (web results read, no file writes); set by the user-hybrid profile",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
     "CORTEX_ENDTURN_SOURCES_AUTO": {
       "defaultValue": "on",
       "rules": [],
@@ -1683,6 +1692,15 @@
         "kind": "value"
       }
     },
+    "CORTEX_PROFILE_LOCKED_OVER": {
+      "defaultValue": "(none)",
+      "rules": [],
+      "meta": {
+        "what": "REPORTED (read-only): levers a LOCKED user profile (user-fast/user-hybrid/user-careful) took over from .env file values",
+        "group": "Loop control",
+        "kind": "value"
+      }
+    },
     "CORTEX_PROMPT_MASS": {
       "defaultValue": "(unset — card wins)",
       "rules": [],
@@ -2418,6 +2436,33 @@
       "meta": {
         "what": "Which model gives the mentor hints",
         "group": "Mentorship & dark features (shipped OFF until benched)",
+        "kind": "value"
+      }
+    },
+    "NEXUS_BROWSER_MODE": {
+      "defaultValue": "hosted",
+      "rules": [],
+      "meta": {
+        "what": "browser surface: hosted (default) = the hosted nexus-browser MCP; local = the @nexus-cortex/browser library on this machine (needs `cortex browser install`)",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "value"
+      }
+    },
+    "NEXUS_BROWSER_NATIVE": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "2026-11-12 (dark): with NEXUS_BROWSER_MODE=local, load the browser library IN-PROCESS (InMemoryTransport) instead of a stdio child; same tools/names",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
+        "kind": "flag-true"
+      }
+    },
+    "NEXUS_DESKTOP": {
+      "defaultValue": "(off)",
+      "rules": [],
+      "meta": {
+        "what": "2026-11-12 desktop surface: virtual (private X display) | real (the user's own screen; enabled only interactively by `cortex desktop enable`) — serves the `desktop` tool as nexus-desktop in-process; unset = off",
+        "group": "Prompt, tools & frame (mostly card-driven — cards win over env)",
         "kind": "value"
       }
     },

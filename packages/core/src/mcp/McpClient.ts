@@ -10,6 +10,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { pathToFileURL } from 'node:url';
 import type { Tool, Resource, Prompt } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from '../utils/logger.js';
 import { getPersistedMcpToken, persistMcpToken } from './McpTokenStore.js';
@@ -29,7 +31,7 @@ function describeError(error: unknown): string {
   return `${error.message} (cause: ${causeMsg}${code})`;
 }
 
-export type McpTransportType = 'stdio' | 'http';
+export type McpTransportType = 'stdio' | 'http' | 'inprocess';
 
 export interface McpReconnectionOptions {
   /** Max attempts before the SDK gives up on a dropped SSE channel */
@@ -63,6 +65,14 @@ export interface McpServerConfig {
    * Transport type. Defaults to 'http' when `url` is set, otherwise 'stdio'.
    */
   transport?: McpTransportType;
+
+  /**
+   * inprocess transport (2026-11-12, NEXUS_BROWSER_NATIVE): absolute path of an ESM module exporting `inProcessFactory` (default
+   * createLocalBrowserMCP) that returns { server, close() } — the server is connected over the SDK's InMemoryTransport in THIS process
+   * (no child process, no stdio env forwarding, no cold connect). Same tools, same names as the stdio/http paths.
+   */
+  inProcessModule?: string;
+  inProcessFactory?: string;
 
   /** Command to execute (stdio transport) */
   command?: string;
@@ -111,6 +121,8 @@ export function mcpToolTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
 export class McpClient {
   private client: Client | undefined;
   private transport: Transport | undefined;
+  /** The in-process server instance (inprocess transport) — closed on disconnect. */
+  private inProcessInstance: { close?: () => Promise<void> } | undefined;
   private status: McpConnectionStatus = McpConnectionStatus.DISCONNECTED;
   private discoveredTools: Tool[] = [];
   private discoveredResources: Resource[] = [];
@@ -181,7 +193,17 @@ export class McpClient {
       version: '1.0.0',
     });
 
-    if (transportType === 'http') {
+    if (transportType === 'inprocess') {
+      if (!this.config.inProcessModule) throw new Error('inprocess transport requires inProcessModule');
+      const mod = await import(pathToFileURL(this.config.inProcessModule).href);
+      const factory = mod[this.config.inProcessFactory || 'createLocalBrowserMCP'];
+      if (typeof factory !== 'function') throw new Error(`inprocess: ${this.config.inProcessModule} has no ${this.config.inProcessFactory || 'createLocalBrowserMCP'}()`);
+      const inst = await factory();
+      const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+      await inst.server.connect(serverSide);
+      this.inProcessInstance = inst;
+      this.transport = clientSide;
+    } else if (transportType === 'http') {
       if (!this.config.url) {
         throw new Error('http transport requires a url to be specified');
       }
@@ -301,7 +323,11 @@ export class McpClient {
       if (this.transport) {
         await this.transport.close();
       }
+      if (this.inProcessInstance) {
+        try { await this.inProcessInstance.close?.(); } catch { /* best effort: browser/sandbox teardown */ }
+      }
     } finally {
+      this.inProcessInstance = undefined;
       this.status = McpConnectionStatus.DISCONNECTED;
       this.client = undefined;
       this.transport = undefined;

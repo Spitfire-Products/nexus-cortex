@@ -553,6 +553,19 @@ program
     process.exit(await runBrowser(action, args ?? [], options));
   });
 
+// Desktop surface (operator 2026-11-12): OFF by default; --virtual = a private X display; --real = the user's own screen, interactive confirm only.
+program
+  .command('desktop [action]')
+  .description('Host-computer control (the desktop tool): status | enable [--virtual|--real] | disable. --real needs a typed confirmation in a terminal')
+  .option('--virtual', 'enable: a private virtual display (Linux / containers) — never your screen')
+  .option('--real', 'enable: YOUR screen, mouse and keyboard (interactive confirmation required)')
+  .option('-y, --yes', 'enable --virtual without prompts (refused for --real)')
+  .option('--json', 'status: machine-readable output')
+  .action(async (action: string | undefined, options: { virtual?: boolean; real?: boolean; yes?: boolean; json?: boolean }) => {
+    const { runDesktop } = await import('./commands/desktop/index.js');
+    process.exit(await runDesktop(action, options));
+  });
+
 // Config commands
 // 2026-10-17 first-run wizard: providers -> keys -> action / helper / mentor / vision / web tools -> write ~/.cortex/.env -> probe.
 // Every question has a flag, so a script/container can run it headless (`--key … --yes`); anything unnamed falls back to the same
@@ -1353,10 +1366,11 @@ program
 program
   .command('uninstall')
   .description('Remove the global install (keeps ~/.cortex config unless --purge)')
-  .option('--purge', 'Also delete your config + API keys at ~/.cortex')
+  .option('--purge', 'Also delete your config + .env keys at ~/.cortex (the encrypted secrets vault is KEPT)')
+  .option('--purge-secrets', 'With --purge: delete the encrypted secrets vault (secrets.enc) and its key file too')
   .option('-y, --yes', 'Skip the confirmation prompt')
   .action(async (opts) => {
-    await uninstallCli({ purge: opts.purge, yes: opts.yes });
+    await uninstallCli({ purge: opts.purge, purgeSecrets: opts.purgeSecrets, yes: opts.yes });
   });
 
 // Startup update check — runs before every command except the lifecycle ones

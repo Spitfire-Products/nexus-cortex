@@ -141,6 +141,22 @@ describe('clones never materialize archive/', () => {
     expect(files(stuck)).toEqual(['HARNESSES.json', 'native/h/new.jsonl']);
   });
 
+  it('a killed run that left archive/ entries UNFLAGGED (files gone, index says deleted) is healed, not aborted forever (live 11-11)', async () => {
+    await canonArchive({ store: work, days: 30, push: true });
+    const killed = path.join(tmp, 'killed');
+    atomicClone(bare, killed, 'test');                                   // excluded clone: archive/ entries carry skip-worktree
+    g(killed, ['config', 'user.email', 't@t']);
+    g(killed, ['config', 'user.name', 't']);
+    const arch = g(killed, ['ls-files', '--', 'archive/']).split('\n').filter(Boolean);
+    expect(arch.length).toBeGreaterThan(0);
+    g(killed, ['update-index', '--no-skip-worktree', '--', ...arch]);   // the state a kill between `set` and `reapply` leaves
+    expect(g(killed, ['status', '--porcelain'])).toContain(' D archive/');
+    expect(await canonArchive({ store: killed, days: 30, push: false })).toBe(0);
+    expect(g(killed, ['status', '--porcelain']).trim()).toBe('');
+    expect(files(killed)).toEqual(['HARNESSES.json', 'native/h/new.jsonl']);
+    expect(g(killed, ['ls-tree', '-r', '--name-only', 'HEAD'])).toContain('archive/2026-07/native/h/old1.jsonl');   // nothing deleted from history
+  });
+
   it('a scoped (cone) clone is still scoped', () => {
     const scoped = path.join(tmp, 'scoped');
     atomicClone(bare, scoped, 'test', ['native/h']);

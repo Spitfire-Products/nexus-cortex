@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { resolveDesktop } from '../config/localDesktop.js';
 /**
  * MCP Server Registry
  *
@@ -43,7 +46,12 @@ export interface McpServerDefinition {
   connectTimeoutMs?: number;
 
   /** Transport type (default 'stdio'). Use 'http' for hosted MCP servers. */
-  transport?: 'stdio' | 'http' | 'sse';
+  transport?: 'stdio' | 'http' | 'sse' | 'inprocess';
+
+  /** inprocess transport: absolute path of the ESM module exporting createLocalBrowserMCP() (the @nexus-cortex/browser dist/index.js). */
+  inProcessModule?: string;
+  /** inprocess transport: the factory export (default createLocalBrowserMCP; nexus-desktop uses createDesktopMCP). */
+  inProcessFactory?: string;
 
   /** HTTP endpoint URL (for transport 'http'). */
   url?: string;
@@ -87,8 +95,27 @@ function withBrowserBackend(def: McpServerDefinition): McpServerDefinition {
   if (b.using !== 'local' || !b.serverJs) return def;
   // connectTimeoutMs (2026-11-03): a cold local server (node + SQLite + sandbox) can take >10 s to answer initialize — CarMax's
   // Browse mode:"direct" failed at exactly 10 s with MCP -32001 while the delegate's own connect had succeeded minutes earlier.
+  // NEXUS_BROWSER_NATIVE=1 (2026-11-12, dark): run the library IN THIS PROCESS over the SDK's InMemoryTransport — no child process, no stdio env
+  // forwarding; same tools, same nexus-browser__* names (operator D6). Needs the package's dist/index.js (it exports createLocalBrowserMCP).
+  const native = /^(1|true|yes|on)$/i.test(String(process.env.NEXUS_BROWSER_NATIVE ?? '').trim());
+  const indexJs = b.packageDir ? path.join(b.packageDir, 'dist', 'index.js') : '';
+  if (native && indexJs && fs.existsSync(indexJs)) {
+    return { ...def, transport: 'inprocess', inProcessModule: indexJs, command: '', defaultArgs: undefined, url: undefined, headers: undefined, connectTimeoutMs: 60_000,
+      description: `${def.description} — NATIVE: the @nexus-cortex/browser library loaded in this process (NEXUS_BROWSER_MODE=local, NEXUS_BROWSER_NATIVE=1).` };
+  }
   return { ...def, transport: 'stdio', command: process.execPath, defaultArgs: [b.serverJs], url: undefined, headers: undefined, connectTimeoutMs: 60_000,
     description: `${def.description} — LOCAL: the @nexus-cortex/browser library on this machine (NEXUS_BROWSER_MODE=local).` };
+}
+
+/** "nexus-desktop" exists only while the desktop surface is ACTIVE (NEXUS_DESKTOP = virtual|real + the package installed): the `desktop`
+ *  tool on its own in-process server (operator 2026-11-12: separate surface from the browser). */
+function desktopDefinition(): McpServerDefinition | null {
+  const d = resolveDesktop();
+  if (!d.using || !d.indexJs) return null;
+  return { name: 'nexus-desktop', displayName: 'Nexus Desktop', category: 'custom' as McpServerCategory, command: '', transport: 'inprocess',
+    inProcessModule: d.indexJs, inProcessFactory: 'createDesktopMCP', connectTimeoutMs: 60_000,
+    description: `Control this computer (${d.mode === 'real' ? "the user's own screen" : 'a private virtual display'}): screen, mouse, keyboard, native-app accessibility — keyboard first, failsafe spot + stop file, audit log.`,
+    verified: true } as McpServerDefinition;
 }
 
 export class McpServerRegistry {
@@ -280,6 +307,7 @@ export class McpServerRegistry {
    * Get server definition by name
    */
   getServer(name: string): McpServerDefinition | undefined {
+    if (name === 'nexus-desktop') return desktopDefinition() ?? undefined;
     const def = this.servers.get(name);
     return def && name === 'nexus-browser' ? withBrowserBackend(def) : def;
   }
@@ -288,7 +316,9 @@ export class McpServerRegistry {
    * Get all registered servers
    */
   getAllServers(): McpServerDefinition[] {
-    return Array.from(this.servers.values()).map((d) => (d.name === 'nexus-browser' ? withBrowserBackend(d) : d));
+    const all = Array.from(this.servers.values()).map((d) => (d.name === 'nexus-browser' ? withBrowserBackend(d) : d));
+    const desk = desktopDefinition();
+    return desk ? [...all, desk] : all;
   }
 
   /**

@@ -16,6 +16,7 @@
  * @module canonTools
  */
 import * as fs from 'node:fs';
+import { isSidecarName } from './sidecar.js';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 
@@ -256,7 +257,7 @@ export async function deriveToolInventory(store: string): Promise<ToolInventory>
     for (const e of es) {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) { await walk(p, harness ?? (HARNESSES.includes(e.name as HarnessName) ? e.name : undefined)); continue; }
-      if (!harness || e.name.endsWith('.events.jsonl') || !/\.jsonl(\.part-\d{4})?$/.test(e.name)) continue;
+      if (!harness || isSidecarName(e.name) || !/\.jsonl(\.part-\d{4})?$/.test(e.name)) continue;
       const rl = readline.createInterface({ input: fs.createReadStream(p), crlfDelay: Infinity });
       for await (const line of rl) {
         if (!line.includes('"tool_use"')) continue;

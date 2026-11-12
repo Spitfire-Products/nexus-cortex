@@ -8,6 +8,7 @@
  * Based on: docs/v4-core_library/Orchestrator_ARCHITECTURE.md
  */
 
+import { resolveDesktop } from '../config/localDesktop.js';
 import { liftPlanAllowedInSession } from '../config/interactiveProfile.js';
 import { featureAppliedKeys } from '../config/featurePayload.js';
 import { maskToolResults, maskSecretText } from '../config/secretsVault.js';
@@ -1398,6 +1399,14 @@ export class CortexOrchestrator {
     // R165: semantics belong to the judge — every tool-using finish is adjudicated. The task-shape regex (R161) only
     // gates the legacy path (CORTEX_JUDGE_SEMANTIC=false).
     if (cfg.semantic ? !ev.usedTools : !isTaskShaped(task)) return;
+    // 2026-11-12 (operator, user profiles): CORTEX_ENDTURN_RESOLVER_WEB=off skips the judge on WEB turns (web results read, no file writes) —
+    // the holdout-8 web runs spent 5-9x the time of direct tool use, much of it in judge reviews of answers the page already proves.
+    // Unset/on = byte-identical. The gate stages (citations / sources) still run; only the second-model review is skipped.
+    if (/^(off|false|0|no)$/i.test(String(process.env.CORTEX_ENDTURN_RESOLVER_WEB ?? '').trim()) && webTurnEvidenced(ev)) {
+      const webSkipStore = this.getDecisionStore();
+      if (webSkipStore) void webSkipStore.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'endturn_resolver', toolName: 'EndTurn', detail: { skipped: 'web-turn', lever: 'CORTEX_ENDTURN_RESOLVER_WEB' } }).catch(() => {});
+      return;
+    }
     this.judgeAdjudicatedThisFinish = false;
     this.judgeAcceptedWithGap = false; // R167
     this.judgeMeetsUnevidenced = false; // R168
@@ -1960,7 +1969,7 @@ export class CortexOrchestrator {
   private fileCheckpointManager?: FileCheckpointManager; // Created in createSession() with sessionId
   private mcpAutoInject: boolean = false;
   /** Browse mode:'direct' (2026-11-03): MCP servers connected mid-session for the MAIN model — pinned like CORTEX_MCP_AUTOCONNECT ones. */
-  private directPinnedServers = new Set<string>();
+  private directPinnedServers = new Set<string>(resolveDesktop().using ? ['nexus-desktop'] : []);   // desktop surface on → its server is pinned from the start
   /** This turn's tool array, so tools connected mid-turn (Browse direct) are usable before the next user message. */
   private currentTurnTools: CanonicalTool[] | null = null;
 
@@ -2272,7 +2281,7 @@ export class CortexOrchestrator {
     // bash-only arm must suppress them here or the surface leaks (lean keeps
     // them — they are part of the "guided" surface under test).
     const bashOnlyProfile = isNarrowProfile();
-    const mcpTools = this.mcpAutoInject && !bashOnlyProfile && frameCfg.frame !== 'terminus' ? this.getMcpToolsAsCanonical() : [];
+    const mcpTools = !bashOnlyProfile && frameCfg.frame !== 'terminus' ? this.getInjectedMcpTools() : [];
     const mcpManagementTools = (bashOnlyProfile || frameCfg.frame === 'terminus') ? [] : this.getMcpManagementTools();
     const contextManagementTools = (bashOnlyProfile || frameCfg.frame === 'terminus') ? [] : this.getContextManagementTools();
 
@@ -2558,6 +2567,7 @@ export class CortexOrchestrator {
     // Deferred loading: filter tools for non-PTC paths (essential + recently-used only)
     if (!isPTCEnabled && this.effectiveDeferredLoading && toolsToUse && toolsToUse.length > 0) {
       toolsToUse = this.toolFilter.getFilteredTools(toolsToUse, { appendOnly: resolveAppendOnlyTools() });
+      if (process.env.CORTEX_DEBUG_TOOLS) console.error(`[debug-tools] request tools=${toolsToUse.length} mcp=${toolsToUse.filter((t: any) => String(t.name).includes('__')).map((t: any) => t.name).join(',') || '(none)'} pinned=${[...this.directPinnedServers].join(',') || '(none)'}`);
     }
     // First-turn anchoring narrows further while armed (no-op once lifted).
     // Card-level home door: capture the active card's anchorProfile (env
@@ -4286,6 +4296,7 @@ export class CortexOrchestrator {
       if (this.effectiveDeferredLoading && !isPTCEnabled) {
         const beforeCount = toolsToUse.length;
         toolsToUse = this.toolFilter.getFilteredTools(allTools, { appendOnly: resolveAppendOnlyTools() });
+        if (process.env.CORTEX_DEBUG_TOOLS) console.error(`[debug-tools] request tools=${toolsToUse.length} mcp=${toolsToUse.filter((t: any) => String(t.name).includes('__')).map((t: any) => t.name).join(',') || '(none)'} pinned=${[...this.directPinnedServers].join(',') || '(none)'}`);
         // StructuredOutput: the re-filter rebuilds from allTools (which never
         // contained the request-scoped tool) — re-append so it stays present
         // on every request of the turn.
@@ -4983,7 +4994,7 @@ export class CortexOrchestrator {
     );
     // Tool-profile: streaming mirror of the non-streaming suppression above.
     const bashOnlyProfile2 = isNarrowProfile();
-    const mcpTools = this.mcpAutoInject && !bashOnlyProfile2 ? this.getMcpToolsAsCanonical() : [];
+    const mcpTools = !bashOnlyProfile2 ? this.getInjectedMcpTools() : [];
     const mcpManagementTools = bashOnlyProfile2 ? [] : this.getMcpManagementTools();
     const contextManagementTools = bashOnlyProfile2 ? [] : this.getContextManagementTools();
     // Per-model deferred-loading resolved once per turn (card > env > settings) — streaming mirror.
@@ -5199,6 +5210,7 @@ export class CortexOrchestrator {
     // Deferred loading: filter tools for non-PTC paths (essential + recently-used only)
     if (!isPTCEnabled && this.effectiveDeferredLoading && toolsToUse && toolsToUse.length > 0) {
       toolsToUse = this.toolFilter.getFilteredTools(toolsToUse, { appendOnly: resolveAppendOnlyTools() });
+      if (process.env.CORTEX_DEBUG_TOOLS) console.error(`[debug-tools] request tools=${toolsToUse.length} mcp=${toolsToUse.filter((t: any) => String(t.name).includes('__')).map((t: any) => t.name).join(',') || '(none)'} pinned=${[...this.directPinnedServers].join(',') || '(none)'}`);
     }
     // First-turn anchoring narrows further while armed (no-op once lifted).
     // Card-level home door: capture the active card's anchorProfile (env
@@ -6325,6 +6337,7 @@ export class CortexOrchestrator {
         // Re-filter tools after SearchTools discovery (same as sendMessage path)
         if (this.effectiveDeferredLoading && !isPTCEnabled) {
           toolsToUse = this.toolFilter.getFilteredTools(allTools, { appendOnly: resolveAppendOnlyTools() });
+          if (process.env.CORTEX_DEBUG_TOOLS) console.error(`[debug-tools] request tools=${toolsToUse.length} mcp=${toolsToUse.filter((t: any) => String(t.name).includes('__')).map((t: any) => t.name).join(',') || '(none)'} pinned=${[...this.directPinnedServers].join(',') || '(none)'}`);
           // StructuredOutput: re-filter rebuilds from allTools — re-append the
           // request-scoped tool (same as the sendMessage continuation path).
           if (structuredOutputState) {
@@ -8446,6 +8459,12 @@ export class CortexOrchestrator {
       // the operator has explicitly disabled blanket auto-injection.
       const autoInjectEnv = process.env.MCP_AUTO_INJECT;
       this.mcpAutoInject = shouldAutoInjectMcp(connectedCount, autoInjectEnv);
+      // 2026-11-12 (D7 macbook T1: the desktop tool was connected but never offered — MCP_AUTO_INJECT is false in the shipped profile):
+      // the desktop surface is an explicit opt-in (NEXUS_DESKTOP=virtual|real), so its server is PINNED and its tool sent on every request.
+      // pinned by NAME whenever the surface is on — not gated on the 'connected' status at this instant (macbook T1 re-test: the pin never
+      // happened there; the in-process server reported connected seconds later). getInjectedMcpTools only returns tools the manager has.
+      if (resolveDesktop().using) this.directPinnedServers.add('nexus-desktop');
+      if (process.env.CORTEX_DEBUG_TOOLS) console.error(`[debug-tools] MCP discovery: desktop=${resolveDesktop().mode}/${resolveDesktop().using} servers=${serverInfo.map((x) => `${x.name}:${x.status}:${x.toolCount}`).join(',') || '(none)'} pinned=${[...this.directPinnedServers].join(',') || '(none)'} autoInject=${this.mcpAutoInject}`);
       if (this.mcpAutoInject) {
         if (this.config.debug) {
           console.log('[Orchestrator Phase 2.5] MCP auto-injection enabled');
@@ -8476,7 +8495,10 @@ export class CortexOrchestrator {
   private getAutoConnectRegistryConfigs(
     excludeNames: Set<string>,
   ): Array<{ name: string; config: McpServerConfig }> {
-    const raw = process.env.CORTEX_MCP_AUTOCONNECT;
+    // 2026-11-12: an ACTIVE desktop surface (NEXUS_DESKTOP + the package) is connected at boot like an autoconnect server.
+    const names = (process.env.CORTEX_MCP_AUTOCONNECT ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+    if (resolveDesktop().using && !names.includes('nexus-desktop')) names.push('nexus-desktop');
+    const raw = names.join(',');
     if (!raw) return [];
     const registry = this.getMcpServerRegistry();
     if (!registry) return [];
@@ -8531,6 +8553,8 @@ export class CortexOrchestrator {
     if (def.defaultArgs) config.args = def.defaultArgs;
     if (def.defaultEnv) config.env = def.defaultEnv;
     if (def.connectTimeoutMs) config.timeout = def.connectTimeoutMs;
+    if (def.inProcessModule) config.inProcessModule = def.inProcessModule;
+    if (def.inProcessFactory) config.inProcessFactory = def.inProcessFactory;
     return config;
   }
 
@@ -9667,6 +9691,14 @@ export class CortexOrchestrator {
    *
    * @returns Array of CanonicalTools from MCP servers
    */
+  /** The MCP tools sent with a request: every server's (MCP_AUTO_INJECT) or only the PINNED servers' (nexus-desktop when the desktop
+   *  surface is on; nexus-browser after Browse mode:"direct"). */
+  private getInjectedMcpTools(): any[] {
+    if (this.mcpAutoInject) return this.getMcpToolsAsCanonical();
+    if (!this.directPinnedServers.size) return [];
+    return this.getMcpToolsAsCanonical().filter((t) => this.directPinnedServers.has((t.metadata as { serverName?: string } | undefined)?.serverName ?? ''));
+  }
+
   private getMcpToolsAsCanonical(): any[] {
     if (!this.mcpManager) {
       return [];
