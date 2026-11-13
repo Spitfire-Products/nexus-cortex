@@ -22,6 +22,13 @@ interface BrowserPkg {
 /** The optional local browser package, or null when it is not installed. */
 export async function loadBrowserPackage(): Promise<BrowserPkg | null> {
   const spec = '@nexus-cortex/browser';   // optional, separately licensed: a runtime import, never a build dependency
+  // 2026-11-13: Node 22 prints "ExperimentalWarning: SQLite is an experimental feature" when the package loads node:sqlite — noise in
+  // the middle of the install prompt. Drop that one warning; every other warning still prints.
+  const emit = process.emitWarning.bind(process);
+  process.emitWarning = ((w: string | Error, ...rest: unknown[]) => {
+    if (/SQLite is an experimental feature/.test(String(typeof w === 'string' ? w : w?.message))) return;
+    return (emit as (...a: unknown[]) => void)(w, ...rest);
+  }) as typeof process.emitWarning;
   try { return (await import(spec)) as unknown as BrowserPkg; } catch (e: unknown) {
     // 2026-11-06: a package that IS installed but fails to load (Node 20 has no node:sqlite) used to read as "not installed" — say why.
     const code = (e as { code?: string })?.code;
