@@ -124,6 +124,21 @@ const COMMANDER_SUBCOMMANDS = new Set([
   'secrets', 'canon', 'features', 'sessions', 'server', 'browser', 'desktop',
 ]);
 const __firstPositional = args.find((a) => !a.startsWith('-'));
+// 2026-11-12 sub-agent NESTING GUARD: an agent's tool (Bash …) marks its children with CORTEX_TOOL_PARENT_DEPTH (core toolChildEnv). From
+// there, anything that would start ANOTHER agent conversation is refused: a prompt / `agent` / `run` / the TUI, and the agent-launching
+// subcommands (autoresearch, message, tmux). Info commands (--version, --help, --sessions, --stats, config, secrets, canon, update …) still
+// work. Sub-agents go through the bounded Task tool. CORTEX_ALLOW_NESTED_AGENT=true (real env) is the operator override.
+{
+  const __parent = process.env.CORTEX_TOOL_PARENT_DEPTH;
+  const __infoOnly = args.some((a) => ['--help', '-h', '--sessions', '--stats', '--list-models', '--models'].includes(a));
+  const __launches = !__infoOnly && (!__firstPositional || !COMMANDER_SUBCOMMANDS.has(__firstPositional) || ['autoresearch', 'message', 'tmux'].includes(__firstPositional));
+  if (__parent && __launches && process.env.CORTEX_ALLOW_NESTED_AGENT !== 'true') {
+    process.stderr.write(`cortex: refused — this command was started by an agent's tool (agent depth ${__parent}), and it would start another agent. `
+      + 'Use the Task tool to delegate to a sub-agent (it is depth-bounded); do not launch cortex from a shell inside an agent. '
+      + '(Operator override: CORTEX_ALLOW_NESTED_AGENT=true.)\n');
+    process.exit(3);
+  }
+}
 if (__firstPositional && COMMANDER_SUBCOMMANDS.has(__firstPositional)) {
   // A few delegated subcommands talk to the cortex server over HTTP (they connect via
   // CortexClient to localhost:PORT). Auto-start the server first so e.g.

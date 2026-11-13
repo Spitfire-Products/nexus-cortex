@@ -235,6 +235,11 @@ function currentSession(): VaultSession | null {
 /** Environment for a process that runs model-chosen code. `tool` selects tool-scoped bindings (e.g. 'Bash'). Always returns an object. */
 export function toolChildEnv(base: NodeJS.ProcessEnv = process.env, tool?: string): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = { ...base };
+  // Sub-agent nesting guard (2026-11-12, operator "fix the sub-agent nesting gap"): every process a tool starts carries the depth of the
+  // agent that started it, so a `cortex` CLI launched from an agent's Bash refuses to start ANOTHER agent (bin/cortex.js) — the bounded
+  // Task/Browse spawners (SubAgentProcessManager, HerdrSubAgentRunner) launch agent-mode.js directly and are unaffected. A separate var,
+  // not CORTEX_AGENT_DEPTH itself, so test suites an agent runs through Bash see the env they expect.
+  { const n = parseInt(base.CORTEX_AGENT_DEPTH ?? '', 10); out.CORTEX_TOOL_PARENT_DEPTH = String(Number.isFinite(n) && n >= 0 ? n : base.CORTEX_AGENT_MODE === 'true' ? 1 : 0); }
   const s = currentSession();
   if (!s) return out;
   for (const [name, value] of s.injected) if (out[name] === value) delete out[name];

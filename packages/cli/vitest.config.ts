@@ -4,6 +4,8 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    // tests run from an agent's Bash must not inherit the sub-agent nesting marker (bin/cortex.js refuses nested agent launches)
+    env: { CORTEX_TOOL_PARENT_DEPTH: '' },
     // Redirect config reads/writes to a sandbox so tests never mutate the real .env.
     setupFiles: ['tests/setup.ts'],
     coverage: {
