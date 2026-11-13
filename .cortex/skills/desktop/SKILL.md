@@ -13,7 +13,7 @@ triggers:
 # The `desktop` tool
 
 `desktop` controls a whole screen: a private virtual display (`NEXUS_DESKTOP=virtual`) or the user's own screen (`real`, enabled only by the
-user with `cortex desktop enable --real`). It is off unless enabled. Use the browser tools for web pages; use `desktop` for what they cannot
+user with `cortex desktop enable --real`). It is off unless enabled; the user installs it with `cortex desktop install`. Use the browser tools for web pages; use `desktop` for what they cannot
 reach — native applications, system dialogs, file pickers, installers, apps inside a virtual machine.
 
 ## 1. Start every task the same way
@@ -39,8 +39,11 @@ reach — native applications, system dialogs, file pickers, installers, apps in
 - If typed characters drop or garble (some apps and virtual machines), retry with `type_via:"paste"` or a `char_delay_ms` of 40–80.
 
 ## 4. Safety (the user's rules, enforced by the tool)
-- FAILSAFE: if the user parks the cursor at the failsafe spot (`info` names it), the tool writes a stop file and REFUSES every further action.
-  Do not try to work around it: tell the user the desktop is stopped and that deleting the stop file resumes it.
+- FAILSAFE: if the user parks the cursor at the failsafe spot (`info` names it), the tool writes a stop file and REFUSES every further action
+  for the rest of the session. Stop immediately and report what you were doing and what is left. Never try to resume, move the cursor,
+  or touch the stop file; resuming is the user's own step (they delete the file and restart).
+- Never reach the screen, mouse, keyboard or apps another way (shell `screencapture`, `osascript`, input-event scripts). The `desktop`
+  tool is the only sanctioned route, and its safety rules exist for the user.
 - `launch` opens only allow-listed apps; ask the user instead of hunting for another way to start a program.
 - Every action is written to an audit log (typed text by length only). Never type secrets the user did not give you for that field.
 - On the user's real screen, say what you are about to do before a multi-step action, keep focus on the target window, and never close or

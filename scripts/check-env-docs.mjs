@@ -27,6 +27,7 @@ const INTERNAL = new Set([
   'CORTEX_AGENT_DEPTH',         // sub-agent nesting depth, set by the spawner (toolAllowlist.ts; bounded by CORTEX_MAX_AGENT_DEPTH)
   'CORTEX_BROWSE_AGENT',        // marks the Browse tool's delegate (it may not start another sub-agent)
   'CORTEX_ARM_STRATEGY',        // autoresearch arm label stamped per worker
+  'CORTEX_BROWSER_PKG_JUST_INSTALLED', // loop guard: `cortex browser install` sets it on the child it re-runs after npm-installing the package (cli/commands/browser); never a user lever
   'CORTEX_TEST_POST_EXEC_THROW', // test-only fault injection for the tool-loop re-execution guard (reexecutionGuard.integration.test); never a user lever
 ]);
 

@@ -556,7 +556,7 @@ program
 // Desktop surface (operator 2026-11-12): OFF by default; --virtual = a private X display; --real = the user's own screen, interactive confirm only.
 program
   .command('desktop [action]')
-  .description('Host-computer control (the desktop tool): status | enable [--virtual|--real] | disable. --real needs a typed confirmation in a terminal')
+  .description('Host-computer control (the desktop tool): status | install | enable [--virtual|--real] | disable. --real needs a typed confirmation in a terminal')
   .option('--virtual', 'enable: a private virtual display (Linux / containers) — never your screen')
   .option('--real', 'enable: YOUR screen, mouse and keyboard (interactive confirmation required)')
   .option('-y, --yes', 'enable --virtual without prompts (refused for --real)')
@@ -1358,9 +1358,11 @@ systemMessages
 // Package lifecycle commands
 program
   .command('update')
-  .description('Update the global install to the latest published release')
-  .action(async () => {
-    await updateCli();
+  .description('Update the global install to the latest release — nexus-cortex plus every optional package already installed (browser, desktop)')
+  .option('--browser', 'also install @nexus-cortex/browser (the local browser) and set it up')
+  .option('--desktop', 'also install @nexus-cortex/desktop (the desktop tool) and turn it on (asks to confirm)')
+  .action(async (opts: { browser?: boolean; desktop?: boolean }) => {
+    await updateCli(opts);
   });
 
 program

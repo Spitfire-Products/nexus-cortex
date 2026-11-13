@@ -96,8 +96,10 @@ export function resolvePolicy(): UpdatePolicy {
 }
 
 /** Run the self-update (visible npm output). Returns true on success. */
-export function runUpdate(): boolean {
-  const res = spawnSync('npm', ['install', '-g', `${PKG_NAME}@latest`], { stdio: 'inherit' });
+/** Update nexus-cortex AND every optional package that is installed (plus any `extra` ones requested), in ONE npm resolve. */
+export function runUpdate(extra: string[] = []): boolean {
+  const specs = [`${PKG_NAME}@latest`, ...[...new Set(extra)].map((p) => `${p}@latest`)];
+  const res = spawnSync('npm', ['install', '-g', ...specs], { stdio: 'inherit', shell: process.platform === 'win32' });
   if (res.status === 0) {
     writeCache({ lastCheck: Date.now(), latest: null });
     return true;

@@ -11,8 +11,8 @@ extract_table, computer_use, screenshots, a real-Chrome sandbox with live view, 
 | Your IP | a datacenter's (bot walls more likely) | yours (a home connection is rarely walled) |
 | License | service | AGPL-3.0-only or commercial (`packages/browser/LICENSE*`) |
 
-> **Availability:** the local browser is a separately licensed package that is not published yet. Until it is, `cortex browser status`
-> reports it as not installed and everything below about the local browser applies only where the package is present.
+> **Package:** the local browser is the separately licensed `@nexus-cortex/browser` package (AGPL-3.0-only or commercial).
+> `cortex browser install` (or `cortex update --browser`) fetches it from npm and installs everything it needs; `cortex update` keeps it current.
 
 `NEXUS_BROWSER_MODE` (`hosted` | `local`) picks one. The harness switches to local only when the local install reports ready, so a
 half-finished install never leaves an agent without a browser.

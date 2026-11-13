@@ -7,10 +7,11 @@
 import { execFileSync } from 'child_process';
 import inquirer from 'inquirer';
 import { SettingsLoader, getGlobalConfigDir, resolveDesktop } from '@nexus-cortex/core';
+import { OPTIONAL_PACKAGES, npmInstallGlobal, runCortex, setupArgs } from '../../lifecycle/optionalPackages.js';
 
 const tty = () => !!process.stdin.isTTY && !!process.stdout.isTTY;
 const onPath = (bin: string) => { try { execFileSync(process.platform === 'win32' ? 'where' : 'which', [bin], { stdio: 'ignore' }); return true; } catch { return false; } };
-const NOT_INSTALLED = 'The desktop package is not installed: npm i -g @nexus-cortex/desktop';
+const NOT_INSTALLED = 'The desktop package is not installed. Install it with: cortex desktop install';
 
 function setDesktop(mode: 'virtual' | 'real' | ''): void {
   new SettingsLoader(getGlobalConfigDir()).setMultiple({ NEXUS_DESKTOP: mode } as never);
@@ -63,9 +64,17 @@ export async function runDesktop(action: string | undefined, opts: { virtual?: b
       console.log(`NEXUS_DESKTOP=${mode} — new sessions get the \`desktop\` tool (nexus-desktop).${missing.length ? ` Install the missing tools above first: ${missing.length} missing.` : ''}`);
       return missing.length ? 1 : 0;
     }
+    case 'install': {
+      // 2026-11-13: fetch @nexus-cortex/desktop from npm (beside nexus-cortex), then offer to turn it on. Enabling stays a separate,
+      // confirmed step: on macOS it means YOUR screen (typed confirmation), so it only runs at a terminal.
+      if (!npmInstallGlobal([`${OPTIONAL_PACKAGES.desktop}@latest`])) { console.error(`npm could not install ${OPTIONAL_PACKAGES.desktop} (see above). If it is a permissions error: sudo npm install -g ${OPTIONAL_PACKAGES.desktop}`); return 1; }
+      const args = setupArgs('desktop', tty());
+      if (!args) { console.log('Installed. Turn it on in a terminal: cortex desktop enable --real'); return 0; }
+      return runCortex(args);
+    }
     case 'disable': { setDesktop(''); console.log('NEXUS_DESKTOP cleared — the desktop tool is off for new sessions.'); return 0; }
     default:
-      console.error('usage: cortex desktop status | enable [--virtual|--real] | disable');
+      console.error('usage: cortex desktop status | install | enable [--virtual|--real] | disable');
       return 2;
   }
 }

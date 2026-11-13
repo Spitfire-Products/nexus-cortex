@@ -62,13 +62,34 @@ and web page reads via WebFetch. Web **search** and **browse** turn on when a se
 | Run a one-shot agent | `cortex agent "…"`  (auto-approves tools, fresh session, self-stops on idle) |
 | Generate project context (`CORTEX.md`) | `cortex init` |
 | Add an MCP server | `cortex mcp init` then `cortex mcp enable <name>`  (the browser already works zero-config) |
-| Browser: hosted (default) or on this machine | `cortex browser status` · `cortex browser install` · `cortex browser use hosted\|local` — [docs/browser.md](docs/browser.md) |
+| Browser: hosted (default) or on this machine | `cortex browser install` (installs the local browser) · `cortex browser status` · `cortex browser use hosted\|local` — [docs/browser.md](docs/browser.md) |
+| Desktop control (your screen, mouse, keyboard) | `cortex desktop install` · `cortex desktop status` · `cortex desktop disable` |
 | Encrypted secrets (API keys, tokens) | `cortex secrets set NAME` · `/secrets` in the TUIs — [docs/secrets.md](docs/secrets.md) |
 | Stop the background server | `cortex --shutdown` |
-| Update to the latest version | `cortex update` |
+| Update to the latest version | `cortex update`  (also updates the browser and desktop packages you installed; `--browser` / `--desktop` add them) |
 | Uninstall | `cortex uninstall`  (or `npm uninstall -g nexus-cortex`) |
 
 The server the CLI auto-starts persists in the background and **self-stops after 60s idle**. To run a long-lived, interactive server yourself, use `cortex-server` — it stays up until you stop it, and (being a real terminal) prompts for tool approval there.
+
+## Optional: local browser and desktop control
+
+Two add-on packages give the agent more reach. Neither is needed for coding work, and both are separately licensed (AGPL-3.0-only or
+commercial).
+
+```bash
+cortex update --browser --desktop     # install both (or one), set them up, and keep them updated from now on
+```
+
+| Package | What it adds | Install alone | Details |
+|---|---|---|---|
+| `@nexus-cortex/browser` | The browser tools (`nexus-browser__browse`, `scan`, `click` …) running on your machine instead of the hosted service: no daily limit, your own Chrome | `cortex browser install` | [README](packages/browser/README.md) · [docs/browser.md](docs/browser.md) |
+| `@nexus-cortex/desktop` | The `desktop` tool: screenshots, mouse and keyboard for native apps, dialogs and installers | `cortex desktop install` | [README](packages/desktop/README.md) |
+
+- **Browser:** without the package, the agent uses the hosted browser service, which has a free daily limit.
+- **Desktop:** off until you turn it on. On your own screen (`cortex desktop enable --real`) it needs a typed confirmation. To stop it,
+  park the mouse cursor at the middle of the top edge of the screen (macOS) or the top-left corner (Linux). While desktop is off, shell
+  commands that capture the screen or inject input always ask you first.
+- **Skills:** the agent gets the shipped `browser` and `desktop` skills, which teach it how to use each tool safely.
 
 ## Customize it — your agents, skills, and commands
 

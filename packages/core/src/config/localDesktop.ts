@@ -20,7 +20,7 @@ export function resolveDesktop(env: NodeJS.ProcessEnv = process.env): DesktopSur
   const mode = m === 'virtual' || m === 'real' ? m : 'off';
   if (mode === 'off') return { mode, using: false, reason: 'NEXUS_DESKTOP is not set (off by default) — `cortex desktop enable` turns it on' };
   const dir = localDesktopPackageDir();
-  if (!dir) return { mode, using: false, reason: 'the @nexus-cortex/desktop package is not installed (npm i -g @nexus-cortex/desktop)' };
+  if (!dir) return { mode, using: false, reason: 'the @nexus-cortex/desktop package is not installed (cortex desktop install)' };
   const indexJs = path.join(dir, 'dist', 'index.js');
   if (!fs.existsSync(indexJs)) return { mode, using: false, reason: `${indexJs} is missing (package not built)`, packageDir: dir };
   return { mode, using: true, reason: `desktop ${mode} — served in-process as nexus-desktop`, indexJs, packageDir: dir };

@@ -9,6 +9,7 @@
  */
 import inquirer from 'inquirer';
 import { SettingsLoader, getGlobalConfigDir, resolveBrowserBackend } from '@nexus-cortex/core';
+import { OPTIONAL_PACKAGES, npmInstallGlobal, runCortex } from '../../lifecycle/optionalPackages.js';
 
 interface BrowserPkg {
   checkAll(): Array<{ area: string; item: string; ok: boolean; optional: boolean; fix?: string }>;
@@ -32,7 +33,7 @@ export async function loadBrowserPackage(): Promise<BrowserPkg | null> {
 }
 
 const tty = () => !!process.stdin.isTTY && !!process.stdout.isTTY;
-const NOT_INSTALLED = 'The local browser package (@nexus-cortex/browser) is not installed on this machine, so the harness uses the hosted browser MCP.';
+const NOT_INSTALLED = 'The local browser package (@nexus-cortex/browser) is not installed on this machine, so the harness uses the hosted browser MCP. Install it with: cortex browser install';
 
 function setMode(mode: 'local' | 'hosted'): void {
   new SettingsLoader(getGlobalConfigDir()).setMultiple({ NEXUS_BROWSER_MODE: mode } as never);
@@ -46,7 +47,16 @@ function setMode(mode: 'local' | 'hosted'): void {
 export async function installLocalBrowser(opts: { approved: boolean; out?: (s: string) => void }): Promise<{ ok: boolean; message: string }> {
   const out = opts.out ?? ((s: string) => console.log(s));
   const pkg = await loadBrowserPackage();
-  if (!pkg) return { ok: false, message: NOT_INSTALLED };
+  if (!pkg) {
+    // 2026-11-13 (operator: "cortex browser install … and be done with it"): fetch the package itself from npm, then finish the setup in
+    // a fresh process (this one cannot import a module installed after it started). The env marker stops a loop if npm "succeeded"
+    // but the package still does not load.
+    if (process.env.CORTEX_BROWSER_PKG_JUST_INSTALLED === '1') return { ok: false, message: `${NOT_INSTALLED} (npm installed it, but it does not load — check \`npm ls -g @nexus-cortex/browser\` and your Node version: it needs Node >= 22.13)` };
+    out(`Installing ${OPTIONAL_PACKAGES.browser} from npm…`);
+    if (!npmInstallGlobal([`${OPTIONAL_PACKAGES.browser}@latest`])) return { ok: false, message: `npm could not install ${OPTIONAL_PACKAGES.browser} (see above). If it is a permissions error: sudo npm install -g ${OPTIONAL_PACKAGES.browser}` };
+    const code = runCortex(['browser', 'install', ...(opts.approved ? ['--yes'] : [])], { CORTEX_BROWSER_PKG_JUST_INSTALLED: '1' });
+    return { ok: code === 0, message: code === 0 ? '' : 'The local browser setup did not finish (see above).' };
+  }
   const plan = pkg.installPlan();
   if (plan.steps.length && !opts.approved) {
     if (!tty()) return { ok: false, message: 'Nothing installed: no one is here to approve it. Run `cortex browser install --yes` to choose the local browser explicitly (for example in an image build); until then the hosted browser MCP is used.' };
@@ -82,7 +92,7 @@ export async function runBrowser(action: string | undefined, args: string[], opt
     }
     case 'install': {
       const r = await installLocalBrowser({ approved: !!opts.yes });
-      console.log(r.message);
+      if (r.message) console.log(r.message);
       return r.ok ? 0 : 1;
     }
     case 'use': {
