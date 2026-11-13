@@ -545,10 +545,14 @@ program
 // Browser backend (operator 2026-11-03): hosted MCP by default; the local @nexus-cortex/browser only when chosen (install = approval).
 program
   .command('browser [action] [args...]')
-  .description('Which browser the harness drives: status | install [--yes] | use <local|hosted>. Installing the local browser installs everything it needs; otherwise the hosted browser MCP is used')
+  .description('Which browser the harness drives: status | install [--yes] [--pdf] [--sandbox] | use <local|hosted>. Installing the local browser installs everything it needs; otherwise the hosted browser MCP is used')
   .option('-y, --yes', 'install: choose the local browser explicitly with no prompt (e.g. in an image build)')
+  .option('--pdf', 'install: add the Python PDF-reading libraries (default: on for Linux, off for macOS/Windows)')
+  .option('--no-pdf', 'install: leave out the PDF-reading libraries')
+  .option('--sandbox', 'install: add the sandbox backend — real Chrome on a virtual display (Linux only; default on there)')
+  .option('--no-sandbox', 'install: leave out the sandbox backend')
   .option('--json', 'status: machine-readable output')
-  .action(async (action: string | undefined, args: string[], options: { yes?: boolean; json?: boolean }) => {
+  .action(async (action: string | undefined, args: string[], options: { yes?: boolean; json?: boolean; pdf?: boolean; sandbox?: boolean }) => {
     const { runBrowser } = await import('./commands/browser/index.js');
     process.exit(await runBrowser(action, args ?? [], options));
   });

@@ -11,11 +11,13 @@ import inquirer from 'inquirer';
 import { SettingsLoader, getGlobalConfigDir, resolveBrowserBackend } from '@nexus-cortex/core';
 import { OPTIONAL_PACKAGES, npmInstallGlobal, runCortex } from '../../lifecycle/optionalPackages.js';
 
+/** Optional parts of the local browser (package 0.8.6+; older packages ignore them). Omitted = the previous choice, else the platform default. */
+export interface BrowserExtras { pdf?: boolean; sandbox?: boolean }
 interface BrowserPkg {
   checkAll(): Array<{ area: string; item: string; ok: boolean; optional: boolean; fix?: string }>;
   readiness(rows?: unknown): { core: boolean; sandbox: boolean };
-  installPlan(rows?: unknown): { steps: string[]; approxMB: number };
-  installAll(opts: { interactive: boolean; log?: (l: string) => void }): Promise<{ ready: { core: boolean; sandbox: boolean }; done: string[]; manual: string[] }>;
+  installPlan(rows?: unknown, extras?: BrowserExtras): { steps: string[]; approxMB: number };
+  installAll(opts: { interactive: boolean; log?: (l: string) => void; extras?: BrowserExtras }): Promise<{ ready: { core: boolean; sandbox: boolean }; done: string[]; manual: string[] }>;
   toolsHome(): string;
 }
 
@@ -51,7 +53,7 @@ function setMode(mode: 'local' | 'hosted'): void {
  * Install the local browser and switch to it. Call only after the user chose it (`approved`), or at a terminal where they will be
  * asked here. Shared by `cortex setup` and `cortex browser install`.
  */
-export async function installLocalBrowser(opts: { approved: boolean; out?: (s: string) => void }): Promise<{ ok: boolean; message: string }> {
+export async function installLocalBrowser(opts: { approved: boolean; out?: (s: string) => void; extras?: BrowserExtras }): Promise<{ ok: boolean; message: string }> {
   const out = opts.out ?? ((s: string) => console.log(s));
   const pkg = await loadBrowserPackage();
   if (!pkg) {
@@ -61,10 +63,11 @@ export async function installLocalBrowser(opts: { approved: boolean; out?: (s: s
     if (process.env.CORTEX_BROWSER_PKG_JUST_INSTALLED === '1') return { ok: false, message: `${NOT_INSTALLED} (npm installed it, but it does not load — check \`npm ls -g @nexus-cortex/browser\` and your Node version: it needs Node >= 22.13)` };
     out(`Installing ${OPTIONAL_PACKAGES.browser} from npm…`);
     if (!npmInstallGlobal([`${OPTIONAL_PACKAGES.browser}@latest`])) return { ok: false, message: `npm could not install ${OPTIONAL_PACKAGES.browser} (see above). If it is a permissions error: sudo npm install -g ${OPTIONAL_PACKAGES.browser}` };
-    const code = runCortex(['browser', 'install', ...(opts.approved ? ['--yes'] : [])], { CORTEX_BROWSER_PKG_JUST_INSTALLED: '1' });
+    const flags = [...(opts.extras?.pdf === true ? ['--pdf'] : opts.extras?.pdf === false ? ['--no-pdf'] : []), ...(opts.extras?.sandbox === true ? ['--sandbox'] : opts.extras?.sandbox === false ? ['--no-sandbox'] : [])];
+    const code = runCortex(['browser', 'install', ...(opts.approved ? ['--yes'] : []), ...flags], { CORTEX_BROWSER_PKG_JUST_INSTALLED: '1' });
     return { ok: code === 0, message: code === 0 ? '' : 'The local browser setup did not finish (see above).' };
   }
-  const plan = pkg.installPlan();
+  const plan = pkg.installPlan(undefined, opts.extras);
   if (plan.steps.length && !opts.approved) {
     if (!tty()) return { ok: false, message: 'Nothing installed: no one is here to approve it. Run `cortex browser install --yes` to choose the local browser explicitly (for example in an image build); until then the hosted browser MCP is used.' };
     out('The local browser needs:');
@@ -75,7 +78,7 @@ export async function installLocalBrowser(opts: { approved: boolean; out?: (s: s
   }
   // Always run the installer once chosen: with nothing missing it only records readiness (<tools home>/install.json), which is what
   // the harness checks before it switches to the local browser.
-  const r = await pkg.installAll({ interactive: tty(), log: (l) => out(`  ${l}`) });
+  const r = await pkg.installAll({ interactive: tty(), log: (l) => out(`  ${l}`), extras: opts.extras });
   for (const d of r.done) out(`  installed: ${d}`);
   for (const m of r.manual) out(`  not installed — ${m}`);
   if (!r.ready.core) return { ok: false, message: 'The local browser is not ready (see above); the hosted browser MCP stays in use.' };
@@ -83,7 +86,7 @@ export async function installLocalBrowser(opts: { approved: boolean; out?: (s: s
   return { ok: true, message: `Local browser ready${r.ready.sandbox ? ' (including the sandbox backend: real Chrome, incognito, live view)' : ' (default backend; the sandbox backend still needs the items above)'} — NEXUS_BROWSER_MODE=local.` };
 }
 
-export async function runBrowser(action: string | undefined, args: string[], opts: { yes?: boolean; json?: boolean }): Promise<number> {
+export async function runBrowser(action: string | undefined, args: string[], opts: { yes?: boolean; json?: boolean; pdf?: boolean; sandbox?: boolean }): Promise<number> {
   switch (action ?? 'status') {
     case 'status': {
       const b = resolveBrowserBackend();
@@ -98,7 +101,8 @@ export async function runBrowser(action: string | undefined, args: string[], opt
       return 0;
     }
     case 'install': {
-      const r = await installLocalBrowser({ approved: !!opts.yes });
+      const extras: BrowserExtras = { ...(opts.pdf !== undefined ? { pdf: opts.pdf } : {}), ...(opts.sandbox !== undefined ? { sandbox: opts.sandbox } : {}) };
+      const r = await installLocalBrowser({ approved: !!opts.yes, extras });
       if (r.message) console.log(r.message);
       return r.ok ? 0 : 1;
     }
@@ -114,7 +118,7 @@ export async function runBrowser(action: string | undefined, args: string[], opt
       console.error('usage: cortex browser use <local|hosted>'); return 2;
     }
     default:
-      console.error('usage: cortex browser status | install [--yes] | use <local|hosted>');
+      console.error('usage: cortex browser status | install [--yes] [--pdf|--no-pdf] [--sandbox|--no-sandbox] | use <local|hosted>');
       return 2;
   }
 }
