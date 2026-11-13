@@ -31,6 +31,16 @@ function describeError(error: unknown): string {
   return `${error.message} (cause: ${causeMsg}${code})`;
 }
 
+/**
+ * 2026-11-13 (operator, local 4.134.1): a hosted MCP that refuses on QUOTA (nexus-browser "Daily usage limit exceeded", HTTP 429 with
+ * action:upgrade) is not a transport fault — retrying cannot help until the reset. Returns a one-line user message, else undefined.
+ */
+export function mcpQuotaRefusal(msg: string): string | undefined {
+  if (!/Daily usage limit exceeded|"action"\s*:\s*"upgrade"/i.test(msg)) return undefined;
+  const reset = /"resetsAt"\s*:\s*"([^"]+)"/.exec(msg)?.[1] ?? 'midnight UTC';
+  return `daily free usage limit reached (resets ${reset})`;
+}
+
 export type McpTransportType = 'stdio' | 'http' | 'inprocess';
 
 export interface McpReconnectionOptions {
@@ -171,6 +181,7 @@ export class McpClient {
       } catch (error) {
         lastError = error;
         await this.safeCloseAfterFailedConnect();
+        if (mcpQuotaRefusal(describeError(error))) break; // quota refusal: a second attempt is the same 429
       }
     }
 
@@ -275,7 +286,11 @@ export class McpClient {
         logger.debug(`[MCP ${this.config.name}] error during teardown (ignored): ${msg}`);
         return;
       }
-      if (this.isRecoverableStreamError(msg)) {
+      if (mcpQuotaRefusal(msg)) {
+        // Surfaced once by the caller (connect throws); not a WARN per attempt.
+        this.status = McpConnectionStatus.ERROR;
+        logger.debug(`[MCP ${this.config.name}] quota refusal: ${msg}`);
+      } else if (this.isRecoverableStreamError(msg)) {
         this.status = McpConnectionStatus.RECONNECTING;
         logger.debug(`[MCP ${this.config.name}] stream drop; auto-reconnecting: ${msg}`);
       } else {

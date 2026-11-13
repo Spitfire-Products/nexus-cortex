@@ -16,6 +16,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync, realpathSync } from 'fs';
 import http from 'http';
+import { createRequire } from 'node:module';
 // L-11: @nexus-cortex/core's barrel costs ~1s to load — imported DYNAMICALLY
 // below so the first-paint banner beats it (static imports hoist).
 
@@ -31,7 +32,18 @@ const PKG_ROOT = join(CLI_DIR, '..', '..');
 // Anchor the install root so .cortex/ config (agents, MCP, etc.) is discoverable
 // regardless of the cwd the user launches from. Honors a pre-set CORTEX_ROOT.
 // Spawned children inherit this via process.env.
-process.env.CORTEX_ROOT = process.env.CORTEX_ROOT || PKG_ROOT;
+// 2026-11-13 (operator: hosted fuzzycortex reported "no .cortex/orient script"): PKG_ROOT is the monorepo root in a checkout, but in an
+// npm install it is .../node_modules — no .cortex there, so the orient script, builtin agents and skills never resolved for TUI users.
+// Prefer a PKG_ROOT that holds .cortex; else the @nexus-cortex/cli package (the one that ships the scaffold); else PKG_ROOT.
+function __resolveCortexRoot(pkgRoot) {
+  try { if (existsSync(join(pkgRoot, '.cortex'))) return pkgRoot; } catch { /* fall through */ }
+  try {
+    const cli = dirname(createRequire(import.meta.url).resolve('@nexus-cortex/cli/package.json'));
+    if (existsSync(join(cli, '.cortex'))) return cli;
+  } catch { /* cli not installed alongside */ }
+  return pkgRoot;
+}
+process.env.CORTEX_ROOT = process.env.CORTEX_ROOT || __resolveCortexRoot(PKG_ROOT);
 
 // FIRST PAINT (L-11): the fuzzycortex blank was launcher import cost + the
 // spawned child's own import graph (~3s of empty screen). Put chrome up
@@ -423,7 +435,7 @@ async function launchCLI() {
       ...process.env,
       CORTEX_MODE: mode,
       CORTEX_SERVER_URL: mode === 'server' ? finalServerUrl : '',
-      CORTEX_ROOT: PKG_ROOT,
+      CORTEX_ROOT: process.env.CORTEX_ROOT,
       NODE_ENV: isDevMode ? 'development' : 'production',
     },
   });

@@ -113,6 +113,7 @@ import { slashCommandRegistry } from '../commands/SlashCommandRegistry.js';
 import { McpConfigManager } from '../mcp/McpConfigManager.js';
 import { McpServerRegistry, type McpServerDefinition } from '../mcp/McpServerRegistry.js';
 import type { McpServerConfig, McpTransportType } from '../mcp/McpClient.js';
+import { mcpQuotaRefusal } from '../mcp/McpClient.js';
 import { prefixMcpToolName, parseMcpToolName } from '../mcp/mcpToolNamespacing.js';
 import { DecisionStore, type SteeringEventKind } from '../training/DecisionStore.js';
 import { formatPriorReminder, formatFamilyReminder, formatApproachReminder } from '../training/DecisionPriorInjector.js';
@@ -8444,6 +8445,12 @@ export class CortexOrchestrator {
             console.log(`[Orchestrator Phase 2.5] Auto-connected MCP server: ${name} (zero-config)`);
           }
         } catch (error: any) {
+          const quota = mcpQuotaRefusal(String(error?.message ?? error));
+          if (quota) {
+            // 2026-11-13: one plain line instead of a WARN per attempt + an error dump (operator, local 4.134.1).
+            console.log(`[${name}] ${quota} — its tools are off for this session.${name === 'nexus-browser' ? ' Upgrade at https://spitfire-products.com or use the local browser (NEXUS_BROWSER_MODE=local).' : ''}`);
+            continue;
+          }
           console.error(`[Orchestrator Phase 2.5] Failed to auto-connect ${name}:`, error.message);
           // Continue with other servers
         }
@@ -8482,7 +8489,7 @@ export class CortexOrchestrator {
           console.log('[Orchestrator Phase 2.5] MCP servers connected but auto-injection disabled by MCP_AUTO_INJECT=false (use management tools to invoke)');
         }
       } else {
-        console.warn('[Orchestrator Phase 2.5] No MCP servers connected - auto-injection disabled');
+        if (this.config.debug) console.log('[Orchestrator Phase 2.5] No MCP servers connected - auto-injection disabled');
       }
 
     } catch (error: any) {

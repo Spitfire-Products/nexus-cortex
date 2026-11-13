@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 /**
  * Nexus Cortex HTTP Server
  * Thin Express wrapper around @nexus-cortex/core library
@@ -34,6 +35,15 @@ const serverPkgRoot = path.join(__dirname, '..');
 if (!process.env.CORTEX_ROOT) {
   if (fs.existsSync(path.join(packageRoot, '.cortex'))) process.env.CORTEX_ROOT = packageRoot;
   else if (fs.existsSync(path.join(serverPkgRoot, '.cortex'))) process.env.CORTEX_ROOT = serverPkgRoot;
+  else {
+    // 2026-11-13 (operator: hosted fuzzycortex said "no .cortex/orient script"): the TUIs (fuzzycortex/neoncortex) start this server
+    // WITHOUT going through bin/cortex.js, the only place that pointed CORTEX_ROOT at @nexus-cortex/cli — the one package that ships the
+    // .cortex scaffold (orient + builtin agents/skills). Resolve that package here too, so every entry point gets the real orient map.
+    try {
+      const cliRoot = path.dirname(createRequire(__filename).resolve('@nexus-cortex/cli/package.json'));
+      if (fs.existsSync(path.join(cliRoot, '.cortex'))) process.env.CORTEX_ROOT = cliRoot;
+    } catch { /* @nexus-cortex/cli not installed next to the server — keep the conditional orient clause */ }
+  }
 }
 
 // Canonical .env bootstrap — the SINGLE implementation in @nexus-cortex/core:
