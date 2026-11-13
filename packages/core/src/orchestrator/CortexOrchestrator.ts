@@ -2093,6 +2093,11 @@ export class CortexOrchestrator {
           // finds nothing, and hand-writes the wrong config file. Include them so
           // deferred setup tools are actually findable.
           const extras = [...this.getMcpManagementTools(), ...this.getContextManagementTools()];
+          // 2026-11-13 (operator: "it does not have a browse tool even when it searches for it"): the CONNECTED MCP servers' tools were never
+          // in this catalog, although getMcpToolsAsCanonical's contract is that non-essential ones are "deferred and discoverable via
+          // SearchTools" — a model that searched "browse" got only web_search/WebFetch and fell back to curl with nexus-browser connected.
+          // Same set the request path injects; names stay server-qualified (nexus-browser__browse), never re-cased.
+          const mcpCatalog = this.getInjectedMcpTools();
           const seen = new Set<string>();
           const catalogVision = (this.getModel(this.currentModelId ?? '') as { vision?: boolean } | undefined)?.vision === true;
           // The catalog obeys the agent's allowlist too: a restricted delegate must not DISCOVER tools it may not use (2026-11-03).
@@ -2105,7 +2110,10 @@ export class CortexOrchestrator {
               description: t.description,
               category: (t as any).category,
               schema: (t as any).schema,
-            }));
+            }))
+            .concat(mcpCatalog
+              .filter((t) => (seen.has(t.name) ? false : (seen.add(t.name), true)))
+              .map((t) => ({ name: t.name, description: t.description, category: `mcp:${(t.metadata as { serverName?: string } | undefined)?.serverName ?? 'server'}`, schema: t.schema })));
         });
       }
     }
