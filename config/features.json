@@ -432,6 +432,15 @@
         "kind": "flag-not-false"
       }
     },
+    "CORTEX_ENDTURN_CITE_ERRORS": {
+      "defaultValue": false,
+      "rules": [],
+      "meta": {
+        "what": "true = error tool results (a refusal, a failing test) can ground EndTurn citations; set by the user-* profiles",
+        "group": "Loop control",
+        "kind": "flag-true"
+      }
+    },
     "CORTEX_ENDTURN_GATE": {
       "defaultValue": false,
       "rules": [],

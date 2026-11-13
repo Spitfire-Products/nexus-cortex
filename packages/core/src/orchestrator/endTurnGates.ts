@@ -114,7 +114,11 @@ export class TurnEvidence {
   /** Call once per executed batch with the results. */
   noteToolResults(results: GateToolResult[]): void {
     for (const tr of results) {
-      if (tr.tool_name === 'EndTurn' || tr.is_error) continue;
+      // 2026-11-12 (macbook D7 T5): an ERROR result is still something the agent read — a refusal or a failing test it quotes verbatim
+      // was rejected as a fabrication, so the agent re-ran the action just to re-ground the quote. CORTEX_ENDTURN_CITE_ERRORS=true lets
+      // error results ground citations (EndTurn's own rejections stay out). Unset = byte-identical (errors excluded).
+      if (tr.tool_name === 'EndTurn') continue;
+      if (tr.is_error && !/^(1|true|on|yes)$/i.test(String(process.env.CORTEX_ENDTURN_CITE_ERRORS ?? '').trim())) continue;
       const txt = typeof tr.content === 'string' ? tr.content : JSON.stringify(tr.content);
       if (!txt) continue;
       this.outputs.push(txt);

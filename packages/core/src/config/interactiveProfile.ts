@@ -202,6 +202,7 @@ export const USER_SURFACE_LEVERS: ReadonlyArray<ProfileLever> = [
   { key: 'CORTEX_TOOL_ANCHOR', value: 'bash-edit', why: 'Bash+Edit turn-1 frame, lifted to the full tool set after the first action' },
   { key: 'CORTEX_SECOND_ATTEMPT', value: '0', why: 'no second attempt (3x cost; selection loses passes)' },
   { key: 'CORTEX_SUBAGENT_ENDTURN', value: 'mechanical', why: 'no judge review inside sub-agents' },
+  { key: 'CORTEX_ENDTURN_CITE_ERRORS', value: 'true', why: 'an error result the agent read may ground an EndTurn citation (D7 T5 re-ran a refused action to re-quote it)' },
 ];
 const JUDGE_ON: ReadonlyArray<ProfileLever> = [
   { key: 'CORTEX_ENDTURN_RESOLVER', value: 'true', why: 'second-model finish review (resolver-k5 +17pp)' },

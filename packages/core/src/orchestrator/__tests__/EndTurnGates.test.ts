@@ -166,3 +166,25 @@ describe('evaluateEndTurnGates — Stage 4f requirement coverage (CORTEX_ENDTURN
     expect(rec).not.toHaveBeenCalledWith('req_coverage', expect.anything());
   });
 });
+
+describe('CORTEX_ENDTURN_CITE_ERRORS (2026-11-12, D7 T5)', () => {
+  const refusal = 'ERROR: desktop launch failed: FAILSAFE: the cursor is parked at the top failsafe spot';
+  it('error results stay out of the citation corpus by default (byte-identical)', () => {
+    delete process.env.CORTEX_ENDTURN_CITE_ERRORS;
+    const ev = new TurnEvidence();
+    ev.noteToolResults([{ tool_use_id: 'a', tool_name: 'nexus-desktop__desktop', content: refusal, is_error: true }]);
+    expect(ev.citationCorpus()).not.toContain('FAILSAFE');
+  });
+  it('with the lever on an error result grounds a citation; EndTurn results never do', () => {
+    process.env.CORTEX_ENDTURN_CITE_ERRORS = 'true';
+    try {
+      const ev = new TurnEvidence();
+      ev.noteToolResults([
+        { tool_use_id: 'a', tool_name: 'nexus-desktop__desktop', content: refusal, is_error: true },
+        { tool_use_id: 'b', tool_name: 'EndTurn', content: 'EndTurn REJECTED — something', is_error: true },
+      ]);
+      expect(ev.citationCorpus()).toContain('FAILSAFE: the cursor is parked');
+      expect(ev.citationCorpus()).not.toContain('EndTurn REJECTED');
+    } finally { delete process.env.CORTEX_ENDTURN_CITE_ERRORS; }
+  });
+});
