@@ -125,7 +125,7 @@ describe('Phase 2 — tool processes and tool output', () => {
   }
 
   it('no vault → identity (a copy of the env, masking off)', () => {
-    expect(toolChildEnv({ A: '1' })).toEqual({ A: '1' });
+    expect(toolChildEnv({ A: '1' })).toEqual({ A: '1', CORTEX_TOOL_PARENT_DEPTH: '0' });   // + the 4.133.2 nesting marker (depth of the agent that started the tool)
     expect(maskSecretText('anything vault-only-value-123')).toBe('anything vault-only-value-123');
   });
 
