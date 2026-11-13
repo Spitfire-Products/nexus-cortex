@@ -544,7 +544,7 @@
       "defaultValue": "on",
       "rules": [],
       "meta": {
-        "what": "off = the EndTurn judge skips WEB-evidenced finishes (web results read, no file writes); set by the user-hybrid profile",
+        "what": "off = the EndTurn judge skips WEB/BROWSER/DESKTOP-evidenced finishes (web tools, nexus-browser MCP or nexus-desktop results read, no file writes); set by the user-hybrid profile",
         "group": "Loop control",
         "kind": "value"
       }
@@ -564,6 +564,15 @@
       "meta": {
         "what": "EndTurn discovery tier: essential = in the turn-1 tool set (default since 4.107.3; cell-n-r6 + tb21-k5-n1) | standard = deferred behind SearchTools (the 4.107.0 baseline)",
         "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
+    "CORTEX_ENDTURN_USER_HALT": {
+      "defaultValue": "on",
+      "rules": [],
+      "meta": {
+        "what": "on (default) = a desktop turn the user STOPPED (the desktop tool latched STOP refusal) finishes as a report: EndTurn gate stages + judge skipped; off = old behaviour",
+        "group": "Loop control",
         "kind": "value"
       }
     },

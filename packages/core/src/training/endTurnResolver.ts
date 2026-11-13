@@ -672,9 +672,11 @@ export function budgetedVetoEscalation(rejectIndex: number, cap: number, remaini
 
 /** A MEETS on a WEB turn is evidenced by the web output itself (2026-11-03): the turn read web results (Browse / WebFetch / WebSearch)
  *  and changed no files. Off with CORTEX_MEETS_CONFIRM_WEB=hold (the turn is then held like any unevidenced MEETS). */
-export function webTurnEvidenced(ev: { webContent: unknown[]; writeInputs: unknown[]; usedFileEditTool?: boolean }, env: NodeJS.ProcessEnv = process.env): boolean {
+export function webTurnEvidenced(ev: { webContent: unknown[]; writeInputs: unknown[]; usedFileEditTool?: boolean; desktopContent?: unknown[]; browserContent?: unknown[] }, env: NodeJS.ProcessEnv = process.env): boolean {
   if (/^hold$/i.test(String(env.CORTEX_MEETS_CONFIRM_WEB ?? '').trim())) return false;
-  return ev.webContent.length > 0 && ev.writeInputs.length === 0 && !ev.usedFileEditTool;
+  // 2026-11-13 (operator): desktop observations count like web pages — the model codes in the shell, not through the desktop; a desktop
+  // turn that changed no files (driving an app / a TUI as a human would) is evidenced by what it saw, like a web answer.
+  return (ev.webContent.length > 0 || (ev.desktopContent?.length ?? 0) > 0 || (ev.browserContent?.length ?? 0) > 0) && ev.writeInputs.length === 0 && !ev.usedFileEditTool;
 }
 
 /** R167 on WEB turns (2026-11-03): an accept-with-gap finish on a turn that read web results and changed no files stands — the hold's

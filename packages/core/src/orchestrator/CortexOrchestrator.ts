@@ -85,7 +85,7 @@ import { toolFactory } from '../tools/ToolFactory.js';
 import { applyToolProfile, resolveToolProfile, resolveToolAnchor, resolveFrameProfile, resolveLiftNudge, resolveLiftPlan, resolveEndTurnResolver, resolveHeadlessDropAskUser, resolveDeferredLoading, isNarrowProfile, isToolAllowedByProfile, webToolBlocked, resolveVisionHelperModel, resolveVisionHandoffMax, resolveSliceNudge, resolveSliceBlock, resolveSliceBlockAt, resolveSliceBlockMax, anchorAppliesToProcess } from '../tools/ToolProfile.js';
 import { sliceReadFile, decideSliceBlock, sliceReadStep } from './sliceBlock.js';
 import type { ChunkRead } from '../training/chunkReadProgression.js';
-import { normalizeEndTurnInput, TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder } from './endTurnGates.js';
+import { normalizeEndTurnInput, TurnEvidence, evaluateEndTurnGates, buildMissingEndTurnReminder, userHaltShortCircuit } from './endTurnGates.js';
 import { resolveCompactionResume, pickDropped, buildCompactionResumeReminder, isCompactionResumeMessage, resolveTaskText, resumeMemoryTargetTokens, coversAll, buildRollingSeedMessage, memoryIndexLine, upsertMemoryIndex, scaleEstimateToRequestView, approxCharsOf, anchoredRequestEstimate, resolveCompactionHandoffQA, resolveHandoffQAMaxQuestions, runHandoffQA, type HandoffQAResult } from './compactionResume.js';
 import { resolveCompactionTargetTokens } from './compactionTarget.js'; // R256
 import { resolveToolResultPruneGate, pruneGateTokens, CompactionThrashTracker } from './contextPressure.js'; // R258
@@ -1399,12 +1399,17 @@ export class CortexOrchestrator {
     // R165: semantics belong to the judge — every tool-using finish is adjudicated. The task-shape regex (R161) only
     // gates the legacy path (CORTEX_JUDGE_SEMANTIC=false).
     if (cfg.semantic ? !ev.usedTools : !isTaskShaped(task)) return;
+    if (ev.userHalted && userHaltShortCircuit(process.env)) {   // 2026-11-13: the user stopped desktop control — no judge review of the report
+      const haltStore = this.getDecisionStore();
+      if (haltStore) void haltStore.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'endturn_resolver', toolName: 'EndTurn', detail: { skipped: 'user-halt', lever: 'CORTEX_ENDTURN_USER_HALT' } }).catch(() => {});
+      return;
+    }
     // 2026-11-12 (operator, user profiles): CORTEX_ENDTURN_RESOLVER_WEB=off skips the judge on WEB turns (web results read, no file writes) —
     // the holdout-8 web runs spent 5-9x the time of direct tool use, much of it in judge reviews of answers the page already proves.
     // Unset/on = byte-identical. The gate stages (citations / sources) still run; only the second-model review is skipped.
     if (/^(off|false|0|no)$/i.test(String(process.env.CORTEX_ENDTURN_RESOLVER_WEB ?? '').trim()) && webTurnEvidenced(ev)) {
       const webSkipStore = this.getDecisionStore();
-      if (webSkipStore) void webSkipStore.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'endturn_resolver', toolName: 'EndTurn', detail: { skipped: 'web-turn', lever: 'CORTEX_ENDTURN_RESOLVER_WEB' } }).catch(() => {});
+      if (webSkipStore) void webSkipStore.recordEvent({ sessionId: this.currentSessionId ?? 'unknown', kind: 'endturn_resolver', toolName: 'EndTurn', detail: { skipped: ev.webContent.length > 0 || ev.browserContent.length > 0 ? 'web-turn' : 'desktop-turn', lever: 'CORTEX_ENDTURN_RESOLVER_WEB' } }).catch(() => {});
       return;
     }
     this.judgeAdjudicatedThisFinish = false;

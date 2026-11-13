@@ -58,6 +58,13 @@ export function sourcesOrAuto(given: unknown, ev: { browseTasks: string[]; webQu
   return sourcesAutoFilled(given, ev, env) ? autoSources(ev) : given;
 }
 
+/** The desktop tool (local MCP `nexus-desktop__desktop`, or `desktop` when registered by the browser package). */
+export const isDesktopTool = (name: unknown): boolean => /^(nexus-desktop__desktop|nexus-browser__desktop|desktop)$/.test(String(name ?? ''));
+/** The desktop package's latched user-stop refusal (0.10.1+): 'desktop control is STOPPED by the user (…)'. */
+export const DESKTOP_USER_STOP = /desktop control is STOPPED by the user/;
+/** CORTEX_ENDTURN_USER_HALT (default on): a user-stopped desktop turn finishes as a report without the gate stages or the judge. */
+export const userHaltShortCircuit = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(off|false|0|no)$/i.test(String(env.CORTEX_ENDTURN_USER_HALT ?? '').trim());
+
 export class TurnEvidence {
   /** Successful tool outputs this turn (quotable observations). */
   outputs: string[] = [];
@@ -71,6 +78,13 @@ export class TurnEvidence {
   /** WebFetch URLs this turn (for harness-filled sources rows). */
   webFetchUrls: string[] = [];
   webContent: string[] = [];
+  /** 2026-11-13 (operator): desktop-tool observations (nexus-desktop / desktop) — evidence like web pages, not code changes. */
+  desktopContent: string[] = [];
+  /** 2026-11-13: nexus-browser MCP observations (direct browser driving) — web evidence for the judge skip only. */
+  browserContent: string[] = [];
+  /** 2026-11-13 (operator): the user stopped desktop control this turn (the desktop tool's latched STOP refusal) — the finish is a
+   *  report, so the EndTurn gate and the judge accept it (CORTEX_ENDTURN_USER_HALT, default on). Keyed on the TOOL result, never on text. */
+  userHalted = false;
   usedTools = false;
   usedMutatingTool = false;
   /** Edit / Write / NotebookEdit ran (a real file change; Bash alone may have only read or fetched). */
@@ -118,6 +132,7 @@ export class TurnEvidence {
       // was rejected as a fabrication, so the agent re-ran the action just to re-ground the quote. CORTEX_ENDTURN_CITE_ERRORS=true lets
       // error results ground citations (EndTurn's own rejections stay out). Unset = byte-identical (errors excluded).
       if (tr.tool_name === 'EndTurn') continue;
+      if (isDesktopTool(tr.tool_name) && tr.is_error && DESKTOP_USER_STOP.test(typeof tr.content === 'string' ? tr.content : JSON.stringify(tr.content ?? ''))) this.userHalted = true;
       if (tr.is_error && !/^(1|true|on|yes)$/i.test(String(process.env.CORTEX_ENDTURN_CITE_ERRORS ?? '').trim())) continue;
       const txt = typeof tr.content === 'string' ? tr.content : JSON.stringify(tr.content);
       if (!txt) continue;
@@ -126,7 +141,11 @@ export class TurnEvidence {
       // quote, so an honest multi-line quote of page text could never match (2026-11-03: 8 Stage-2 rejections across the cars.com +
       // CarMax Browse delegates, one of which then timed out). Also index the decoded text.
       for (const extra of decodedObservationTexts(tr.content)) if (extra !== txt) this.outputs.push(extra);
+      // 2026-11-13: the browser driven DIRECTLY through the nexus-browser MCP (user-fast / user-hybrid, CORTEX_MCP_AUTOCONNECT=nexus-browser)
+      // is web evidence for the judge skip — before this a direct-browser finish was never a "web turn" (CORTEX_ENDTURN_RESOLVER_WEB never fired).
       if (tr.tool_name === 'WebSearch' || tr.tool_name === 'WebFetch' || tr.tool_name === 'Browse') this.webContent.push(txt);
+      if (/^nexus-browser__/.test(String(tr.tool_name))) this.browserContent.push(txt);   // kept OUT of webContent: the integrity sources check keys on it
+      if (isDesktopTool(tr.tool_name)) this.desktopContent.push(txt);
     }
   }
 
@@ -239,6 +258,12 @@ export function evaluateEndTurnGates(
           '(do not rely on memory of them); fix anything that does not match; then call EndTurn again ' +
           'with the verified attestation.';
         if (deps.debug) log(`[EffortTail] first EndTurn bounced — re-attestation at elevated effort (${tailTurns} continuation(s))`);
+        continue;
+      }
+      if (ev.userHalted && userHaltShortCircuit(env)) {   // the user stopped desktop control: the finish is the report — no gate stages
+        deps.recordEvent('endturn_user_halt', { stage: 'gate', lever: 'CORTEX_ENDTURN_USER_HALT' }, 'EndTurn');
+        if (deps.debug) log('[Orchestrator] EndTurn accepted: the user stopped desktop control this turn (CORTEX_ENDTURN_USER_HALT)');
+        ev.endTurnCalled = true;
         continue;
       }
       const input: any = normalizeEndTurnInput(etUse?.input);
