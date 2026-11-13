@@ -474,7 +474,7 @@ BEST PRACTICES:
     description: `Search the web for current information. Use when you need facts, documentation, API references, or recent events beyond your training data.
 
 WHEN TO USE: verifying claims, finding library docs, checking current versions, looking up error messages, researching APIs or services.
-WHEN NOT TO USE: if the answer is in the codebase (use Grep/Read), or if you need to interact with the page (use Browse).
+WHEN NOT TO USE: if the answer is in the codebase (use Grep/Read), or if you need to interact with the page (use the browser tools: Browse, or nexus-browser__browse when that server is connected; SearchTools finds them).
 TASK INTEGRITY: research documentation and concepts — never search for a task's published solution, reference implementation, or expected answer. Your deliverable must be produced by work you execute in this workspace; a retrieved or recited solution is a failed task.
 
 Results are text snippets from search engines. May not include full page content — use WebFetch to read a specific URL from the results.`,
@@ -522,7 +522,7 @@ Results are text snippets from search engines. May not include full page content
     description: `Fetch and read content from a specific URL. Returns the page's text content (HTML stripped).
 
 WHEN TO USE: reading documentation pages, API references, blog posts, changelogs, or any URL you already have.
-WHEN NOT TO USE: if the page requires JavaScript rendering, login, or interaction (use Browse instead). If you need to search first and don't have a URL (use WebSearch).
+WHEN NOT TO USE: if the page requires JavaScript rendering, login, or interaction (use the browser tools instead: Browse, or nexus-browser__browse when that server is connected; SearchTools finds them). If you need to search first and don't have a URL (use WebSearch).
 TASK INTEGRITY: fetch documentation, never a task's published solution or reference implementation — deliverables must derive from work executed in this workspace.
 
 The 'prompt' parameter guides what to extract — use it to focus on specific sections rather than getting the entire page.`,

@@ -12,6 +12,33 @@
 
 import type { PermissionPolicy } from '../contracts/MiddlewareContracts.js';
 import { analyzeBashCommand } from './bashCommandView.js';
+import * as path from 'node:path';
+import { resolveDesktop } from '../../config/localDesktop.js';
+
+/**
+ * 2026-11-13 (operator's M2 session 28a43865): with no desktop package installed, deepseek-flash answered "do you have desktop tools?"
+ * by screenshotting the real screen, posting a CoreGraphics input event and scripting Safari/Chrome — all through plain Bash, around every
+ * guard the desktop tool has (off by default, failsafe, stop latch, audit). Screen capture, synthetic input and app scripting through Bash
+ * therefore ALWAYS ask (blacklist tier: auto-approve does not cover it) unless the user enabled the desktop surface
+ * (NEXUS_DESKTOP + the package), which is the same power granted on purpose. Returns the category for the prompt, else undefined.
+ */
+export function nativeAutomationCategory(cmd: string): string | undefined {
+  const c = String(cmd ?? '');
+  if (/\bscreencapture\b|\bimport\s+-window\b|\bxwd\b/.test(c)) return 'screen capture';
+  if (/\bCGEvent(Post|PostToPid|CreateMouseEvent|CreateKeyboardEvent|CreateScrollWheelEvent)\b|\bcliclick\b|\bx?dotool\b|\bydotool\b/.test(c)) return 'synthetic mouse/keyboard input';
+  if (/\bosascript\b/.test(c) && /System Events|\bkeystroke\b|\bkey code\b|\bclick\b|do JavaScript|execute javascript/i.test(c)) return 'app or UI scripting (AppleScript/JXA)';
+  if (/\bsafaridriver\b|\bshortcuts\s+run\b/.test(c)) return 'browser or Shortcuts automation';
+  return undefined;
+}
+
+/** The orient scripts the harness itself ships (CORTEX_ROOT/.cortex/orient, CORTEX_ROOT/docs/prompts/orient-scaffold.sh). */
+export function isShippedOrientCommand(cmd: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  const root = (env.CORTEX_ROOT ?? '').trim();
+  if (!root) return false;
+  const shipped = new Set([path.join(root, '.cortex', 'orient'), path.join(root, 'docs', 'prompts', 'orient-scaffold.sh')]);
+  const m = /^sh\s+(['"]?)([^'"\s;&|<>$`]+)\1(?:\s+2>&1)?(?:\s*\|\s*head(?:\s+-n)?(?:\s+-?\d+)?)?$/.exec(cmd.trim());
+  return !!m && shipped.has(path.normalize(m[2]!));
+}
 
 /**
  * Whitelist Policy: Safe research/read operations that never need approval
@@ -146,6 +173,13 @@ export const whitelistPolicy: PermissionPolicy = {
         return { allowed: true }; // A write — pass-through to graylist
       }
       const matchText = structure.view.trim();
+
+      // 2026-11-13 (operator's fuzzycortex run): the harness's OWN shipped orient script (the prompt tells the model to run it first) asked
+      // for Bash approval every session. Exactly `sh <shipped path>` (optionally `2>&1` and `| head [-n] N`) is whitelisted; a project's
+      // own ./.cortex/orient stays behind approval — that one is arbitrary project code.
+      if (isShippedOrientCommand(matchText)) {
+        return { allowed: true, tier: 'whitelist' };
+      }
 
       // Check if command matches any safe command (with or without args)
       const isSafeCommand = safeReadCommands.some((safe) => {
@@ -285,6 +319,18 @@ export const blacklistPolicy: PermissionPolicy = {
       const bl = analyzeBashCommand(cmd);
       const scanText = bl.interpreterFed ? cmd : bl.view;
       const isDangerous = dangerousPatterns.some((pattern) => scanText.includes(pattern));
+
+      // Native automation (see nativeAutomationCategory): scan the FULL command — a heredoc that writes a script and runs it in the same
+      // call is how the M2 session posted its CGEvent.
+      const native = nativeAutomationCategory(cmd);
+      if (native && !resolveDesktop().using) {
+        return {
+          allowed: false,
+          reason: `NATIVE AUTOMATION (${native}) acts on your real screen/apps outside the desktop tool's safety rails — always asks unless you enable the desktop surface (cortex desktop enable)`,
+          canApprove: true,
+          tier: 'blacklist',
+        };
+      }
 
       if (isDangerous) {
         const previewCmd = cmd.substring(0, 50) + (cmd.length > 50 ? '...' : '');
