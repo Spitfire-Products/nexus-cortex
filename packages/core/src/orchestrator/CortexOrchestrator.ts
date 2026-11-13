@@ -3474,15 +3474,18 @@ export class CortexOrchestrator {
             : String(currentAssistantCanonicalMessage.content ?? '');
           // R165: when the semantic judge adjudicated this finish, the regex surrender/open-items nudges defer to it.
           const judgeOwnsFinish = this.judgeAdjudicatedThisFinish && resolveEndTurnResolverConfig().semantic && !this.judgeAcceptedWithGap && !this.judgeMeetsUnevidenced; // R167: an accept-with-gap leaves the regex nudges live; R168: so does an unverified MEETS
+          // 2026-11-13 (macbook T5 on 4.134.0): a USER-HALTED turn (desktop STOP refusal) ends as a report — the surrender and the
+          // budget-continue nudges read its honest "not finished" text as an open-items finish and re-opened the turn for 89 s.
+          const userHaltOwnsFinish = ev.userHalted && userHaltShortCircuit(process.env);
           const surrenderUnsatisfied =
-            resolveSurrenderNudgeMode() && ev.usedTools && !surrenderNudgeUsed && !judgeOwnsFinish &&
+            !userHaltOwnsFinish && resolveSurrenderNudgeMode() && ev.usedTools && !surrenderNudgeUsed && !judgeOwnsFinish &&
             detectSurrenderText(surrenderDraftText);
           // R151 HB-BUDGET-VISIBILITY: an open-items finish with >= MIN_REMAINING of the wall budget left gets ONE
           // continue-with-budget nudge (after the surrender guard, which is narrower and takes precedence).
           const budgetContinueMin = resolveBudgetContinueMinRemaining();
           const budgetRemainingFrac = TURN_DEADLINE_MS > 0 ? Math.max(0, 1 - (Date.now() - loopStartMs) / TURN_DEADLINE_MS) : 0;
           const budgetContinueUnsatisfied =
-            !surrenderUnsatisfied && budgetContinueMin > 0 && TURN_DEADLINE_MS > 0 && resolveBudgetVisibility() &&
+            !userHaltOwnsFinish && !surrenderUnsatisfied && budgetContinueMin > 0 && TURN_DEADLINE_MS > 0 && resolveBudgetVisibility() &&
             ev.usedTools && !judgeOwnsFinish && budgetContinueNudges < BUDGET_CONTINUE_MAX_NUDGES && budgetRemainingFrac >= budgetContinueMin &&
             detectOpenItemsText(surrenderDraftText);
           if (endTurnGateUnsatisfied && endTurnNudges >= END_TURN_MAX_NUDGES) {
