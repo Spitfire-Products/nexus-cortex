@@ -202,7 +202,9 @@ export class CortexV4Server {
     this.app.post('/shutdown', async (_req, res) => {
       res.json({ status: 'shutting_down' });
       console.log(chalk.yellow('\n[SHUTDOWN] Shutdown requested via /shutdown'));
-      await this.stop();
+      // a stop() that hangs on open connections kept old servers alive holding the port (m2 11-14) — exit regardless after 5 s
+      setTimeout(() => process.exit(0), 5000).unref();
+      await this.stop().catch(() => undefined);
       process.exit(0);
     });
 
@@ -423,7 +425,12 @@ export class CortexV4Server {
         });
 
         server.on('error', (err: any) => {
-          if (err.code === 'EADDRINUSE') {
+          if (err.code === 'EADDRINUSE' && process.env.CORTEX_SERVER_STRICT_PORT === '1') {
+            // 2026-11-14 (m2): a server started BY THE CLI must not hop ports — the CLI talks to its own port, so a hop leaked servers on
+            // 4001–4005 while the CLI kept hitting the old one. Fail loudly instead; the CLI reports it.
+            console.error(chalk.red(`Port ${port} is in use and CORTEX_SERVER_STRICT_PORT=1 — not trying another port`));
+            reject(err);
+          } else if (err.code === 'EADDRINUSE') {
             console.log(chalk.yellow(`Port ${port} in use, trying ${port + 1}...`));
             attemptPort(port + 1, maxAttempts - 1);
           } else {

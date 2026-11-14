@@ -62,7 +62,7 @@ describe('effort levers loop integration', () => {
     for (const k of ['CORTEX_EFFORT_RAMP', 'CORTEX_COMPUTE_NUDGE', 'CORTEX_COMPUTE_NUDGE_TOKENS', 'CORTEX_COMPUTE_NUDGE_COOLDOWN']) delete process.env[k];
     for (const k of Object.keys(PINNED)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
     if ('ANTHROPIC_API_KEY' in saved && saved.ANTHROPIC_API_KEY === undefined) delete process.env.ANTHROPIC_API_KEY;
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });   // CI flake 11-14: ENOTEMPTY while a writer finished
   });
 
   async function run(mode: 'sendMessage' | 'streamMessage', outTokens = 5) {

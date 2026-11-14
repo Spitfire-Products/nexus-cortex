@@ -386,16 +386,24 @@ async function startServer() {
     env: {
       ...process.env,
       PORT: BASE_PORT,
+      CORTEX_SERVER_STRICT_PORT: '1',   // never hop to another port: this CLI only talks to BASE_PORT (m2 11-14: leaked servers on 4001–4005)
       PROJECT_PATH: process.env.PROJECT_PATH || process.cwd(),
       PROJECT_ROOT: process.env.PROJECT_ROOT || process.cwd(),
     },
     detached: true,
   });
+  // the child exiting (e.g. CORTEX_SERVER_STRICT_PORT refusing a busy port) is reported at once, not after the full wait (11-14)
+  let exitedCode = null;
+  serverProcess.once('exit', (code) => { exitedCode = code ?? -1; });
   serverProcess.unref();
 
   // Wait for healthy (up to 15s)
   for (let i = 0; i < 30; i++) {
     await new Promise(r => setTimeout(r, 500));
+    if (exitedCode !== null) {
+      console.error(`[cortex] the server exited during startup (code ${exitedCode}) — is port ${BASE_PORT} held by another program? See ${logPath}`);
+      process.exit(1);
+    }
     if (await isServerUp()) {
       process.stderr.write(`[cortex] Server ready on ${BASE_URL}\n`);
       return;
@@ -536,7 +544,9 @@ async function ensureServer() {
   // port+1 (EADDRINUSE fallback) and this CLI would then talk to nothing (e2e 2026-11-14: new server on 4520, CLI said ready on 4519)
   const { createConnection } = await import('net');
   const portOf = () => Number(new URL(BASE_URL).port || 80);
-  const portBusy = () => new Promise((res) => { const c = createConnection({ port: portOf(), host: new URL(BASE_URL).hostname }); c.once('connect', () => { c.destroy(); res(true); }); c.once('error', () => res(false)); });
+  // the server binds 0.0.0.0 (IPv4); `localhost` can resolve to ::1 first on macOS and report the port free while it is held (m2 11-14)
+  const probe = (host) => new Promise((res) => { const c = createConnection({ port: portOf(), host }); c.setTimeout(1000, () => { c.destroy(); res(false); }); c.once('connect', () => { c.destroy(); res(true); }); c.once('error', () => res(false)); });
+  const portBusy = async () => (await probe('127.0.0.1')) || (await probe('::1'));
   let free = 0;
   for (let i = 0; i < 80 && free < 3; i++) { free = (await portBusy()) ? 0 : free + 1; await new Promise((r) => setTimeout(r, 250)); }
   if (free < 3) { process.stderr.write(`[cortex] the old server did not release port ${portOf()} — run: cortex --shutdown\n`); process.exit(2); }
