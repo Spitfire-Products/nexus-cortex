@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 
 // 11-14 (macbook step 5b): with the desktop surface ON, Bash screencapture/osascript ran with no prompt — around the desktop tool's stop
 // latch, failsafe and audit. The surface is mocked ON for the whole file so every case proves the guard no longer depends on it.
-vi.mock('../../../config/localDesktop.js', () => ({ resolveDesktop: () => ({ mode: 'real', using: true, reason: 'mocked on' }) }));
+vi.mock('../../../config/localDesktop.js', () => ({ resolveDesktop: () => ({ mode: process.env.NEXUS_DESKTOP === 'real' ? 'real' : 'off', using: process.env.NEXUS_DESKTOP === 'real', reason: 'mocked' }) }));
 import { nativeAutomationCategory, blacklistPolicy } from '../DefaultPolicies.js';
 
 const ev = (command: string) => blacklistPolicy.evaluate({ toolName: 'Bash', toolInput: { command } } as any);
@@ -45,10 +45,9 @@ describe('blacklist policy', () => {
     delete process.env.NEXUS_DESKTOP;
     expect((await ev('ls')).allowed).toBe(true);
   });
-  it('still asks with the desktop surface ON and points at the desktop tool', async () => {
+  it('is ALLOWED once the user enabled the desktop surface (operator 11-14: the point is to let the agent drive the computer)', async () => {
+    process.env.NEXUS_DESKTOP = 'real';
     const r = await ev('screencapture -x /tmp/a.png');
-    expect(r.allowed).toBe(false);
-    expect(r.tier).toBe('blacklist');
-    expect(String(r.reason)).toMatch(/desktop tool/);
+    expect(r.allowed).toBe(true);
   });
 });

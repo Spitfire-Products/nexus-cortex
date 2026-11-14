@@ -289,7 +289,10 @@ export const nativeAutomationFloorPolicy: PermissionPolicy = {
   evaluate: async (context) => {
     if (context.toolName !== 'Bash') return { allowed: true };
     const native = nativeAutomationCategory(context.toolInput?.command || '');
-    if (!native) return { allowed: true };
+    // 11-14 operator ("the entire point … was to create a way for the agent or you to drive a computer — you are handicapping it"): once
+    // the user ENABLED the desktop surface (cortex desktop enable = consent), native automation through Bash is allowed, headless or not.
+    // The floor only guards installs where the user has NOT opted in.
+    if (!native || resolveDesktop().using) return { allowed: true };
     const desk = resolveDesktop();
     return {
       allowed: false,
@@ -386,7 +389,7 @@ export const blacklistPolicy: PermissionPolicy = {
       const native = nativeAutomationCategory(cmd);
       // 11-14 (macbook step 5b): it used to pass once the desktop surface was ON — then Bash screencapture/osascript reached the screen
       // around the desktop tool's stop latch, failsafe and audit. It ALWAYS asks now; with the surface on the prompt names the tool to use.
-      if (native) {
+      if (native && !resolveDesktop().using) {   // desktop surface enabled = the user's consent (operator 11-14)
         const desk = resolveDesktop();
         return {
           allowed: false,
