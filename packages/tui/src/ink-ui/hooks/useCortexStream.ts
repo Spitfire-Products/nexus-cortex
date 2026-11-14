@@ -11,6 +11,7 @@
  * 4. Support slash commands and shell mode
  */
 
+import { isModelFacingTool } from '@nexus-cortex/core';
 import { useState, useRef, useCallback, useMemo } from 'react';
 import type { OrchestratorClient } from '@nexus-cortex/cli/dist/orchestrator/OrchestratorClient.js';
 import type {
@@ -383,6 +384,8 @@ export const useCortexStream = (
       case 'tool_use_complete':
         // Tool call completed - add to stream events AND history
         // Core library provides this in correct order relative to text
+        // EndTurn (model-facing, core tools/toolDisplay.ts) is never drawn as a tool call.
+        if (chunk.toolUse && isModelFacingTool(chunk.toolUse.name)) break;
         if (chunk.toolUse) {
           const toolUse = chunk.toolUse;
           onDebugMessage(`Tool use: ${toolUse.name}`);
@@ -429,6 +432,7 @@ export const useCortexStream = (
 
       case 'tool_result':
         // Tool completed - toolResult field contains the result data
+        if (chunk.toolResult && isModelFacingTool(chunk.toolResult.tool_name)) break; // its result is an instruction to the model
         if (chunk.toolResult) {
           const toolResult = chunk.toolResult;
           onDebugMessage(`Tool result for ${toolResult.tool_name}: ${toolResult.is_error ? 'error' : 'success'}`);

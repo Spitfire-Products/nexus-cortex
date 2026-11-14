@@ -50,6 +50,7 @@ import { getSuggestions, type FlatCommand } from './commands/slashCommands.js';
 import { InteractiveMenu } from '../commands/system-message/InteractiveMenu.js';
 import { SystemMessageStore } from '@nexus-cortex/core/system-messages/SystemMessageStore.js';
 import type { ModelDisplayInfo, InteractiveMenuDefinition, MenuResult } from '@nexus-cortex/core';
+import { isModelFacingTool, modelFacingToolLine } from '@nexus-cortex/core';
 import { MentorshipConfigService, slashCommandRegistry, keymapFooterHint, keymapKey } from '@nexus-cortex/core';
 import { InSessionScheduler } from '@nexus-cortex/core';
 import { ModelPickerDialog } from './components/ModelPickerDialog.js';
@@ -356,6 +357,14 @@ const MessageDisplay: React.FC<{
                   />
                 );
               }
+              if (block.type === 'tool_use' && block.toolUse && isModelFacingTool(block.toolUse.name)) {
+                // EndTurn: the model's attestation — one dim line, never the payload (core tools/toolDisplay.ts)
+                return (
+                  <Box key={`${msg.uuid}-tool-${i}`}>
+                    <Text dimColor>  · {modelFacingToolLine(block.toolUse.name)}</Text>
+                  </Box>
+                );
+              }
               if (block.type === 'tool_use' && block.toolUse) {
                 const toolName = block.toolUse.name;
                 const input = block.toolUse.input || {};
@@ -368,6 +377,7 @@ const MessageDisplay: React.FC<{
                   </Box>
                 );
               }
+              if (block.type === 'tool_result' && isModelFacingTool(block.tool_name)) return null;
               if (block.type === 'tool_result') {
                 const isError = block.is_error;
                 const isEdit = block.tool_name?.toLowerCase() === 'edit';

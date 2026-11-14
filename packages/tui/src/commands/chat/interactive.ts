@@ -22,6 +22,7 @@ import { showModelPicker } from '../../ui/InkModelPicker.js';
 import type { ModelDisplayInfo } from '@nexus-cortex/core';
 import { MentorshipConfigService, onboardingLines, shouldShowOnboarding, markOnboardingShown } from '@nexus-cortex/core';
 import { InSessionScheduler } from '@nexus-cortex/core';
+import { isModelFacingTool, modelFacingToolLine } from '@nexus-cortex/core';
 import { resolveSessionModel, type Platform } from '@nexus-cortex/cli/dist/themes/colors.js';
 import { showInteractiveMenu } from '../../ui/InkMenuPicker.js';
 import { showCommandPalette } from '../../ui/InkCommandPalette.js';
@@ -1942,6 +1943,7 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
               // the answer (neoncortex renders thinking as a separate labeled
               // block — mirror that separation here)
               if (!hasStartedThinking) {
+                { const pending = markdownRenderer.flush(); if (pending) persistentInput.writeOutput(pending); } // narration before thinking
                 persistentInput.printLine();
                 persistentInput.printLine(chalk.dim('[Thinking]'));
                 hasStartedThinking = true;
@@ -2057,7 +2059,18 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
           isInToolExecution = true;
 
           const toolUse = chunk.toolUse;
+          // EndTurn (any naming form) is written for the MODEL — its attestation input and its instruction result are never
+          // printed; tool_result below shows one dim line (core tools/toolDisplay.ts decides which tools these are).
+          if (toolUse && isModelFacingTool(toolUse.name)) {
+            persistentInput.setPhase('Checking the answer');
+            continue;
+          }
           if (toolUse) {
+            // Narration the model wrote before this call is still in the markdown buffer (it flushes on newlines) — print it NOW, in its
+            // round, instead of letting it pile up and come out glued to the final answer (operator 11-14 "squashed … at the end").
+            { const pending = markdownRenderer.flush(); if (pending) persistentInput.writeOutput(pending); }
+            // A tool call ends the current thinking block: the NEXT reasoning gets its own [Thinking] header (it ran on unlabelled).
+            hasStartedThinking = false;
             persistentInput.setPhase(`Running ${toolUse.name}`);
             // Store for summary (backward compat)
             toolsUsed.push({
@@ -2083,6 +2096,12 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
         // Tool result received (emitted after tool execution)
         if (chunk.type === 'tool_result') {
           const toolResult = chunk.toolResult;
+          const facingLine = toolResult ? modelFacingToolLine(toolResult.tool_name, toolResult.is_error) : undefined;
+          if (facingLine) {
+            if (hasStartedThinking) { persistentInput.printLine(); hasStartedThinking = false; } // end the thinking line first
+            persistentInput.printLine(theme.dimmed(`  · ${facingLine}`));
+            continue;
+          }
           if (toolResult) {
             const MAX_RESULT_DISPLAY = 20000;
 

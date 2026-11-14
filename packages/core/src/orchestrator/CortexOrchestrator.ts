@@ -10432,6 +10432,9 @@ export class CortexOrchestrator {
       userTaskText: this.lastRealUserText(),
       env: process.env,
       debug: this.config.debug,
+      // Gate diagnostics ("Stage4: EndTurn rejected …"): kept in server/headless logs (transcript analysers count them), but in a
+      // TERMINAL session they printed into the middle of the TUI's thinking (operator 11-14 "it isnt cohesive") → debug only there.
+      log: (m: string) => { if (!process.stdout.isTTY || this.config.debug || process.env.DEBUG === 'true') console.warn(m); },
       recordEvent: (kind: string, detail: Record<string, unknown>, toolName?: string) => {
         const store = this.getDecisionStore();
         if (!store) return;

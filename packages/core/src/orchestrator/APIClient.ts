@@ -1070,7 +1070,12 @@ export class APIClient {
     // deepseek-flash/1017) for an explicit thinking-off request — CORTEX_ACTION_EFFORT=none or disableThinking —
     // which until now only OMITTED reasoning_effort and so ran thinking ON at the provider default. Probe:
     // {thinking:enabled, reasoning_effort:none} → reasons; {reasoning_effort:none} alone or {thinking:disabled} → no reasoning.
-    const explicitThinkingOff = disableThinking === true || reasoningEffort === 'none';
+    // 2026-11-14 (operator: "I no longer see the interleaved thinking between tool calls"): a request `reasoningEffort: 'none'` is the
+    // BASELINE (docs/THINKING_GLOSSARY.md) — both TUIs send it whenever the thinking DISPLAY is off, so treating it as thinking-OFF
+    // (6ea004eed, 10-17) silently ran every TUI DeepSeek session with no reasoning. Thinking OFF is now only what asks for it: the
+    // CORTEX_ACTION_EFFORT=none lever (the bench action arm this was built for) or an explicit disableThinking.
+    const leverThinkingOff = reasoningEffort === 'none' && String(process.env.CORTEX_ACTION_EFFORT ?? '').trim() === 'none';
+    const explicitThinkingOff = disableThinking === true || leverThinkingOff;
     if ((hasForcedToolChoice || explicitThinkingOff) && isChatCompletionsRoute && modelConfig.provider === 'deepseek') {
       chatRequest.thinking = { type: 'disabled' };
       if (process.env.DEBUG === 'true' || process.env.DEBUG_THINKING === 'true') {

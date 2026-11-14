@@ -40,3 +40,4 @@ export * from './context-management/index.js';
 
 // PTC / Progressive Tool Loading
 export { ClientSideToolFilter } from './ClientSideToolFilter.js';
+export * from './toolDisplay.js';

@@ -1,5 +1,5 @@
 /**
- * CORTEX_ACTION_EFFORT=none / disableThinking → DeepSeek chat requests carry the EXPLICIT
+ * CORTEX_ACTION_EFFORT=none (the lever) / disableThinking → DeepSeek chat requests carry the EXPLICIT
  * `thinking: { type: 'disabled' }` field (2026-10-17, 4.125.4).
  *
  * Live probe on deepseek-flash (V4.1-Flash-1017): `{thinking:{type:enabled}, reasoning_effort:none}`
@@ -56,10 +56,24 @@ describe('DeepSeek chat: explicit thinking-off field', () => {
     expect(c.thinking).toBeUndefined();
   });
 
-  it('effort none → thinking.type=disabled and NO reasoning_effort', () => {
-    const c = build(req({ reasoningEffort: 'none' }));
-    expect(c.thinking).toEqual({ type: 'disabled' });
-    expect(c.reasoning_effort).toBeUndefined();
+  it('CORTEX_ACTION_EFFORT=none (the lever) → thinking.type=disabled and NO reasoning_effort', () => {
+    const prev = process.env.CORTEX_ACTION_EFFORT; process.env.CORTEX_ACTION_EFFORT = 'none';
+    try {
+      const c = build(req({ reasoningEffort: 'none' }));
+      expect(c.thinking).toEqual({ type: 'disabled' });
+      expect(c.reasoning_effort).toBeUndefined();
+    } finally { if (prev === undefined) delete process.env.CORTEX_ACTION_EFFORT; else process.env.CORTEX_ACTION_EFFORT = prev; }
+  });
+
+  it("a request 'none' WITHOUT the lever (the TUIs' thinking-display-off default) is the baseline: thinking stays ON (11-14)", () => {
+    const prev = process.env.CORTEX_ACTION_EFFORT; delete process.env.CORTEX_ACTION_EFFORT;
+    try {
+      const c = build(req({ reasoningEffort: 'none' }));
+      expect(c.thinking).toBeUndefined();
+      expect(c.reasoning_effort).toBeUndefined();
+      process.env.CORTEX_ACTION_EFFORT = 'high';
+      expect(build(req({ reasoningEffort: 'none' })).thinking).toBeUndefined();
+    } finally { if (prev === undefined) delete process.env.CORTEX_ACTION_EFFORT; else process.env.CORTEX_ACTION_EFFORT = prev; }
   });
 
   it('disableThinking (continuation flag) → thinking.type=disabled', () => {
