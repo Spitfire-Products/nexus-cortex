@@ -106,6 +106,8 @@ export class PermissionsMiddleware implements IPermissionsChecker {
   private auditLogger?: PermissionAuditLogger;
   private enableLogging: boolean;
   private bypassAll: boolean;
+  /** policies named 'floor-*' — evaluated even under bypassAll (2026-11-14) */
+  private floorPolicies: PermissionPolicy[] = [];
 
   // Cache for session audit entries (in-memory)
   private sessionAuditCache: Map<string, PermissionAuditEntry[]> = new Map();
@@ -127,6 +129,7 @@ export class PermissionsMiddleware implements IPermissionsChecker {
     this.bypassAll = options.bypassAll ?? false;
 
     // Register initial policies
+    this.floorPolicies = (options.policies || []).filter((p) => String(p?.name || '').startsWith('floor-'));
     if (options.policies) {
       for (const policy of options.policies) {
         this.registerPolicy(policy);
@@ -160,6 +163,18 @@ export class PermissionsMiddleware implements IPermissionsChecker {
     // way to override a hard-deny policy (e.g. WhitelistPolicy with
     // canApprove: false), since approval handlers cannot rescue those.
     if (this.bypassAll) {
+      // FLOORS are never bypassed (2026-11-14, m2 battery C5 on 4.137.4): a CLI-started server is headless → auto-approve → bypassAll, which
+      // skipped the native-automation and key-in-file floors for every `cortex "<task>"` and scheduled turn. Headless there is no one to
+      // ask, so a floor that would ask REFUSES here, with its own reason.
+      for (const floor of this.floorPolicies) {
+        if (!floor.enabled) continue;
+        const d = await floor.evaluate(permissionContext as any);
+        if (d && d.allowed === false) {
+          const reason = `${d.reason} — refused: this run auto-approves with no one to ask (headless). Use the desktop tool / cortex setup, or run interactively.`;
+          await this.logDecision(permissionContext, { allowed: false, reason, canApprove: false } as any, false, false);
+          return { allowed: false, reason, canApprove: false, tier: 'blacklist' } as any;
+        }
+      }
       if (this.enableLogging) {
         console.log(
           `[PermissionsMiddleware] bypassAll active — allowing ${toolName} without evaluation`,
