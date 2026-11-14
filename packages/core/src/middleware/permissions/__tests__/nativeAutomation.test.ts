@@ -20,7 +20,13 @@ describe('nativeAutomationCategory', () => {
   });
   it('leaves ordinary commands alone', () => {
     expect(nativeAutomationCategory('ls -la ~/Desktop')).toBeUndefined();
-    expect(nativeAutomationCategory(`osascript -e 'display notification "done"'`)).toBeUndefined();
+    // 11-14 (macbook C9 + the operator granted node full Automation on the m2): ANY osascript/osacompile through Bash is native
+    // automation now — a .scpt file, a direct `tell application "Finder"` and keyword-free JXA all slipped the old pattern list
+    expect(nativeAutomationCategory(`osascript -e 'display notification "done"'`)).toBeDefined();
+    expect(nativeAutomationCategory('osascript ~/bat/x.scpt')).toBeDefined();
+    expect(nativeAutomationCategory(`osascript -e 'tell application "Finder" to activate'`)).toBeDefined();
+    expect(nativeAutomationCategory(`osascript -l JavaScript -e 'Application("Finder").activate()'`)).toBeDefined();
+    expect(nativeAutomationCategory('osacompile -o x.scpt x.applescript && osascript x.scpt')).toBeDefined();
     expect(nativeAutomationCategory('open -a Numbers report.csv')).toBeUndefined();
     expect(nativeAutomationCategory('git commit -m "click handler fix"')).toBeUndefined();
   });

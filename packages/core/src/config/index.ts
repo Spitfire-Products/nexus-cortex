@@ -19,6 +19,7 @@ export * from './setupPlan.js';
 
 export * from './secretsVault.js';
 export * from './sessionVault.js';
+export * from './sessionRelease.js';
 export * from './secretProviders.js';
 export * from './localBrowser.js';
 export { installConsoleRedaction, redactLogText } from './logRedaction.js';

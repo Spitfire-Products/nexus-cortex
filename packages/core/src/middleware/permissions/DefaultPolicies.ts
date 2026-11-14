@@ -26,7 +26,9 @@ export function nativeAutomationCategory(cmd: string): string | undefined {
   const c = String(cmd ?? '');
   if (/\bscreencapture\b|\bimport\s+-window\b|\bxwd\b/.test(c)) return 'screen capture';
   if (/\bCGEvent(Post|PostToPid|CreateMouseEvent|CreateKeyboardEvent|CreateScrollWheelEvent)\b|\bcliclick\b|\bx?dotool\b|\bydotool\b/.test(c)) return 'synthetic mouse/keyboard input';
-  if (/\bosascript\b/.test(c) && /System Events|\bkeystroke\b|\bkey code\b|\bclick\b|do JavaScript|execute javascript/i.test(c)) return 'app or UI scripting (AppleScript/JXA)';
+  // ANY osascript / osacompile is app or UI scripting (11-14, macbook C9): saved .scpt files, a direct `tell application "Finder"` and
+  // keyword-free JXA all slipped the old System-Events/keystroke pattern list — the desktop tool's audited `osa` is the sanctioned path.
+  if (/\b(osascript|osacompile)\b/.test(c)) return 'app or UI scripting (AppleScript/JXA)';
   if (/\bsafaridriver\b|\bshortcuts\s+run\b/.test(c)) return 'browser or Shortcuts automation';
   return undefined;
 }
