@@ -16,7 +16,7 @@ export interface ScheduleJob {
   tag: string;            // e.g. "[mail poll]" — unique key
   everyMin: number;       // period in minutes (>= 1)
   prompt: string;         // sent verbatim as the turn's user message
-  session?: string;       // --resume <id>; omitted = the server's current session (stateful default)
+  session?: string;       // --resume <id>; omitted = a FRESH session per run (--new)
   model?: string;
   cwd?: string;           // project the turn runs in (default: home)
   mailName?: string;      // agent-home mail address for mailOnly (e.g. m2-cortex)
@@ -55,7 +55,9 @@ export function dueJobs(jobs: ScheduleJob[], nowMs: number): ScheduleJob[] {
 /** argv + env for one headless turn. `cortexJs` = this install's bin/cortex.js (absolute: launchd has a minimal PATH). */
 export function jobInvocation(j: ScheduleJob, cortexJs: string): { args: string[]; env: Record<string, string> } {
   const args = [cortexJs, '--quiet'];
-  if (j.session) args.push('--resume', j.session);
+  // a pinned session resumes it; otherwise EVERY run starts its own fresh session (m2 11-14): continuing "the server's current session"
+  // mixed mail turns into whatever a human last ran (battery state), and sessions not started with --new missed the USER.md slot.
+  if (j.session) args.push('--resume', j.session); else args.push('--new');
   if (j.model) args.push('-m', j.model);
   args.push(j.prompt);
   const env: Record<string, string> = {};
