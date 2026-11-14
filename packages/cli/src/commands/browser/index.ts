@@ -83,7 +83,7 @@ export async function installLocalBrowser(opts: { approved: boolean; out?: (s: s
   for (const m of r.manual) out(`  not installed — ${m}`);
   if (!r.ready.core) return { ok: false, message: 'The local browser is not ready (see above); the hosted browser MCP stays in use.' };
   setMode('local');
-  return { ok: true, message: `Local browser ready${r.ready.sandbox ? ' (including the sandbox backend: real Chrome, incognito, live view)' : ' (default backend; the sandbox backend still needs the items above)'} — NEXUS_BROWSER_MODE=local.` };
+  return { ok: true, message: `Local browser ready${r.ready.sandbox ? ' (including the sandbox backend: real Chrome, incognito, live view)' : (process.platform === 'linux' ? ' (default backend; the sandbox backend still needs the items above)' : ' (default backend; the sandbox backend is Linux-only)')} — NEXUS_BROWSER_MODE=local.` };
 }
 
 export async function runBrowser(action: string | undefined, args: string[], opts: { yes?: boolean; json?: boolean; pdf?: boolean; sandbox?: boolean }): Promise<number> {

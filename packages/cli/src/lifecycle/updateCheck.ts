@@ -99,10 +99,18 @@ export function resolvePolicy(): UpdatePolicy {
 /** Update nexus-cortex AND every optional package that is installed (plus any `extra` ones requested), in ONE npm resolve. */
 export function runUpdate(extra: string[] = []): boolean {
   const specs = [`${PKG_NAME}@latest`, ...[...new Set(extra)].map((p) => `${p}@latest`)];
-  const res = spawnSync('npm', ['install', '-g', ...specs], { stdio: 'inherit', shell: process.platform === 'win32' });
-  if (res.status === 0) {
-    writeCache({ lastCheck: Date.now(), latest: null });
-    return true;
+  // 2026-11-13: right after a release npm can list a version whose tarball its CDN does not serve yet (E404 on the .tgz; seen twice,
+  // cleared within ~4 min). Retry twice, 90 s apart, before giving up — a failed install leaves the previous version in place.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const res = spawnSync('npm', ['install', '-g', ...specs], { stdio: 'inherit', shell: process.platform === 'win32' });
+    if (res.status === 0) {
+      writeCache({ lastCheck: Date.now(), latest: null });
+      return true;
+    }
+    if (attempt < 3) {
+      process.stderr.write(`\nnpm install failed (attempt ${attempt}/3). If a version was published minutes ago npm may still be making it available — retrying in 90 s…\n`);
+      spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},90000)'], { stdio: 'ignore' });
+    }
   }
   return false;
 }
