@@ -201,6 +201,23 @@ export class PermissionsMiddleware implements IPermissionsChecker {
       return { allowed: true };
     }
 
+    // Auto-approve ON → NOTHING waits for a human (operator 11-14: "if a task is asking for approval and the user is expecting the agent to
+    // be off doing its directive then that is a fail"). Floors refuse at once; every other approvable decision (graylist AND blacklist) is
+    // approved. Interactive mode (auto-approve OFF) still asks below.
+    if (result.decision.canApprove && result.decision.tier !== 'graylist' && context.approvalMode?.autoApproveActions === true) {
+      for (const floor of this.floorPolicies) {
+        if (!floor.enabled) continue;
+        const fd = await floor.evaluate(permissionContext as any);
+        if (fd && fd.allowed === false) {
+          const reason = `${fd.reason} — refused without asking (auto-approve is on, so nothing waits for a person).`;
+          await this.logDecision(permissionContext, { allowed: false, reason, canApprove: false } as any, false, false);
+          return { allowed: false, reason, canApprove: false, tier: 'blacklist' } as any;
+        }
+      }
+      await this.logDecision(permissionContext, { allowed: true }, true, true);
+      return { allowed: true };
+    }
+
     // Graylist + auto-approve ON → auto-approve
     if (
       result.decision.tier === 'graylist' &&

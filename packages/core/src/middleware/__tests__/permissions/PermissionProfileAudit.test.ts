@@ -29,7 +29,7 @@ const EXECUTOR_REGISTRY_TOOLS = [
   'InspectSandbox', 'InteractWithSandbox', 'KillShell',
   'ListCompactionBoundaries', 'ListSessions', 'LoadSession',
   'ModifySandbox', 'NotebookEdit', 'PRAgent', 'Read',
-  'RequestHistoricalContext', 'SearchConversationHistory', 'SearchTools', 'SecretsList',
+  'RequestHistoricalContext', 'SearchConversationHistory', 'SearchTools', 'SecretsList', 'SecretsSet',
   'Skill', 'SlashCommand', 'StopSandbox', 'Task', 'TmuxSession',
   'TodoCreate', 'TodoList', 'TodoUpdate', 'WebFetch', 'WebSearch',
   'WorkspaceManager', 'Write',

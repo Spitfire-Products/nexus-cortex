@@ -12607,7 +12607,7 @@ export class CortexOrchestrator {
       'Session & History': [
         'ListSessions', 'LoadSession', 'SearchConversationHistory',
         'GetConversationSegment', 'ListCompactionBoundaries', 'RequestHistoricalContext',
-        'CanonListSessions', 'CanonPullSession', 'SecretsList',
+        'CanonListSessions', 'CanonPullSession', 'SecretsList', 'SecretsSet',
       ],
       'Sandbox & Artifacts': [
         'CreateArtifactTool', 'InteractWithSandbox', 'ModifySandbox',

@@ -15,12 +15,13 @@ import { slashCommandRegistry } from '@nexus-cortex/cli/dist/commands/slash/Slas
 import { createSystemMessageCommand } from '../system-message/index.js';
 import { createAgentCommand, listAgents, showAgentInfo } from '../agent/index.js';
 import { renderSplashScreen, renderCompactHeader, type StatusLineState } from '../../ui/SplashScreen.js';
-import { rawQuestion } from '../../ui/RawInput.js';
+import { rawQuestion, activeRawQuestion } from '../../ui/RawInput.js';
 import { createPersistentInput } from '../../ui/PersistentInput.js';
 import { runThemePicker } from '../../ui/ChalkThemePicker.js';
 import { showModelPicker } from '../../ui/InkModelPicker.js';
 import type { ModelDisplayInfo } from '@nexus-cortex/core';
 import { MentorshipConfigService, onboardingLines, shouldShowOnboarding, markOnboardingShown } from '@nexus-cortex/core';
+import { InSessionScheduler } from '@nexus-cortex/core';
 import { resolveSessionModel, type Platform } from '@nexus-cortex/cli/dist/themes/colors.js';
 import { showInteractiveMenu } from '../../ui/InkMenuPicker.js';
 import { showCommandPalette } from '../../ui/InkCommandPalette.js';
@@ -494,6 +495,8 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
   };
 
   // Create persistent input handler for streaming mode
+  // resolves the in-session scheduler's pending job when its turn ends (see the scheduler at the end of this function)
+  let scheduledTurnDone: (() => void) | null = null;
   const persistentInput = createPersistentInput({
     getStatusState,
     theme,
@@ -1830,6 +1833,7 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
 
     // Process the message with persistent input box
     await processMessage(userInput);
+    if (scheduledTurnDone) { const done = scheduledTurnDone; scheduledTurnDone = null; done(); }
 
     // Check for queued messages and process them
     while (persistentInput.hasQueuedMessages()) {
@@ -2292,6 +2296,24 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
       persistentInput.stopCapture();
     }
   }
+
+  // In-session scheduler (2026-11-14, operator: a first-class team member works through its TUI): while this window is open it OWNS
+  // ~/.cortex/schedules.json — a due job (mail poll, loops) is submitted as a turn in THIS session when the input box is empty and the
+  // user has been quiet; the OS ticker stands down meanwhile. Core: @nexus-cortex/core config/schedule.ts. Off: CORTEX_TUI_SCHEDULER=off.
+  const scheduler = new InSessionScheduler({
+    isIdle: () => { const q = activeRawQuestion(); return !!q && q.isEmpty() && !persistentInput.isCapturing() && !scheduledTurnDone; },
+    lastUserActivityMs: () => activeRawQuestion()?.lastKeyMs ?? Date.now(),
+    sessionId: () => client.getSessionId?.() ?? undefined,
+    notify: (line) => { if (!activeRawQuestion()) console.log(theme.dimmed(`[i] ${line}`)); },
+    runTurn: (text) => new Promise<void>((resolve) => {
+      const q = activeRawQuestion();
+      if (!q) { resolve(); return; }
+      scheduledTurnDone = resolve;
+      q.inject(text);
+    }),
+  }, { ui: 'fuzzycortex' });
+  scheduler.start();
+  process.on('exit', () => scheduler.stop());
 
   prompt();
 }

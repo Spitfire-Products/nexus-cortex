@@ -273,5 +273,64 @@ export function describeVaultForAgent(): { unlocked: boolean; source?: string; s
   };
 }
 
+// ── the agent's write path (SecretsSet tool, 2026-11-14) ──────────────────────────────────────────────────────────────────────────
+// Operator: "if the agent is working with keys it should have a way to either add it to the encrypted secrets vault or the encrypted
+// session vault and then it can be used from there without printing". The agent stores a key it obtained (a value it already holds, an
+// env var of its own process, or a file a command wrote — the last two never put the value in the conversation); the vault is created
+// with the zero-friction default when missing; the secret is bound as $NAME (or envVar) for tool processes by default and masked in every
+// later tool result at once. The result reports the name, length and binding — never the value.
+
+/** Env var names a binding may never take: they change how processes run, or belong to the vault/harness itself. */
+const RESERVED_ENV = /^(PATH|HOME|USER|SHELL|PWD|TMPDIR|TERM|LANG|LC_[A-Z_]+|LD_[A-Z_]+|DYLD_[A-Z_]+|NODE_OPTIONS|NODE_PATH|PYTHONPATH|PYTHONHOME|BASH_ENV|ENV|PROMPT_COMMAND|IFS|CORTEX_[A-Z0-9_]*)$/;
+
+export interface AgentSecretInput { name: string; value?: string; fromEnv?: string; fromFile?: string; deleteFile?: boolean; bind?: boolean; envVar?: string; tool?: string; provider?: string; note?: string; overwrite?: boolean }
+export interface AgentSecretResult { name: string; chars: number; created: boolean; replaced: boolean; boundAs?: string; boundTool?: string; source: 'value' | 'env' | 'file'; fileDeleted?: boolean; vaultPath: string }
+
+export function storeSecretForAgent(input: AgentSecretInput, opts: { keychain?: boolean; env?: NodeJS.ProcessEnv } = {}): AgentSecretResult {
+  const env = opts.env ?? process.env;
+  const name = String(input.name ?? '').trim();
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error('secret names are environment-variable style: letters, digits, _ (e.g. OPENAI_API_KEY)');
+  const sources = [input.value !== undefined, !!input.fromEnv, !!input.fromFile].filter(Boolean).length;
+  if (sources !== 1) throw new Error('give exactly one of value, from_env or from_file');
+  const bind = input.bind !== false;
+  const envVar = (input.envVar ?? name).trim();
+  if (bind) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(envVar)) throw new Error(`env_var ${envVar} is not a valid environment variable name`);
+    if (RESERVED_ENV.test(envVar)) throw new Error(`env_var ${envVar} is reserved (it changes how processes run or belongs to the harness) — pick another name`);
+  }
+  let value: string; let source: AgentSecretResult['source'];
+  if (input.value !== undefined) { value = String(input.value); source = 'value'; }
+  else if (input.fromEnv) { value = env[input.fromEnv] ?? ''; source = 'env'; if (!value) throw new Error(`from_env: ${input.fromEnv} is empty or not set in this process`); }
+  else { try { value = fs.readFileSync(input.fromFile!, 'utf8'); } catch (e) { throw new Error(`from_file: cannot read ${input.fromFile} (${(e as NodeJS.ErrnoException).code ?? (e as Error).message})`); } source = 'file'; }
+  value = value.replace(/^\s+|\s+$/g, '');
+  if (!value) throw new Error('the secret value is empty');
+
+  let created = false;
+  let r = openVaultNonInteractive(env);
+  if (!r.status.exists) {
+    // the zero-friction default (initVaultDefault): reuse a key that exists, else a new random key in the keychain or the owner-only key file
+    const given = resolveMasterSecret(env);
+    let master: string;
+    if (given && given.source !== 'passphrase') master = given.master;
+    else {
+      master = newMasterSecret();
+      if (!(opts.keychain !== false && keychainSet(master))) { fs.mkdirSync(path.dirname(vaultKeyFilePath()), { recursive: true, mode: 0o700 }); fs.writeFileSync(vaultKeyFilePath(), master + '\n', { mode: 0o600 }); }
+    }
+    createVault(master); created = true;
+    r = openVaultNonInteractive(env);
+  }
+  if (!r.vault) throw new Error(`the secrets vault is ${r.status.error ?? 'locked'} — the user unlocks it (cortex secrets unlock) or sets CORTEX_SECRETS_KEY`);
+  const vault = r.vault;
+  const replaced = vault.names().includes(name);
+  if (replaced && !input.overwrite) throw new Error(`a secret named ${name} already exists — pass overwrite:true to replace it (the old value is kept in secrets.enc.bak), or choose another name`);
+  vault.set(name, value, { ...(input.provider ? { provider: input.provider } : {}), ...(input.note ? { note: input.note } : {}) });
+  if (bind) vault.bind({ secret: name, envVar, scope: input.tool ? 'tool' : 'global', ...(input.tool ? { tool: input.tool } : {}) });
+  let fileDeleted: boolean | undefined;
+  if (source === 'file' && input.deleteFile) { try { fs.rmSync(input.fromFile!); fileDeleted = true; } catch { fileDeleted = false; } }
+  // mask + bind from THIS turn on, also when no vault was open at startup (no session yet)
+  if (env === process.env) recordVaultSession(vault, [...(session?.injected.keys() ?? [])], env);
+  return { name, chars: value.length, created, replaced, ...(bind ? { boundAs: envVar, ...(input.tool ? { boundTool: input.tool } : {}) } : {}), source, ...(fileDeleted !== undefined ? { fileDeleted } : {}), vaultPath: vault.file };
+}
+
 /** Test hook: forget the recorded session. */
 export function _resetVaultSessionForTests(): void { session = null; }

@@ -50,6 +50,12 @@ The harness itself uses provider keys from the vault for its model calls. The ag
   the model and the screen as `«secret:NAME»`. The same masking applies to the harness's own logs of tool results.
 - **`SecretsList`** lets the agent see names, providers and bindings (never values), so it can tell you which secret to bind
   instead of asking you to paste a key into the chat.
+- **`SecretsSet`** (4.137.11+) is the agent's write path: when it obtains a key (a CLI printed it, a sign-up page showed it, you pasted
+  it), it stores it encrypted, bound as `$NAME` for its shell by default, and masked from then on. Sources: `from_file` (a file a
+  command wrote; `delete_file: true` removes the plaintext — the value never enters the conversation), `from_env`, or `value`. It
+  creates the vault on first use, refuses to replace an existing secret without `overwrite: true`, and refuses to bind reserved
+  names (`PATH`, `HOME`, `LD_*`, `NODE_OPTIONS`, `CORTEX_*`). The result reports the name, length and binding — never the value.
+  The "keys never go in files" guard now points the agent at it.
 
 **Limits.** This keeps values out of the model's context and out of processes you did not give them to. It is not a sandbox: tools
 run as your OS user, so a deliberately hostile command could read `~/.cortex/vault.key` or query the keychain directly. Anything it

@@ -8,7 +8,7 @@ import path from 'path';
 import { webcrypto } from 'crypto';
 import {
   createVault, initVaultDefault, writeVaultFile, readVaultFile, Vault, deriveKey, encryptValue, decryptValue, loadVaultIntoEnv, openVaultNonInteractive, maskSecrets,
-  toolChildEnv, maskSecretText, maskToolResults, describeVaultForAgent, _resetVaultSessionForTests,
+  toolChildEnv, maskSecretText, maskToolResults, describeVaultForAgent, _resetVaultSessionForTests, storeSecretForAgent,
   PBKDF2_ITERATIONS, VAULT_ID, type EncryptedSecret,
 } from './secretsVault.js';
 
@@ -196,5 +196,63 @@ describe('the vault is never overwritten', () => {
     try { initVaultDefault({}); } finally { delete process.env.CORTEX_HOME; }
     expect(fs.readFileSync(path.join(cd, 'vault.key'), 'utf8')).toBe('kept-key\n');
     expect(() => Vault.open('kept-key', 'key-file', path.join(cd, 'secrets.enc'))).not.toThrow();
+  });
+});
+
+// 2026-11-14 (operator: "if the agent is working with keys it should have a way to either add it to the encrypted secrets vault … and then
+// it can be used from there without printing") — the agent's write path (SecretsSet tool).
+describe('storeSecretForAgent (SecretsSet)', () => {
+  const saved: Record<string, string | undefined> = {};
+  const touch = ['CORTEX_HOME', 'CORTEX_SECRETS_KEY', 'CORTEX_SECRETS_KEY_FILE', 'AGENT_KEY', 'SVC_TOKEN', 'FROM_ENV_SRC'];
+  beforeEach(() => { for (const k of touch) saved[k] = process.env[k]; _resetVaultSessionForTests(); process.env.CORTEX_HOME = dir; delete process.env.CORTEX_SECRETS_KEY; delete process.env.CORTEX_SECRETS_KEY_FILE; });
+  afterEach(() => { for (const k of touch) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } _resetVaultSessionForTests(); });
+  const vf = () => path.join(dir, '.cortex', 'secrets.enc');
+
+  it('creates the vault when none exists, stores encrypted, binds as $NAME, masks at once — the result never holds the value', () => {
+    const r = storeSecretForAgent({ name: 'AGENT_KEY', value: 'agent-secret-value-001' }, { keychain: false });
+    expect(r.created).toBe(true); expect(r.boundAs).toBe('AGENT_KEY');
+    expect(JSON.stringify(r)).not.toContain('agent-secret-value-001');
+    expect(fs.readFileSync(vf(), 'utf8')).not.toContain('agent-secret-value-001');
+    expect(maskSecretText('curl -H x:agent-secret-value-001')).toBe('curl -H x:«secret:AGENT_KEY»');
+    expect(toolChildEnv(process.env, 'Bash').AGENT_KEY).toBe('agent-secret-value-001');
+  });
+
+  it('bind:false stores without exposing it to tool processes; custom env var name works', () => {
+    storeSecretForAgent({ name: 'AGENT_KEY', value: 'agent-secret-value-002', bind: false }, { keychain: false });
+    expect(toolChildEnv(process.env).AGENT_KEY).toBeUndefined();
+    storeSecretForAgent({ name: 'SVC', value: 'service-token-value-003', envVar: 'SVC_TOKEN' }, { keychain: false });
+    expect(toolChildEnv(process.env).SVC_TOKEN).toBe('service-token-value-003');
+  });
+
+  it('refuses to replace an existing secret unless overwrite:true', () => {
+    storeSecretForAgent({ name: 'AGENT_KEY', value: 'first-value-000004' }, { keychain: false });
+    expect(() => storeSecretForAgent({ name: 'AGENT_KEY', value: 'second-value-00005' }, { keychain: false })).toThrow(/already exists/);
+    storeSecretForAgent({ name: 'AGENT_KEY', value: 'second-value-00005', overwrite: true }, { keychain: false });
+    expect(toolChildEnv(process.env).AGENT_KEY).toBe('second-value-00005');
+  });
+
+  it('from_env and from_file (with delete) keep the value out of the conversation', () => {
+    process.env.FROM_ENV_SRC = 'value-from-env-0006';
+    storeSecretForAgent({ name: 'E1', fromEnv: 'FROM_ENV_SRC' }, { keychain: false });
+    const f = path.join(dir, 'k.txt'); fs.writeFileSync(f, 'value-from-file-007\n');
+    const r = storeSecretForAgent({ name: 'F1', fromFile: f, deleteFile: true }, { keychain: false });
+    expect(fs.existsSync(f)).toBe(false); expect(r.chars).toBe(19);   // trailing newline trimmed
+    expect(maskSecretText('value-from-env-0006 value-from-file-007')).toBe('«secret:E1» «secret:F1»');
+  });
+
+  it('rejects bad names, empty values, two sources, and shadowing env vars (PATH, LD_*, NODE_OPTIONS, CORTEX_*)', () => {
+    expect(() => storeSecretForAgent({ name: 'bad-name', value: 'xxxxxxxxx' }, { keychain: false })).toThrow(/names/);
+    expect(() => storeSecretForAgent({ name: 'A1', value: '' }, { keychain: false })).toThrow(/empty/);
+    expect(() => storeSecretForAgent({ name: 'A1', value: 'x', fromEnv: 'HOME' }, { keychain: false })).toThrow(/exactly one/);
+    for (const envVar of ['PATH', 'LD_PRELOAD', 'NODE_OPTIONS', 'CORTEX_SECRETS_KEY', 'HOME'])
+      expect(() => storeSecretForAgent({ name: 'A2', value: 'yyyyyyyyy', envVar }, { keychain: false })).toThrow(/reserved/);
+  });
+
+  it('opens an existing vault through its key file and keeps its secrets', () => {
+    storeSecretForAgent({ name: 'AGENT_KEY', value: 'agent-secret-value-008' }, { keychain: false });
+    _resetVaultSessionForTests();
+    const r = storeSecretForAgent({ name: 'SECOND', value: 'second-secret-val-009' }, { keychain: false });
+    expect(r.created).toBe(false);
+    expect(describeVaultForAgent().secrets.map((s) => s.name)).toEqual(['AGENT_KEY', 'SECOND']);
   });
 });

@@ -12,15 +12,12 @@ const ctx = (auto: boolean) => ({ sessionId: 's', conversationId: 'c', turnNumbe
   approvalMode: { autoApproveActions: auto } }) as unknown as MiddlewareContext;
 
 describe('approval request carries the tier', () => {
-  it('a blacklist action with auto-approve ON still asks, and says so', async () => {
+  it('auto-approve ON never asks (operator 11-14): a floor action is refused at once, no prompt', async () => {
     const handler: ApprovalHandler = { requestApproval: vi.fn().mockResolvedValue(true) };
     const mw = new PermissionsMiddleware({ policies: [blacklistPolicy], approvalHandler: handler });
-    const d = await mw.checkPermission('Bash', { command: 'screencapture -x /tmp/a.png' }, ctx(true));
-    expect(handler.requestApproval).toHaveBeenCalledTimes(1);
-    const req = (handler.requestApproval as any).mock.calls[0][0];
-    expect(req.tier).toBe('blacklist');
-    expect(req.autoApproveOn).toBe(true);
-    expect(d.allowed).toBe(true);
+    const d = await mw.checkPermission('Bash', { command: 'curl -s https://example.com' }, ctx(true));
+    expect(handler.requestApproval).not.toHaveBeenCalled();
+    expect(d.allowed).toBe(true);   // dangerous-pattern Bash is auto-approved; floors (not registered here) would refuse
     await mw.close();
   });
   it('auto-approve OFF: no autoApproveOn flag', async () => {

@@ -23,3 +23,4 @@ export * from './sessionRelease.js';
 export * from './secretProviders.js';
 export * from './localBrowser.js';
 export { installConsoleRedaction, redactLogText } from './logRedaction.js';
+export * from './schedule.js';

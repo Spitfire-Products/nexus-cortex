@@ -81,6 +81,8 @@ export const whitelistPolicy: PermissionPolicy = {
       'CanonPullSession',
       // Secrets vault: names / providers / bindings only — never values.
       'SecretsList',
+      // Stores a key ENCRYPTED in the user's own vault, refuses to replace one without overwrite:true, never prints it (11-14).
+      'SecretsSet',
     ];
 
     if (whitelistTools.includes(context.toolName)) {
@@ -332,7 +334,7 @@ export const secretsInFilesFloorPolicy: PermissionPolicy = {
     if (!hit) return { allowed: true };
     return {
       allowed: false,
-      reason: `writes a key/token (${hit}) ${context.toolName === 'Bash' ? 'through Bash' : 'into ' + (i.file_path || 'a file')} — keys never go in files: the user stores them with cortex setup (the vault). Always asks.`,
+      reason: `writes a key/token (${hit}) ${context.toolName === 'Bash' ? 'through Bash' : 'into ' + (i.file_path || 'a file')} — keys never go in files or command lines: store it with the SecretsSet tool (encrypted vault, bound as $NAME) and use "$NAME" instead. Always asks.`,
       canApprove: true,
       tier: 'blacklist',
     };

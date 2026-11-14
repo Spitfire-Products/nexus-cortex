@@ -234,6 +234,14 @@ const inputHistory: string[] = [];
 const MAX_HISTORY_SIZE = 100;
 
 /**
+ * The question waiting for input right now, if any (2026-11-14: the in-session scheduler submits a due job as a turn only while the box
+ * is EMPTY and the user has been quiet; inject() resolves the pending question with the job's prompt exactly as if it had been typed).
+ */
+export interface ActiveRawQuestion { isEmpty(): boolean; lastKeyMs: number; inject(text: string): void }
+let activeQuestion: ActiveRawQuestion | null = null;
+export const activeRawQuestion = (): ActiveRawQuestion | null => activeQuestion;
+
+/**
  * Draw the input frame with status line below
  *
  * Uses explicit line counting and cursor movement (not save/restore which fails on scroll).
@@ -472,6 +480,7 @@ export function rawQuestion(options: RawInputOptions): Promise<string> {
       return !/[\x40-\x7e]/.test(s.slice(2));
     };
     const handleData = (data: Buffer) => {
+      if (activeQuestion) activeQuestion.lastKeyMs = Date.now();
       if (escTimeout) { clearTimeout(escTimeout); escTimeout = null; }
       const str = pendingEsc + data.toString();
       pendingEsc = '';
@@ -543,6 +552,7 @@ export function rawQuestion(options: RawInputOptions): Promise<string> {
             }
           }
         }
+        if (activeQuestion === me) activeQuestion = null;
         resolve(input);
         return;
       }
@@ -887,6 +897,24 @@ export function rawQuestion(options: RawInputOptions): Promise<string> {
       }
     };
 
+    const me: ActiveRawQuestion = {
+      isEmpty: () => !input.trim(),
+      lastKeyMs: Date.now(),
+      inject: (text: string) => {
+        if (activeQuestion !== me) return;
+        activeQuestion = null;
+        try { process.stdin.removeListener('data', handleData); } catch { /* gone */ }
+        removeResizeListener();
+        if (escTimeout) { clearTimeout(escTimeout); escTimeout = null; }
+        if (drawTimeout) { clearTimeout(drawTimeout); drawTimeout = null; }
+        if (process.stdin.isTTY) { try { process.stdin.setRawMode(false); } catch { /* stdin closed */ } }
+        input = text; cursorPos = text.length;
+        drawInputFrame(input, cursorPos, options);
+        clearInputFrame(input, options.theme);   // echoes the prompt like a typed one
+        resolve(text);
+      },
+    };
+    activeQuestion = me;
     process.stdin.on('data', handleData);
   });
 }

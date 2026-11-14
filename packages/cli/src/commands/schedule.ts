@@ -9,7 +9,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { acquireTickLock, dueJobs, jobInvocation, loadJobs, mailGate, removeJob, saveJobs, schedulesFile, upsertJob, type ScheduleJob } from '../lifecycle/schedule.js';
+import { acquireTickLock, dueJobs, jobInvocation, liveScheduleOwner, loadJobs, mailGate, removeJob, saveJobs, schedulesFile, upsertJob, type ScheduleJob } from '../lifecycle/schedule.js';
 
 const CORTEX_JS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'bin', 'cortex.js');
 const LOG = path.join(os.homedir(), '.cortex', 'schedule.log');
@@ -53,16 +53,20 @@ export async function scheduleCli(op: string, tag: string | undefined, o: Record
     case 'list': {
       if (!jobs.length) { console.log('[schedule] no jobs (cortex schedule add …)'); return; }
       for (const j of jobs) console.log(`${j.enabled === false ? 'off' : 'on '} ${j.tag}  every ${j.everyMin} min${j.mailOnly ? ` · mail-only (${j.mailName})` : ''}${j.yolo ? ' · yolo' : ''} · last ${j.lastRunMs ? new Date(j.lastRunMs).toISOString() : 'never'}${j.lastRc !== undefined ? ` rc ${j.lastRc}` : ''}`);
+      { const ow = liveScheduleOwner(); if (ow) console.log(`runner: ${ow.ui} window (pid ${ow.pid}) runs due jobs in its session while open; the ticker stands down`); }
       console.log(`ticker: ${process.platform === 'darwin' ? (fs.existsSync(PLIST) ? 'launchd installed' : 'NOT installed (cortex schedule install)') : 'crontab (cortex schedule install)'} · log ${LOG}`);
       return;
     }
     case 'run-due': {
+      // an open TUI owns the schedule and runs due jobs inside its own session while idle — stand down so nothing runs twice
+      const owner = liveScheduleOwner();
+      if (owner) { if (o.dryRun) console.log(`[schedule] owned by ${owner.ui} pid ${owner.pid} on ${owner.host} — the ticker stands down`); return; }
       const release = acquireTickLock(LOCK); if (!release) return;   // a previous tick's turn is still running
       try {
         for (const j of dueJobs(jobs, Date.now())) {
           if (!mailGate(j, peekMail)) continue;                        // mail-only and nothing unread: no turn, no spend
           if (o.dryRun) { console.log(`[schedule] would run ${j.tag}`); continue; }
-          jobs = loadJobs(file).map((x) => x.tag === j.tag ? { ...x, lastRunMs: Date.now() } : x); saveJobs(file, jobs);   // stamp BEFORE: a crash never re-fires in a loop
+          jobs = loadJobs(file).map((x) => x.tag === j.tag ? { ...x, lastRunMs: Date.now(), lastRunner: 'ticker' } : x); saveJobs(file, jobs);   // stamp BEFORE: a crash never re-fires in a loop
           const inv = jobInvocation(j, CORTEX_JS); const t0 = Date.now();
           const r = spawnSync(process.execPath, inv.args, { cwd: j.cwd || os.homedir(), encoding: 'utf8', timeout: 45 * 60_000, env: { ...process.env, ...inv.env } });
           const rc = r.status ?? -1;

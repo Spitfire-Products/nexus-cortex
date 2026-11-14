@@ -2279,6 +2279,44 @@ The harness already uses provider API keys from the vault for its own model call
   },
 
   {
+    name: 'SecretsSet',
+    description: `Store a key, token or password in the user's ENCRYPTED secrets vault (~/.cortex/secrets.enc) so you can use it without ever printing it. The vault is created on first use. By default the secret is bound as the environment variable $NAME for your shell and tool processes, and every later tool result shows the value as «secret:NAME».
+
+Use it whenever you obtain or are given a credential: an API key a CLI printed, a token a sign-up page showed, a key the user pasted. Then use it as "$NAME" in commands (curl -H "Authorization: Bearer $NAME" …) — never echo it, write it to a file, or put it in a command literally (keys in files are refused).
+
+Give exactly ONE source:
+- from_file: a file a command wrote (e.g. \`some-cli create-key > /tmp/k\`) — add delete_file:true to remove the plaintext. Preferred: the value never enters the conversation.
+- from_env: an environment variable of this process.
+- value: the literal value, only when it is already in the conversation.
+
+name: env-var style (OPENAI_API_KEY). env_var: bind under another name. bind:false: store only. tool: bind for one tool only (e.g. Bash). overwrite:true replaces an existing secret (the previous file is kept as secrets.enc.bak). Reserved names (PATH, HOME, LD_*, NODE_OPTIONS, CORTEX_*) cannot be bound. Browser sign-in sessions belong in the session vault, not here. SecretsList shows what is stored.`,
+    schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Secret name, environment-variable style (letters, digits, _), e.g. OPENAI_API_KEY' },
+        value: { type: 'string', description: 'The literal value — only when it is already in the conversation' },
+        from_env: { type: 'string', description: 'Read the value from this environment variable of the harness process' },
+        from_file: { type: 'string', description: 'Read the value from this file (surrounding whitespace trimmed)' },
+        delete_file: { type: 'boolean', description: 'With from_file: delete the plaintext file after storing (recommended)' },
+        bind: { type: 'boolean', description: 'Expose it to shell/tool processes as an env var (default true)' },
+        env_var: { type: 'string', description: 'Env var name for the binding (default: name)' },
+        tool: { type: 'string', description: 'Bind for this tool only (e.g. Bash); default: every tool process' },
+        provider: { type: 'string', description: 'Optional provider label (openai, github, vast, …)' },
+        note: { type: 'string', description: 'Optional note (what it is for) — never the value' },
+        overwrite: { type: 'boolean', description: 'Replace an existing secret with the same name' }
+      },
+      required: ['name']
+    },
+    category: 'base',
+    discoveryTier: 'standard',
+    metadata: {
+      immutable: true,
+      executionEnvironment: 'client',
+      version: '1.0.0'
+    }
+  },
+
+  {
     name: 'CanonListSessions',
     description: `List prior agent sessions in the canon store — the portable, cross-harness memory rail: a git repo the user owns that captures sessions from every harness (this one, Claude Code, the browser agent, grok, gemini) on every machine.
 

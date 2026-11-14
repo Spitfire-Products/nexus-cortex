@@ -51,6 +51,7 @@ import { InteractiveMenu } from '../commands/system-message/InteractiveMenu.js';
 import { SystemMessageStore } from '@nexus-cortex/core/system-messages/SystemMessageStore.js';
 import type { ModelDisplayInfo, InteractiveMenuDefinition, MenuResult } from '@nexus-cortex/core';
 import { MentorshipConfigService, slashCommandRegistry, keymapFooterHint, keymapKey } from '@nexus-cortex/core';
+import { InSessionScheduler } from '@nexus-cortex/core';
 import { ModelPickerDialog } from './components/ModelPickerDialog.js';
 import { SecretsDialog } from './components/SecretsDialog.js';
 import { MenuRenderer } from './components/MenuRenderer.js';
@@ -2693,8 +2694,10 @@ export const CortexApp: React.FC<CortexAppProps> = ({
     refreshOrchestratorHistory, // Refresh history after streaming completes
   );
 
+  const lastKeystrokeRef = useRef(Date.now());
   // Keyboard shortcuts
   useInput((input, key) => {
+    lastKeystrokeRef.current = Date.now();   // the in-session scheduler never starts a job while someone is typing
     // Tab - toggle extended reasoning (only for toggleable models)
     if (key.tab && !key.shift) {
       if (reasoningToggleable) {
@@ -2870,6 +2873,31 @@ export const CortexApp: React.FC<CortexAppProps> = ({
       });
     }
   }, [streamingState, queuedMessage, submitQuery, supportsReasoning, reasoningEffort, addItem]);
+
+  // In-session scheduler (2026-11-14, operator: a first-class team member works through its TUI): while this window is open it OWNS
+  // ~/.cortex/schedules.json — due jobs (mail poll, loops) run as turns in THIS session when idle, and the OS ticker stands down.
+  // Core: @nexus-cortex/core config/schedule.ts. Off with CORTEX_TUI_SCHEDULER=off.
+  const schedIdleRef = useRef(false);
+  useEffect(() => {
+    schedIdleRef.current = streamingState === StreamingState.Idle && !pendingApproval && !queuedMessage
+      && !showThemePicker && !showModelPicker && !showSecrets && !showSessionPicker && !showSystemMessageManager;
+  }, [streamingState, pendingApproval, queuedMessage, showThemePicker, showModelPicker, showSecrets, showSessionPicker, showSystemMessageManager]);
+  const submitQueryRef = useRef(submitQuery);
+  useEffect(() => { submitQueryRef.current = submitQuery; }, [submitQuery]);
+  const clientRef = useRef(client);
+  useEffect(() => { clientRef.current = client; }, [client]);
+  useEffect(() => {
+    if (!initialized) return;
+    const sched = new InSessionScheduler({
+      isIdle: () => schedIdleRef.current && streamingStateRef.current === StreamingState.Idle,
+      lastUserActivityMs: () => lastKeystrokeRef.current,
+      sessionId: () => clientRef.current?.getSessionId?.() ?? undefined,
+      notify: (line) => addItem({ type: MessageType.Info, infoContent: ` ${line}` }, Date.now()),
+      runTurn: (prompt) => submitQueryRef.current(prompt, { reasoningEffort: supportsReasoningRef.current ? reasoningEffortRef.current : undefined }),
+    }, { ui: 'neoncortex' });
+    sched.start();
+    return () => sched.stop();
+  }, [initialized, addItem]);
 
   // Loading state - show simple spinner while initializing
   if (!initialized) {
