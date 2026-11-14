@@ -3,6 +3,8 @@
  * Nexus Cortex CLI
  * Main entry point
  */
+import * as path from 'node:path';
+import * as os from 'node:os';
 import { Command } from 'commander';
 import { listModels } from './commands/models/list.js';
 import { modelInfo } from './commands/models/info.js';
@@ -1269,6 +1271,14 @@ tools
     for (const r of results) {
       const line = r.status === 'installed' ? `[OK] ${r.tool} ${r.version} installed` : r.status === 'up-to-date' ? `[OK] ${r.tool} ${r.version} already installed` : r.status === 'unsupported' ? `[SKIP] ${r.tool}: no build for ${process.platform}-${process.arch}` : `[FAIL] ${r.tool}: ${r.error}`;
       console.log(line);
+    }
+    // 2026-11-14 (m2): the harness finds these itself, but YOUR shell only does if ~/.cortex/bin is on PATH — say so instead of leaving
+    // `sgrep: command not found` (and sgrep's own "ripgrep is required") for the user to work out.
+    const binDir = path.join(os.homedir(), '.cortex', 'bin');
+    if (results.some((r) => r.status === 'installed' || r.status === 'up-to-date')
+        && !(process.env.PATH ?? '').split(path.delimiter).includes(binDir)) {
+      const rc = process.platform === 'darwin' ? '~/.zshrc' : '~/.bashrc';
+      console.log(`\nTo use them in your own shell, add ~/.cortex/bin to PATH:  echo 'export PATH="$HOME/.cortex/bin:$PATH"' >> ${rc}`);
     }
     if (results.some((r) => r.status === 'failed')) process.exitCode = 1;
   });

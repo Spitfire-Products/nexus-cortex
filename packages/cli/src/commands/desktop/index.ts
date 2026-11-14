@@ -18,6 +18,22 @@ function setDesktop(mode: 'virtual' | 'real' | ''): void {
   process.env.NEXUS_DESKTOP = mode;
 }
 
+/** 2026-11-14 (m2 report): this row used to be hard-coded ok. Read the real state through osascript/JXA (the same calls the desktop tool
+ *  makes): Accessibility = AXIsProcessTrusted; Screen Recording = CGPreflightScreenCaptureAccess (needs ObjC.bindFunction — without it the
+ *  function is never defined and the old check always said granted). Unknown → an optional row with the fix. Permissions belong to the
+ *  terminal app this runs in. */
+function macPermissionRows(): Array<{ item: string; ok: boolean; fix?: string; optional?: boolean }> {
+  const fix = 'System Settings → Privacy & Security → grant it to your terminal app (Terminal / iTerm2), then restart that app';
+  let ax = -1, sr = -1;
+  try {
+    const js = "ObjC.import('ApplicationServices'); var a = $.AXIsProcessTrusted() ? 1 : 0; var s = 2; try { ObjC.bindFunction('CGPreflightScreenCaptureAccess', ['bool', []]); s = $.CGPreflightScreenCaptureAccess() ? 1 : 0; } catch (e) { s = 2; } a + ' ' + s;";
+    const out = execFileSync('osascript', ['-l', 'JavaScript', '-e', js], { encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] }).trim().split(/\s+/).map(Number);
+    ax = out[0] ?? -1; sr = out[1] ?? -1;
+  } catch { /* osascript unavailable or refused: report unknown */ }
+  const row = (item: string, v: number) => v === 1 ? { item, ok: true } : v === 0 ? { item, ok: false, fix } : { item: `${item} (could not check)`, ok: false, optional: true, fix };
+  return [row('Accessibility for this terminal app', ax), row('Screen Recording for this terminal app', sr)];
+}
+
 /** The OS tools each backend needs (from the package's backends: macOS screencapture/sips/osascript + cliclick; X11 xdotool + ImageMagick import). */
 function checks(mode: 'virtual' | 'real'): Array<{ item: string; ok: boolean; fix?: string; optional?: boolean }> {
   if (process.platform === 'darwin') {
@@ -25,8 +41,7 @@ function checks(mode: 'virtual' | 'real'): Array<{ item: string; ok: boolean; fi
     return [
       { item: 'screencapture + sips (built in)', ok: onPath('screencapture') && onPath('sips') },
       { item: 'cliclick (mouse; REQUIRED on macOS 11)', ok: onPath('cliclick'), fix: 'brew install cliclick' },
-      { item: 'Screen Recording + Accessibility for this terminal app', ok: true, optional: true,
-        fix: 'System Settings → Privacy & Security → grant both to the terminal app, then restart it (the tool reports them in `desktop info`)' },
+      ...macPermissionRows(),
     ];
   }
   const rows = [
