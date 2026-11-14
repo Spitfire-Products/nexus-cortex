@@ -11,6 +11,7 @@ export { ListAvailableMcpServers } from './ListAvailableMcpServers.js';
 export { SearchMcpServers } from './SearchMcpServers.js';
 export { GetMcpConfig } from './GetMcpConfig.js';
 export { EnableMcpServer } from './EnableMcpServer.js';
+export { ReconnectMcpServer } from './ReconnectMcpServer.js';
 export { DisableMcpServer } from './DisableMcpServer.js';
 export { ConfigureMcpServer } from './ConfigureMcpServer.js';
 export { InitMcpConfig } from './InitMcpConfig.js';
@@ -19,6 +20,7 @@ export type { ListAvailableMcpServersInput, ListAvailableMcpServersOutput } from
 export type { SearchMcpServersInput, SearchMcpServersOutput } from './SearchMcpServers.js';
 export type { GetMcpConfigInput, GetMcpConfigOutput } from './GetMcpConfig.js';
 export type { EnableMcpServerInput, EnableMcpServerOutput } from './EnableMcpServer.js';
+export type { ReconnectMcpServerInput, ReconnectMcpServerOutput } from './ReconnectMcpServer.js';
 export type { DisableMcpServerInput, DisableMcpServerOutput } from './DisableMcpServer.js';
 export type { ConfigureMcpServerInput, ConfigureMcpServerOutput } from './ConfigureMcpServer.js';
 export type { InitMcpConfigInput, InitMcpConfigOutput } from './InitMcpConfig.js';

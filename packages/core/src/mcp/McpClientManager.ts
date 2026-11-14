@@ -147,6 +147,19 @@ export class McpClientManager {
   }
 
   /**
+   * Restart one server's connection IN THIS SESSION (2026-11-14, operator: agents must be able to "stop and update and restart … to
+   * reconnect mcps"): disconnect (a stdio server's process exits), connect again (a stdio server is SPAWNED AGAIN, so a package installed
+   * since the session started is the one that runs), and rediscover its tools. The orchestrator reads tools live from this manager, so
+   * the next request already carries the new tool list.
+   */
+  async reconnectServer(name: string): Promise<{ server: string; tools: number }> {
+    if (!this.configs.has(name)) throw new Error(`No configuration found for MCP server '${name}' (configured: ${this.getServerNames().join(', ') || 'none'})`);
+    await this.connectToServer(name);   // connect disconnects an existing client first
+    const tools = await this.discoverServerTools(name);
+    return { server: name, tools: tools.length };
+  }
+
+  /**
    * Connect to all configured MCP servers
    */
   async connectToAllServers(): Promise<void> {

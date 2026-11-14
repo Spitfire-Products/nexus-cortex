@@ -65,6 +65,8 @@ export const whitelistPolicy: PermissionPolicy = {
       'WebSearch',
       'WebFetch',
       'GetMcpConfig',
+      // Restarts an ALREADY-configured MCP server in this session (no config write) — self-maintenance after an update (11-14).
+      'ReconnectMcpServer',
       'ListAvailableMcpServers',
       'SearchMcpServers',
       'GetConversationSegment',

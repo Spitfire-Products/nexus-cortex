@@ -161,6 +161,7 @@ import {
   GetMcpConfig,
   EnableMcpServer,
   DisableMcpServer,
+  ReconnectMcpServer,
   ConfigureMcpServer,
   InitMcpConfig
 } from '../tools/mcp-management/index.js';
@@ -8877,6 +8878,7 @@ export class CortexOrchestrator {
           'GetMcpConfig',
           'EnableMcpServer',
           'DisableMcpServer',
+          'ReconnectMcpServer',
           'ConfigureMcpServer',
           'InitMcpConfig'
         ];
@@ -9075,6 +9077,10 @@ export class CortexOrchestrator {
                     this.config.projectPath || process.cwd(),
                     connectedServers
                   );
+                  break;
+
+                case 'ReconnectMcpServer':
+                  mcpManagementResult = await ReconnectMcpServer.execute(toolUse.input, this.mcpManager);
                   break;
 
                 case 'ConfigureMcpServer':
@@ -9775,6 +9781,7 @@ export class CortexOrchestrator {
       GetMcpConfig.toCanonicalTool(),
       EnableMcpServer.toCanonicalTool(),
       DisableMcpServer.toCanonicalTool(),
+      ReconnectMcpServer.toCanonicalTool(),
       ConfigureMcpServer.toCanonicalTool(),
       InitMcpConfig.getToolDefinition()
     ] as any[];

@@ -12,6 +12,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { pathToFileURL } from 'node:url';
+import fs from 'node:fs';
 import type { Tool, Resource, Prompt } from '@modelcontextprotocol/sdk/types.js';
 import { logger } from '../utils/logger.js';
 import { getPersistedMcpToken, persistMcpToken } from './McpTokenStore.js';
@@ -206,7 +207,12 @@ export class McpClient {
 
     if (transportType === 'inprocess') {
       if (!this.config.inProcessModule) throw new Error('inprocess transport requires inProcessModule');
-      const mod = await import(pathToFileURL(this.config.inProcessModule).href);
+      // 2026-11-14 (ReconnectMcpServer): tag the URL with the file's mtime so a reconnect after `npm i -g` loads the NEW entry module —
+      // Node caches ES modules by URL, so the bare path kept the version the session started with. Its chunks are content-hashed
+      // (esbuild splitting), so changed code arrives under new chunk names; unchanged chunks are identical and may stay cached.
+      let ver = '';
+      try { ver = `?v=${Math.round(fs.statSync(this.config.inProcessModule).mtimeMs)}`; } catch { /* missing file → import() reports it */ }
+      const mod = await import(pathToFileURL(this.config.inProcessModule).href + ver);
       const factory = mod[this.config.inProcessFactory || 'createLocalBrowserMCP'];
       if (typeof factory !== 'function') throw new Error(`inprocess: ${this.config.inProcessModule} has no ${this.config.inProcessFactory || 'createLocalBrowserMCP'}()`);
       const inst = await factory();

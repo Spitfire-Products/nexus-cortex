@@ -38,7 +38,7 @@ const EXECUTOR_REGISTRY_TOOLS = [
 const ORCHESTRATOR_MANAGED_TOOLS = [
   'ConfigureMcpServer', 'DisableMcpServer', 'EnableMcpServer',
   'GetMcpConfig', 'InitCortexContext', 'InitMcpConfig',
-  'ListAvailableMcpServers', 'MemoryRecall', 'MemoryWrite', 'SearchMcpServers',
+  'ListAvailableMcpServers', 'MemoryRecall', 'MemoryWrite', 'ReconnectMcpServer', 'SearchMcpServers',
 ];
 
 const CANONICAL_TOOL_NAMES = new Set([
