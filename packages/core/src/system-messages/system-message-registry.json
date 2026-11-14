@@ -206,6 +206,22 @@
     },
 
     {
+      "id": "user_md",
+      "name": "USER.md User Instructions",
+      "file": "USER.md",
+      "conditions": {
+        "turnNumber": 0
+      },
+      "injection": {
+        "position": "prepend",
+        "role": "system",
+        "priority": 6
+      },
+      "cache": true,
+      "description": "The user's standing instructions for every project ($CORTEX_USER_MD or ~/.cortex/USER.md; CORTEX_USER_MD=off disables). Unlike ~/.cortex/CORTEX.md it is not replaced by a project CORTEX.md."
+    },
+
+    {
       "id": "claude_memory",
       "name": "Claude Memory Context",
       "file": "MEMORY.md",

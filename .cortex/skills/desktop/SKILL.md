@@ -24,6 +24,8 @@ reach — native applications, system dialogs, file pickers, installers, apps in
    `screenshot` or `zoom` only when there is no accessible element to read.
 
 ## 2. Fastest path first (in this order)
+0. On macOS, a script before the UI: `osa` (AppleScript/JXA — `validate:true` first, then run) for scriptable apps, and `macshortcut` for the
+   user's existing Shortcuts (System Settings toggles, Maps, Freeform and Screenshot are reachable only that way).
 1. A native keyboard shortcut (`hotkey` catalog: app switcher, go-to-folder in any open/save dialog, menu search, save-as …).
 2. A menu item by name (`menu`) — one call instead of several clicks.
 3. Keyboard navigation (Tab, arrows, Enter, accelerators) with `key` / `type`.

@@ -2268,6 +2268,15 @@
         "kind": "value"
       }
     },
+    "CORTEX_USER_MD": {
+      "defaultValue": "~/.cortex/USER.md",
+      "rules": [],
+      "meta": {
+        "what": "User-level standing instructions injected in every project (system slot user_md): unset = $HOME/.cortex/USER.md when present | <path> = that file | off|false|0 = disabled. Not replaced by a project CORTEX.md (unlike ~/.cortex/CORTEX.md)",
+        "group": "Mentor role (MENTORSHIP_HELPER_MODEL — the bounded single-shot judges/planners; distinct from the HELPER role)",
+        "kind": "value"
+      }
+    },
     "CORTEX_VERIFY_SCALE": {
       "defaultValue": "off",
       "rules": [],

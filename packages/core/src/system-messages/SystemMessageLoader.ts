@@ -409,6 +409,20 @@ export class SystemMessageLoader {
       throw new Error(`AGENTS.md not found in project or parent directories`);
     }
 
+    // USER.md — the user's standing instructions for EVERY project (2026-11-14). ~/.cortex/CORTEX.md is only a fallback that a
+    // project CORTEX.md replaces; this slot always loads beside the project docs. CORTEX_USER_MD = a file path, or off|false|0.
+    if (definition.id === 'user_md') {
+      const opt = (process.env.CORTEX_USER_MD || '').trim();
+      if (/^(off|false|0|no)$/i.test(opt)) throw new Error('USER.md disabled (CORTEX_USER_MD=off)');
+      const homeDir = process.env.HOME || process.env.USERPROFILE || '~';
+      const userMdPath = opt ? (isAbsolute(opt) ? opt : resolve(this.projectPath, opt)) : join(homeDir, '.cortex', 'USER.md');
+      if (await this.fileExists(userMdPath)) {
+        if (this.debug) console.log(`[SystemMessageLoader] Loaded USER.md: ${userMdPath}`);
+        return this.readFileCached(userMdPath);
+      }
+      throw new Error(`USER.md not found at ${userMdPath} (optional)`);
+    }
+
     // Special handling for GEMINI.md - Gemini-specific project instructions
     if (definition.id === 'gemini_md') {
       const projectGeminiMd = join(this.projectPath, 'GEMINI.md');
@@ -556,6 +570,7 @@ export class SystemMessageLoader {
     // moves to MEMORY.archive.md, never deleted). See memoryArchive.ts.
     'agents_md',
     'gemini_md',
+    'user_md',
     'cortex',
   ]);
 
