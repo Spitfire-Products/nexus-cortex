@@ -300,6 +300,40 @@ export const nativeAutomationFloorPolicy: PermissionPolicy = {
   },
 };
 
+/** Provider-key shapes (prefix + length) — conservative on purpose, so ordinary words ("risk-assessment", "task-list") never match. */
+const KEY_SHAPES: RegExp[] = [
+  /\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}/, /\bxai-[A-Za-z0-9]{20,}/, /\bghp_[A-Za-z0-9]{30,}/, /\bgithub_pat_[A-Za-z0-9_]{22,}/, /\bAKIA[0-9A-Z]{16}\b/,
+  /\bAIza[0-9A-Za-z_-]{30,}/, /\bhf_[A-Za-z0-9]{30,}/, /\b(?:nb|ncsb|nrl|nar|ncx)_[A-Za-z0-9]{20,}/, /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+];
+export function keyShapeIn(text: string): string | undefined {
+  const t = String(text ?? '');
+  for (const r of KEY_SHAPES) { const m = r.exec(t); if (m) return m[0].slice(0, 6) + '…'; }
+  return undefined;
+}
+
+/**
+ * FLOOR policy (2026-11-14, macbook battery C7): an agent wrote a key-shaped value from its task into a file although USER.md forbids it —
+ * a prompt rule is not a guard. ASK (blacklist tier → headless fails fast, interactive confirms) before Write / Edit / Bash put a key-shaped
+ * value on disk. Prepended to every policy set with nativeAutomationFloorPolicy (OrchestratorFactory.createDefaultPolicies).
+ */
+export const secretsInFilesFloorPolicy: PermissionPolicy = {
+  name: 'floor-secrets-in-files',
+  priority: 9_999,
+  enabled: true,
+  evaluate: async (context) => {
+    const i = context.toolInput || {};
+    const text = context.toolName === 'Write' ? i.content : context.toolName === 'Edit' ? i.new_string : context.toolName === 'Bash' ? i.command : undefined;
+    const hit = text ? keyShapeIn(text) : undefined;
+    if (!hit) return { allowed: true };
+    return {
+      allowed: false,
+      reason: `writes a key/token (${hit}) ${context.toolName === 'Bash' ? 'through Bash' : 'into ' + (i.file_path || 'a file')} — keys never go in files: the user stores them with cortex setup (the vault). Always asks.`,
+      canApprove: true,
+      tier: 'blacklist',
+    };
+  },
+};
+
 export const blacklistPolicy: PermissionPolicy = {
   name: 'blacklist-dangerous-operations',
   priority: 1000, // Highest priority - checked first

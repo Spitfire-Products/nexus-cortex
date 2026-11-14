@@ -46,7 +46,7 @@ import { BashCommandPolicy } from '../middleware/permissions/BashCommandPolicy.j
 import { CLIApprovalHandler } from '../middleware/permissions/CLIApprovalHandler.js';
 import { AutoApproveHandler } from '../middleware/permissions/AutoApproveHandler.js';
 import type { PermissionPolicy } from '../middleware/contracts/MiddlewareContracts.js';
-import { defaultPolicies, nativeAutomationFloorPolicy } from '../middleware/permissions/DefaultPolicies.js';
+import { defaultPolicies, nativeAutomationFloorPolicy, secretsInFilesFloorPolicy } from '../middleware/permissions/DefaultPolicies.js';
 import { PermissionConfigLoader } from '../middleware/permissions/PermissionConfigLoader.js';
 import { resolvePermissionProfilePath } from '../middleware/permissions/profilePath.js';
 
@@ -160,7 +160,7 @@ export async function createDefaultPolicies(config: OrchestratorConfig): Promise
               `[OrchestratorFactory] Loaded ${policies.length} policies from permission profile: ${profileName} (defaultPolicy: ${defaultPolicy}, path: ${profilePath})`,
             );
           }
-          return { policies: [boundaryPolicy, nativeAutomationFloorPolicy, ...policies], defaultPolicy };   // floor: never dropped by a profile
+          return { policies: [boundaryPolicy, nativeAutomationFloorPolicy, secretsInFilesFloorPolicy, ...policies], defaultPolicy };   // floor: never dropped by a profile
         } catch (error) {
           console.warn(`[OrchestratorFactory] Failed to load permission profile ${profileName}:`, error);
           console.warn('[OrchestratorFactory] Falling back to default policies');
@@ -174,7 +174,7 @@ export async function createDefaultPolicies(config: OrchestratorConfig): Promise
   }
 
   // Fallback: hardcoded default policies use the safer 'deny' default.
-  return { policies: [boundaryPolicy, nativeAutomationFloorPolicy, ...defaultPolicies], defaultPolicy: 'deny' };
+  return { policies: [boundaryPolicy, nativeAutomationFloorPolicy, secretsInFilesFloorPolicy, ...defaultPolicies], defaultPolicy: 'deny' };
 }
 
 async function fsReadJson(filePath: string): Promise<any> {

@@ -26,6 +26,16 @@ function peekMail(addr: string): string {
   return (r.stdout || '').trim();
 }
 
+/** PATH for the OS ticker. launchd/cron give a minimal PATH, so tools the agent relies on vanished in scheduled turns (macbook 11-14: cliclick in
+ *  ~/.local/bin, screencapture in /usr/sbin; /opt/homebrew is the Apple-silicon prefix only). Use the INSTALLING shell's PATH (the user's own),
+ *  plus node's dir, ~/.cortex/bin, ~/.local/bin and the standard system dirs — deduplicated, order kept. */
+export function tickerPath(envPath = process.env.PATH || ''): string {
+  const home = os.homedir();
+  const parts = [path.dirname(process.execPath), path.join(home, '.cortex', 'bin'), path.join(home, '.local', 'bin'), ...envPath.split(':'),
+    '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/local/sbin', '/usr/sbin', '/sbin'];
+  return [...new Set(parts.filter(Boolean))].join(':');
+}
+
 export async function scheduleCli(op: string, tag: string | undefined, o: Record<string, any>): Promise<void> {
   const file = schedulesFile(); let jobs = loadJobs(file);
   switch (op) {
@@ -64,7 +74,7 @@ export async function scheduleCli(op: string, tag: string | undefined, o: Record
     }
     case 'install': {
       if (process.platform === 'darwin') {
-        const pathEnv = [path.dirname(process.execPath), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', path.join(os.homedir(), '.cortex', 'bin')].join(':');
+        const pathEnv = tickerPath();
         fs.mkdirSync(path.dirname(PLIST), { recursive: true });
         fs.writeFileSync(PLIST, `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>Label</key><string>com.nexus-cortex.schedule</string>\n<key>ProgramArguments</key><array><string>${process.execPath}</string><string>${CORTEX_JS}</string><string>schedule</string><string>run-due</string></array>\n<key>EnvironmentVariables</key><dict><key>PATH</key><string>${pathEnv}</string></dict>\n<key>StartInterval</key><integer>60</integer>\n<key>StandardOutPath</key><string>${LOG}</string><key>StandardErrorPath</key><string>${LOG}</string>\n</dict></plist>\n`);
         spawnSync('launchctl', ['unload', PLIST]); const r = spawnSync('launchctl', ['load', '-w', PLIST], { encoding: 'utf8' });
@@ -72,7 +82,7 @@ export async function scheduleCli(op: string, tag: string | undefined, o: Record
       }
       const cur = spawnSync('crontab', ['-l'], { encoding: 'utf8' }).stdout || '';
       if (cur.includes(CRON_MARK)) { console.log('[schedule] ticker already in crontab'); return; }
-      const line = `* * * * * ${process.execPath} ${CORTEX_JS} schedule run-due >> ${LOG} 2>&1 ${CRON_MARK}`;
+      const line = `* * * * * PATH=${tickerPath()} ${process.execPath} ${CORTEX_JS} schedule run-due >> ${LOG} 2>&1 ${CRON_MARK}`;
       const r = spawnSync('crontab', ['-'], { input: cur.replace(/\n?$/, '\n') + line + '\n', encoding: 'utf8' });
       console.log(r.status === 0 ? '[schedule] ticker installed (crontab, every minute)' : `[schedule] crontab failed: ${r.stderr}`); return;
     }
