@@ -47,6 +47,7 @@ import { configCategory } from './commands/config/category.js';
 import { configReset } from './commands/config/reset.js';
 import { configInit } from './commands/config/init.js';
 import { updateCli } from './commands/update.js';
+import { scheduleCli } from './commands/schedule.js';
 import { uninstallCli } from './commands/uninstall.js';
 import { checkForUpdate } from './lifecycle/updateCheck.js';
 import { ensureTools, installTools, toolsStatus } from './lifecycle/toolsInstall.js';
@@ -1370,6 +1371,23 @@ systemMessages
 // `ui` interactive command group moved to @nexus-cortex/tui (neoncortex / cli-full).
 
 // Package lifecycle commands
+program
+  .command('schedule <op> [tag]')
+  .description('Durable loops/crons for the cortex agent (survive restarts): add | list | remove | enable | disable | run-due | install | uninstall')
+  .option('--every <min>', 'period in minutes (add)')
+  .option('--prompt <text>', 'the prompt each run sends (add)')
+  .option('--prompt-file <file>', 'read the prompt from a file (add)')
+  .option('--mail-name <addr>', 'agent-home mail address for --mail-only (e.g. m2-cortex)')
+  .option('--mail-only', 'run only when that address has unread agent-home mail')
+  .option('--yolo', 'auto-approve tools in this job (unattended; the blacklist tier still refuses)')
+  .option('--cwd <dir>', 'project directory the turn runs in (default: home)')
+  .option('--session <id>', 'resume this session id (default: the server\'s current session)')
+  .option('--model <id>', 'model for the turn')
+  .option('--dry-run', 'run-due: list what would run')
+  .action(async (op: string, tag: string | undefined, opts: Record<string, any>) => {
+    try { await scheduleCli(op, tag, opts); } catch (e: any) { console.error(`[schedule] ${e.message}`); process.exit(1); }
+  });
+
 program
   .command('update')
   .description('Update the global install to the latest release — nexus-cortex plus every optional package already installed (browser, desktop)')

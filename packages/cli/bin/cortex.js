@@ -121,7 +121,7 @@ const COMMANDER_SUBCOMMANDS = new Set([
   'update', 'uninstall', 'setup',
   // 2026-11-02: these five were registered in src/index.ts but missing here, so `cortex secrets set X` (etc.) was sent to the
   // MODEL as a chat prompt on an auto-started server. tests/binSubcommands.test.ts now fails when the two lists drift.
-  'secrets', 'canon', 'features', 'sessions', 'server', 'browser', 'desktop',
+  'secrets', 'canon', 'features', 'sessions', 'server', 'browser', 'desktop', 'schedule',
 ]);
 const __firstPositional = args.find((a) => !a.startsWith('-'));
 // 2026-11-12 sub-agent NESTING GUARD: an agent's tool (Bash …) marks its children with CORTEX_TOOL_PARENT_DEPTH (core toolChildEnv). From
