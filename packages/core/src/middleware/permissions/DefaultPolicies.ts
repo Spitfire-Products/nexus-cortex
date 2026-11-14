@@ -275,6 +275,31 @@ export const graylistPolicy: PermissionPolicy = {
  * - ALWAYS requires explicit approval (even if auto-approve ON)
  * - ONLY exception: YOLO=true bypasses all
  */
+/**
+ * FLOOR policy (2026-11-14, macbook battery C5): the native-automation guard used to live only inside blacklistPolicy, which the factory uses
+ * just when NO permission-profile file exists — real installs ship ~/.cortex/permissions.*.json, so the guard never ran there. This policy is
+ * prepended to EVERY resolved policy set (profile or default) by OrchestratorFactory.createDefaultPolicies, above any profile priority.
+ */
+export const nativeAutomationFloorPolicy: PermissionPolicy = {
+  name: 'floor-native-automation',
+  priority: 10_000,
+  enabled: true,
+  evaluate: async (context) => {
+    if (context.toolName !== 'Bash') return { allowed: true };
+    const native = nativeAutomationCategory(context.toolInput?.command || '');
+    if (!native) return { allowed: true };
+    const desk = resolveDesktop();
+    return {
+      allowed: false,
+      reason: desk.using
+        ? `NATIVE AUTOMATION (${native}) through Bash bypasses the desktop tool's stop switch, failsafe and audit log — use the desktop tool (nexus-desktop__desktop) instead; through Bash it always asks`
+        : `NATIVE AUTOMATION (${native}) acts on your real screen/apps outside the desktop tool's safety rails — always asks (enable the desktop surface with cortex desktop enable to use the desktop tool)`,
+      canApprove: true,
+      tier: 'blacklist',
+    };
+  },
+};
+
 export const blacklistPolicy: PermissionPolicy = {
   name: 'blacklist-dangerous-operations',
   priority: 1000, // Highest priority - checked first
