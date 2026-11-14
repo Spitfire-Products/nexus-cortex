@@ -20,7 +20,7 @@ describe('floors under bypassAll (headless auto-approve)', () => {
   });
   it('refuses writing a key into a file', async () => {
     const m = mw(); const d: any = await m.checkPermission('Write', { file_path: '/x/key.txt', content: fakeKey }, ctx); await m.close();
-    expect(d.allowed).toBe(false); expect(String(d.reason)).toMatch(/cortex setup/);
+    expect(d.allowed).toBe(false); expect(String(d.reason)).toMatch(/SecretsSet/);
   });
   it('everything else stays bypassed (auto-approve still works)', async () => {
     const m = mw(); const d: any = await m.checkPermission('Bash', { command: 'rm -rf ./build' }, ctx); await m.close();

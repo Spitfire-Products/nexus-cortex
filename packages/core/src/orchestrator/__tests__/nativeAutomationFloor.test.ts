@@ -46,7 +46,7 @@ describe('native-automation floor policy', () => {
   it('asks before Bash writes a key into a file WITH a permissive profile (battery C7)', async () => {
     const fake = ['sk', '-test-', '0'.repeat(22)].join('');   // assembled: no key-shaped literal in source
     const d: any = await decisionFor(`echo '${fake}' > ~/bat/key.txt`, true);
-    expect(d.asked).toBe(true); expect(d.tier).toBe('blacklist'); expect(String(d.reason)).toMatch(/cortex setup/);
+    expect(d.asked).toBe(true); expect(d.tier).toBe('blacklist'); expect(String(d.reason)).toMatch(/SecretsSet/);
   });
   it('leaves ordinary Bash to the profile', async () => {
     const d: any = await decisionFor('ls -la', true);
