@@ -11,6 +11,7 @@
  * This allows /system-message edits to take effect on the next turn.
  */
 
+import os from 'os';
 import { readFile, access, readdir, stat } from 'fs/promises';
 import { join, dirname, isAbsolute, resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -414,7 +415,8 @@ export class SystemMessageLoader {
     if (definition.id === 'user_md') {
       const opt = (process.env.CORTEX_USER_MD || '').trim();
       if (/^(off|false|0|no)$/i.test(opt)) throw new Error('USER.md disabled (CORTEX_USER_MD=off)');
-      const homeDir = process.env.HOME || process.env.USERPROFILE || '~';
+      // os.homedir() when HOME is unset: a launchd-started server looked for a literal '~/.cortex/USER.md' and found nothing (m2 11-14)
+      const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
       const userMdPath = opt ? (isAbsolute(opt) ? opt : resolve(this.projectPath, opt)) : join(homeDir, '.cortex', 'USER.md');
       if (await this.fileExists(userMdPath)) {
         if (this.debug) console.log(`[SystemMessageLoader] Loaded USER.md: ${userMdPath}`);

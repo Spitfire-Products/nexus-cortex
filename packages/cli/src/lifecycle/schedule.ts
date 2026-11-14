@@ -60,7 +60,8 @@ export function jobInvocation(j: ScheduleJob, cortexJs: string): { args: string[
   if (j.session) args.push('--resume', j.session); else args.push('--new');
   if (j.model) args.push('-m', j.model);
   args.push(j.prompt);
-  const env: Record<string, string> = {};
+  // warn, never block: an update-required refusal at every release darkened the m2's mail loop until someone ran cortex update (11-14)
+  const env: Record<string, string> = { CORTEX_UPDATE_POLICY: process.env.CORTEX_UPDATE_POLICY || 'warn' };
   if (j.yolo) env.YOLO = 'true';
   return { args, env };
 }

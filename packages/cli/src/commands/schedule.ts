@@ -76,13 +76,13 @@ export async function scheduleCli(op: string, tag: string | undefined, o: Record
       if (process.platform === 'darwin') {
         const pathEnv = tickerPath();
         fs.mkdirSync(path.dirname(PLIST), { recursive: true });
-        fs.writeFileSync(PLIST, `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>Label</key><string>com.nexus-cortex.schedule</string>\n<key>ProgramArguments</key><array><string>${process.execPath}</string><string>${CORTEX_JS}</string><string>schedule</string><string>run-due</string></array>\n<key>EnvironmentVariables</key><dict><key>PATH</key><string>${pathEnv}</string></dict>\n<key>StartInterval</key><integer>60</integer>\n<key>StandardOutPath</key><string>${LOG}</string><key>StandardErrorPath</key><string>${LOG}</string>\n</dict></plist>\n`);
+        fs.writeFileSync(PLIST, `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>Label</key><string>com.nexus-cortex.schedule</string>\n<key>ProgramArguments</key><array><string>${process.execPath}</string><string>${CORTEX_JS}</string><string>schedule</string><string>run-due</string></array>\n<key>EnvironmentVariables</key><dict><key>PATH</key><string>${pathEnv}</string><key>HOME</key><string>${os.homedir()}</string></dict>\n<key>StartInterval</key><integer>60</integer>\n<key>StandardOutPath</key><string>${LOG}</string><key>StandardErrorPath</key><string>${LOG}</string>\n</dict></plist>\n`);
         spawnSync('launchctl', ['unload', PLIST]); const r = spawnSync('launchctl', ['load', '-w', PLIST], { encoding: 'utf8' });
         console.log(r.status === 0 ? `[schedule] ticker installed (launchd, every 60 s): ${PLIST}` : `[schedule] launchctl load failed: ${r.stderr}`); return;
       }
       const cur = spawnSync('crontab', ['-l'], { encoding: 'utf8' }).stdout || '';
       if (cur.includes(CRON_MARK)) { console.log('[schedule] ticker already in crontab'); return; }
-      const line = `* * * * * PATH=${tickerPath()} ${process.execPath} ${CORTEX_JS} schedule run-due >> ${LOG} 2>&1 ${CRON_MARK}`;
+      const line = `* * * * * HOME=${os.homedir()} PATH=${tickerPath()} ${process.execPath} ${CORTEX_JS} schedule run-due >> ${LOG} 2>&1 ${CRON_MARK}`;
       const r = spawnSync('crontab', ['-'], { input: cur.replace(/\n?$/, '\n') + line + '\n', encoding: 'utf8' });
       console.log(r.status === 0 ? '[schedule] ticker installed (crontab, every minute)' : `[schedule] crontab failed: ${r.stderr}`); return;
     }

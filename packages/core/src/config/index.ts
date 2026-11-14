@@ -18,6 +18,7 @@ export { applyFeaturePayload, featureAppliedKeys, featurePayloadHash, canonicalJ
 export * from './setupPlan.js';
 
 export * from './secretsVault.js';
+export * from './sessionVault.js';
 export * from './secretProviders.js';
 export * from './localBrowser.js';
 export { installConsoleRedaction, redactLogText } from './logRedaction.js';

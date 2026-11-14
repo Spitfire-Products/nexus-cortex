@@ -41,6 +41,12 @@ describe('USER.md user-level instructions', () => {
     process.env.CORTEX_USER_MD = 'off';
     expect((await load()).find(x => x.definition.id === 'user_md')).toBeUndefined();
   });
+  it('finds ~/.cortex/USER.md via the OS home dir when HOME is unset (launchd-started servers, m2 11-14)', async () => {
+    const os = await import('node:os'); const saved = os.default.homedir;
+    (os.default as any).homedir = () => home; delete process.env.HOME;
+    try { expect((await load()).find(x => x.definition.id === 'user_md')?.content).toContain('USER-RULES-MARKER'); }
+    finally { (os.default as any).homedir = saved; process.env.HOME = home; }
+  });
   it('absent file = no message, no error', async () => {
     rmSync(join(home, '.cortex', 'USER.md'));
     expect((await load()).find(x => x.definition.id === 'user_md')).toBeUndefined();
