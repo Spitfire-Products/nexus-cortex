@@ -1,5 +1,0 @@
----
-"@nexus-cortex/core": patch
----
-
-**Auto-approve from `~/.cortex/config.json`** (operator request): `{ "autoApprove": true }` or `{ "fuzzycortex": { "autoApprove": true } }` makes a terminal session (fuzzycortex, neoncortex, interactive `cortex`) start with auto-approve ON, so a restarted TUI agent no longer stalls on its first approval. Decided once in the library (`resolveInitialApprovalMode`, called by the CortexOrchestrator constructor; `OrchestratorClient` passes the surface and applies it in server mode too), so every surface and both turn routes share it; the TUIs only display it (fuzzycortex's status line also follows the "auto-approve this session" dialog answer now). A project `.cortex/config.json` is never honoured for the key (a cloned repo cannot switch approval off — it is reported). Headless runs stay ON. Floors are unchanged. `cortex permissions auto-approve --enable|--disable` outside a session now writes this key — it used to write a permission-profile field that no session start ever applied, so it reported ON while every TUI started OFF.
