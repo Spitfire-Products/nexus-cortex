@@ -1508,7 +1508,9 @@ export const CortexApp: React.FC<CortexAppProps> = ({
   const [showThinking, setShowThinking] = useState(false);
   const [autoApprove, setAutoApprove] = useState(initialAutoApprove);
   const [currentModel, setCurrentModel] = useState(modelId || 'loading...');
-  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>('none');
+  // undefined = the LIBRARY decides (model card + CORTEX_PROFILE levers), exactly as a headless turn; Tab asks for 'high' explicitly
+  // (operator 11-14: thin wrappers). It used to start at 'none', which every request sent and which overrode the card/profile.
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort | undefined>(undefined);
   const [supportsReasoning, setSupportsReasoning] = useState(false);
   const [reasoningToggleable, setReasoningToggleable] = useState(false);
   // Initialize theme from .cortex/config.json or use default
@@ -2722,10 +2724,10 @@ export const CortexApp: React.FC<CortexAppProps> = ({
         // budget as the default — thinking never fully disables there, so
         // "OFF" would be a lie (audit 2026-07-28).
         setReasoningEffort(prev => {
-          const newEffort = prev === 'none' ? 'high' : 'none';
+          const newEffort: ReasoningEffort | undefined = prev === 'high' ? undefined : 'high';
           addItem({
             type: MessageType.Info,
-            infoContent: `Extended reasoning: ${newEffort === 'high' ? 'HIGH' : 'baseline'}`,
+            infoContent: `Extended reasoning: ${newEffort === 'high' ? 'HIGH' : 'model default (card + profile)'}`,
           }, Date.now());
           return newEffort;
         });
@@ -3112,9 +3114,9 @@ export const CortexApp: React.FC<CortexAppProps> = ({
 
                   // Reset reasoning effort when switching models
                   if (modelSupportsReasoning && modelReasoningToggleable) {
-                    setReasoningEffort(showThinking ? 'high' : 'none');
+                    setReasoningEffort(showThinking ? 'high' : undefined);
                   } else {
-                    setReasoningEffort('none');
+                    setReasoningEffort(undefined);   // the new model's card decides
                   }
 
                   // Persist model choice to .cortex/config.json

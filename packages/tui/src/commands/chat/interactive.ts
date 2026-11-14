@@ -177,7 +177,10 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
 
   // Track reasoning effort for OpenAI GPT-5 models
   // Tab toggle switches between 'none' and 'high' for models that support reasoning
-  let reasoningEffort: ReasoningEffort = 'none';
+  // The effort is the LIBRARY's (model card + CORTEX_PROFILE levers) unless the user explicitly asks for more with Tab — undefined
+  // sends nothing, so a TUI turn runs exactly like a headless one (operator 11-14: the TUIs are thin wrappers; logic lives in core).
+  // It used to start at 'none' and send it on every request, which overrode the card/profile for every TUI turn.
+  let reasoningEffort: ReasoningEffort | undefined = undefined;
 
   // Track auto-approve and YOLO mode states for status line
   let autoApproveEnabled = false;
@@ -248,7 +251,7 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
     const currentModel = client.getCurrentModel();
     const supportsReasoning = currentModel?.reasoning?.supported === true;
     if (supportsReasoning) {
-      reasoningEffort = showThinking ? 'high' : 'none';
+      reasoningEffort = showThinking ? 'high' : undefined;   // Tab OFF = back to the library default, never a forced 'none'
     }
   };
 
