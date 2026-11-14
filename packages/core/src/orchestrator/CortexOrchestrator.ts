@@ -8,6 +8,7 @@
  * Based on: docs/v4-core_library/Orchestrator_ARCHITECTURE.md
  */
 
+import { resolveInitialApprovalMode, describeInitialApprovalMode, type InitialApprovalMode } from '../config/approvalSettings.js';
 import { resolveDesktop } from '../config/localDesktop.js';
 import { liftPlanAllowedInSession } from '../config/interactiveProfile.js';
 import { featureAppliedKeys } from '../config/featurePayload.js';
@@ -224,6 +225,10 @@ export interface OrchestratorConfig {
 
   /** Project path for file operations */
   projectPath: string;
+
+  /** The running surface (fuzzycortex | neoncortex | cortexserver | cli) — selects `<surface>.autoApprove` in ~/.cortex/config.json.
+   *  Falls back to env CORTEX_SURFACE. */
+  surface?: string;
 
   /**
    * Path to a file that REPLACES the core `system_prompt` system message
@@ -608,6 +613,8 @@ export class CortexOrchestrator {
 
   // Wave 3: Approval mode for auto-approve actions feature
   private approvalMode: { autoApproveActions: boolean };
+  /** How the starting approval mode was decided (config/approvalSettings.ts) — for surfaces to show at start. */
+  private initialApproval: InitialApprovalMode = { autoApproveActions: false, source: 'default' };
   /** R147: cached herdr-delegate availability probe (HERDR_ENV + herdr terminal backend), once per process. */
   private herdrDelegateAvailable: Promise<boolean> | null = null;
 
@@ -2046,13 +2053,15 @@ export class CortexOrchestrator {
     this.currentModelId = config.defaultModelId;
     this.mcpAutoInject = false;
 
-    // Wave 3: Initialize approval mode based on context
-    // Interactive sessions (terminal): auto-approve OFF
-    // Non-interactive (piped commands): auto-approve ON
-    const isInteractive = process.stdin.isTTY && process.stdout.isTTY;
+    // Starting approval mode — decided ONCE, in the library (config/approvalSettings.ts, operator 11-14): the user's
+    // ~/.cortex/config.json `<surface>.autoApprove` → `autoApprove` → default (terminal → OFF, no terminal → ON). Every surface and
+    // both turn routes (sendMessage / streamMessage → handleToolCalls) read this.approvalMode. Floors still refuse when nobody is asked.
+    const initialApproval = resolveInitialApprovalMode({ surface: config.surface ?? process.env.CORTEX_SURFACE, projectDir: config.projectPath });
     this.approvalMode = {
-      autoApproveActions: !isInteractive
+      autoApproveActions: initialApproval.autoApproveActions
     };
+    this.initialApproval = initialApproval;
+    if (initialApproval.ignored) console.warn(`[cortex] ${describeInitialApprovalMode(initialApproval, config.surface)}`);
 
     // Wave 3: Store middleware components
     this.errorClassifier = errorClassifier;
@@ -12337,6 +12346,11 @@ export class CortexOrchestrator {
    *
    * @returns Current approval mode configuration
    */
+  /** How this session's starting auto-approve mode was decided (source + any ignored project key). */
+  getInitialApprovalMode(): InitialApprovalMode {
+    return { ...this.initialApproval };
+  }
+
   getApprovalMode(): { autoApproveActions: boolean } {
     return { ...this.approvalMode };
   }

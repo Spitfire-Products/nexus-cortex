@@ -40,6 +40,9 @@ export interface OrchestratorClientOptions {
   defaultModelId?: string;
   projectPath?: string;
   debug?: boolean;
+  /** The surface running this client (fuzzycortex | neoncortex | cli …): selects `<surface>.autoApprove` in ~/.cortex/config.json
+   *  (core config/approvalSettings.ts). Falls back to env CORTEX_SURFACE. */
+  surface?: string;
   /**
    * Callbacks for pausing/resuming custom input handling during approval dialogs.
    * Use this with persistent input systems that manage their own terminal state.
@@ -239,6 +242,8 @@ export class OrchestratorClient {
       workingDirectory: workingDir,
       enableTimeline: true,
       debug: this.options.debug || false,
+      // The starting auto-approve mode is resolved INSIDE the orchestrator from the user's ~/.cortex/config.json for this surface.
+      ...(this.options.surface ? { surface: this.options.surface } : {}),
       // Pass sub-agent event callback for real-time UI updates
       onSubAgentEvent: this.options.onSubAgentEvent
     }, {
@@ -282,6 +287,12 @@ export class OrchestratorClient {
 
       // Create a new session on the server
       await this.createNewSession();
+
+      // The server's orchestrator resolved its own mode (surface cortexserver, no terminal). A user setting for THIS surface wins for
+      // this session — the same library resolver, applied over the wire. The default (no key) leaves the server's mode alone.
+      const { resolveInitialApprovalMode } = await import('@nexus-cortex/core');
+      const initial = resolveInitialApprovalMode({ surface: this.options.surface ?? process.env.CORTEX_SURFACE, projectDir: this.options.projectPath });
+      if (initial.source !== 'default') await this.setApprovalMode(initial.autoApproveActions);
     } catch (error: any) {
       throw new Error(`Failed to connect to server: ${error.message}`);
     }
@@ -592,21 +603,29 @@ export class OrchestratorClient {
   /**
    * Get approval mode
    */
+  /** How the session's starting auto-approve mode was decided — for a surface's start banner. Direct mode reads the orchestrator;
+   *  server mode re-runs the same core resolver for this client's surface. */
+  async getInitialApprovalMode(): Promise<import('@nexus-cortex/core').InitialApprovalMode> {
+    if (this.mode === 'direct' && this.orchestrator) return this.orchestrator.getInitialApprovalMode();
+    const { resolveInitialApprovalMode } = await import('@nexus-cortex/core');
+    return resolveInitialApprovalMode({ surface: this.options.surface ?? process.env.CORTEX_SURFACE, projectDir: this.options.projectPath });
+  }
+
   async getApprovalMode(): Promise<{ autoApproveActions: boolean; yoloMode?: boolean; context?: string }> {
     if (this.mode === 'direct' && this.orchestrator) {
       // Live session — read the running orchestrator's runtime mode.
       return this.orchestrator.getApprovalMode();
     }
     if (this.mode === 'direct') {
-      // Headless — read the active profile's approvalHandler from disk.
-      const { root, profile } = OrchestratorClient.resolvePermissionTarget();
-      const { getApprovalHandlerFromProfile, resolvePermissionWriteTarget } =
-        await import('@nexus-cortex/core');
-      const handler = getApprovalHandlerFromProfile(root, profile);
+      // No live session — report what the NEXT terminal session will start with (the library resolver over ~/.cortex/config.json).
+      // 11-14: this used to read a permission profile's approvalHandler that no session start ever applied, so it said ON while
+      // every TUI started OFF.
+      const { resolveInitialApprovalMode, globalUiConfigPath } = await import('@nexus-cortex/core');
+      const m = resolveInitialApprovalMode({ surface: this.options.surface ?? process.env.CORTEX_SURFACE, isInteractive: true, projectDir: this.options.projectPath });
       return {
-        autoApproveActions: handler === 'auto-approve',
+        autoApproveActions: m.autoApproveActions,
         yoloMode: process.env.YOLO === 'true',
-        context: `profile:${profile} (${resolvePermissionWriteTarget(root, profile)})`,
+        context: m.source === 'default' ? `default (no autoApprove in ${globalUiConfigPath()})` : `${globalUiConfigPath()} (${m.source})`,
       };
     }
     const response = await fetch(`${this.serverUrl}/approval/mode`);
@@ -629,15 +648,14 @@ export class OrchestratorClient {
       };
     }
     if (this.mode === 'direct') {
-      // Headless — persist to the active profile's approvalHandler.
-      const { root, profile } = OrchestratorClient.resolvePermissionTarget();
-      const { setApprovalHandlerInProfile } = await import('@nexus-cortex/core');
-      const handler = autoApprove ? 'auto-approve' : 'cli';
-      const res = setApprovalHandlerInProfile(root, profile, handler);
+      // No live session — persist the user setting the next terminal session starts from (~/.cortex/config.json, library-owned).
+      const { persistAutoApprove } = await import('@nexus-cortex/core');
+      const surface = this.options.surface ?? process.env.CORTEX_SURFACE;
+      const file = persistAutoApprove(autoApprove, surface ? { surface } : {});
       return {
         success: true,
-        message: `Profile '${profile}' approvalHandler -> ${handler}`,
-        path: res.path,
+        message: `${surface ? `${surface}.autoApprove` : 'autoApprove'} = ${autoApprove} in ${file} (terminal sessions start from it)`,
+        path: file,
       };
     }
     const response = await fetch(`${this.serverUrl}/approval/mode`, {

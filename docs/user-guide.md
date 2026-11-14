@@ -72,6 +72,24 @@ interactive server (it prompts for tool approval in that terminal). Add your own
 commands in `~/.cortex/{agents,skills,commands,system-messages}/` (created on first run; the bundled
 set is mirrored read-only to `~/.cortex/builtin/` as examples).
 
+### Auto-approve in the TUIs (`~/.cortex/config.json`)
+
+A terminal session (fuzzycortex, neoncortex, an interactive `cortex`) starts with auto-approve **OFF** unless your own
+`~/.cortex/config.json` (the file that holds the theme and default model; `CORTEX_HOME` relocates it) says otherwise:
+
+```json
+{ "autoApprove": true }                                  // every terminal surface
+{ "fuzzycortex": { "theme": "palenight", "autoApprove": true } }   // one surface: fuzzycortex | neoncortex | cli
+```
+
+The surface's own key wins over the top-level one. `cortex permissions auto-approve --enable|--disable` (outside a session)
+writes the same key. The setting is decided once in the core library, so every surface and both the streaming and
+non-streaming turn routes start from it; the TUI status line shows `[Auto-Approve]`. Headless runs (`cortex "<task>"`, the
+server, sandboxes) are always auto-approve — nobody can answer a prompt there. A project's `.cortex/config.json` (a tracked
+file that comes with a cloned repo) is **never** honoured for this key; cortex prints a warning instead. Auto-approve never
+lifts the safety floors (screen/app automation, keys written into files, saved browser sign-ins): those are refused at once
+when nobody is asked.
+
 ## The `cortex` CLI
 
 `cortex` is a headless command — one-shot or multi-turn natural-language queries, plus a

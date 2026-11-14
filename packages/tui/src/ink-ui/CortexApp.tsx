@@ -1695,6 +1695,7 @@ export const CortexApp: React.FC<CortexAppProps> = ({
           defaultModelId: effectiveModelId,
           projectPath: projectPath || process.cwd(),
           debug,
+          surface: 'neoncortex', // selects neoncortex.autoApprove in ~/.cortex/config.json (decided in the library)
         });
 
         await orchestratorClient.initialize();
@@ -1721,6 +1722,11 @@ export const CortexApp: React.FC<CortexAppProps> = ({
         if (initialAutoApprove) {
           orchestratorClient.enableYoloMode();
         }
+        // The status line shows the LIBRARY's starting mode (core config/approvalSettings.ts), not a local guess.
+        try {
+          const mode = await orchestratorClient.getApprovalMode();
+          if (mode.autoApproveActions === true) setAutoApprove(true);
+        } catch { /* keep the default */ }
       } catch (err) {
         setInitError(err instanceof Error ? err.message : 'Failed to initialize');
       }

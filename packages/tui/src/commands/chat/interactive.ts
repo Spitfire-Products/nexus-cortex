@@ -154,7 +154,8 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
     serverUrl,
     defaultModelId: effectiveModelId,
     projectPath: process.env.PROJECT_PATH || process.cwd(),
-    debug: process.env.DEBUG === 'true'
+    debug: process.env.DEBUG === 'true',
+    surface: PLATFORM, // selects fuzzycortex.autoApprove in ~/.cortex/config.json (decided in the library)
   });
 
   // Note: client.initialize() is called after persistentInput is created
@@ -512,6 +513,14 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
   }
   await client.initialize();
 
+  // The starting auto-approve mode is the LIBRARY's (core config/approvalSettings.ts); this TUI only shows it.
+  try {
+    autoApproveEnabled = (await client.getApprovalMode()).autoApproveActions === true;
+    const { describeInitialApprovalMode } = await import('@nexus-cortex/core');
+    const line = describeInitialApprovalMode(await client.getInitialApprovalMode(), PLATFORM);
+    if (line) console.log(theme.dimmed(line));
+  } catch { /* status line keeps its default */ }
+
   // Inject Ink-based approval handler (same React component as neoncortex)
   client.setApprovalHandler({
     requestApproval: async (request: { toolName: string; toolInput: any; reason: string; timestamp: Date }) => {
@@ -550,6 +559,7 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
 
         if (result === 'yolo') {
           await client.setApprovalMode(true);
+          autoApproveEnabled = true; // the status line follows the library's mode (was left OFF here)
           console.log('[OK] Operation approved (auto-approve: ON)');
           return true;
         }
