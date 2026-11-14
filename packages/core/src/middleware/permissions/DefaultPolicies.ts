@@ -19,8 +19,8 @@ import { resolveDesktop } from '../../config/localDesktop.js';
  * 2026-11-13 (operator's M2 session 28a43865): with no desktop package installed, deepseek-flash answered "do you have desktop tools?"
  * by screenshotting the real screen, posting a CoreGraphics input event and scripting Safari/Chrome — all through plain Bash, around every
  * guard the desktop tool has (off by default, failsafe, stop latch, audit). Screen capture, synthetic input and app scripting through Bash
- * therefore ALWAYS ask (blacklist tier: auto-approve does not cover it) unless the user enabled the desktop surface
- * (NEXUS_DESKTOP + the package), which is the same power granted on purpose. Returns the category for the prompt, else undefined.
+ * therefore ALWAYS ask (blacklist tier: auto-approve does not cover it) — since 11-14 also with the desktop surface on, where the prompt
+ * points at the desktop tool (its stop latch + audit must not be bypassable through Bash). Returns the category for the prompt, else undefined.
  */
 export function nativeAutomationCategory(cmd: string): string | undefined {
   const c = String(cmd ?? '');
@@ -323,10 +323,15 @@ export const blacklistPolicy: PermissionPolicy = {
       // Native automation (see nativeAutomationCategory): scan the FULL command — a heredoc that writes a script and runs it in the same
       // call is how the M2 session posted its CGEvent.
       const native = nativeAutomationCategory(cmd);
-      if (native && !resolveDesktop().using) {
+      // 11-14 (macbook step 5b): it used to pass once the desktop surface was ON — then Bash screencapture/osascript reached the screen
+      // around the desktop tool's stop latch, failsafe and audit. It ALWAYS asks now; with the surface on the prompt names the tool to use.
+      if (native) {
+        const desk = resolveDesktop();
         return {
           allowed: false,
-          reason: `NATIVE AUTOMATION (${native}) acts on your real screen/apps outside the desktop tool's safety rails — always asks unless you enable the desktop surface (cortex desktop enable)`,
+          reason: desk.using
+            ? `NATIVE AUTOMATION (${native}) through Bash bypasses the desktop tool's stop switch, failsafe and audit log — use the desktop tool (nexus-desktop__desktop) instead; through Bash it always asks`
+            : `NATIVE AUTOMATION (${native}) acts on your real screen/apps outside the desktop tool's safety rails — always asks (enable the desktop surface with cortex desktop enable to use the desktop tool)`,
           canApprove: true,
           tier: 'blacklist',
         };

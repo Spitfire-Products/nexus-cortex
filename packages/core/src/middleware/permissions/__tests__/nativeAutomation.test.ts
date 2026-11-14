@@ -1,5 +1,9 @@
-/** 2026-11-13: screen capture / synthetic input / app scripting through Bash always asks unless the desktop surface is enabled. */
-import { describe, it, expect, afterEach } from 'vitest';
+/** 2026-11-13: screen capture / synthetic input / app scripting through Bash always asks; since 11-14 also with the desktop surface on (the prompt points at the desktop tool). */
+import { describe, it, expect, afterEach, vi } from 'vitest';
+
+// 11-14 (macbook step 5b): with the desktop surface ON, Bash screencapture/osascript ran with no prompt — around the desktop tool's stop
+// latch, failsafe and audit. The surface is mocked ON for the whole file so every case proves the guard no longer depends on it.
+vi.mock('../../../config/localDesktop.js', () => ({ resolveDesktop: () => ({ mode: 'real', using: true, reason: 'mocked on' }) }));
 import { nativeAutomationCategory, blacklistPolicy } from '../DefaultPolicies.js';
 
 const ev = (command: string) => blacklistPolicy.evaluate({ toolName: 'Bash', toolInput: { command } } as any);
@@ -34,5 +38,11 @@ describe('blacklist policy', () => {
   it('passes through to the normal policies for ordinary commands', async () => {
     delete process.env.NEXUS_DESKTOP;
     expect((await ev('ls')).allowed).toBe(true);
+  });
+  it('still asks with the desktop surface ON and points at the desktop tool', async () => {
+    const r = await ev('screencapture -x /tmp/a.png');
+    expect(r.allowed).toBe(false);
+    expect(r.tier).toBe('blacklist');
+    expect(String(r.reason)).toMatch(/desktop tool/);
   });
 });
