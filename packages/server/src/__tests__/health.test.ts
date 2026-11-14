@@ -37,7 +37,8 @@ describe('/health endpoint', () => {
       expect(response.body).toHaveProperty('server');
       expect(response.body.server).toMatchObject({
         name: 'Nexus Cortex',
-        version: '4.0.0',
+        // the REAL package version (was hard-coded '4.0.0'; the CLI compares it to detect a stale server — 2026-11-14)
+        version: JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'package.json'), 'utf8')).version,
         architecture: 'core-library'
       });
       expect(response.body.server).toHaveProperty('uptime');

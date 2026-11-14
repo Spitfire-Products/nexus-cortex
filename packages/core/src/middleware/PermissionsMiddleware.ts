@@ -207,7 +207,8 @@ export class PermissionsMiddleware implements IPermissionsChecker {
           const approved = await this.requestApproval(
             permissionContext,
             result.decision.reason,
-            signal
+            signal,
+            { tier: result.decision.tier as any, autoApproveOn: context.approvalMode?.autoApproveActions === true }
           );
 
           if (approved) {
@@ -265,7 +266,8 @@ export class PermissionsMiddleware implements IPermissionsChecker {
   async requestApproval(
     context: PermissionContext,
     reason: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    meta: { tier?: 'whitelist' | 'graylist' | 'blacklist'; autoApproveOn?: boolean } = {}
   ): Promise<boolean> {
     if (!this.approvalHandler) {
       return false;
@@ -278,6 +280,8 @@ export class PermissionsMiddleware implements IPermissionsChecker {
         toolInput: context.toolInput,
         reason,
         timestamp: context.timestamp,
+        ...(meta.tier ? { tier: meta.tier } : {}),
+        ...(meta.autoApproveOn ? { autoApproveOn: true } : {}),
       }, signal);
     } catch (error) {
       console.error('[PermissionsMiddleware] Approval request error:', error);

@@ -20,6 +20,10 @@ export interface ApprovalRequest {
   toolInput: any;
   reason: string;
   timestamp: Date;
+  /** policy tier that asked; 'blacklist' always asks, even with auto-approve on (2026-11-14) */
+  tier?: 'whitelist' | 'graylist' | 'blacklist';
+  /** session auto-approve already ON */
+  autoApproveOn?: boolean;
 }
 
 /**

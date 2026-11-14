@@ -144,6 +144,11 @@ export const ApprovalDialog: React.FC<ApprovalDialogProps> = ({
         {request.reason && (
           <Text dimColor>Reason: {request.reason}</Text>
         )}
+        {request.tier === 'blacklist' && (
+          <Text color={Colors.AccentYellow}>
+            {request.autoApproveOn ? 'Asks even with auto-approve ON: ' : ''}this kind of action (dangerous command, screen/app automation) is always confirmed by you.
+          </Text>
+        )}
       </Box>
 
       {/* Options */}
@@ -152,7 +157,7 @@ export const ApprovalDialog: React.FC<ApprovalDialogProps> = ({
           <Text color={Colors.AccentGreen}>❯ 1.</Text> Yes
         </Text>
         <Text>
-          <Text dimColor>  2.</Text> Yes, auto-approve all (shift+tab)
+          <Text dimColor>  2.</Text> {request.autoApproveOn ? 'Yes (auto-approve is already ON)' : 'Yes, and auto-approve this session (shift+tab)'}
         </Text>
         <Text>
           <Text dimColor>  3.</Text> No, skip (esc)

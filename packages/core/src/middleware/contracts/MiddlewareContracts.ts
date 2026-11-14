@@ -181,6 +181,10 @@ export interface ApprovalRequest {
   toolInput: any;
   reason: string;
   timestamp: Date;
+  /** 2026-11-14: the policy tier that asked (blacklist = always asks, even with auto-approve on) — UIs explain the prompt with it */
+  tier?: 'whitelist' | 'graylist' | 'blacklist';
+  /** true when session auto-approve is already ON (so the UI can say why it still asks) */
+  autoApproveOn?: boolean;
 }
 
 /**

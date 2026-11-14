@@ -1663,19 +1663,13 @@ export const CortexApp: React.FC<CortexAppProps> = ({
       .filter(text => text.length > 0);
   }, [history]);
 
-  // YOLO mode toggle callback for approval handler
-  const handleYoloToggle = useCallback(() => {
+
+  // Option 2 in the approval dialog ENABLES auto-approve — it must never toggle it off (2026-11-14 operator: "I was having to continue to
+  // approve actions after every option 2"; a second '2' flipped it back OFF). Shift+Tab elsewhere keeps the toggle.
+  const handleYoloEnable = useCallback(() => {
     setAutoApprove(prev => {
-      const newValue = !prev;
-      // Also update the orchestrator
-      if (client) {
-        if (newValue) {
-          client.enableYoloMode();
-        } else {
-          client.disableYoloMode();
-        }
-      }
-      return newValue;
+      if (!prev && client) client.enableYoloMode();
+      return true;
     });
   }, [client]);
 
@@ -1686,7 +1680,7 @@ export const CortexApp: React.FC<CortexAppProps> = ({
     approve,
     deny,
     approveAndEnableYolo,
-  } = useReactApprovalHandler(handleYoloToggle);
+  } = useReactApprovalHandler(handleYoloEnable);
 
   // Initialize orchestrator client
   useEffect(() => {

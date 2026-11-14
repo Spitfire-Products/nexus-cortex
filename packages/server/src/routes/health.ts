@@ -3,7 +3,15 @@
  * HTML dashboard, holographic preset
  */
 import { Router, Request, Response } from 'express';
+import { readFileSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import { ModularModelRegistry, collectEffectiveConfig, collectEffectiveConfigMeta } from '@nexus-cortex/core';
+
+// dist/routes/health.js → ../../package.json (the @nexus-cortex/server package)
+const SERVER_VERSION: string = (() => {
+  try { return JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json'), 'utf8')).version; } catch { return 'unknown'; }
+})();
 
 export const healthRouter = Router();
 
@@ -40,7 +48,8 @@ healthRouter.get('/health', (req: Request, res: Response) => {
     status: 'healthy',
     server: {
       name: 'Nexus Cortex',
-      version: '4.0.0',
+      version: SERVER_VERSION,   // was hard-coded '4.0.0' — the CLI compares it to detect a stale server (2026-11-14)
+      projectPath: process.env.PROJECT_PATH || process.cwd(),   // the CLI restarts a server bound to another project (m2 battery C4)
       uptime: uptimeFormatted,
       uptimeSeconds: Math.floor(uptime),
       nodeVersion: process.version,

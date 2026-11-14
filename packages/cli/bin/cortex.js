@@ -29,6 +29,7 @@ import { existsSync, readFileSync, realpathSync, mkdirSync, openSync, writeFileS
 import { homedir } from 'os';
 import { createRequire } from 'module';
 import { Agent as UndiciAgent } from 'undici';
+import { isStaleServer, staleServerPolicy, wrongProject } from './stale-server.js';
 
 // 🔴 ENV BOOTSTRAP FIRST (operator directive: seed+load .env "no matter how
 // invoked"). This bin historically NEVER ran bootstrapEnv — it read only the raw
@@ -505,10 +506,48 @@ async function ensureKeysOrExit() {
   process.exit(1);
 }
 
+function cliVersion() {
+  try { return JSON.parse(readFileSync(join(__cortex_dirname, '..', 'package.json'), 'utf8')).version; } catch { return 'unknown'; }
+}
+
 async function ensureServer() {
   if (!(await isServerUp())) {
     await startServer();
+    return;
   }
+  // 2026-11-14 (m2 battery C5/C7): a server started BEFORE `cortex update` keeps serving the OLD harness — no USER.md slot, no new guards —
+  // and nothing said so. Compare versions; by default restart a stale server (CORTEX_STALE_SERVER=warn|fail to change that).
+  let sv, sp;
+  try { const h = (await (await fetch(`${BASE_URL}/health`, { signal: AbortSignal.timeout(3000) })).json())?.server; sv = h?.version; sp = h?.projectPath; } catch { /* treat as unknown */ }
+  const cv = cliVersion();
+  const stale = isStaleServer(sv, cv);
+  // a server bound to ANOTHER project would put this turn's memory, files and session there (m2 battery C4) — same policy as a stale one
+  const other = !stale && wrongProject(sp, process.env.PROJECT_PATH || process.cwd());
+  if (!stale && !other) return;
+  const policy = staleServerPolicy(process.env);
+  const msg = stale
+    ? `[cortex] the server on ${BASE_URL} runs ${sv && sv !== '4.0.0' ? sv : 'an older release'}, this CLI is ${cv}`
+    : `[cortex] the server on ${BASE_URL} is bound to ${sp}, but you are in ${process.cwd()}`;
+  if (policy === 'warn') { process.stderr.write(`${msg} — continuing on the OLD server (CORTEX_STALE_SERVER=warn)\n`); return; }
+  if (policy === 'fail') { process.stderr.write(`${msg} — refusing (CORTEX_STALE_SERVER=fail). Run: cortex --shutdown\n`); process.exit(2); }
+  process.stderr.write(`${msg} — restarting it ${stale ? 'so this turn runs the installed version' : 'in this directory'}\n`);
+  try { await fetch(`${BASE_URL}/shutdown`, { method: 'POST', signal: AbortSignal.timeout(5000) }); } catch { /* it may already be going */ }
+  // wait until the PORT is free, not just until /health stops answering: a server started while the old one still holds the socket hops to
+  // port+1 (EADDRINUSE fallback) and this CLI would then talk to nothing (e2e 2026-11-14: new server on 4520, CLI said ready on 4519)
+  const { createConnection } = await import('net');
+  const portOf = () => Number(new URL(BASE_URL).port || 80);
+  const portBusy = () => new Promise((res) => { const c = createConnection({ port: portOf(), host: new URL(BASE_URL).hostname }); c.once('connect', () => { c.destroy(); res(true); }); c.once('error', () => res(false)); });
+  let free = 0;
+  for (let i = 0; i < 80 && free < 3; i++) { free = (await portBusy()) ? 0 : free + 1; await new Promise((r) => setTimeout(r, 250)); }
+  if (free < 3) { process.stderr.write(`[cortex] the old server did not release port ${portOf()} — run: cortex --shutdown\n`); process.exit(2); }
+  await startServer();
+  // verify the server that answers is the one we wanted (version + project)
+  try {
+    const h = (await (await fetch(`${BASE_URL}/health`, { signal: AbortSignal.timeout(3000) })).json())?.server;
+    if (isStaleServer(h?.version, cv) || wrongProject(h?.projectPath, process.env.PROJECT_PATH || process.cwd())) {
+      process.stderr.write(`[cortex] after the restart ${BASE_URL} still answers as ${h?.version} in ${h?.projectPath} — stop it by hand: cortex --shutdown\n`); process.exit(2);
+    }
+  } catch { /* startServer already verified it is up */ }
 }
 
 async function fetchJSON(path, options = {}, timeoutMs = 30000) {
