@@ -34,6 +34,17 @@ export async function updateCli(opts: { browser?: boolean; desktop?: boolean } =
     console.log(theme.colors.highlight(`\nSetting up ${OPTIONAL_PACKAGES[k]}: cortex ${args.join(' ')}`));
     if (runCortex(args) !== 0) console.error(theme.colors.error(`Setup of ${OPTIONAL_PACKAGES[k]} did not finish — run: cortex ${args.join(' ')}`));
   }
+  // 2026-11-15 (macbook: the launchd ticker pointed at a cli path an update had moved and failed every minute): an installed ticker is
+  // rewritten after the update so it always runs the current install.
+  try {
+    const fs = await import('fs'); const os = await import('os'); const path = await import('path');
+    const plist = path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.nexus-cortex.schedule.plist');
+    const { spawnSync } = await import('child_process');
+    const inCron = process.platform !== 'darwin' && (spawnSync('crontab', ['-l'], { encoding: 'utf8' }).stdout || '').includes('# nexus-cortex schedule ticker');
+    if ((process.platform === 'darwin' && fs.existsSync(plist)) || inCron) {
+      if (runCortex(['schedule', 'install']) === 0) console.log(theme.colors.muted('Re-installed the schedule ticker for the updated install.'));
+    }
+  } catch { /* no ticker */ }
   // 2026-11-14 (m2: a server started 11-05 survived three updates and kept serving the old harness): stop a running server so the next
   // call starts the NEW one. The CLI's stale-server check (4.137.1) also catches it; this makes the update itself leave nothing old behind.
   const base = process.env.CORTEX_URL || `http://localhost:${process.env.PORT || '4000'}`;

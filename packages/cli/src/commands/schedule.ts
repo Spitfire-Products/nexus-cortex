@@ -36,6 +36,16 @@ export function tickerPath(envPath = process.env.PATH || ''): string {
   return [...new Set(parts.filter(Boolean))].join(':');
 }
 
+/** The command the OS ticker runs. NOT this file's own bin path: npm moves @nexus-cortex/cli between nested and hoisted on an update, and the
+ *  launchd ticker then failed every minute with MODULE_NOT_FOUND while a TUI was the runner (macbook 11-15: ~306 lines in schedule.log, nobody
+ *  noticed). The global `cortex` shim beside node (npm's bin dir) — or the first `cortex` on PATH — is kept current by npm across updates. */
+export function tickerCommand(execPath = process.execPath, envPath = process.env.PATH || ''): string[] {
+  const isExe = (p: string) => { try { fs.accessSync(p, fs.constants.X_OK); return fs.statSync(p).isFile() || fs.lstatSync(p).isSymbolicLink(); } catch { return false; } };
+  const candidates = [path.join(path.dirname(execPath), 'cortex'), ...envPath.split(':').filter(Boolean).map((d) => path.join(d, 'cortex'))];
+  const shim = candidates.find(isExe);
+  return shim ? [shim, 'schedule', 'run-due'] : [execPath, CORTEX_JS, 'schedule', 'run-due'];
+}
+
 export async function scheduleCli(op: string, tag: string | undefined, o: Record<string, any>): Promise<void> {
   const file = schedulesFile(); let jobs = loadJobs(file);
   switch (op) {
@@ -80,14 +90,15 @@ export async function scheduleCli(op: string, tag: string | undefined, o: Record
       if (process.platform === 'darwin') {
         const pathEnv = tickerPath();
         fs.mkdirSync(path.dirname(PLIST), { recursive: true });
-        fs.writeFileSync(PLIST, `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>Label</key><string>com.nexus-cortex.schedule</string>\n<key>ProgramArguments</key><array><string>${process.execPath}</string><string>${CORTEX_JS}</string><string>schedule</string><string>run-due</string></array>\n<key>EnvironmentVariables</key><dict><key>PATH</key><string>${pathEnv}</string><key>HOME</key><string>${os.homedir()}</string></dict>\n<key>StartInterval</key><integer>60</integer>\n<key>StandardOutPath</key><string>${LOG}</string><key>StandardErrorPath</key><string>${LOG}</string>\n</dict></plist>\n`);
+        fs.writeFileSync(PLIST, `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>Label</key><string>com.nexus-cortex.schedule</string>\n<key>ProgramArguments</key><array>${tickerCommand().map((a) => `<string>${a}</string>`).join('')}</array>\n<key>EnvironmentVariables</key><dict><key>PATH</key><string>${pathEnv}</string><key>HOME</key><string>${os.homedir()}</string></dict>\n<key>StartInterval</key><integer>60</integer>\n<key>StandardOutPath</key><string>${LOG}</string><key>StandardErrorPath</key><string>${LOG}</string>\n</dict></plist>\n`);
         spawnSync('launchctl', ['unload', PLIST]); const r = spawnSync('launchctl', ['load', '-w', PLIST], { encoding: 'utf8' });
         console.log(r.status === 0 ? `[schedule] ticker installed (launchd, every 60 s): ${PLIST}` : `[schedule] launchctl load failed: ${r.stderr}`); return;
       }
       const cur = spawnSync('crontab', ['-l'], { encoding: 'utf8' }).stdout || '';
-      if (cur.includes(CRON_MARK)) { console.log('[schedule] ticker already in crontab'); return; }
-      const line = `* * * * * HOME=${os.homedir()} PATH=${tickerPath()} ${process.execPath} ${CORTEX_JS} schedule run-due >> ${LOG} 2>&1 ${CRON_MARK}`;
-      const r = spawnSync('crontab', ['-'], { input: cur.replace(/\n?$/, '\n') + line + '\n', encoding: 'utf8' });
+      // re-install replaces the old line (it may point at a path an update removed) instead of keeping it
+      const kept = cur.split('\n').filter((l) => !l.includes(CRON_MARK)).join('\n');
+      const line = `* * * * * HOME=${os.homedir()} PATH=${tickerPath()} ${tickerCommand().join(' ')} >> ${LOG} 2>&1 ${CRON_MARK}`;
+      const r = spawnSync('crontab', ['-'], { input: kept.replace(/\n?$/, '\n') + line + '\n', encoding: 'utf8' });
       console.log(r.status === 0 ? '[schedule] ticker installed (crontab, every minute)' : `[schedule] crontab failed: ${r.stderr}`); return;
     }
     case 'uninstall': {
