@@ -12,7 +12,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { execFile } from 'child_process';
+import { execFile, spawnSync } from 'child_process';
 
 export interface ScheduleJob {
   tag: string;            // e.g. "[mail poll]" — unique key
@@ -22,7 +22,8 @@ export interface ScheduleJob {
   model?: string;
   cwd?: string;           // project the ticker's turn runs in (default: home)
   mailName?: string;      // agent-home mail address for mailOnly (e.g. m2-cortex)
-  mailOnly?: boolean;     // fire only when that address has unread mail
+  mailOnly?: boolean;     // fire only when that address has unread mail (the agent-home team mail; a convenience for that setup)
+  when?: string;          // generic gate: a shell command; the job fires only when it exits 0 AND prints something (2026-11-15)
   yolo?: boolean;         // ticker: auto-approve tools for this job. In a TUI the session's own approval mode applies.
   enabled?: boolean;
   lastRunMs?: number;
@@ -80,8 +81,21 @@ export function jobInvocation(j: ScheduleJob, cortexJs: string): { args: string[
 export const hasUnreadMail = (out: string): boolean => { const t = (out || '').trim(); return !!t && !/^no new mail/i.test(t); };
 
 /** mailOnly jobs pass only when `peek` (mail.py read --peek as the job's address) shows mail. Other jobs always pass. */
-export function mailGate(j: ScheduleJob, peek: (mailName: string) => string): boolean {
+export function mailGate(j: ScheduleJob, peek: (mailName: string) => string, when: (cmd: string) => boolean = whenGateSync): boolean {
+  if (j.when && !when(j.when)) return false;
   return !j.mailOnly || hasUnreadMail(peek(j.mailName || ''));
+}
+
+/** The generic `when` gate (2026-11-15: --mail-only depended on a script only our team has). Runs the job's shell command; passes only when it
+ *  exits 0 AND prints something. A missing / failing / silent command never fires the job (no turn, no spend). */
+export function whenGateSync(cmd: string, timeoutMs = 60_000): boolean {
+  const r = spawnSync('sh', ['-c', cmd], { encoding: 'utf8', timeout: timeoutMs });
+  return r.status === 0 && !!String(r.stdout || '').trim();
+}
+export function whenGateAsync(cmd: string, timeoutMs = 60_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile('sh', ['-c', cmd], { encoding: 'utf8', timeout: timeoutMs }, (err, stdout) => resolve(!err && !!String(stdout || '').trim()));
+  });
 }
 
 /** Async mail peek (never blocks a TUI render loop). '' when agent-home is not on this machine or the peek fails. */
@@ -194,6 +208,7 @@ export class InSessionScheduler {
     if (this.running || !this.h.isIdle() || now - this.h.lastUserActivityMs() < this.o.idleGraceMs) return 'busy';
     const due = dueJobs(loadJobs(this.o.file), now);
     for (const j of due) {
+      if (j.when && !(await whenGateAsync(j.when))) continue;
       if (j.mailOnly && !hasUnreadMail(await this.o.peek(j.mailName || ''))) continue;
       // re-check after the (slow) peek: the user may have started typing or a turn may have begun
       if (this.running || !this.h.isIdle() || this.o.now() - this.h.lastUserActivityMs() < this.o.idleGraceMs) return 'busy';

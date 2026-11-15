@@ -55,14 +55,14 @@ export async function scheduleCli(op: string, tag: string | undefined, o: Record
       const every = Number(o.every);
       if (!prompt || !(every >= 1)) throw new Error('add needs --every <minutes ≥ 1> and --prompt or --prompt-file');
       const j: ScheduleJob = { tag, everyMin: every, prompt, ...(o.session ? { session: o.session } : {}), ...(o.model ? { model: o.model } : {}),
-        ...(o.cwd ? { cwd: path.resolve(o.cwd) } : {}), ...(o.mailName ? { mailName: o.mailName } : {}), mailOnly: !!o.mailOnly, yolo: !!o.yolo, enabled: true };
-      saveJobs(file, upsertJob(jobs, j)); console.log(`[schedule] ${tag}: every ${every} min${j.mailOnly ? `, only with unread mail for ${j.mailName}` : ''}${j.yolo ? ', auto-approve ON' : ''}`); return;
+        ...(o.cwd ? { cwd: path.resolve(o.cwd) } : {}), ...(o.mailName ? { mailName: o.mailName } : {}), ...(o.when ? { when: String(o.when) } : {}), mailOnly: !!o.mailOnly, yolo: !!o.yolo, enabled: true };
+      saveJobs(file, upsertJob(jobs, j)); console.log(`[schedule] ${tag}: every ${every} min${j.mailOnly ? `, only with unread mail for ${j.mailName}` : ''}${j.when ? `, only when \`${j.when}\` prints something` : ''}${j.yolo ? ', auto-approve ON' : ''}`); return;
     }
     case 'remove': saveJobs(file, removeJob(jobs, tag || '')); console.log(`[schedule] removed ${tag}`); return;
     case 'enable': case 'disable': saveJobs(file, jobs.map((j) => j.tag === tag ? { ...j, enabled: op === 'enable' } : j)); console.log(`[schedule] ${op}d ${tag}`); return;
     case 'list': {
       if (!jobs.length) { console.log('[schedule] no jobs (cortex schedule add …)'); return; }
-      for (const j of jobs) console.log(`${j.enabled === false ? 'off' : 'on '} ${j.tag}  every ${j.everyMin} min${j.mailOnly ? ` · mail-only (${j.mailName})` : ''}${j.yolo ? ' · yolo' : ''} · last ${j.lastRunMs ? new Date(j.lastRunMs).toISOString() : 'never'}${j.lastRc !== undefined ? ` rc ${j.lastRc}` : ''}`);
+      for (const j of jobs) console.log(`${j.enabled === false ? 'off' : 'on '} ${j.tag}  every ${j.everyMin} min${j.mailOnly ? ` · mail-only (${j.mailName})` : ''}${j.when ? ` · when: ${j.when}` : ''}${j.yolo ? ' · yolo' : ''} · last ${j.lastRunMs ? new Date(j.lastRunMs).toISOString() : 'never'}${j.lastRc !== undefined ? ` rc ${j.lastRc}` : ''}`);
       { const ow = liveScheduleOwner(); if (ow) console.log(`runner: ${ow.ui} window (pid ${ow.pid}) runs due jobs in its session while open; the ticker stands down`); }
       console.log(`ticker: ${process.platform === 'darwin' ? (fs.existsSync(PLIST) ? 'launchd installed' : 'NOT installed (cortex schedule install)') : 'crontab (cortex schedule install)'} · log ${LOG}`);
       return;

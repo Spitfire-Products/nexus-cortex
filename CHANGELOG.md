@@ -7,6 +7,362 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.137.18] - 2026-11-15
+
+### Added
+- **`cortex schedule add --when "<command>"`**: a job fires only when that shell command exits 0 and prints something (new issues, a non-empty
+  queue, files in an inbox). No turn and no spend otherwise. Documented in the new `docs/schedule.md`, with who runs jobs (an open window or
+  the OS ticker) and how to check the ticker after an update.
+- **`CORTEX_ARTIFACT_PORTS`**: choose the ports artifact sandboxes may bind (comma list).
+
+### Changed
+- Artifact sandboxes pick a free port from 3001–3099 on an ordinary machine; the previous fixed list (one hosting environment's external port
+  mappings) is now used only on that host.
+- Docs: profiles (`user-hybrid` is the default, the `user-*` profiles run the main model at `high` effort), `ReconnectMcpServer`, scheduled jobs.
+
+## [4.137.17] - 2026-11-15
+
+Safer auto-approve, a secrets tool for the agent, an in-session scheduler, and reasoning effort that the TUIs no longer override.
+
+### Added
+- **`SecretsSet` tool**: the agent stores a key it obtained in the encrypted secrets vault, bound as `$NAME` for its shell and masked as `«secret:NAME»` in later tool results. It needs `overwrite: true` to replace a secret and refuses reserved names (`PATH`, `HOME`, `NODE_OPTIONS`, `CORTEX_*`, …).
+- **`ReconnectMcpServer` tool**: restarts an MCP server in the current session and rediscovers its tools, so an updated MCP package takes effect without restarting the TUI.
+- **In-session scheduler**: an open fuzzycortex or neoncortex window runs your `cortex schedule` jobs as turns (marked `[scheduled <tag>]`) after 60 s of idle input; the OS ticker stands down meanwhile, so a job never runs twice. `cortex schedule list` shows the runner; `CORTEX_TUI_SCHEDULER=off` keeps jobs on the ticker.
+- **Auto-approve from `~/.cortex/config.json`**: `{ "autoApprove": true }` starts every terminal session with auto-approve on (a project `.cortex/config.json` cannot set it). `cortex permissions auto-approve --enable|--disable` now writes this key; before, its setting was never applied.
+
+### Changed
+- **User profiles run the action model at `high` effort.** `user-fast`, `user-hybrid` (the default) and `user-careful` now set `CORTEX_ACTION_EFFORT=high` unless you set it yourself. `standard` and `bench-tb4` are unchanged.
+- **With auto-approve on, the agent never waits for a person**: every approvable action is approved, and the two safety floors (native automation with the desktop surface off, a key written into a file) refuse at once instead of prompting.
+- **Keys never go in files, enforced**: before `Write`, `Edit` or `Bash` puts a key-shaped value (`sk-…`, `ghp_…`, `AKIA…`, `AIza…`, `hf_…`, private-key blocks, …) on disk, the harness asks; headless runs refuse.
+- **Native automation through Bash is a safety floor on every install**: `osascript`/`osacompile` (including `.scpt` and JXA), screen capture, synthetic input and UI scripting ask, or refuse when headless; after `cortex desktop enable` they run without asking. Floors are now also enforced in headless runs, where auto-approve used to skip them.
+- Approval prompts show the policy tier, and Ink TUI option 2 now turns auto-approve on instead of toggling it. Scheduled runs use `CORTEX_UPDATE_POLICY=warn`, so a new release no longer blocks them.
+
+### Fixed
+- **Reasoning in the TUIs**: both TUIs sent `reasoningEffort: 'none'`, overriding the card and profile (and turning DeepSeek thinking off). They now send nothing unless you press Tab for HIGH, so TUI turns match headless effort and interleaved thinking shows again.
+- **TUI readability.** The `EndTurn` check prints one dim `· answer checked` line, and in fuzzycortex narration stays in its tool round and each thinking block gets its own `[Thinking]` header.
+- **The CLI no longer runs your turn on an old or misplaced server**: an older server, or one bound to another directory, is restarted in your cwd first (`CORTEX_STALE_SERVER=warn|fail`), `/health` reports the real version, and `cortex update` stops a running server.
+- **Server restarts no longer leak servers**: `/shutdown` exits within 5 s, the port check uses IPv4 explicitly (macOS can resolve `localhost` to `::1`), and a CLI-started server fails on a busy port.
+- **The schedule ticker survives npm updates**: it now runs the global `cortex` command instead of a package path an update could move, and `cortex update` re-installs it.
+- `~/.cortex/USER.md` is found when `HOME` is unset (for example, servers started by launchd).
+
+## [4.136.1] - 2026-11-14
+
+### Added
+- **User-level standing instructions**: `~/.cortex/USER.md` (or the file named by `CORTEX_USER_MD`) is loaded in every project as its own system section, beside the project's `CLAUDE.md` / `AGENTS.md` / `CORTEX.md`. Before, a project `CORTEX.md` replaced the user-level one. `CORTEX_USER_MD=off` disables it.
+
+### Changed
+- Bash screen capture, synthetic input and app/UI scripting ask even with the desktop surface enabled, and the prompt points the model at the `desktop` tool, which has its own stop switch, failsafe and audit log. (4.137 later relaxed this once `cortex desktop enable` is run; see above.)
+
+## [4.135.4] - 2026-11-14
+
+### Added
+- **Optional packages install from npm.** `cortex update --browser --desktop` installs the local browser and/or the desktop tool and sets them up; `cortex browser install` and `cortex desktop install` do the same one at a time. After that, a plain `cortex update` keeps every installed package current. The README has a new optional-packages section.
+- New shipped `browser` skill. The `desktop` skill's stop rule now matches desktop 0.10.1+: once stopped, desktop control stays stopped for the session until the user resumes it.
+
+## [4.134.4] - 2026-11-13
+
+### Changed
+- **A user-stopped desktop turn ends as a report**, with no nudge back to work (`CORTEX_ENDTURN_USER_HALT`, default on).
+- Desktop observations and pages seen through the nexus-browser MCP now count as web evidence for the finish check, like `WebFetch` results.
+- Bash screen capture, input injection, `osascript` app scripting, `safaridriver` and Shortcuts always ask unless the desktop surface is enabled.
+
+### Fixed
+- **`SearchTools` finds the tools of connected MCP servers** (for example `nexus-browser__browse`).
+- TUI users (fuzzycortex/neoncortex) installed from npm now get the shipped orient script, built-in agents and skills.
+- A hosted MCP quota refusal ("Daily usage limit exceeded") is one quiet startup line with no retry.
+- `web_search`/`web_fetch` descriptions no longer mention a `Browse` tool the profile may not offer.
+
+## [4.133.3] - 2026-11-13
+
+### Changed
+- **The default profile is now `user-hybrid`** (was `standard`): the main model drives the browser tools itself, MCP and web tools are on, it writes a plan of attack after the first tool result, and code/file finishes get a second-model review (web-only finishes do not). Set `CORTEX_PROFILE=standard` to keep the previous behaviour.
+- Error results the agent read can now back a finish-check citation (`CORTEX_ENDTURN_CITE_ERRORS`, on in the `user-*` profiles).
+
+### Added
+- **Sub-agent nesting guard**: processes started by an agent's tools are marked with that agent's depth, and the `cortex` CLI refuses to start another agent from such a process (exit 3, "use the Task tool"). Info commands keep working. Override with `CORTEX_ALLOW_NESTED_AGENT=true`.
+
+## [4.132.0] - 2026-11-12
+
+Dependency updates only.
+
+## [4.131.7] - 2026-11-05
+
+Encrypted secrets, a local browser mode, a scope check for web tasks, and hardened auto-research.
+
+### Added
+- **Encrypted secrets vault** (`~/.cortex/secrets.enc`, `cortex secrets …`, `/secrets` in both TUIs): tool processes get only bound secrets, and tool output and console logs are masked (`CORTEX_LOG_REDACTION=off` disables log masking).
+- **Local browser mode**: `NEXUS_BROWSER_MODE=local` runs `@nexus-cortex/browser` on your machine (`cortex setup --browser local` or `cortex browser install`), and `WebFetch` falls back to it for thin or walled pages.
+- **`Browse` direct mode**: `mode: "direct"` connects the browser tools into your own session when someone is watching (`CORTEX_BROWSE_DIRECT=auto`). Follow-up `Browse` calls continue where the last ended (`CORTEX_BROWSE_CARRY`), and delegates time out after 10 minutes (`CORTEX_BROWSE_TIMEOUT_MS`) with partial results.
+- **Scope check** (`CORTEX_SCOPE_CHECK`, default on): when a task names a place ("near X", a ZIP code) and the results are not limited to it, the finish is held once to apply the filter or say it cannot be applied.
+- **`CORTEX_PROFILE=tools-only`**: the model and its tools with a minimal prompt; reviews, gates, planner and mentors off. `CORTEX_BROWSE_TOOL=off` hides only the `Browse` delegate.
+- **Auto-research gate hardening** (`cortex autoresearch loop`): task-sets are sealed and hidden from the Fixer, and a candidate touching a protected path (`--protect`) or straying outside `--editable` is refused. Each round's winner is re-tested on fresh runs (`--confirm-mode pooled|strict|direction`, `--no-confirm`). Task-family regression guards (`--guards block|warn|off`) stop an aggregate gain from hiding a family loss. Base and candidate runs are interleaved, each experiment reports the runs it needs for `--target-effect` at `--power` (`--auto-runs`, `--max-runs`), arms get distinct approaches with `--width` > 1, and every non-merged arm or near-miss is kept as a ref with a reason under `.cortex/`.
+
+### Changed
+- Sub-agents never chain (`CORTEX_MAX_AGENT_DEPTH`, default 1); their reports keep the final answer and show tokens and cost.
+- `cortex agent`: 30-minute default timeout, returns a `sessionId`, and `--json` always prints the answer; requests carry their deadline (`turn_deadline_ms`). TUI sessions belong to the working directory.
+- The web-turn finish review holds only on evidence of an unmet constraint or wrong answer (`CORTEX_RESOLVER_WEB_RULE`).
+
+### Fixed
+- **Tool-call repair**: malformed tool-argument JSON (missing or stray braces, trailing commas, raw newlines, unescaped quotes) is repaired instead of running the call with empty arguments.
+- A completely empty turn with budget left now continues with tools instead of getting a "do not call any tools" nudge, which could make a `Browse` sub-agent invent results.
+- Bundled browser tools: `type` verifies the field, `click` reports the post-navigation URL, and `page_state` notes empty pages.
+- Stalled streams are retried after 120 s (`CORTEX_STREAM_HEADER_TIMEOUT_MS`); MCP tool calls get 300 s (`CORTEX_MCP_TOOL_TIMEOUT_MS`).
+- Canon store: a token is never written into the store's `.git/config`, and older clones are scrubbed on first use.
+- `cortex tools install` now installs sgrep on Intel Macs; log redaction no longer breaks `--json` output.
+
+## [4.130.0] - 2026-10-24
+
+### Changed
+- **The canon store no longer defaults to `/tmp`.** With no `--store`, every `cortex canon …` command and the `CanonListSessions` tool use `CANON_STORE` if set, else an existing `/tmp/canon-store` (so current setups keep working), else `~/.cache/nexus-canon/store`. `/tmp` is RAM-backed on many systems and cleared at boot.
+
+## [4.129.1] - 2026-10-22
+
+### Added
+- **`mercury-3` model card** (Inception Labs' diffusion LLM): 1M context, 131,072 max output, tools, JSON mode and structured outputs, streaming.
+- **Agent profiles can declare `anchor:`** (`bash-edit`, `bash-only`, `bash-plus`, `lean`, `none`) and `mcp:` (MCP servers to auto-connect for the delegate), and the `Task` tool accepts `tools: [...]` to widen a delegate's tool list per call. New shipped `action-agent`.
+- **`TmuxSession` can drive panes it did not create** on the herdr backend: `sessionId` may be any existing pane id or title, and `action: 'list'` lists every pane on the server.
+
+### Changed
+- **TUI streaming no longer flickers**: the Ink TUIs redraw only changed lines at up to 20 fps and show the streaming tail that fits the terminal (`CORTEX_TUI_INCREMENTAL_RENDER`, `CORTEX_TUI_MAX_FPS`).
+
+### Fixed
+- **Delegated sub-agents get their own setup**: their agent definition's prompt is used, they no longer inherit the main model's narrow first-turn tools, they keep `SearchTools` and `EndTurn`, and they inherit the parent's approval mode.
+- MCP servers named in `CORTEX_MCP_AUTOCONNECT` keep their tools loaded instead of having them deferred.
+
+## [4.128.0] - 2026-10-19
+
+### Added
+- **DeepSeek web tools backend.** `WebSearch` and `WebFetch` can use DeepSeek's Search/Fetch API. Select it with `WEB_TOOLS_MODEL=deepseek-*`; automatic selection ranks it second after Gemini. A DeepSeek key alone now enables `WebSearch` under `ENABLE_WEBTOOLS=auto`.
+- **Comparative web search.** `WEB_SEARCH_PROVIDERS` (`auto`, `all`, or a list of `google`, `deepseek`, `anthropic`, `xai`, `openai`) and a per-call `providers` parameter query several providers in parallel and merge the answers. It costs the sum of the providers' fees, so it is not the default.
+- **Server-side tool usage is reported.** `usage.session.serverSideToolsUsed` sums provider server-side tool calls over the whole session, and xAI's per-family details are passed through as `usage.serverSideToolUsageDetails`.
+
+## [4.127.2] - 2026-10-18
+
+### Changed
+- The orient scaffold (`.cortex/orient`) gives clearer search guidance: ripgrep for exact tokens, sgrep for meaning-shaped queries, with recommended flags. It names only the searchers actually installed.
+
+## [4.126.0] - 2026-10-18
+
+### Added
+- **Search tools installed automatically.** On startup the CLI installs sgrep and ripgrep into `~/.cortex/bin` (on the Bash tool's `PATH`) from pinned, checksum-verified releases. It runs at most once a day and never blocks on a network failure. `CORTEX_TOOLS_AUTO_INSTALL=auto|off`; manual control with `cortex tools install [sgrep|rg] [--force]` and `cortex tools status`.
+
+## [4.125.4] - 2026-10-17
+
+### Added
+- **`cortex setup` wizard.** Pick providers, keys, the action/helper/mentor/vision models and the web-tools backend; settings go to `~/.cortex/.env` and each model is verified. `cortex` with no key in a terminal starts it.
+- `~/.cortex/bin`, when present, is added to the Bash tool's `PATH`, and the orient script names the searchers it finds there.
+
+### Changed
+- **Lever profiles ship on.** `CORTEX_PROFILE=standard` is the default for interactive and headless sessions. It turns on the proven recovery and steering behaviour (loop tool block, empty-turn continue, reasoning-wall recovery, task-conditioned edit scope, and more) wherever you set nothing. `CORTEX_PROFILE=bench-tb4` reproduces the published Terminal-Bench configuration; `CORTEX_PROFILE=off` restores the old defaults.
+- `deepseek-flash` is now served by DeepSeek V4.1 Flash (2026-10-17 build) at unchanged pricing. `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` are retired aliases served by the same model.
+- `CORTEX_HOME` relocates the config directory on every surface.
+
+### Fixed
+- `CORTEX_ACTION_EFFORT=none` now really turns thinking off on DeepSeek requests.
+- `CORTEX_PROFILE=container` (used by the hosted sandbox images) now resolves to `standard` instead of `off`.
+
+## [4.124.85] - 2026-10-16
+
+A long series of agent-loop, finish-check, context and provider improvements, plus new model cards.
+
+### Added
+- **New model cards**: Claude Opus 5.5 (`claude-opus-5-5`), Claude Sonnet 5.5 (`claude-sonnet-5-5`), Claude Fable 5.1 (`claude-fable-5-1`), GPT-6 Luna/Sol/Astra (`gpt-6-luna`, `gpt-6-sol`, `gpt-6.1-sol`, `gpt-6-astra`), GPT-5.6 Sol, GPT-5.4 nano, GPT-5.5 Pro and GPT-5.3-Codex (Responses only), Gemini 3.8 Flash, Gemini 3.5 Flash-Lite, Gemini 3.1 Flash-Lite, and Grok 4.7 (`grok-4.7`, plus `grok-4.7-chat`). `claude-haiku-4-5-20251001` resolves to the Haiku 4.5 card.
+- **xAI chat/completions transport**: `grok-4.3-chat`, `grok-build-0.1-chat`, or `XAI_API_MODE=chat` for unpinned xAI cards. The existing `/v1/messages` and `/v1/responses` paths are unchanged.
+- **Session-wide usage**: `/v1/messages` responses carry `usage.session` totals for the whole session, including helper, mentor and sub-agent spend; before, only the last request was reported.
+- **Kill guard** (`CORTEX_KILL_GUARD`, default on): `pkill`/`killall`/`pgrep` in the Bash tool never hit the calling shell or the harness, so `pkill -f node` can no longer take it down.
+- **Wait primitives**: `BashOutput` `wait_seconds`/`wait_for`, persistent-session `wait_for` and `TmuxSession` `wait`, so waiting on output never looks like a repeated command.
+- **herdr integration**: inside a herdr pane the agent reports its state to herdr, terminal sessions run in sibling panes, and `Task` delegates can run as visible herdr agents (`CORTEX_SUBAGENT_RUNTIME`, `CORTEX_TERMINAL_BACKEND`).
+- **Feature payloads**: `CORTEX_FEATURES_FILE` / `CORTEX_FEATURES_JSON` fill unset settings from an offline GrowthBook-format payload; `cortex features show` lists them.
+- **Per-surface mentor models** (`CORTEX_LIFT_PLAN_MODEL`, `CORTEX_ENDTURN_RESOLVER_MODEL`, and siblings).
+- Experimental, off by default: `CORTEX_FRAME=terminus` (single-pane terminal mode), `CORTEX_SECOND_ATTEMPT`, `CORTEX_JUDGE_REQ_LEDGER`, `CORTEX_PLATEAU_STOP`, `CORTEX_TURN_STATUS`, `CORTEX_INVENTORY`, `CORTEX_GEMINI_EXPLICIT_CACHE`, and several prompt-cache switches.
+
+### Changed
+- **Reasoning effort works on OpenAI GPT-5.x and GPT-6 models**, translated to each model's accepted levels, and models that need `/v1/responses` for tools are routed there automatically.
+- Models that accept only adaptive thinking (the Claude 5.5 and Fable 5.1 families) never receive `budget_tokens`, a forced `tool_choice`, or `temperature`/`top_p`.
+- DeepSeek cards use the API's real maximum output with a matching HTTP timeout (`CORTEX_HTTP_TIMEOUT_MS`), and streaming chat completions report usage by default (`CORTEX_STREAM_USAGE`).
+- `cortex canon pull` defaults to the current project's `.cortex/sessions`.
+
+### Fixed
+- **Compaction no longer thrashes**: it compacts down to `CORTEX_COMPACTION_TARGET_PCT` of the threshold instead of re-compacting every turn, reserves the effective output cap (`CORTEX_OUTPUT_CAP_TOKENS`), and prunes old tool results earlier (`CORTEX_TOOL_RESULT_PRUNE_AT`).
+- An aborted streamed chat completion settles with the partial message instead of hanging.
+- Sub-agent results no longer land in the task's workspace when the default relative `SESSION_STORAGE_DIR` is used.
+- `Edit`: a not-found `old_string` points at the closest current lines.
+- Published packages no longer contain machine-specific paths.
+
+## [4.123.3] - 2026-09-21
+
+### Fixed
+- The Bash poll classifier no longer throws on a command named after a JavaScript built-in (for example `constructor`), which could end a multi-turn session.
+- Multi-line checks run by the finish check are read correctly.
+
+## [4.122.0] - 2026-09-21
+
+Experimental finish-check option, off by default (`CORTEX_JUDGE_INDEPENDENT_DERIVATION`).
+
+## [4.121.0] - 2026-09-21
+
+Experimental finish-check budget and repeat-check settings, off by default (`CORTEX_JUDGE_VETO_MIN_REMAINING`, `CORTEX_JUDGE_GAP_HOLD_MIN_INTERVAL_MS`, `CORTEX_JUDGE_SPEC_REPEAT_MAX`). Default behaviour is unchanged.
+
+## [4.120.0] - 2026-09-20
+
+Experimental finish-check holds and spec-derived checks, off by default (`CORTEX_JUDGE_GAP_HOLD`, `CORTEX_JUDGE_SPEC_TESTS`).
+
+## [4.119.1] - 2026-09-18
+
+Experimental: `CORTEX_ACTION_PLAN_FIELDS` (off by default) adds required `analysis` and `plan` fields to the `Bash`, `Edit` and `Write` schemas. Republished to work around an npm publishing issue.
+
+## [4.118.1] - 2026-09-18
+
+### Added
+- The lift planner can investigate before it plans, running read-only checks and file reads between rounds (`CORTEX_LIFT_PLAN_TOOL_ROUNDS`, default 1 = unchanged).
+
+## [4.117.3] - 2026-09-18
+
+### Added
+- **Confirmed finishes** (`CORTEX_MEETS_CONFIRM`; default on in this release, off from 4.131): the finish judge backs a "done" verdict with one to three checks that the harness runs; an unverified verdict with budget left is held once.
+- Experimental, off by default: an investigating finish judge (`CORTEX_JUDGE_TOOL_ROUNDS`, `CORTEX_JUDGE_TOOL_AUTOLOOP`) and a strict per-response analysis/plan contract (`CORTEX_TURN_CONTRACT_ENFORCE`).
+
+## [4.116.2] - 2026-09-17
+
+### Changed
+- **Finish confirmation**: when the finish judge would accept a finish with a recorded gap and at least 30% of the time budget remains, the finish is held once with the gap and open items shown (`CORTEX_FINISH_CONFIRM`, `CORTEX_FINISH_CONFIRM_MIN_REMAINING`). `CORTEX_FINISH_CONFIRM=false` restores the old behaviour.
+
+## [4.115.0] - 2026-09-17
+
+Experimental output contract, off by default (`CORTEX_TURN_CONTRACT=channel`).
+
+## [4.114.2] - 2026-09-17
+
+### Changed
+- **The finish judge can no longer hold a finish on opinion** (`CORTEX_JUDGE_VETO=evidence`, the new default): the harness runs the checks a "gap" verdict names and holds the finish only when one of them fails, at most once per session, showing the failing output. `opinion` restores the earlier policy; `never` only records.
+- A judge-named check counts as evidence only when it completed, exited non-zero and printed output.
+
+### Added
+- DeepSeek internal-reasoning tokens are summed into the session metrics and returned as `tokens.reasoning`.
+
+## [4.113.0] - 2026-09-16
+
+### Changed
+- The finish judge reviews every tool-using finish, can name shell checks that the harness runs before the next review, and grades its confidence; after one escalation a finish is accepted with its gap recorded. `CORTEX_JUDGE_SEMANTIC=false` restores the previous gating.
+
+## [4.112.0] - 2026-09-16
+
+### Fixed
+- The finish judge now reviews analysis and science tasks too, and its view of workspace changes skips build and vendor directories so edited source is never crowded out.
+
+## [4.111.1] - 2026-09-16
+
+### Changed
+- The finish judge's reject limit follows the time budget: with plenty of budget left it may send work back up to `CORTEX_ENDTURN_RESOLVER_MAX_REJECTS_BUDGETED` (default 6) times.
+
+### Fixed
+- A repeated reasoning exhaustion in one turn keeps stepping effort down instead of resetting.
+
+## [4.110.0] - 2026-09-16
+
+### Changed
+- The image-rejection recovery now covers the streaming tool loop.
+- The `AskForAdvice` hint budget is a setting (`CORTEX_MENTOR_CONSULT_BUDGET_TOKENS`, default 800), and the sub-agent console progress beat is throttled.
+
+## [4.109.0] - 2026-09-16
+
+### Fixed
+- **Reasoning exhaustion**: a turn that hit the output cap mid-reasoning is treated as truncated, with an effort backoff (`CORTEX_REASONING_EXHAUST_BACKOFF`).
+- **Image rejection**: a provider error rejecting an image replaces the image blocks and retries once instead of ending the session.
+- Runtime state under `<project>/.cortex` is added to `.git/info/exclude`, so `git add -A` cannot commit live sessions.
+- The Bash child shell raises its own OOM score so the system kills the model's process before the agent (`CORTEX_BASH_OOM_PRIORITY`).
+- The surrender detector recognizes more phrasings, and the continue-with-budget nudge can fire twice (`CORTEX_BUDGET_CONTINUE_MAX_NUDGES`).
+
+## [4.108.22] - 2026-09-15
+
+Agent-loop reliability: compaction, network resilience, loop detection and tmux.
+
+### Added
+- **Time-budget visibility** (`CORTEX_BUDGET_VISIBILITY`, default on): with a turn deadline, a budget line appears at each 10% of elapsed time, and a finish with open items and half the budget left gets one continue nudge.
+- **Persistent sessions without tmux** fall back to a detached background process with a warning instead of refusing. tmux is installed automatically on first use where possible, and completion uses `tmux wait-for`.
+- `CORTEX_STATE_DIR` and a read-only-workdir fallback: when the project directory is not writable, runtime state goes to `~/.cortex/projects/<hash>` (or a temp directory) instead of crashing the server.
+- `CORTEX_OUTER_TOOL_TIMEOUT_MS` sets a floor for the per-batch tool timeout.
+
+### Changed
+- **Compaction resume memory**: after compaction the model gets the history recall tools, the current workspace state and the task text verbatim, and the resume file is indexed in `.cortex/MEMORY.md`.
+- `Task` sub-agent time limits follow the parent's remaining deadline (or the `Task` `timeout_ms` input) instead of a fixed 300 s.
+- Large or multi-line tmux input is pasted through a buffer, so heredocs arrive intact.
+
+### Fixed
+- **Network resilience**: "Connection error", "terminated" and "other side closed" are retried on a wall-clock budget (`CORTEX_API_NETWORK_RETRY_MS`, default 10 minutes), and an empty or null chat completion body is retried instead of ending the turn.
+- **Compaction estimates** use the provider's reported prompt tokens and the pruned request view, and count images at a fixed cost, which stops false and repeated compactions.
+- **Loop detection is less trigger-happy**: paging through a file in ranges, polling a background job (`sleep N; probe`), and different scripts run under the same shell wrapper are no longer treated as loops. Repeated polling gets a nudge to use `run_in_background` with `BashOutput`.
+
+## [4.107.3] - 2026-09-11
+
+### Changed
+- **`EndTurn` is available from turn 1** (`CORTEX_ENDTURN_TIER=essential`, the new default) instead of being hidden behind `SearchTools`. `CORTEX_ENDTURN_TIER=standard` restores deferred loading.
+- The finish judge, deadline-exit mentor and loop-exit planner now see the lift planner's plan of attack, so the agent is judged against the plan it was given.
+- Each mentor surface has its own thinking switch (`CORTEX_LIFT_PLAN_REASONING`, `CORTEX_ENDTURN_RESOLVER_REASONING`, …).
+
+## [4.106.2] - 2026-09-10
+
+### Fixed
+- **Thinking-on mentor calls no longer come back empty.** They get output room for reasoning (`CORTEX_MENTOR_REASONING_ALLOWANCE`), a timeout sized to their effort (`CORTEX_MENTOR_THINKING_TIMEOUT_MS`), and one thinking-off retry if the reply is still empty.
+- A blank finish-judge verdict is treated as an abstention, not as "done".
+- Mentor events record which request actually delivered the text.
+
+## [4.105.0] - 2026-09-10
+
+### Added
+- `CORTEX_MENTOR_EFFORT` sets one reasoning effort for every planner surface (a surface's own `*_EFFORT` still wins), and `CORTEX_ASK_FOR_ADVICE=false` removes the `AskForAdvice` tool while mentorship stays on.
+
+## [4.104.0] - 2026-09-10
+
+### Added
+- **Mentor role**: the lift planner, finish judge, deadline-exit planner, loop-exit planner and `AskForAdvice` share one configurable role, separate from the helper model. Settings: `MENTORSHIP_HELPER_MODEL`, `CORTEX_MENTOR_REASONING`, `CORTEX_MENTOR_CONSULT_REASONING`, `CORTEX_MENTOR_TEMPERATURE`.
+
+## [4.103.0] - 2026-09-10
+
+### Fixed
+- **DeepSeek mentor calls now actually reason** at their configured effort; they had been sent with thinking disabled.
+- Legacy DeepSeek ids and aliases (`deepseek`, `deepseek-chat`, `reasoner`, `deepseek-v4-flash`, `deepseek-v4-pro`) now resolve to `deepseek-flash`.
+
+## [4.102.0] - 2026-09-10
+
+### Changed
+- `HELPER_MODEL_ID`, `VISION_HELPER_MODEL` and `MENTORSHIP_HELPER_MODEL` default to `deepseek-flash` (DeepSeek V4.1 Flash), ahead of DeepSeek V4 Pro's retirement on 2026-09-14.
+
+## [4.101.0] - 2026-09-10
+
+### Changed
+- **The finish judge sees the work**: the files changed, a fresh environment snapshot, the latest tool outputs and the project's own check (Makefile `test`, `test.sh`, pytest) when one exists; a "gap" must name a visible defect or failed check (`CORTEX_JUDGE_DELTA`, `CORTEX_JUDGE_RUN_CHECK`).
+- **Near-duplicate loop detection**: Bash, Write and Edit calls that are near-identical to recent ones now trigger the loop guard (`NEARDUP_SIM`, `NEARDUP_WINDOW`, `NEARDUP_SIM_AT`).
+- `CORTEX_SLICE_BLOCK` is now on by default: after repeated slice-reads of the same source file, further slices are blocked in favour of `Read`.
+
+## [4.100.0] - 2026-09-10
+
+### Added
+- **`deepseek-flash` model card** (DeepSeek V4.1 Flash): vision, reasoning levels low/high/max, tool calls, 1M context. The older DeepSeek flash ids still work and route to it.
+
+### Fixed
+- Finish-check citations can quote text the model wrote inside Bash commands and the task statement, and multi-line quotes are matched line by line. `CORTEX_ENDTURN_CITATION_LINEWISE=false` restores whole-block matching.
+
+## [4.99.0] - 2026-09-09
+
+### Changed
+- The default helper model is vision-capable, so compaction and tool-result summaries describe images instead of dropping them.
+- `CORTEX_SLASH_COMMAND_HINT=false` drops the "Available Slash Commands" note, which is useless in headless runs.
+
+## [4.98.0] - 2026-09-09
+
+Experimental: `CORTEX_SLICE_BLOCK` (off by default in this release; on from 4.101) blocks repeated slice-reads of the same source file.
+
+## [4.97.0] - 2026-09-09
+
+### Added
+- **`mercury-2.5` model card** (Inception Labs diffusion LLM): 260K context, 65,536 output, tools, JSON mode and structured outputs.
+
+### Fixed
+- DeepSeek tool calls that leak into the reply text in DeepSeek's markup format are recovered as real tool calls.
+
+---
+
 ## [4.96.1] - 2026-09-08
 
 First published release carrying the 4.96.0 content — the 4.96.0 tag failed to publish (a release

@@ -312,25 +312,15 @@ export class SandboxViewServer {
         await new Promise(resolve => setTimeout(resolve, 1000));
 
         // Find a new available port dynamically by checking registry
-        // Use only ports that have external mappings in .replit configuration
-        // Infrastructure ports (reserved): 4000 (server), 4001 (dashboard)
-        // Available artifact ports with external mappings:
-        const ACCESSIBLE_PORTS = [
-          3001,  // → 6800
-          3004,  // → 4200
-          3005,  // → 8081
-          3011,  // → 9000
-          4002,  // → 3002
-          4003,  // → 3003
-          4004,  // → 5173
-          4005,  // → 5000
-          5000,  // → 80
-          8000,  // → 8008
-          8080,  // → 8080
-          24678, // → 8000
-          36655, // → 6000
-          46323  // → 8099
-        ];
+        // Which ports an artifact may take (2026-11-15: the list used to be ONLY this workspace's .replit external mappings, published to
+        // every npm user). CORTEX_ARTIFACT_PORTS (comma list) wins; on Replit (REPL_ID set) the externally mapped ports below stay the default
+        // because only those are reachable from outside; anywhere else any free local port works, so a plain range is used.
+        // Infrastructure ports (reserved): 4000 (server), 4001 (dashboard).
+        const REPLIT_MAPPED_PORTS = [3001, 3004, 3005, 3011, 4002, 4003, 4004, 4005, 5000, 8000, 8080, 24678, 36655, 46323];
+        const fromEnv = (process.env.CORTEX_ARTIFACT_PORTS || '').split(',').map((x) => parseInt(x.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0 && n < 65536 && n !== 4000 && n !== 4001);
+        const ACCESSIBLE_PORTS = fromEnv.length ? fromEnv
+          : process.env.REPL_ID ? REPLIT_MAPPED_PORTS
+          : Array.from({ length: 99 }, (_, i) => 3001 + i);
         const usedPorts = new Set(registry.getUsedPorts());
 
         let newPort: number | null = null;

@@ -90,6 +90,17 @@ file that comes with a cloned repo) is **never** honoured for this key; cortex p
 lifts the safety floors (screen/app automation, keys written into files, saved browser sign-ins): those are refused at once
 when nobody is asked.
 
+### Scheduled jobs
+
+`cortex schedule` runs prompts on a period, surviving restarts; `--when "<command>"` fires a job only when there is work. See
+[schedule.md](schedule.md) for who runs the jobs (the open window or the OS ticker) and how to check the ticker after an update.
+
+### Updating an MCP server without restarting (`ReconnectMcpServer`)
+
+After `npm i -g` of an MCP package (for example `@nexus-cortex/desktop`), the running session still has the old version loaded. The agent can
+call the `ReconnectMcpServer` tool (`{ "server_name": "nexus-desktop" }`) to restart that server inside the session: the server process — or the
+in-process module, re-imported fresh — is loaded again and its tools rediscovered, with no TUI restart (4.137.12+).
+
 ## The `cortex` CLI
 
 `cortex` is a headless command — one-shot or multi-turn natural-language queries, plus a

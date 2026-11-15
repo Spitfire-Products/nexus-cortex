@@ -4,9 +4,28 @@ Every Nexus Cortex setting is an environment variable, read from the layered `.e
 
 > **Canonical sources:** the dev repo's `.env` (the MASTER, annotated with per-lever `[LEDGER]` notes) is generated into the shipped `.env.defaults` (read live as the default layer), and `packages/core/src/config/SettingsSchema.ts` is the schema (types + the hardcoded floor). This page mirrors them for browsing — if anything here disagrees, those win.
 >
-> **How config resolves (highest → lowest):** a `.env.local` beside any base file → the process environment → the secrets vault (`~/.cortex/secrets.enc`, API keys; [secrets.md](secrets.md)) → `./.env` (current directory) → the package's own `.env` (source checkouts) → `~/.cortex/.env` (your overrides; `cortex setup` writes settings here and keys to the vault, `cortex config set` writes here) → feature-payload rules → the lever profile (`CORTEX_PROFILE`, shipped `standard`) → the shipped `.env.defaults` → the hardcoded floor. Every lever reports its resolved value and source (`env`, `profile`, `feature`, `code-default`) in `cortex config get` and `GET /health/config`.
+> **How config resolves (highest → lowest):** a `.env.local` beside any base file → the process environment → the secrets vault (`~/.cortex/secrets.enc`, API keys; [secrets.md](secrets.md)) → `./.env` (current directory) → the package's own `.env` (source checkouts) → `~/.cortex/.env` (your overrides; `cortex setup` writes settings here and keys to the vault, `cortex config set` writes here) → feature-payload rules → the lever profile (`CORTEX_PROFILE`, shipped `user-hybrid`; see Profiles below) → the shipped `.env.defaults` → the hardcoded floor. Every lever reports its resolved value and source (`env`, `profile`, `feature`, `code-default`) in `cortex config get` and `GET /health/config`.
 
 Per-launch overrides win — e.g. `DEFAULT_MODEL_ID=grok-4.3 PORT=4100 node packages/server/dist/index.js`. Booleans are the literal strings `true`/`false`. Only API keys are required; every other variable has a proven-optimal default.
+
+#### Profiles (`CORTEX_PROFILE`)
+
+A profile is a named bundle of settings. Settings you set yourself in the environment win over a profile; the three `user-*` profiles are
+LOCKED, so they also win over values that came from `.env` files.
+
+| Profile | What it is for |
+|---|---|
+| `user-hybrid` | **Default since 4.133.1.** Guards against loops and stalls, MCP + web tools on, browser tools in the main session, a planner, and a finish judge (thinking off) that may abstain. |
+| `user-fast` | Guards + MCP/web tools, no planner, no judge, no mentor: fastest turns. |
+| `user-careful` | Like `user-hybrid`, with the judge reviewing every finish (web finishes too). |
+| `standard` | The measured baseline the benchmarks pin. |
+| `bench-tb4` | `standard` plus the Terminal-Bench 4.0 cell bundle, for reproducing those runs. |
+| `tools-only` | Model + tools only: every reviewer off, minimal prompt. |
+| `off` | No profile: only the shipped defaults. |
+
+All three `user-*` profiles run the main (action) model at `CORTEX_ACTION_EFFORT=high` (4.137.16+); `standard` leaves the effort to the model
+card. The TUIs send an effort only when you ask for HIGH with Tab (4.137.15+). `cortex config get` shows each setting's value and whether it came
+from your environment, a profile, a feature payload or the code default.
 
 #### API keys & authentication
 

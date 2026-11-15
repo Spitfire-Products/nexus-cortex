@@ -162,7 +162,7 @@ export interface EnvironmentVariables {
   CORTEX_FINISH_CONFIRM?: string; // default on: an accept-with-gap finish with budget left is held ONCE with an informed confirmation (budget, reviewer gaps, own open items) — R167 HB-FINISH-CONFIRM
   CORTEX_FINISH_CONFIRM_MIN_REMAINING?: string; // fraction of the wall budget that must remain to confirm (default 0.3) — R167
   CORTEX_FINISH_CONFIRM_MAX?: string; // confirmations per session (default 1, 0..5) — R167
-  CORTEX_MEETS_CONFIRM?: string; // default on: a MEETS verdict must name a proving CHECK that passes; an unverified MEETS with budget left is held once (shares CORTEX_FINISH_CONFIRM_MAX) — R168 HB-MEETS-CONFIRM
+  CORTEX_MEETS_CONFIRM?: string; // default OFF since 4.131 (=true restores R168): a MEETS verdict must name a proving CHECK that passes; an unverified MEETS with budget left is held once (shares CORTEX_FINISH_CONFIRM_MAX) — R168 HB-MEETS-CONFIRM
   CORTEX_TURN_CONTRACT_ENFORCE?: string; // 'true': a tool-calling response whose text lacks ANALYSIS + PLAN is rejected unexecuted with a re-prompt, up to CORTEX_TURN_CONTRACT_ENFORCE_MAX times per turn (HB-TURN-CONTRACT-ENFORCE; default off)
   CORTEX_ACTION_PLAN_FIELDS?: string; // 'true': Bash/Edit/Write calls must carry required `analysis` + `plan` fields (the per-step plan inside the action's own JSON; invalid calls are returned unexecuted, no cap) — R172 HB-ACTION-PLAN-FIELDS (default off)
   CORTEX_TURN_CONTRACT_ENFORCE_MAX?: string; // format rejections per turn before the batch executes as-is (default 2, 0..10)
