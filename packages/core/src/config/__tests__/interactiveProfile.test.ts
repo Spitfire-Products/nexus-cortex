@@ -363,3 +363,20 @@ describe('user profiles (2026-11-12): user-fast / user-hybrid / user-careful, LO
     });
   });
 });
+
+describe('user profiles carry the measured action effort (operator 11-14)', () => {
+  it('user-fast / user-hybrid / user-careful set CORTEX_ACTION_EFFORT=high; standard and bench-tb4 unchanged', async () => {
+    const { resolveInteractiveProfile } = await import('../interactiveProfile.js');
+    for (const name of ['user-fast', 'user-hybrid', 'user-careful']) {
+      const r = resolveInteractiveProfile({ CORTEX_PROFILE: name } as NodeJS.ProcessEnv, { interactive: true });
+      expect(r.apply.CORTEX_ACTION_EFFORT, name).toBe('high');
+    }
+    const std = resolveInteractiveProfile({ CORTEX_PROFILE: 'standard' } as NodeJS.ProcessEnv, { interactive: true });
+    expect(std.apply.CORTEX_ACTION_EFFORT).toBeUndefined();
+  });
+  it('a real-env CORTEX_ACTION_EFFORT still beats the locked profile (benches / users can override)', async () => {
+    const { resolveInteractiveProfile } = await import('../interactiveProfile.js');
+    const r = resolveInteractiveProfile({ CORTEX_PROFILE: 'user-hybrid', CORTEX_ACTION_EFFORT: 'max' } as NodeJS.ProcessEnv, { interactive: true }, undefined, new Set(['CORTEX_ACTION_EFFORT']));
+    expect(r.apply.CORTEX_ACTION_EFFORT).toBeUndefined();
+  });
+});

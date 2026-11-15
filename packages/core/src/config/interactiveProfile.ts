@@ -114,7 +114,7 @@ export const BENCH_LITE_DEFERRED: ReadonlyArray<DeferredLever> = [
   { key: 'CORTEX_RULE_INTERP', benchValue: 'on', verdict: 'NEEDS-ADAPTATION', reason: 'judge INTERPRETATION rule → GAP + CHECK vetoes; a human can resolve ambiguity directly; no bench arm yet' },
   { key: 'CORTEX_RULE_HOLDOUT', benchValue: 'on', verdict: 'NEEDS-ADAPTATION', reason: 'judge HELD-OUT rule assumes hidden-input grading; GAP vetoes; no bench arm yet' },
   { key: 'CORTEX_RULE_INDEP', benchValue: 'on', verdict: 'NEEDS-ADAPTATION', reason: 'judge INDEPENDENT-CHECK rule → GAP vetoes; no bench arm yet' },
-  { key: 'CORTEX_ACTION_EFFORT', benchValue: 'high', verdict: 'NEEDS-ADAPTATION', reason: 'a latency/cost preference the TUIs already expose through their reasoning-effort selector; a hidden env floor would fight it' },
+  { key: 'CORTEX_ACTION_EFFORT', benchValue: 'high', verdict: 'NEEDS-ADAPTATION', reason: 'bench-lite only (legacy): the user-* profiles carry it since 4.137.16 (USER_ACTION_EFFORT); the TUIs no longer force an effort per request (4.137.15)' },
   { key: 'CORTEX_WORKSPACE_CLEAN', benchValue: '1', verdict: 'BENCH-ONLY', reason: 'moves project knowledge (CORTEX.md, memory, doctrine) out of the project into the state dir — a grader-clean-tree concern; humans want project memory in the project' },
   { key: 'CORTEX_ORIENT_BASELINE', benchValue: '1', verdict: 'BENCH-ONLY', reason: 'checksum baseline + pre-finish revert line for graded repair tasks; writes <workspace>/.cortex' },
   { key: 'CORTEX_PID1_GUARD', benchValue: 'on', verdict: 'BENCH-ONLY', reason: 'container assumption: on a workstation PID 1 is init/systemd and the "killing it ends your session" note would be wrong' },
@@ -196,6 +196,12 @@ export const USER_GUARD_LEVERS: ReadonlyArray<ProfileLever> = [
   { key: 'CORTEX_WALL_FORCE_ACTION_AT', value: '2', why: 'from the second wall the retry forces a tool call' },
   { key: 'CORTEX_OUTER_TOOL_TIMEOUT_MS', value: '600000', why: 'outer per-batch tool abort floor (long builds are not killed)' },
 ];
+/** The action model's reasoning effort for every user profile (operator 11-14: "the user profiles should have =high set for the action
+ *  model"). The measured verdict: high kept over low (e6 09-18: low 3/29 vs high 10/28), max no lift (t4w3n 10-20), none 1/14 (t4w2d).
+ *  On DeepSeek the card's 'medium' was already coerced to 'high' server-side — this makes it explicit on every surface and provider. */
+export const USER_ACTION_EFFORT: ReadonlyArray<ProfileLever> = [
+  { key: 'CORTEX_ACTION_EFFORT', value: 'high', why: 'action-model effort = the measured bench verdict (high; low rejected, max no lift)' },
+];
 export const USER_SURFACE_LEVERS: ReadonlyArray<ProfileLever> = [
   { key: 'MCP_AUTO_INJECT', value: 'true', why: 'tools of the MCP servers a user connects reach the model (the bench keeps false)' },
   { key: 'ENABLE_WEBTOOLS', value: 'true', why: 'web search/fetch on regardless of key detection (the bench pins false)' },
@@ -218,7 +224,7 @@ const BROWSER_DIRECT: ReadonlyArray<ProfileLever> = [
 ];
 /** user-fast = tools-only + guards: the model and its tools, every reviewer off. */
 export const USER_FAST_LEVERS: ReadonlyArray<ProfileLever> = [
-  ...USER_GUARD_LEVERS, ...USER_SURFACE_LEVERS, ...BROWSER_DIRECT,
+  ...USER_ACTION_EFFORT, ...USER_GUARD_LEVERS, ...USER_SURFACE_LEVERS, ...BROWSER_DIRECT,
   { key: 'CORTEX_ENDTURN_RESOLVER', value: 'false', why: 'no finish review' },
   { key: 'CORTEX_ENDTURN_GATE', value: 'false', why: 'no mandatory EndTurn attestation' },
   { key: 'CORTEX_ENDTURN_REQUIREMENTS', value: 'false', why: 'no requirements attestation' },
@@ -232,12 +238,12 @@ export const USER_FAST_LEVERS: ReadonlyArray<ProfileLever> = [
 /** user-hybrid = tools-only speed on web turns (browser in the main session, no judge on web-evidenced finishes) + the measured reviewers on
  *  code/file work (plan of attack, judge with abstain, EndTurn gate as shipped). */
 export const USER_HYBRID_LEVERS: ReadonlyArray<ProfileLever> = [
-  ...STANDARD_LEVERS.filter((l) => !USER_GUARD_LEVERS.some((g) => g.key === l.key)), ...USER_GUARD_LEVERS, ...USER_SURFACE_LEVERS, ...BROWSER_DIRECT, ...JUDGE_ON,
+  ...STANDARD_LEVERS.filter((l) => !USER_GUARD_LEVERS.some((g) => g.key === l.key)), ...USER_ACTION_EFFORT, ...USER_GUARD_LEVERS, ...USER_SURFACE_LEVERS, ...BROWSER_DIRECT, ...JUDGE_ON,
   { key: 'CORTEX_ENDTURN_RESOLVER_WEB', value: 'off', why: 'no judge review of a web-evidenced finish (web results read, no file writes)' },
 ];
 /** user-careful = standard + MCP + web: the full measured pipeline (Browse delegate, judge on every tool-using finish, plan of attack). */
 export const USER_CAREFUL_LEVERS: ReadonlyArray<ProfileLever> = [
-  ...STANDARD_LEVERS.filter((l) => !USER_GUARD_LEVERS.some((g) => g.key === l.key)), ...USER_GUARD_LEVERS, ...USER_SURFACE_LEVERS, ...JUDGE_ON,
+  ...STANDARD_LEVERS.filter((l) => !USER_GUARD_LEVERS.some((g) => g.key === l.key)), ...USER_ACTION_EFFORT, ...USER_GUARD_LEVERS, ...USER_SURFACE_LEVERS, ...JUDGE_ON,
 ];
 /** Profiles whose levers are LOCKED once selected (win over .env file values; real env + .env.local still win). */
 export const LOCKED_PROFILES: ReadonlySet<InteractiveProfileName> = new Set(['user-fast', 'user-hybrid', 'user-careful']);
