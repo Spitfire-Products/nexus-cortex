@@ -16,7 +16,9 @@
  */
 import { defaultCanonStore } from './storePath.js';
 import { sidecarFiles } from './sidecar.js';
-import { requireCanonRepo, redactRepoUrl, canonGit, atomicClone, gitAuthArgs } from './canonRepo.js';
+import { groupChunkFiles, logicalPathOf, orderChunks, segmentBytesOfFiles, segmentLinesOfStream, segmentsOfFiles, segmentsOfStream, renderSegments, type SegmentMeta } from './canonSegments.js';
+import { discoverArchivedCanonSessions, sessionLines } from './canonArchiveRead.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, atomicClone, gitAuthArgs, withStoreLock } from './canonRepo.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -65,6 +67,8 @@ export interface CanonPullOptions extends CanonStoreOptions {
   /** Only consider copies stored under this harness (claude-code, nexus-cortex, …). */
   harness?: string;
   home?: string;
+  /** Materialize only this compaction window (canonSegments) as `<uuid>.seg-NNNN.jsonl` instead of the whole session. */
+  segment?: number;
 }
 
 export interface CanonPullResult {
@@ -75,14 +79,24 @@ export interface CanonPullResult {
 }
 
 /** Clone the store if absent, else pull — rehydrate freshness on arrival. */
-function ensureFreshStore(store: string, repoUrl?: string, label = 'canon-pull'): void {
-  if (!fs.existsSync(path.join(store, '.git'))) {
-    const repo = requireCanonRepo(repoUrl, store, label);
-    console.log(`[${label}] no store at ${store} — cloning ${redactRepoUrl(repo)}`);
-    atomicClone(repo, store, label); // 09-26: shared clone — partial + archive/ excluded (was a raw full clone)
-  } else {
-    canonGit(store, label)(['pull', '-q', 'origin', 'main']);
-  }
+/**
+ * Bring the store up to date before a read — UNDER the single-writer lock (2026-11-15). Two reads that pulled at once raced on
+ * refs/remotes/origin/main and the loser left a 555 MB orphan tmp_pack that filled the disk quota. When another canon writer holds the
+ * lock (a sync, a watcher cycle, another read's pull), that writer is already updating the store: this read uses the store as it is
+ * instead of waiting or pulling twice. A missing store is still cloned (nothing to read otherwise).
+ */
+async function ensureFreshStore(store: string, repoUrl?: string, label = 'canon-pull'): Promise<void> {
+  const fresh = async () => {
+    if (!fs.existsSync(path.join(store, '.git'))) {
+      const repo = requireCanonRepo(repoUrl, store, label);
+      console.log(`[${label}] no store at ${store} — cloning ${redactRepoUrl(repo)}`);
+      atomicClone(repo, store, label); // 09-26: shared clone — partial + archive/ excluded (was a raw full clone)
+    } else {
+      canonGit(store, label)(['pull', '-q', 'origin', 'main']);
+    }
+  };
+  if (!fs.existsSync(path.join(store, '.git'))) { await fresh(); return; }
+  await withStoreLock(store, label, fresh, () => { console.log(`[${label}] another canon writer is updating the store — reading it as it is`); }, 0);
 }
 
 /**
@@ -132,10 +146,10 @@ export function countArchived(store: string, section: 'canon' | 'native'): numbe
     });
     const live = new Set(execFileSync('git', ['-C', store, 'ls-tree', '-r', '--name-only', 'HEAD', '--', `${section}/`], {
       encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
-    }).split('\n').map((l) => l.replace(new RegExp(`^${section}/`), '').replace(/\.part-\d{4}$/, '')));
+    }).split('\n').map((l) => logicalPathOf(l.replace(new RegExp(`^${section}/`), ''))));
     const mains = new Set<string>();
     for (const p of out.split('\n')) {
-      const m = p.match(/^archive\/\d{4}-\d{2}\/(canon|native)\/(.+?\.jsonl)(\.part-\d{4})?$/);
+      const m = p.match(/^archive\/\d{4}-\d{2}\/(canon|native)\/(.+?\.jsonl)(\.seg-\d{4}\.part-\d{4}|\.part-\d{4})?$/);
       // Archived-only sessions: a copy also present in the live tree is already listed above.
       if (m && m[1] === section && !m[2]!.endsWith('.events.jsonl') && !live.has(m[2]!)) mains.add(m[2]!);
     }
@@ -154,8 +168,7 @@ export function discoverCanonSessions(store: string): CanonSession[] {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) { walk(p); continue; }
       if (!e.isFile()) continue;
-      const m = e.name.match(/^(.*\.jsonl)\.part-\d{4}$/);
-      const logical = m ? path.join(dir, m[1]!) : p;
+      const logical = logicalPathOf(p); // both layouts: size parts and segmented sub-chunks (canonSegments)
       if (!logical.endsWith('.jsonl') || logical.endsWith('.events.jsonl')) continue;
       const g = groups.get(logical) ?? [];
       g.push(p);
@@ -164,8 +177,8 @@ export function discoverCanonSessions(store: string): CanonSession[] {
   };
   walk(root);
   const out: CanonSession[] = [];
-  for (const [logical, parts] of groups) {
-    parts.sort();
+  for (const [logical, files] of groups) {
+    const parts = orderChunks(files);
     const rel = path.relative(root, logical);
     let uuid = path.basename(rel, '.jsonl');
     // Dir-per-session envelopes (grok-build: <uuid>/chat_history.jsonl) name
@@ -191,7 +204,7 @@ export function discoverCanonSessions(store: string): CanonSession[] {
 /** List canon sessions (prints rows; returns them). `all` includes <4KB sessions. */
 export async function canonList(o: CanonStoreOptions & { all?: boolean } = {}): Promise<CanonSession[]> {
   const store = o.store ?? defaultCanonStore();
-  ensureFreshStore(store, o.repoUrl);
+  await ensureFreshStore(store, o.repoUrl);
   const sessions = discoverCanonSessions(store);
   const rows = sessions.filter((s) => o.all || s.bytes > 4096);
   for (const s of rows) {
@@ -268,6 +281,8 @@ export interface CanonPullNativeOptions extends CanonStoreOptions {
   /** Overwrite existing destination files (default false — pull is a branch). */
   force?: boolean;
   home?: string;
+  /** Materialize only this compaction window of the main transcript (byte-exact) as `<uuid>.seg-NNNN.jsonl`. */
+  segment?: number;
 }
 
 export interface CanonPullNativeResult {
@@ -294,7 +309,7 @@ export function claudeProjectSlug(cwd: string): string {
  */
 export async function canonPullNative(o: CanonPullNativeOptions): Promise<CanonPullNativeResult> {
   const store = o.store ?? defaultCanonStore();
-  ensureFreshStore(store, o.repoUrl, 'canon-pull-native');
+  await ensureFreshStore(store, o.repoUrl, 'canon-pull-native');
   const live = await pullNativeFrom(o, path.join(store, 'native'));
   if (!live.noMatch || o.rel) return live;
   // Not in the live tree — the session may be archived (not on disk by design): hydrate it and retry.
@@ -324,14 +339,15 @@ async function pullNativeFrom(o: CanonPullNativeOptions, nativeRoot: string): Pr
       const p = path.join(dir, e.name);
       if (e.isDirectory()) { walk(p); continue; }
       if (!e.isFile()) continue;
-      const m = e.name.match(/^(.*)\.part-\d{4}$/);
-      const logical = m ? path.join(dir, m[1]!) : p;
+      if (e.name.endsWith('.segments.json')) continue; // a store-side segment index (canonSegments), not a harness file
+      const logical = logicalPathOf(p);
       const g = groups.get(logical) ?? [];
       g.push(p);
       groups.set(logical, g);
     }
   };
   walk(nativeRoot);
+  for (const [l, files] of groups) groups.set(l, orderChunks(files));
 
   // A session = the `<uuid>.jsonl` main file + everything under `<uuid>/`.
   // Match by uuid (or prefix) on the main-file basename, like canonPull.
@@ -379,6 +395,19 @@ async function pullNativeFrom(o: CanonPullNativeOptions, nativeRoot: string): Pr
       ? claudeProjectSlug(path.resolve(o.project))
       : path.basename(path.dirname(mainRel)); // original project slug from the store layout
     destDir = path.join(home, '.claude', 'projects', slug);
+  }
+
+  if (o.segment !== undefined) {
+    const dest = path.join(destDir, `${uuid}.seg-${String(o.segment).padStart(4, '0')}.jsonl`);
+    if (fs.existsSync(dest) && !o.force) {
+      console.error(`[canon-pull-native] ${dest} already exists — use --force to overwrite`);
+      return { code: 1, destDir };
+    }
+    fs.mkdirSync(destDir, { recursive: true });
+    try { writeChunks(dest, segmentBytesOfFiles(groups.get(main)!, harness, o.segment)); }
+    catch (e) { try { fs.rmSync(dest, { force: true }); } catch { /* none */ } console.error(`[canon-pull-native] ${(e as Error).message}`); return { code: 1, destDir }; }
+    console.log(`[canon-pull-native] materialized segment ${o.segment} of ${uuid} (${harness}) — ${(fs.statSync(dest).size / 1024).toFixed(0)}KB → ${dest}`);
+    return { code: 0, destDir, files: [dest], harness };
   }
 
   // Collect the session's logical files: main + sidecars (events) + <uuid>/ tree.
@@ -554,7 +583,7 @@ export async function canonPullNativeAll(o: CanonPullNativeAllOptions = {}): Pro
   const store = o.store ?? defaultCanonStore();
   const harness = o.harness ?? 'claude-code';
   const maxBytes = (o.maxMb ?? 25) * 1024 * 1024;
-  ensureFreshStore(store, o.repoUrl, 'canon-pull-native');
+  await ensureFreshStore(store, o.repoUrl, 'canon-pull-native');
   const sessions = discoverCanonSessions(store).filter((s) => s.harness === harness);
   // discoverCanonSessions walks /canon; sizes there track the native tree
   // closely enough for the cap. The per-session pull itself reads /native.
@@ -655,7 +684,7 @@ export function resolveCopies<T>(
 export async function canonPull(o: CanonPullOptions): Promise<CanonPullResult> {
   const store = o.store ?? defaultCanonStore();
   const home = o.home ?? process.env.HOME ?? os.homedir();
-  ensureFreshStore(store, o.repoUrl);
+  await ensureFreshStore(store, o.repoUrl);
   let sessions = discoverCanonSessions(store);
   let matches = sessions.filter((s) => s.uuid === o.session || s.uuid.startsWith(o.session));
   let archiveRoot: string | null = null;
@@ -701,14 +730,29 @@ async function pullOne(o: CanonPullOptions, matches: CanonSession[], _home: stri
   }
   const s = matches[0]!;
   const destDir = o.to ?? path.join(process.cwd(), '.cortex', 'sessions'); // the CURRENT project's sessions dir (1.11.10 defaulted to the author's monorepo)
-  const dest = path.join(destDir, `${s.uuid}.jsonl`);
+  const seg = o.segment;
+  const dest = path.join(destDir, seg === undefined ? `${s.uuid}.jsonl` : `${s.uuid}.seg-${String(seg).padStart(4, '0')}.jsonl`);
   if (fs.existsSync(dest) && !o.force) {
     console.error(`[canon-pull] ${dest} already exists — resuming elsewhere is a BRANCH; use --force to overwrite the local copy`);
     return { code: 1, dest, session: s };
   }
   fs.mkdirSync(destDir, { recursive: true });
-  fs.writeFileSync(dest, '');
-  for (const p of s.parts) fs.appendFileSync(dest, fs.readFileSync(p));
+  if (seg === undefined) {
+    fs.writeFileSync(dest, '');
+    for (const p of s.parts) fs.appendFileSync(dest, fs.readFileSync(p));
+  } else {
+    try {
+      if (s.archived) {
+        const fd = fs.openSync(dest, 'w');
+        try { for await (const l of segmentLinesOfStream(sessionLines(s), s.harness, seg)) fs.writeSync(fd, l + '\n'); } finally { fs.closeSync(fd); }
+      } else writeChunks(dest, segmentBytesOfFiles(s.parts, s.harness, seg));
+    } catch (e) {
+      try { fs.rmSync(dest, { force: true }); } catch { /* none */ }
+      console.error(`[canon-pull] ${(e as Error).message}`);
+      return { code: 1, session: s };
+    }
+    console.log(`[canon-pull] segment ${seg} only (one compaction window; \`canon list --segments ${s.uuid.slice(0, 8)}\` lists them)`);
+  }
   if (o.stripSignatures) {
     const { stripped, dropped } = stripThinkingSignatures(dest);
     if (stripped || dropped) {
@@ -716,9 +760,11 @@ async function pullOne(o: CanonPullOptions, matches: CanonSession[], _home: stri
     }
   }
   const lines = fs.readFileSync(dest, 'utf8').split('\n').filter(Boolean).length;
-  console.log(`[canon-pull] materialized ${s.uuid} (${s.harness}${s.title ? ` — "${s.title}"` : ''})`);
-  console.log(`[canon-pull]   ${lines} canonical message(s), ${(s.bytes / 1024).toFixed(0)}KB → ${dest}`);
-  console.log(`[canon-pull]   resume with: cortex --resume ${s.uuid} "..."`);
+  // A segment is its own session id (`<uuid>.seg-NNNN` = the file name) and its own size — 11-15: the hint resumed the whole session.
+  const resumeId = path.basename(dest, '.jsonl');
+  console.log(`[canon-pull] materialized ${s.uuid}${seg === undefined ? '' : ` segment ${seg}`} (${s.harness}${s.title ? ` — "${s.title}"` : ''})`);
+  console.log(`[canon-pull]   ${lines} canonical message(s), ${(fs.statSync(dest).size / 1024).toFixed(0)}KB → ${dest}`);
+  console.log(`[canon-pull]   resume with: cortex --resume ${resumeId} "..."`);
   // Phase E rung 1: the pull-time tool-ontology compatibility report — the
   // receiving side learns up front which referenced tools are native, which
   // map by name, and which need relay/re-expression (P4 ladder).
@@ -736,4 +782,84 @@ async function pullOne(o: CanonPullOptions, matches: CanonSession[], _home: stri
     }
   } catch { /* report is best-effort — never block a pull */ }
   return { code: 0, dest, session: s };
+}
+
+function writeChunks(dest: string, chunks: Iterable<Buffer>): void {
+  const fd = fs.openSync(dest, 'w');
+  try { for (const b of chunks) fs.writeSync(fd, b); } finally { fs.closeSync(fd); }
+}
+
+/** Native sessions (live /native tree) whose main file matches `session` — the same match rule as `pull --native`. */
+export function findNativeSessions(store: string, session: string, o: { harness?: string; rel?: string } = {}): CanonSession[] {
+  const nativeRoot = path.join(store, 'native');
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    let entries: fs.Dirent[] = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile()) files.push(p);
+    }
+  };
+  walk(nativeRoot);
+  const out: CanonSession[] = [];
+  for (const [logical, parts] of groupChunkFiles(files)) {
+    const rel = path.relative(nativeRoot, logical);
+    const base = path.basename(rel);
+    if (!base.endsWith('.jsonl') || base.endsWith('.events.jsonl')) continue;
+    if (o.rel ? rel !== o.rel : !(path.basename(base, '.jsonl').startsWith(session) && path.dirname(rel).split(path.sep).length <= 2)) continue;
+    const harness = rel.split(path.sep)[0]!;
+    if (o.harness && harness !== o.harness) continue;
+    out.push({ uuid: path.basename(base, '.jsonl'), rel, parts, harness, bytes: parts.reduce((n, p) => n + fs.statSync(p).size, 0) });
+  }
+  return out.sort((a, b) => a.rel.localeCompare(b.rel));
+}
+
+export interface CanonSegmentsOptions extends CanonStoreOptions {
+  /** Session uuid (or unique prefix). */
+  session: string;
+  /** Read the byte-exact /native copy instead of the canonical line. */
+  native?: boolean;
+  harness?: string;
+  rel?: string;
+  /** Print JSON instead of the table. */
+  json?: boolean;
+  /** Skip the store freshen (git pull) — for local/offline reads. */
+  noFetch?: boolean;
+}
+export interface CanonSegmentsResult { code: 0 | 1; session?: CanonSession; segments?: SegmentMeta[] }
+
+/**
+ * List one session's compaction segments (canonSegments): the written index for a segmented session, else computed
+ * from the stored bytes (nothing written). Each row: window lines/bytes, time span, the boundary's token counts, the
+ * first real prompt, and the compaction summary — the map an agent reads before `pull <uuid> --segment N`.
+ */
+export async function canonSegments(o: CanonSegmentsOptions): Promise<CanonSegmentsResult> {
+  const store = o.store ?? defaultCanonStore();
+  if (!o.noFetch) await ensureFreshStore(store, o.repoUrl, 'canon-segments');
+  let matches: CanonSession[];
+  if (o.native) matches = findNativeSessions(store, o.session, { harness: o.harness, rel: o.rel });
+  else {
+    const live = discoverCanonSessions(store);
+    const pick = (ss: CanonSession[]) => ss.filter((s) => (o.rel ? s.rel === o.rel : s.uuid.startsWith(o.session)) && (!o.harness || s.harness === o.harness));
+    matches = pick(live);
+    if (!matches.length) matches = pick(discoverArchivedCanonSessions(store, live.map((s) => s.rel)));
+  }
+  if (!o.rel) matches = matches.filter((m) => !m.rel.split(path.sep).includes('subagents'));
+  if (matches.length !== 1) {
+    console.error(matches.length ? `[canon-segments] ambiguous — ${matches.length} matches (pin one with --rel <path> or --harness <h>):` : `[canon-segments] no ${o.native ? 'native' : 'canon'} session matches '${o.session}'`);
+    for (const m of matches) console.error(`  ${m.uuid}  (${m.rel})`);
+    return { code: 1 };
+  }
+  const s = matches[0]!;
+  if (s.archived && !s.archived.local) { console.error(`[canon-segments] ${s.uuid} is archived and its blobs are not local — \`canon pull ${s.uuid}\` fetches it`); return { code: 1, session: s }; }
+  const segments = s.archived ? await segmentsOfStream(sessionLines(s), s.harness) : segmentsOfFiles(s.parts, s.harness);
+  if (o.json) console.log(JSON.stringify({ session: s.uuid, rel: s.rel, harness: s.harness, segments }, null, 1));
+  else {
+    console.log(`${s.uuid}  ${s.harness}  ${s.rel}  — ${segments.length} segment(s)${s.title ? `  "${s.title}"` : ''}`);
+    console.log(renderSegments(segments));
+    console.log(`\n[canon-segments] pull one window: canon pull ${s.uuid.slice(0, 8)}${o.native ? ' --native' : ''} --segment <n>`);
+  }
+  return { code: 0, session: s, segments };
 }

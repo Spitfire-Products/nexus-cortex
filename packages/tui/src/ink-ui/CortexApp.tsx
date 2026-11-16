@@ -54,6 +54,7 @@ import { isModelFacingTool, modelFacingToolLine } from '@nexus-cortex/core';
 import { MentorshipConfigService, slashCommandRegistry, keymapFooterHint, keymapKey } from '@nexus-cortex/core';
 import { InSessionScheduler } from '@nexus-cortex/core';
 import { ModelPickerDialog } from './components/ModelPickerDialog.js';
+import { SigninsDialog } from './components/SigninsDialog.js';
 import { SecretsDialog } from './components/SecretsDialog.js';
 import { MenuRenderer } from './components/MenuRenderer.js';
 import { SubAgentPanel, createSubAgentStateManager, type SubAgentState } from './components/SubAgentPanel.js';
@@ -1519,6 +1520,7 @@ export const CortexApp: React.FC<CortexAppProps> = ({
 
   // Model picker state
   const [showModelPicker, setShowModelPicker] = useState(false);
+  const [showSignins, setShowSignins] = useState(false);   // /signins — saved browser sign-ins (vault T4; metadata only)
   const [showSecrets, setShowSecrets] = useState(false);   // /secrets — the vault dialog (values never enter the transcript)
   const [availableModels, setAvailableModels] = useState<ModelDisplayInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -1879,6 +1881,11 @@ export const CortexApp: React.FC<CortexAppProps> = ({
       case 'm':
       case 'secrets': {
         setShowSecrets(true);
+        return { handled: true };
+      }
+
+      case 'signins': {
+        setShowSignins(true);
         return { handled: true };
       }
 
@@ -2898,8 +2905,8 @@ export const CortexApp: React.FC<CortexAppProps> = ({
   const schedIdleRef = useRef(false);
   useEffect(() => {
     schedIdleRef.current = streamingState === StreamingState.Idle && !pendingApproval && !queuedMessage
-      && !showThemePicker && !showModelPicker && !showSecrets && !showSessionPicker && !showSystemMessageManager;
-  }, [streamingState, pendingApproval, queuedMessage, showThemePicker, showModelPicker, showSecrets, showSessionPicker, showSystemMessageManager]);
+      && !showThemePicker && !showModelPicker && !showSecrets && !showSignins && !showSessionPicker && !showSystemMessageManager;
+  }, [streamingState, pendingApproval, queuedMessage, showThemePicker, showModelPicker, showSecrets, showSignins, showSessionPicker, showSystemMessageManager]);
   const submitQueryRef = useRef(submitQuery);
   useEffect(() => { submitQueryRef.current = submitQuery; }, [submitQuery]);
   const clientRef = useRef(client);
@@ -3087,6 +3094,13 @@ export const CortexApp: React.FC<CortexAppProps> = ({
         )}
 
         {/* Secrets Dialog (/secrets) — only value-free notices reach the transcript */}
+        {showSignins && (
+          <SigninsDialog
+            sessionId={client?.getSessionId() ?? undefined}
+            onNotice={(t) => addItem({ type: MessageType.Info, infoContent: `🔑 ${t}` }, Date.now())}
+            onClose={() => setShowSignins(false)}
+          />
+        )}
         {showSecrets && (
           <SecretsDialog
             onClose={() => setShowSecrets(false)}
@@ -3296,7 +3310,7 @@ export const CortexApp: React.FC<CortexAppProps> = ({
       {/* Input - enabled during streaming to allow message queuing */}
       <EnhancedInput
         onSubmit={handleSubmit}
-        disabled={!!pendingApproval || showThemePicker || showModelPicker || showSecrets || showSessionPicker || showSystemMessageManager}
+        disabled={!!pendingApproval || showThemePicker || showModelPicker || showSecrets || showSignins || showSessionPicker || showSystemMessageManager}
         placeholder={streamingState === StreamingState.Streaming ? "Type next message (will queue)..." : undefined}
         userMessages={userMessages}
         prefillValue={streamingState === StreamingState.Idle ? nextActionPrediction : null}

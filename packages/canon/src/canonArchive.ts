@@ -164,7 +164,11 @@ async function canonArchiveUnlocked(opts: CanonArchiveOptions): Promise<number> 
   // refuses to drop it when the exclusion applies (live: a store that had materialized archive/ kept all 1.6 GB).
   // Re-stat what is really on disk (identical content → uptodate); missing paths (the new archive/ entries) are fine.
   try { git(store, ['update-index', '-q', '--refresh', '--ignore-missing']); } catch { /* exit 1 = some entries differ; harmless */ }
-  const tree = git(store, ['write-tree']).trim();
+  // --missing-ok (2026-11-15, reproduced): plain write-tree CHECKS that every indexed object exists, and in a partial clone the check
+  // lazily FETCHES each missing blob — every archived session, which this store exists to never download. One archive run on the repl
+  // pulled ~1 GB of archive/ blobs it then never used (dupes included, the 6 h cycle wrote ~3.5 GB of packs and filled the quota). The
+  // tree is identical; the blobs are on the remote (they came from it), so the push and every later read still resolve them.
+  const tree = git(store, ['write-tree', '--missing-ok']).trim();
   const parent = git(store, ['rev-parse', 'HEAD']).trim();
   const commit = git(store, [
     '-c', 'user.email=canon-archive@local', '-c', 'user.name=canon-archive',

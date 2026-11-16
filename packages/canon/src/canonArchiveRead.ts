@@ -22,6 +22,7 @@ import * as path from 'node:path';
 import * as readline from 'node:readline';
 import type { CanonSession } from './canonPull.js';
 import { isSidecarName, sidecarFiles } from './sidecar.js';
+import { isSegmentChunk, logicalPathOf } from './canonSegments.js';
 
 /** Where an archived session's bytes live: git blob ids in the store (part order), plus the events sidecar. */
 export interface ArchivedSessionRef {
@@ -83,14 +84,13 @@ export function discoverArchivedCanonSessions(
     if (!pm) continue;
     const [bucket, rest] = [pm[1]!, pm[2]!];
     if (isSidecarName(rest)) {
-      const logical = rest.replace(/\.events\.jsonl(\.part-\d{4})?$/, '.jsonl');
+      const logical = logicalPathOf(rest).replace(/\.events\.jsonl$/, '.jsonl');
       const cur = sidecars.get(logical); const part = { name: rest, sha: m[1]! };
       if (!cur || bucket > cur.bucket) sidecars.set(logical, { bucket, sha: m[1]!, parts: [part] });
       else if (bucket === cur.bucket) cur.parts.push(part);
       continue;
     }
-    const cm = rest.match(/^(.*\.jsonl)\.part-\d{4}$/);
-    const logical = cm ? cm[1]! : rest;
+    const logical = logicalPathOf(rest); // both layouts (size parts, segmented sub-chunks)
     if (!logical.endsWith('.jsonl')) continue;
     const g = groups.get(logical);
     const part = { name: rest, sha: m[1]!, size: -1 }; // filled from the local batch check below; -1 = not local
@@ -99,7 +99,10 @@ export function discoverArchivedCanonSessions(
   }
 
   // Split sidecars: parts in order; the title lookup reads the LAST part (the newest ai-title record lives at the end).
-  for (const sc of sidecars.values()) { sc.parts.sort((x, y) => x.name.localeCompare(y.name)); sc.sha = sc.parts[sc.parts.length - 1]!.sha; }
+  // A segmented layout kept beside an old one wins (canonSegments.orderChunks), for parts and sidecars alike.
+  const preferSeg = <T extends { name: string }>(ps: T[]): T[] => { const seg = ps.filter((p) => isSegmentChunk(p.name)); return seg.length ? seg : ps; };
+  for (const g of groups.values()) g.parts = preferSeg(g.parts);
+  for (const sc of sidecars.values()) { sc.parts = preferSeg(sc.parts); sc.parts.sort((x, y) => x.name.localeCompare(y.name)); sc.sha = sc.parts[sc.parts.length - 1]!.sha; }
   const sizes = localBlobSizes(store, [
     ...[...groups.values()].flatMap((g) => g.parts.map((p) => p.sha)),
     ...[...sidecars.values()].flatMap((sc) => sc.parts.map((p) => p.sha)),

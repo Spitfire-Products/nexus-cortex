@@ -7,7 +7,9 @@
  * @module permissions/CLIApprovalHandler
  */
 
-import type { ApprovalHandler, ApprovalRequest } from '../contracts/MiddlewareContracts.js';
+import type {
+  ApprovalAnswer, ApprovalHandler, ApprovalRequest, ApprovalScope,
+} from '../contracts/MiddlewareContracts.js';
 
 /**
  * Options for CLI approval handler
@@ -134,7 +136,7 @@ export class CLIApprovalHandler implements ApprovalHandler {
   /**
    * Request approval for a tool operation
    */
-  async requestApproval(request: ApprovalRequest, signal?: AbortSignal): Promise<boolean> {
+  async requestApproval(request: ApprovalRequest, signal?: AbortSignal): Promise<ApprovalAnswer> {
     // FAIL-FAST: Headless mode (no TTY) cannot prompt for interactive approval.
     // Without this check, promptMultiChoice() waits on stdin forever, which
     // causes tool-execution timeout to fire (at TOOL_TIMEOUT_MS) but the
@@ -176,6 +178,44 @@ export class CLIApprovalHandler implements ApprovalHandler {
       // Check current auto-approve status
       const currentAutoApprove = this.getAutoApproveStatus ? this.getAutoApproveStatus() : false;
       const statusHint = currentAutoApprove ? ' (auto-approve: ON)' : '';
+
+      // ── the load_session question: FOUR choices (T3 D1) ──────────────────────────────────────────────
+      // once / this session / always for this site / no. The answer carries the scope back to the policy, which hands it to
+      // releaseSite — that is what makes the floor's no-prompt path reachable and keeps the release to ONE question (D2).
+      if (request.kind === 'load_session') {
+        const choices = request.choices && request.choices.length > 0
+          ? request.choices
+          : CLIApprovalHandler.loadSessionChoices(request.site ?? 'this site');
+        const labels = choices.map((c, i) => `${i + 1}. ${c.label}`);
+
+        console.log(`\n ${request.reason}${statusHint}`);
+        labels.forEach((label, i) => console.log(`${i === 0 ? ' > ' : ' '}${label}`));
+
+        let response: string;
+        try {
+          response = await this.promptMultiChoice(this.options.timeoutMs, signal, labels);
+        } catch (error: any) {
+          this.clearPrompt(labels.length + 2);
+          console.log(`[WARN] Approval failed: ${error.message}`);
+          return false;
+        }
+        this.clearPrompt(labels.length + 2);
+
+        if (response === 'toggle') {
+          // shift+tab: the auto-approve toggle is orthogonal to the scope — approve once after flipping it.
+          if (this.onToggleAutoApprove) this.onToggleAutoApprove();
+          console.log('[OK] Operation approved (auto-approve toggled)');
+          return { approved: true, scope: 'once' };
+        }
+
+        const picked = /^[1-9]$/.test(response) ? choices[Number(response) - 1] : undefined;
+        if (!picked || picked.value === 'no') {
+          console.log('[--] Operation skipped');
+          return false;
+        }
+        console.log(`[OK] Operation approved (${picked.value})`);
+        return { approved: true, scope: picked.value as ApprovalScope };
+      }
 
       // Show prompt — initial render with cursor on option 1
       console.log(`\n Do you want to ${actionVerb} ${fileName}?${statusHint}`);
@@ -271,28 +311,42 @@ export class CLIApprovalHandler implements ApprovalHandler {
     '3. No, skip this operation (esc)',
   ];
 
-  private static readonly OPTION_RESPONSES = ['1', '2', '3'];
+  /** The four labels for a load_session prompt (used when the request carries none). */
+  private static loadSessionChoices(site: string): ReadonlyArray<{ value: 'once' | 'session' | 'always' | 'no'; label: string }> {
+    return [
+      { value: 'once', label: 'Yes, just this once' },
+      { value: 'session', label: 'Yes, for this session' },
+      { value: 'always', label: `Yes, always for ${site}` },
+      { value: 'no', label: 'No, do not load it (esc)' },
+    ];
+  }
 
   /**
-   * Redraw the 3 option lines in-place (cursor stays on option area).
-   * Moves up 3 lines, redraws each, then positions cursor at the end.
+   * Redraw the option lines in-place (cursor stays on option area).
+   * Moves up `labels.length` lines, redraws each, then positions cursor at the end.
    */
-  private redrawOptions(selectedIndex: number): void {
-    // Move cursor up 3 lines (we're below the options)
-    process.stdout.write('\x1b[3A');
-    for (let i = 0; i < 3; i++) {
+  private redrawOptions(selectedIndex: number, labels: readonly string[]): void {
+    // Move cursor up over the option lines (we're below them)
+    process.stdout.write(`\x1b[${labels.length}A`);
+    for (let i = 0; i < labels.length; i++) {
       process.stdout.write('\x1b[2K\x1b[0G'); // clear line, cursor to col 0
       const prefix = i === selectedIndex ? ' > ' : ' ';
-      process.stdout.write(`${prefix}${CLIApprovalHandler.OPTION_LABELS[i]}`);
-      if (i < 2) process.stdout.write('\n');
+      process.stdout.write(`${prefix}${labels[i]}`);
+      if (i < labels.length - 1) process.stdout.write('\n');
     }
     process.stdout.write('\n'); // move below options
   }
 
   /**
    * Prompt user for multi-choice selection with arrow key navigation.
+   *
+   * `optionLabels` is what makes this usable for both dialogs: omitted → the legacy three-option prompt, unchanged; the
+   * load_session dialog passes its four labels. Resolves with the 1-based choice number, 'esc', or 'toggle'.
    */
-  private promptMultiChoice(timeoutMs: number, signal?: AbortSignal): Promise<string> {
+  private promptMultiChoice(timeoutMs: number, signal?: AbortSignal, optionLabels?: readonly string[]): Promise<string> {
+    const labels = optionLabels && optionLabels.length > 0 ? optionLabels : CLIApprovalHandler.OPTION_LABELS;
+    const count = labels.length;
+    const last = count - 1;
     return new Promise((resolve, reject) => {
       const wasRaw = process.stdin.isRaw;
       const wasPaused = process.stdin.isPaused();
@@ -369,15 +423,15 @@ export class CLIApprovalHandler implements ApprovalHandler {
           if (escTimer) { clearTimeout(escTimer); escTimer = null; }
           if (selectedIndex > 0) {
             selectedIndex--;
-            this.redrawOptions(selectedIndex);
+            this.redrawOptions(selectedIndex, labels);
           }
           return;
         }
         if (char === '\x1b[B') {
           if (escTimer) { clearTimeout(escTimer); escTimer = null; }
-          if (selectedIndex < 2) {
+          if (selectedIndex < last) {
             selectedIndex++;
-            this.redrawOptions(selectedIndex);
+            this.redrawOptions(selectedIndex, labels);
           }
           return;
         }
@@ -400,10 +454,10 @@ export class CLIApprovalHandler implements ApprovalHandler {
           const seq = '\x1b' + char;
           if (seq === '\x1b[A' && selectedIndex > 0) {
             selectedIndex--;
-            this.redrawOptions(selectedIndex);
-          } else if (seq === '\x1b[B' && selectedIndex < 2) {
+            this.redrawOptions(selectedIndex, labels);
+          } else if (seq === '\x1b[B' && selectedIndex < last) {
             selectedIndex++;
-            this.redrawOptions(selectedIndex);
+            this.redrawOptions(selectedIndex, labels);
           } else if (seq === '\x1b[Z') {
             cleanup();
             resolve('toggle');
@@ -412,7 +466,7 @@ export class CLIApprovalHandler implements ApprovalHandler {
         }
 
         // Direct number keys (no Enter required)
-        if (char === '1' || char === '2' || char === '3') {
+        if (/^[1-9]$/.test(char) && Number(char) <= count) {
           cleanup();
           resolve(char);
           return;
@@ -421,7 +475,7 @@ export class CLIApprovalHandler implements ApprovalHandler {
         // Enter — confirm currently selected option
         if (char === '\r' || char === '\n') {
           cleanup();
-          resolve(CLIApprovalHandler.OPTION_RESPONSES[selectedIndex] ?? '1');
+          resolve(String(selectedIndex + 1));
           return;
         }
 
@@ -431,7 +485,7 @@ export class CLIApprovalHandler implements ApprovalHandler {
           process.exit(0);
         }
 
-        // y/n shortcuts
+        // y/n shortcuts: yes = first choice, no = last choice (identical to the legacy 1/3 mapping)
         if (char === 'y' || char === 'Y') {
           cleanup();
           resolve('1');
@@ -439,7 +493,7 @@ export class CLIApprovalHandler implements ApprovalHandler {
         }
         if (char === 'n' || char === 'N') {
           cleanup();
-          resolve('3');
+          resolve(String(count));
           return;
         }
       };

@@ -90,6 +90,11 @@ file that comes with a cloned repo) is **never** honoured for this key; cortex p
 lifts the safety floors (screen/app automation, keys written into files, saved browser sign-ins): those are refused at once
 when nobody is asked.
 
+### Saved browser sign-ins
+
+`cortex browser-secrets import` saves your session for chosen sites from Chrome, Brave, Edge, Arc or Chromium into an encrypted vault; the
+agent's browser gets one only after you approve it (`/signins` manages them). See [saved-signins.md](saved-signins.md).
+
 ### Scheduled jobs
 
 `cortex schedule` runs prompts on a period, surviving restarts; `--when "<command>"` fires a job only when there is work. See

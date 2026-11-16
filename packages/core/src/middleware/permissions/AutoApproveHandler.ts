@@ -46,6 +46,9 @@ export interface AutoApproveHandlerOptions {
  * ```
  */
 export class AutoApproveHandler implements ApprovalHandler {
+  /** Marks a handler that answers every prompt by itself (YOLO). PermissionsMiddleware refuses a saved-sign-in release rather than let it
+   *  answer (operator 11-15: under YOLO nobody would see the question). Duck-typed so the middleware needs no import of this class. */
+  readonly isAutomatic = true;
   private options: Required<AutoApproveHandlerOptions>;
   private approvalCount = 0;
 

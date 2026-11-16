@@ -9,11 +9,13 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import {
-  putSite, listSites, getSiteForRelease, revokeSite, appendReleaseLog,
+  putSite, listSites, getSiteForRelease, revokeSite, appendReleaseLog, siteExpiresAt,
   sessionVaultPath, releaseLogPath, SESSION_VAULT_KEY_ID,
   type SiteEntry, type VaultCookie,
 } from './sessionVault.js';
 import { deriveKey, encryptValue, decryptValue } from './secretsVault.js';
+import { toCdpPartitionKey } from './sessionRelease.js';
+import { listBrowserSecrets } from './sessionBrowserSecrets.js';
 
 const MASTER = 'test-master-1';
 const env = { CORTEX_SECRETS_KEY: MASTER } as NodeJS.ProcessEnv;
@@ -197,6 +199,39 @@ describe('input validation', () => {
     expect(getSiteForRelease('github.com', file, env).cookies[0]!.sameSite).toBe('None');
   });
 
+  it('T3 D3: a partitionKey may be the object form, and it round-trips unchanged', () => {
+    const key = { topLevelSite: 'v-0010', hasCrossSiteAncestor: true };
+    putSite(entry({ cookies: [cookie({ partitionKey: key })] }), file, env);
+    expect(getSiteForRelease('github.com', file, env).cookies[0]!.partitionKey).toEqual(key);
+    const key2 = { topLevelSite: 'v-0011', hasCrossSiteAncestor: false };
+    putSite(entry({ cookies: [cookie({ partitionKey: key2 })] }), file, env);
+    expect(getSiteForRelease('github.com', file, env).cookies[0]!.partitionKey).toEqual(key2);
+    putSite(entry({ cookies: [cookie({ partitionKey: 'v-0012' })] }), file, env);
+    expect(getSiteForRelease('github.com', file, env).cookies[0]!.partitionKey).toBe('v-0012');
+  });
+
+  it('T3 D3: refuses a malformed partitionKey without echoing the value', () => {
+    const bad: unknown[] = [
+      { topLevelSite: '', hasCrossSiteAncestor: true },
+      { topLevelSite: '   ', hasCrossSiteAncestor: false },
+      { topLevelSite: 7, hasCrossSiteAncestor: true },
+      { hasCrossSiteAncestor: true },
+      { topLevelSite: 'v-0013' },
+      { topLevelSite: 'v-0014', hasCrossSiteAncestor: 'true' },
+      { topLevelSite: 'v-0015', hasCrossSiteAncestor: 1 },
+      [],
+      7,
+    ];
+    for (const pk of bad) {
+      let msg = '';
+      try { putSite(entry({ cookies: [cookie({ partitionKey: pk as never })] }), file, env); } catch (e) { msg = (e as Error).message; }
+      expect(msg).toMatch(/partitionKey/i);
+      expect(msg).not.toContain('v-001');
+    }
+    expect(fs.existsSync(file)).toBe(false);
+    putSite(entry({ cookies: [cookie({ partitionKey: { topLevelSite: 'v-0018', hasCrossSiteAncestor: true } })] }), file, env);
+  });
+
   it('accepts the site itself, a subdomain, and the leading-dot form browsers write', () => {
     putSite(entry({ cookies: [cookie({ domain: 'github.com' }), cookie({ domain: 'api.github.com' }), cookie({ domain: '.github.com' })] }), file, env);
     expect(listSites(file)[0]!.cookieCount).toBe(3);
@@ -232,5 +267,44 @@ describe('appendReleaseLog', () => {
     expect(() => appendReleaseLog({ site: 'github.com', mode: 'forever' as never, at: 1 }, log)).toThrow(/mode/i);
     expect(() => appendReleaseLog({ site: 'github.com/x', mode: 'once', at: 1 }, log)).toThrow(/site/i);
     expect(fs.existsSync(log)).toBe(false);
+  });
+});
+
+/**
+ * Both partitionKey forms stay readable (T3 rev 4, condition 3). The string form is what an EXISTING vault holds; the object
+ * form is what a browser importer must write from now on. Both are asserted here in one table, through the store AND through
+ * the CDP mapping (the string form was already covered piecemeal; this pins both shapes together).
+ */
+describe('partitionKey: the old string form and the object form both round-trip', () => {
+  it.each([
+    ['string (an existing vault)', 'https://github.com', { topLevelSite: 'https://github.com', hasCrossSiteAncestor: false }],
+    ['object', { topLevelSite: 'https://github.com', hasCrossSiteAncestor: true }, { topLevelSite: 'https://github.com', hasCrossSiteAncestor: true }],
+  ])('%s', (_label, stored, expected) => {
+    putSite(entry({ cookies: [cookie({ partitionKey: stored as never })] }), file, env);
+    const got = getSiteForRelease('github.com', file, env);
+    expect(got.cookies[0]!.partitionKey).toEqual(stored);          // unchanged through the store
+    expect(toCdpPartitionKey(got.cookies[0]!.partitionKey)).toEqual(expected);
+  });
+});
+
+describe('site expiry (2026-11-15 real-Mac test: x.com read "expired" ~22 min after import)', () => {
+  it('is the LATEST real cookie expiry; session cookies and expires <= 0 are ignored; none → undefined', () => {
+    expect(siteExpiresAt([{ expires: 1_900_000_000 }, { expires: 1_800_000_000 }, {}, { expires: 0 }, { expires: -1 }])).toBe(1_900_000_000);
+    expect(siteExpiresAt([{}, { expires: 0 }])).toBeUndefined();
+    expect(siteExpiresAt([])).toBeUndefined();
+  });
+
+  it('one short-lived cookie no longer makes the whole site read expired', () => {
+    const nowS = Math.floor(Date.now() / 1000);
+    putSite(entry({
+      site: 'x.com', expiresAt: undefined,
+      cookies: [cookie({ name: 'tracker', domain: '.x.com', expires: nowS - 60 }),          // already gone
+                cookie({ name: 'auth_token', domain: '.x.com', expires: nowS + 86_400 * 300 }),
+                cookie({ name: 'sess', domain: '.x.com' })],                               // session cookie: no expires
+    }), file, env);
+    const row = listSites(file).find((s) => s.site === 'x.com')!;
+    expect(row.expiresAt).toBe(nowS + 86_400 * 300);
+    const listed = listBrowserSecrets({ vaultFile: file }).find((s) => s.site === 'x.com');
+    expect(listed?.expired).toBe(false);
   });
 });

@@ -113,8 +113,51 @@ export function scrubStoreRemote(storePath: string): void {
   } catch { /* not a git store yet, or no origin */ }
 }
 
+/**
+ * STORE HARDENING (2026-11-15, the "mystery writes" root cause). In a blob-less PARTIAL clone two git defaults
+ * write gigabytes nobody asked for:
+ *  1. every `fetch` (including the hidden fetch inside a lazy blob download) and every `commit` / `rebase` ends
+ *     by spawning `git maintenance run --auto --quiet --detach` — detached + silent, so it outlives the command
+ *     that started it and never appears as "our" process. Its gc repacks every pack into one: on the repl store
+ *     that copied the 580 MB of promisor packs, then a tmp_pack grew to exactly the free space (1.44 GB, twice)
+ *     and died at the quota (11-15 09:51 + 10:24 PT, reproduced: trace shows the detached child after fetch and
+ *     after a lazy fetch).
+ *  2. RENAME DETECTION needs both blob versions: `pull --rebase` / `status` / `diff` across another machine's
+ *     `canon-archive` commit (sessions MOVED into archive/) lazily downloads every moved session's old blob
+ *     (reproduced on a toy partial clone: 0 fetches without a content diff, 11 with `diff --stat` across a move).
+ * Written into the store's own .git/config, so it covers EVERY git command there — canon code paths that bypass
+ * canonGit, and commands typed by hand. Idempotent; once per process per store. Rename detection stays ON for a
+ * CANON_FULL_CLONE store (all blobs local, nothing to fetch). Canon writers append to live files while archive
+ * moves touch old, inactive sessions, so rebasing without rename detection is safe; a real conflict still
+ * aborts in guardedPush.
+ */
+export const STORE_HARDENING: Array<[string, string]> = [
+  ['maintenance.auto', 'false'],
+  ['gc.auto', '0'],
+];
+export const PARTIAL_STORE_HARDENING: Array<[string, string]> = [
+  ['diff.renames', 'false'],
+  ['merge.renames', 'false'],
+  ['status.renames', 'false'],
+];
+const hardenedStores = new Set<string>();
+export function hardenStoreConfig(storePath: string): void {
+  if (hardenedStores.has(storePath)) return;
+  hardenedStores.add(storePath);
+  const run = (args: string[]) => execFileSync('git', ['-C', storePath, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  let partial = false;
+  try { partial = run(['config', '--get', 'remote.origin.partialclonefilter']) !== ''; } catch { /* key absent = full clone */ }
+  for (const [k, v] of [...STORE_HARDENING, ...(partial ? PARTIAL_STORE_HARDENING : [])]) {
+    try {
+      let cur = '';
+      try { cur = run(['config', '--get', k]); } catch { /* unset */ }
+      if (cur !== v) run(['config', k, v]);
+    } catch { /* not a git store yet — the next call retries via a fresh process */ }
+  }
+}
+
 export function canonGit(cwd: string | null, label: string): (args: string[]) => string {
-  if (cwd) scrubStoreRemote(cwd);
+  if (cwd) { scrubStoreRemote(cwd); hardenStoreConfig(cwd); }
   return (args: string[]): string => {
     try {
       return execFileSync('git', [...gitAuthArgs(), ...gitIdArgs(), ...args], {
@@ -312,6 +355,7 @@ export function atomicClone(repoUrl: string, storePath: string, label: string, s
       if (headHasArchive(tmp)) g(['sparse-checkout', 'set', '--no-cone', ...ARCHIVE_EXCLUSION_PATTERNS]);
       g(['checkout', '-q']);
     }
+    hardenStoreConfig(tmp);   // before the store is visible: no verb ever runs on an un-hardened clone
     // A racing process may have completed its own clone while ours ran — keep
     // theirs (it is complete by the same invariant) and discard ours.
     if (fs.existsSync(`${storePath}/.git`)) {

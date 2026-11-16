@@ -354,14 +354,15 @@ export class McpClientManager {
   async callTool(
     serverName: string,
     toolName: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    meta?: Record<string, unknown>
   ): Promise<any> {
     const client = this.clients.get(serverName);
     if (!client) {
       throw new Error(`MCP server '${serverName}' is not connected`);
     }
 
-    return await client.callTool(toolName, args);
+    return await client.callTool(toolName, args, meta);
   }
 
   /**

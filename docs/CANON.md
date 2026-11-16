@@ -185,6 +185,71 @@ same functions are exported from `@nexus-cortex/core`
 (`canonSync`/`canonTranslate`/`canonPull`/`canonArtifacts`/`canonGraph`) for
 embedding — the CLI and any scheduler run one implementation.
 
+## Session storage: segments by compaction (2026-11-15)
+
+A session file over the 50 MB single-file cap used to be cut by SIZE into
+`<id>.jsonl.part-NNNN` (25 MB each). A size cut means nothing for retrieval, and the
+growing last part was re-stored on every sync. New writes now cut by COMPACTION
+WINDOW instead (`packages/canon/src/canonSegments.ts`):
+
+```
+<id>.jsonl.seg-SSSS.part-PPPP          segment SSSS, size-limited sub-chunk PPPP (same 25 MB cap)
+<id>.events.jsonl.seg-SSSS.part-PPPP   canon layer: the events sidecar split along the same segments
+<id>.segments.json                     the index
+```
+
+- **Segment** = one compaction window. Claude Code writes a parsed
+  `{"type":"system","subtype":"compact_boundary","compactMetadata":{…}}` record at each
+  compaction (the next record is the `isCompactSummary` summary). Segment 0 runs from the
+  session start to the first boundary; every later segment starts AT a boundary. Lines
+  are parsed — a line that only mentions the word is not a boundary. A harness with no
+  marker (or a session not yet compacted) is one segment; a harness adds its marker with
+  `registerSegmentDetector(label, fn)`.
+- **Stable history**: a closed segment never changes, so its files are never rewritten;
+  only the open segment's last sub-chunk grows. Concatenating every sub-chunk in name
+  order reproduces the stored bytes exactly (the index records each file's sha256 and the
+  whole session's).
+- **Index** (`<id>.segments.json`, format `canon-segments/1`): per segment — `n`,
+  `closed`, `lineStart`/`lineEnd` and `byteStart`/`byteEnd` (0-based, end-exclusive),
+  first/last record timestamp, record counts by type, the first real user prompt
+  (200 chars; summaries, meta, tool results and `<…>` injections skipped), the boundary
+  `{trigger, preTokens, postTokens, durationMs}`, the summary (600 chars), and its files.
+- **Both layouts are read.** Old `.part-NNNN` sessions stay as they are (no migration;
+  sync keeps writing them in the old layout). Where a session has both, the segmented
+  files win. Segment lookups on an old-layout or small single-file session are computed
+  from the bytes on the fly (nothing written). The native layer is written by `sync`; the
+  canonical line follows the native layout at the next `translate`.
+
+CLI: `cortex canon list --segments <uuid>`, `cortex canon pull <uuid> --segment <n>`, `cortex canon rechunk <uuid>`
+(the same flags as the standalone `nexus-canon` below). **Resume a pulled segment by its own id**:
+`cortex --resume <uuid>.seg-NNNN` (the file name; the pull prints the exact command). `cortex canon pull` writes
+by default into the sessions folder cortex RESUMES from (`resolveContext`: the workspace / project `.cortex/sessions`,
+or `~/.cortex/sessions` for a folder with no `package.json` above it). The standalone `nexus-canon pull` cannot see
+that resolver and keeps `<cwd>/.cortex/sessions` — pass `--to` when using it (2026-11-15: a segment pulled into a
+folder with no `package.json` was "not found" by resume until the cortex wrapper took the resolver's folder).
+
+Standalone CLI (`nexus-canon`):
+
+```bash
+nexus-canon list --segments <uuid> [--native] [--json]   # the windows: lines, MB, time span,
+                                                         # pre→post tokens, first prompt, summary
+nexus-canon pull <uuid> --segment <n> [--native] [--to <dir>]
+                        # ONE window → <uuid>.seg-NNNN.jsonl (canonical line by default;
+                        # --native = the byte-exact original window)
+nexus-canon rechunk <uuid> [--dry-run]
+                        # store an EXISTING native session by segment: writes the segmented
+                        # files + index beside the old ones, verifies sha256, deletes nothing.
+                        # Readers then prefer the segmented copy, the next sync continues it,
+                        # the next translate re-derives its canonical line segmented. Remove
+                        # the old parts after review with the printed `git rm` lines.
+```
+
+Library: `canonSegments`, `canonRechunk`, `SegmentedWriter`, `SegmentScanner`,
+`segmentsOfFiles`, `segmentBytesOfFiles`, `readSegmentIndex`, `groupChunkFiles`. The graph
+(`canon graph`) adds one `seg:<uuid>:<n>` node per segment of a session stored by
+segment, labelled with its first prompt (else its summary), linked `has_segment` from the
+session and `continues_as` from the previous window.
+
 ## Keeping the store current (reactive capture)
 
 Manual `canon sync` still works, but the store can keep itself current. Two

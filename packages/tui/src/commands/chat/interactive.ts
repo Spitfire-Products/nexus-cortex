@@ -1192,6 +1192,19 @@ export async function interactiveChat(options: ChatOptions): Promise<void> {
         return;
       }
 
+      case 'signins': {
+        // vault T4: the shared Ink dialog (same component as neoncortex); metadata only, never a cookie value.
+        rl.pause();
+        const { showSigninsDialog } = await import('../../ui/InkSigninsDialog.js');
+        const notices = await showSigninsDialog(client.getSessionId() ?? undefined);
+        await new Promise<void>(resolve => setImmediate(resolve));
+        if (process.stdin.isTTY) { process.stdin.setRawMode(false); process.stdin.ref(); process.stdin.resume(); }
+        rl.resume();
+        for (const n of notices) console.log(theme.dimmed(`🔑 ${n}`));
+        prompt();
+        return;
+      }
+
       case 'config':
         if (!parsed.subcommand || (parsed.subcommand === 'set' && !parsed.args[0])) {
           // /config or /config set (no args) — open interactive menu

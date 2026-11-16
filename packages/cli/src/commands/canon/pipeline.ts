@@ -1,5 +1,5 @@
 /**
- * `cortex canon sync|translate|pull|list` — CLI faces of the graduated canon
+ * `cortex canon sync|translate|pull|list|rechunk` — CLI faces of the graduated canon
  * pipeline (@nexus-cortex/core `canon/`). One implementation serves these
  * verbs and the cron wrapper scripts; handlers here only map options in and
  * results to exit codes / --json output.
@@ -56,18 +56,36 @@ export async function canonGraphCmd(o: CanonPipelineOptions & { project?: string
 }
 
 export async function canonPullCmd(
-  o: CanonPipelineOptions & { session: string; to?: string; force?: boolean; target?: string; stripSignatures?: boolean; native?: boolean; project?: string; harness?: string },
+  o: CanonPipelineOptions & { session: string; to?: string; force?: boolean; target?: string; stripSignatures?: boolean; native?: boolean; project?: string; harness?: string; rel?: string; segment?: number },
 ): Promise<void> {
   if (o.native) {
     const { canonPullNative } = await import('@nexus-cortex/core');
-    const rn = await canonPullNative({ session: o.session, to: o.to, project: o.project, harness: o.harness, force: o.force, store: o.store });
+    const rn = await canonPullNative({ session: o.session, to: o.to, project: o.project, harness: o.harness, force: o.force, store: o.store, rel: o.rel, segment: o.segment });
     if (o.json) console.log(JSON.stringify(rn, null, 2));
     if (rn.code !== 0) process.exitCode = rn.code;
     return;
   }
-  const result = await canonPull({ session: o.session, to: o.to, force: o.force, store: o.store, target: o.target as any, stripSignatures: o.stripSignatures });
+  // Default destination = the sessions dir cortex RESUMES from (ContextResolver: workspace / project / GLOBAL ~/.cortex/sessions),
+  // not <cwd>/.cortex/sessions. They differ for any folder with no package.json above it: ContextResolver falls back to 'global'
+  // (2026-11-15: a pulled segment in such a folder → resumeSession "not found or has no messages").
+  const to = o.to ?? (await import('@nexus-cortex/core')).resolveContext({ cwd: process.cwd() }).sessionsDir;
+  const result = await canonPull({ session: o.session, to, force: o.force, store: o.store, target: o.target as any, stripSignatures: o.stripSignatures, harness: o.harness, rel: o.rel, segment: o.segment });
   if (o.json) console.log(JSON.stringify(result, null, 2));
   if (result.code !== 0) process.exitCode = result.code;
+}
+
+/** `cortex canon list --segments <uuid>` — one session's compaction windows (nexus-canon canonSegments). */
+export async function canonSegmentsCmd(o: CanonPipelineOptions & { session: string; native?: boolean; harness?: string; rel?: string }): Promise<void> {
+  const { canonSegments } = await import('@nexus-cortex/core');
+  const r = await canonSegments({ session: o.session, native: o.native, harness: o.harness, rel: o.rel, json: o.json, store: o.store });
+  if (r.code !== 0) process.exitCode = r.code;
+}
+
+/** `cortex canon rechunk <uuid>` — store an existing native session by compaction segment (nothing deleted). */
+export async function canonRechunkCmd(o: CanonPipelineOptions & { session: string; harness?: string; rel?: string }): Promise<void> {
+  const { canonRechunk } = await import('@nexus-cortex/core');
+  const r = await canonRechunk({ session: o.session, dryRun: o.dryRun, harness: o.harness, rel: o.rel, store: o.store });
+  if (r.code !== 0) process.exitCode = r.code;
 }
 
 export async function canonArtifactsCmd(o: CanonPipelineOptions): Promise<void> {

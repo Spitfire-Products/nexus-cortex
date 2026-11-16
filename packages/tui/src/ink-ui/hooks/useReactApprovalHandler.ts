@@ -11,6 +11,7 @@
  */
 
 import { useState, useCallback, useRef } from 'react';
+import { answerFor, isLoadSessionRequest, type ApprovalAnswer, type ApprovalChoice } from '../approvalChoices.js';
 
 /**
  * Request for tool approval (matches core's ApprovalRequest)
@@ -24,13 +25,20 @@ export interface ApprovalRequest {
   tier?: 'whitelist' | 'graylist' | 'blacklist';
   /** session auto-approve already ON */
   autoApproveOn?: boolean;
+  /** 2026-11-14 (vault T3, D1): the policy wants its own four-way dialog (once / session / always / no) */
+  kind?: 'load_session';
+  /** the site the question is about (kind === 'load_session') */
+  site?: string;
+  /** the choices to render */
+  choices?: ReadonlyArray<ApprovalChoice>;
 }
 
 /**
- * Handler interface for tool approval (matches core's ApprovalHandler)
+ * Handler interface for tool approval (matches core's ApprovalHandler). A bare boolean is the legacy answer; a
+ * load_session request answers with { approved, scope }.
  */
 export interface ApprovalHandler {
-  requestApproval(request: ApprovalRequest): Promise<boolean>;
+  requestApproval(request: ApprovalRequest): Promise<ApprovalAnswer>;
 }
 
 /**
@@ -38,7 +46,7 @@ export interface ApprovalHandler {
  */
 export interface PendingApproval {
   request: ApprovalRequest;
-  resolve: (approved: boolean) => void;
+  resolve: (answer: ApprovalAnswer) => void;
 }
 
 /**
@@ -55,6 +63,8 @@ export interface UseReactApprovalHandlerReturn {
   deny: () => void;
   /** Call to approve and enable auto-approve for the session */
   approveAndEnableYolo: () => void;
+  /** Call to answer with a specific choice (the four-way load_session dialog) */
+  choose: (choice: ApprovalChoice) => void;
 }
 
 /**
@@ -92,10 +102,11 @@ export function useReactApprovalHandler(
     setPendingApproval(pending);
   }, []);
 
-  // Approve the pending request
+  // Approve the pending request ('once' for a load_session question, `true` for a plain one)
   const approve = useCallback(() => {
     if (pendingRef.current) {
-      pendingRef.current.resolve(true);
+      const { request, resolve } = pendingRef.current;
+      resolve(isLoadSessionRequest(request) ? { approved: true, scope: 'once' } : true);
       updatePending(null);
     }
   }, [updatePending]);
@@ -108,10 +119,19 @@ export function useReactApprovalHandler(
     }
   }, [updatePending]);
 
+  // Answer with a specific choice (the four-way load_session dialog)
+  const choose = useCallback((choice: ApprovalChoice) => {
+    if (pendingRef.current) {
+      pendingRef.current.resolve(answerFor(choice));
+      updatePending(null);
+    }
+  }, [updatePending]);
+
   // Approve and enable YOLO mode
   const approveAndEnableYolo = useCallback(() => {
     if (pendingRef.current) {
-      pendingRef.current.resolve(true);
+      const { request, resolve } = pendingRef.current;
+      resolve(isLoadSessionRequest(request) ? { approved: true, scope: 'once' } : true);
       updatePending(null);
       onYoloToggle?.();
     }
@@ -119,7 +139,7 @@ export function useReactApprovalHandler(
 
   // Create the handler object (stable reference)
   const handler = useRef<ApprovalHandler>({
-    requestApproval: async (request: ApprovalRequest): Promise<boolean> => {
+    requestApproval: async (request: ApprovalRequest): Promise<ApprovalAnswer> => {
       return new Promise((resolve) => {
         updatePending({ request, resolve });
       });
@@ -132,6 +152,7 @@ export function useReactApprovalHandler(
     approve,
     deny,
     approveAndEnableYolo,
+    choose,
   };
 }
 

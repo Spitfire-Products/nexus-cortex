@@ -8,7 +8,8 @@ import { canonArchive } from './canonArchive.js';
 import { canonArtifacts } from './canonArtifacts.js';
 import { canonGraph } from './canonGraph.js';
 import { canonInit } from './canonInit.js';
-import { canonList, canonPull, canonPullNative, canonPullNativeAll } from './canonPull.js';
+import { canonList, canonPull, canonPullNative, canonPullNativeAll, canonSegments } from './canonPull.js';
+import { canonRechunk } from './canonRechunk.js';
 import { canonSync } from './canonSync.js';
 import { deriveToolInventory, TOOL_CONCEPTS } from './canonTools.js';
 import { canonTranslate } from './canonTranslate.js';
@@ -23,7 +24,10 @@ Verbs:
   sync [--dry-run] [--store <dir>] [--scope auto|<labels>]  native harness sessions -> store (scrubbed); --scope = sparse sync-only clone of just those legs (auto = harnesses present on this machine)
   translate [--dry-run] [--store <dir>]  native -> canonical line + projections
   list [--all] [--project N/A] [--store <dir>]  list canon sessions
+  list --segments <uuid> [--native] [--harness <h>] [--rel <stored path>] [--json]  one session's compaction windows (lines, time span, tokens, first prompt, summary)
   pull <uuid> [--native] [--to <dir>] [--project <cwd>] [--harness <h>] [--rel <stored path>] [--force] [--store <dir>]  materialize a session (--native = byte-exact original-harness files, e.g. into ~/.claude/projects for claude --resume)
+  pull <uuid> --segment <n> [--native] [--to <dir>] ...  materialize ONE compaction window as <uuid>.seg-NNNN.jsonl
+  rechunk <uuid> [--dry-run] [--harness <h>] [--rel <native path>] [--store <dir>]  store an existing native session by compaction segment (old files kept; nothing deleted)
   artifacts [--dry-run] [--store <dir>]  capture capability artifacts
   archive [--days N] [--dry-run] [--no-push] [--store <dir>]  move sessions older than N days (default 30) to archive/ (remote keeps all; local goes sparse + FLAT)
   tools [--store <dir>] [--json]      observed tool inventory + cross-harness concept map
@@ -44,7 +48,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   const [verb, ...rest] = argv;
   const flag = (k: string) => rest.includes(k);
   const opt = (k: string) => (rest.includes(k) ? rest[rest.indexOf(k) + 1] : undefined);
-  const positional = rest.find((a) => !a.startsWith('--') && a !== opt('--to') && a !== opt('--store') && a !== opt('--remote') && a !== opt('--merge-graph') && a !== opt('--project') && a !== opt('--rel'));
+  const VALUE_OPTS = ['--to', '--store', '--remote', '--merge-graph', '--project', '--rel', '--segment', '--segments', '--harness', '--max-mb', '--recent', '--recent-max-mb', '--days', '--debounce', '--scope'];
+  const valueIdx = new Set(VALUE_OPTS.map((k) => rest.indexOf(k)).filter((i) => i >= 0).map((i) => i + 1));
+  const positional = rest.find((a, i) => !a.startsWith('--') && !valueIdx.has(i));
+  const segOpt = opt('--segment');
+  const segment = segOpt === undefined ? undefined : Number(segOpt);
+  if (segOpt !== undefined && (!Number.isInteger(segment) || segment! < 0)) { console.error('--segment must be a non-negative integer'); return 2; }
 
   switch (verb) {
     case 'init': {
@@ -61,9 +70,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       const r = await canonTranslate({ dryRun: flag('--dry-run'), store: opt('--store') });
       return r.errors.length ? 1 : 0;
     }
-    case 'list':
+    case 'list': {
+      const segOf = opt('--segments');
+      if (rest.includes('--segments')) {
+        if (!segOf || segOf.startsWith('--')) { console.error('usage: nexus-canon list --segments <sessionUuid> [--native] [--harness <h>] [--rel <path>] [--json]'); return 2; }
+        return (await canonSegments({ session: segOf, native: flag('--native'), harness: opt('--harness'), rel: opt('--rel'), json: flag('--json'), store: opt('--store') })).code;
+      }
       await canonList({ store: opt('--store'), all: flag('--all') });
       return 0;
+    }
+    case 'rechunk': {
+      if (!positional) { console.error('usage: nexus-canon rechunk <sessionUuid> [--dry-run] [--harness <h>] [--rel <native path>] [--store <dir>]'); return 2; }
+      return (await canonRechunk({ session: positional, dryRun: flag('--dry-run'), harness: opt('--harness'), rel: opt('--rel'), store: opt('--store') })).code;
+    }
     case 'pull': {
       if (flag('--native') && flag('--all')) {
         const maxMb = opt('--max-mb');
@@ -78,12 +97,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         });
         return ra.failed.length ? 1 : 0;
       }
-      if (!positional) { console.error('usage: nexus-canon pull <sessionUuid> [--native [--all]] [--to <dir>] [--project <cwd>] [--harness <h>] [--max-mb <n>] [--rel <stored path>] [--force] [--strip-signatures]'); return 2; }
+      if (!positional) { console.error('usage: nexus-canon pull <sessionUuid> [--segment <n>] [--native [--all]] [--to <dir>] [--project <cwd>] [--harness <h>] [--max-mb <n>] [--rel <stored path>] [--force] [--strip-signatures]'); return 2; }
       if (flag('--native')) {
-        const rn = await canonPullNative({ session: positional, to: opt('--to'), project: opt('--project'), harness: opt('--harness'), force: flag('--force'), store: opt('--store'), rel: opt('--rel') });
+        const rn = await canonPullNative({ session: positional, to: opt('--to'), project: opt('--project'), harness: opt('--harness'), force: flag('--force'), store: opt('--store'), rel: opt('--rel'), segment });
         return rn.code;
       }
-      const r = await canonPull({ session: positional, to: opt('--to'), force: flag('--force'), store: opt('--store'), stripSignatures: flag('--strip-signatures'), rel: opt('--rel'), harness: opt('--harness') });
+      const r = await canonPull({ session: positional, to: opt('--to'), force: flag('--force'), store: opt('--store'), stripSignatures: flag('--strip-signatures'), rel: opt('--rel'), harness: opt('--harness'), segment });
       return r.code;
     }
     case 'tools': {

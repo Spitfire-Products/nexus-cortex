@@ -507,6 +507,14 @@ export class SlashCommandRegistry {
       usage: '/secrets',
     });
 
+    // 2026-11-14 vault T4: the interactive face of the browser session vault (~/.cortex/session-vault.enc); headless = `cortex browser-secrets …`
+    this.register({
+      name: 'signins',
+      category: 'config',
+      description: 'Saved browser sign-ins: grant always / this session, clear a grant, delete (values are never shown)',
+      usage: '/signins',
+    });
+
     // Config commands
     this.register({
       name: 'config',

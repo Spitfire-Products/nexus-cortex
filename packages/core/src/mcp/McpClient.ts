@@ -423,7 +423,7 @@ export class McpClient {
   /**
    * Call a tool on the MCP server
    */
-  async callTool(toolName: string, args: Record<string, unknown>): Promise<any> {
+  async callTool(toolName: string, args: Record<string, unknown>, meta?: Record<string, unknown>): Promise<any> {
     this.assertConnected();
 
     try {
@@ -433,6 +433,7 @@ export class McpClient {
       const result = await this.client!.callTool({
         name: toolName,
         arguments: args,
+        ...(meta && Object.keys(meta).length ? { _meta: meta } : {}),   // harness-only request metadata (e.g. a release ticket), never model input
       }, undefined, { timeout: mcpToolTimeoutMs() });
       // A successful call means the stream recovered — self-heal the status.
       if (this.status === McpConnectionStatus.RECONNECTING) {

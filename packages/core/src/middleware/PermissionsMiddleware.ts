@@ -23,7 +23,10 @@ import type {
   PermissionPolicy,
   ApprovalHandler,
   MiddlewareContext,
+  ApprovalDialogSpec,
+  NormalizedApproval,
 } from './contracts/MiddlewareContracts.js';
+import { normalizeApprovalAnswer } from './contracts/MiddlewareContracts.js';
 
 import { PermissionEvaluator } from './permissions/PermissionEvaluator.js';
 import { PermissionAuditLogger } from './permissions/PermissionAuditLogger.js';
@@ -234,16 +237,35 @@ export class PermissionsMiddleware implements IPermissionsChecker {
 
     // Graylist (auto-approve OFF) or Blacklist → request approval
     if (result.decision.canApprove) {
+      // Saved sign-ins under YOLO (operator 2026-11-15, decision 4): YOLO swaps in a handler that says yes to everything while the
+      // auto-approve flag can stay OFF, so the floor's question would be "answered" with nobody looking. Refuse it the way auto-approve
+      // and headless do. A site with a standing 'always' grant never reaches here (the floor allows it first).
+      if (result.decision.approval?.kind === 'load_session' && (this.approvalHandler as { isAutomatic?: boolean } | undefined)?.isAutomatic === true) {
+        const reason = `${result.decision.reason} — refused: YOLO answers every prompt by itself, so nobody would see this one. Grant the site "always" in /signins to let unattended runs use it.`;
+        await this.logDecision(permissionContext, { allowed: false, reason, canApprove: false } as any, false, false);
+        return { allowed: false, reason, canApprove: false, tier: 'blacklist' } as any;
+      }
       if (this.approvalHandler) {
         try {
-          const approved = await this.requestApproval(
+          const answer = await this.askApproval(
             permissionContext,
             result.decision.reason,
             signal,
-            { tier: result.decision.tier as any, autoApproveOn: context.approvalMode?.autoApproveActions === true }
+            {
+              tier: result.decision.tier as any,
+              autoApproveOn: context.approvalMode?.autoApproveActions === true,
+              // T3 D1: the decision's own dialog spec (kind/site/choices) — copied, never imported: the middleware knows
+              // nothing about the session vault.
+              ...(result.decision.approval ? { approval: result.decision.approval } : {}),
+            }
           );
 
-          if (approved) {
+          if (answer.approved) {
+            // T3 D2: the policy records what the answer means (the load_session floor hands it to releaseSite). The
+            // middleware only reports the normalised answer; an observer throwing never changes the decision.
+            if (result.decision.onApproved) {
+              try { result.decision.onApproved(answer); } catch { /* recorder only */ }
+            }
             // Log the approval
             await this.logDecision(permissionContext, { allowed: true }, true, true);
 
@@ -299,25 +321,49 @@ export class PermissionsMiddleware implements IPermissionsChecker {
     context: PermissionContext,
     reason: string,
     signal?: AbortSignal,
-    meta: { tier?: 'whitelist' | 'graylist' | 'blacklist'; autoApproveOn?: boolean } = {}
+    meta: {
+      tier?: 'whitelist' | 'graylist' | 'blacklist';
+      autoApproveOn?: boolean;
+      approval?: ApprovalDialogSpec;
+    } = {}
   ): Promise<boolean> {
+    const answer = await this.askApproval(context, reason, signal, meta);
+    return answer.approved;
+  }
+
+  /**
+   * Ask the handler and NORMALISE its answer through the one helper (T3 D1). Handlers may still return a bare boolean; a
+   * handler that understands the request's `kind` returns `{ approved, scope }`.
+   */
+  private async askApproval(
+    context: PermissionContext,
+    reason: string,
+    signal?: AbortSignal,
+    meta: {
+      tier?: 'whitelist' | 'graylist' | 'blacklist';
+      autoApproveOn?: boolean;
+      approval?: ApprovalDialogSpec;
+    } = {}
+  ): Promise<NormalizedApproval> {
     if (!this.approvalHandler) {
-      return false;
+      return { approved: false };
     }
 
     try {
       this.approvalWaitListener?.('start', context.toolName);
-      return await this.approvalHandler.requestApproval({
+      const raw = await this.approvalHandler.requestApproval({
         toolName: context.toolName,
         toolInput: context.toolInput,
         reason,
         timestamp: context.timestamp,
         ...(meta.tier ? { tier: meta.tier } : {}),
         ...(meta.autoApproveOn ? { autoApproveOn: true } : {}),
+        ...(meta.approval ? { kind: meta.approval.kind, site: meta.approval.site, choices: meta.approval.choices } : {}),
       }, signal);
+      return normalizeApprovalAnswer(raw);
     } catch (error) {
       console.error('[PermissionsMiddleware] Approval request error:', error);
-      return false;
+      return { approved: false };
     } finally {
       this.approvalWaitListener?.('end', context.toolName);
     }

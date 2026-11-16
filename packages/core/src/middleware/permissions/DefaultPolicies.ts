@@ -14,6 +14,8 @@ import type { PermissionPolicy } from '../contracts/MiddlewareContracts.js';
 import { analyzeBashCommand } from './bashCommandView.js';
 import * as path from 'node:path';
 import { resolveDesktop } from '../../config/localDesktop.js';
+import { listSites, sessionVaultPath } from '../../config/sessionVault.js';
+import { grantsPath, readGrantForSite, notePreApproval, hasSessionGrant } from '../../config/sessionRelease.js';
 
 /**
  * 2026-11-13 (operator's M2 session 28a43865): with no desktop package installed, deepseek-flash answered "do you have desktop tools?"
@@ -476,3 +478,98 @@ export const defaultPolicies: PermissionPolicy[] = [
   whitelistPolicy, // Priority 100
   graylistPolicy, // Priority 50 (checked last)
 ];
+
+/**
+ * FLOOR policy (2026-11-15, vault task T3): `load_session` releases a saved browser session for a site — the highest-value thing
+ * an agent can do with the vault, so it never rides on a generic classification.
+ *
+ * The rule, exactly:
+ *   - the site has a valid standing 'always' grant (grant.importedAt === the CURRENT vault entry's importedAt) → allowed, no prompt;
+ *   - the site is not in the vault → allowed (release itself returns loaded 0 and asks nothing — there is nothing to protect);
+ *   - otherwise → refused with canApprove + blacklist tier: the middleware then turns it into a dialog when a person is there
+ *     (auto-approve OFF), and REFUSES AT ONCE when auto-approve is on or the run is headless (nothing waits).
+ *
+ * Paths are injectable so tests never touch ~/.cortex.
+ */
+export interface LoadSessionFloorOptions { vaultFile?: string; grantsFile?: string }
+
+/**
+ * The four choices the load_session dialog offers (T3 D1). Shared with the CLI and the TUI so the two surfaces ask the same
+ * question; the value is what the handler returns and what releaseSite understands.
+ */
+export function loadSessionChoices(site: string): ReadonlyArray<{ value: 'once' | 'session' | 'always' | 'no'; label: string }> {
+  return [
+    { value: 'once', label: 'Yes, just this once' },
+    { value: 'session', label: 'Yes, for this session' },
+    { value: 'always', label: `Yes, always for ${site}` },
+    { value: 'no', label: 'No, do not load it (esc)' },
+  ];
+}
+
+export function loadSessionFloorPolicy(opts: LoadSessionFloorOptions = {}): PermissionPolicy {
+  return {
+    name: 'floor-load-session',
+    priority: 9_998,
+    enabled: true,
+    evaluate: async (context) => {
+      const tool = String(context.toolName || '');
+      if (tool !== 'nexus-browser__load_session' && tool !== 'load_session') return { allowed: true };
+      const raw = (context.toolInput as { site?: unknown } | undefined)?.site;
+      if (typeof raw !== 'string' || !raw.trim()) {
+        return { allowed: false, reason: 'load_session needs a site (the registrable domain, e.g. github.com)', canApprove: true, tier: 'blacklist' };
+      }
+      const site = raw.trim().toLowerCase();
+      const entry = listSites(opts.vaultFile ?? sessionVaultPath()).find((x) => x.site === site);
+      if (!entry) return { allowed: true };
+      const grant = readGrantForSite(site, opts.grantsFile ?? grantsPath());
+      if (grant?.mode === 'always' && grant.importedAt === entry.importedAt) return { allowed: true };
+      if (hasSessionGrant(site, entry.importedAt, typeof context.sessionId === 'string' ? context.sessionId : undefined)) return { allowed: true };   // the user said "this session" in the dialog (in-process only)
+      return {
+        allowed: false,
+        reason: `no standing grant for ${site} - the user grants it once in the TUI`,
+        canApprove: true,
+        tier: 'blacklist',
+        // T3 D1/D2: this refusal carries its own four-way question, so the ONE dialog the user sees is the one that decides
+        // the release. The answer is handed to releaseSite through the in-memory pre-approval (never the disk).
+        approval: { kind: 'load_session', site, choices: loadSessionChoices(site) },
+        onApproved: (answer) => {
+          if (!answer.approved) return;
+          // Bound to the entry the user actually saw (importedAt) and to the session that answered: a re-imported site or
+          // another session can never consume this answer. No sessionId → nothing is recorded (fail closed).
+          notePreApproval({
+            site,
+            importedAt: entry.importedAt,
+            sessionId: context.sessionId,
+            scope: answer.scope ?? 'once',
+          });
+        },
+      };
+    },
+  };
+}
+
+/**
+ * Classification for the session-vault tool (vault task T3). No policy file classifies `nexus-browser__*` tools, and the honest
+ * reason this entry exists is EXPLICIT CLASSIFICATION — not a rescue from the default policy.
+ *
+ * What PermissionEvaluator actually does (see evaluate() there): a policy that returns `{ allowed: true }` WITHOUT a tier is a
+ * pass-through and evaluation continues; if every policy passes through, the evaluator returns ALLOWED. The configured default
+ * policy is consulted only when NO policy evaluated at all (none registered, or every one disabled) — never because a tool was
+ * unclassified. So an unclassified `nexus-browser__load_session` would NOT be denied by the default policy; it would be allowed
+ * by pass-through, with no policy named as the deciding one.
+ *
+ * This entry therefore makes the tool's decision explicit and attributable (`tier: 'whitelist'`, deciding policy
+ * `load-session-tool`) instead of an accidental pass-through. It is harmless because it is deliberately LOWER priority than the
+ * `floor-load-session` floor (9_998), which runs first and refuses when there is no standing grant — this entry can never
+ * release anything the floor refused, and it never even gets evaluated after a refusal (the evaluator stops at the first
+ * non-allowed decision). Interactive use with no grant stops at the floor and reaches the dialog.
+ */
+export const loadSessionToolPolicy: PermissionPolicy = {
+  name: 'load-session-tool',
+  priority: 500,
+  enabled: true,
+  evaluate: async (context) => {
+    const tool = String(context.toolName || '');
+    return tool === 'nexus-browser__load_session' || tool === 'load_session' ? { allowed: true, tier: 'whitelist' } : { allowed: true };
+  },
+};

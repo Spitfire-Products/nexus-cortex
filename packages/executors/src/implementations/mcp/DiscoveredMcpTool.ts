@@ -235,6 +235,8 @@ export class DiscoveredMcpToolExecutor extends BaseTool<
 
       signal.addEventListener('abort', onAbort, { once: true });
 
+      // Saved browser sign-ins: this executor path sends no _meta, so a load_session through it carries no release ticket and the
+      // browser process can only honour an 'always' grant (fail closed; the orchestrator's MCP branch asks and mints the ticket).
       mcpManager
         .callTool(serverName, toolName, args)
         .then((res) => {

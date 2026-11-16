@@ -13,6 +13,7 @@ import { resolveDesktop } from '../config/localDesktop.js';
 import { liftPlanAllowedInSession } from '../config/interactiveProfile.js';
 import { featureAppliedKeys } from '../config/featurePayload.js';
 import { maskToolResults, maskSecretText } from '../config/secretsVault.js';
+import { gateMcpLoadSession } from '../config/sessionTicket.js';
 import { resolveBrowserBackend } from '../config/localBrowser.js';
 import { normalizeMcpSchema } from '../mcp/mcpSchemaCompat.js';
 import { v4 as uuidv4 } from 'uuid';
@@ -8953,6 +8954,10 @@ export class CortexOrchestrator {
         const MAX_RETRIES = 2;
         const BASE_DELAY_MS = 1000;
         let result: any;
+        // Arguments forwarded to an MCP server, prepared ONCE per call (a retry after a network error must not ask again or mint a
+        // second release ticket). See the load_session block in the MCP branch below.
+        let mcpForwardArgs: Record<string, unknown> | undefined;
+        let mcpForwardMeta: Record<string, unknown> | undefined;
 
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
           try {
@@ -9132,10 +9137,28 @@ export class CortexOrchestrator {
                 );
               }
 
+              if (mcpForwardArgs === undefined) {
+                mcpForwardArgs = (toolUse.input ?? {}) as Record<string, unknown>;
+                // Saved browser sign-ins (vault glue, 2026-11-15). MCP calls skip the general permission check above, so the
+                // load_session FLOOR (DefaultPolicies floor-load-session) is run here for this one tool; then the user's answer —
+                // held only in THIS process — is handed to the browser process as a single-use release ticket (sessionTicket.ts),
+                // in the request's _meta: never in the arguments, so the ticket id cannot reach the transcript or be supplied by the model.
+                const pm = this.permissionsMiddleware;
+                mcpForwardMeta = await gateMcpLoadSession(rawToolName, toolUse.name, mcpForwardArgs, this.currentSessionId,
+                  pm ? (name, input) => pm.checkPermission(name, input, {
+                    sessionId: this.currentSessionId,
+                    config: this.config,
+                    modelId: this.currentModelId,
+                    conversationId: this.currentConversationId,
+                    turnNumber: this.turnNumber,
+                    approvalMode: this.approvalMode,
+                  } as any, signal) : undefined);
+              }
               const mcpResult = await this.mcpManager!.callTool(
                 mcpServerName,
                 rawToolName,
-                toolUse.input
+                mcpForwardArgs,
+                mcpForwardMeta
               );
 
               // Phase 2.5 Day 4: Convert MCP result to ToolResult format

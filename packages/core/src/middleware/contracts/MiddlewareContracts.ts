@@ -146,6 +146,14 @@ export type PermissionDecision =
       reason: string;
       canApprove: boolean;
       tier?: 'graylist' | 'blacklist'; // Approval tier for auto-approve logic
+      /**
+       * 2026-11-14 (vault T3, D2): a refusal that carries its OWN dialog spec. The middleware copies kind/site/choices into the
+       * ApprovalRequest, so the one question the user answers is the question this policy needs answered — not a generic
+       * yes/no that the tool then has to ask again.
+       */
+      approval?: ApprovalDialogSpec;
+      /** Called with the normalised answer after a positive one. The policy (not the middleware) decides what to record. */
+      onApproved?: (answer: NormalizedApproval) => void;
     };
 
 /**
@@ -176,6 +184,50 @@ export interface PermissionPolicy {
 /**
  * Approval request for dangerous operations
  */
+/** How long an approval applies. 'always' is the only scope that reaches the disk (the release path writes the grant). */
+export type ApprovalScope = 'once' | 'session' | 'always';
+
+/** One selectable choice in a multi-choice approval dialog. 'no' is a refusal, not a scope. */
+export interface ApprovalChoice {
+  value: ApprovalScope | 'no';
+  label: string;
+}
+
+/**
+ * 2026-11-14 (vault T3, D1): the four-way question a policy can put in front of the user. Carried by the decision and copied
+ * into the ApprovalRequest, so the dialog a handler shows is the one the policy asked for.
+ */
+export interface ApprovalDialogSpec {
+  kind: 'load_session';
+  site: string;
+  choices: ReadonlyArray<ApprovalChoice>;
+}
+
+/** What a handler may return. A bare boolean is the legacy shape and means 'once' when true. */
+export type ApprovalAnswer = boolean | { approved: boolean; scope?: ApprovalScope };
+
+/** The single shape the rest of the code works with. */
+export interface NormalizedApproval {
+  approved: boolean;
+  scope?: ApprovalScope;
+}
+
+/**
+ * THE one place a raw handler answer becomes a decision. Every caller that treats an answer as a boolean goes through this.
+ * `{ approved: true }` with no scope is 'once'; a missing or unrecognised answer is a refusal.
+ */
+export function normalizeApprovalAnswer(answer: ApprovalAnswer | null | undefined): NormalizedApproval {
+  if (answer === true) return { approved: true, scope: 'once' };
+  if (answer === false || answer === null || answer === undefined) return { approved: false };
+  if (typeof answer === 'object') {
+    if (answer.approved !== true) return { approved: false };
+    const scope = answer.scope;
+    if (scope === 'session' || scope === 'always' || scope === 'once') return { approved: true, scope };
+    return { approved: true, scope: 'once' };
+  }
+  return { approved: false };
+}
+
 export interface ApprovalRequest {
   toolName: string;
   toolInput: any;
@@ -185,6 +237,12 @@ export interface ApprovalRequest {
   tier?: 'whitelist' | 'graylist' | 'blacklist';
   /** true when session auto-approve is already ON (so the UI can say why it still asks) */
   autoApproveOn?: boolean;
+  /** 2026-11-14 (vault T3): set when the policy wants its own multi-choice dialog rather than the generic yes/no prompt. */
+  kind?: 'load_session';
+  /** the site the question is about (kind === 'load_session') */
+  site?: string;
+  /** the choices to render; a handler that understands `kind` must offer exactly these */
+  choices?: ReadonlyArray<ApprovalChoice>;
 }
 
 /**
@@ -200,7 +258,7 @@ export interface ApprovalHandler {
    *                 this to avoid hanging tool-execution timeouts. Non-interactive handlers
    *                 (auto-approve, deny-all) can ignore it since they return immediately.
    */
-  requestApproval(request: ApprovalRequest, signal?: AbortSignal): Promise<boolean>;
+  requestApproval(request: ApprovalRequest, signal?: AbortSignal): Promise<ApprovalAnswer>;
 }
 
 /**

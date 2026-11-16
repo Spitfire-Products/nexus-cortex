@@ -36,6 +36,7 @@ import { buildTouchedIndex } from './canonTouched.js';
 import { discoverArchivedCanonSessions } from './canonArchiveRead.js';
 import { extractCognition, readSessionCognitionRecords } from './canonCognition.js';
 import { scrubSecrets } from './canonSync.js';
+import { isSegmentChunk, logicalPathOf, readSegmentIndex } from './canonSegments.js';
 
 const CONFIDENCE_SCORE: Record<string, number> = { EXTRACTED: 1.0, INFERRED: 0.5, AMBIGUOUS: 0.2 };
 
@@ -279,6 +280,19 @@ async function canonGraphUnlocked(o: CanonGraphOptions = {}): Promise<CanonGraph
       const src = s.archived?.path ?? path.join('canon', s.rel);
       nodes.push({ id: nid, label: s.title ?? s.uuid.slice(0, 8), file_type: 'document', source_file: src, source_location: '', harness: s.harness, bytes: s.bytes });
       edge(projNodeId, nid, 'contains', 'EXTRACTED', src);
+      // Compaction segments (canonSegments): one node per window of a session stored by segment, labelled with its first
+      // prompt (else its summary), linked to the session and to the window before it. Only sessions with a written index
+      // get them — nothing is scanned here, so graph cost is unchanged for every other session.
+      const segIdx = s.archived || !s.parts.length || !s.parts.every(isSegmentChunk) ? null : readSegmentIndex(logicalPathOf(s.parts[0]!));
+      for (const seg of segIdx?.segments ?? []) {
+        const sid = `seg:${s.uuid}:${seg.n}`;
+        const label = scrubSecrets((seg.firstPrompt ?? seg.summary ?? `segment ${seg.n}`).replace(/\s+/g, ' ').slice(0, 120));
+        const segSrc = path.join(path.dirname(src), seg.parts?.[0]?.file ?? path.basename(src));
+        nodes.push({ id: sid, label, file_type: 'document', source_file: segSrc, source_location: `L${seg.lineStart + 1}`, segment: seg.n,
+          first_ts: seg.firstTs, last_ts: seg.lastTs, closed: seg.closed, ...(seg.boundary ? { compaction: seg.boundary } : {}) });
+        edge(nid, sid, 'has_segment', 'EXTRACTED', segSrc);
+        if (seg.n > 0) edge(`seg:${s.uuid}:${seg.n - 1}`, sid, 'continues_as', 'EXTRACTED', segSrc);
+      }
     }
     for (const a of artifacts) {
       const nid = `art:${a.kind}:${a.id}`;

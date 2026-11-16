@@ -22,6 +22,7 @@ import * as path from 'node:path';
 import type { CanonSession } from './canonPull.js';
 import { sessionLines, sidecarLines } from './canonArchiveRead.js';
 import { sidecarFiles } from './sidecar.js';
+import { logicalPathOf } from './canonSegments.js';
 
 export interface TouchedIndex {
   /** session REL (unique — uuids repeat across dual-lineage copies) → absolute file path → touch count */
@@ -188,7 +189,7 @@ export async function buildTouchedIndex(
     if (s.archived) {
       sig = 'v6|blob|' + s.archived.blobs.join('|') + '|' + (s.archived.sidecarBlobs?.join(',') || '0');
     } else {
-      const logicalAbs = s.parts[0]!.replace(/\.part-\d{4}$/, '');
+      const logicalAbs = logicalPathOf(s.parts[0]!);
       const sides = sidecarFiles(logicalAbs);
       const sidecarSig = sides.length
         ? sides.map((f) => { const st = fs.statSync(f); return `${st.size}:${Math.round(st.mtimeMs)}`; }).join(',')

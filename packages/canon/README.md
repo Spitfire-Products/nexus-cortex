@@ -42,6 +42,14 @@ nexus-cortex harness there is additionally a per-turn hook: `cortex config set
 CANON_AUTO_SYNC true` schedules the same debounced pipeline after every completed
 turn.
 
+**Big sessions are stored by compaction window.** A session over 50 MB is kept as
+`<id>.jsonl.seg-SSSS.part-PPPP` sub-chunks plus a `<id>.segments.json` index (per window:
+line/byte range, time span, token counts at the compaction, first prompt, summary), so
+closed windows never change and only the open tail grows. `nexus-canon list --segments
+<uuid>` shows the windows, `nexus-canon pull <uuid> --segment <n>` materializes one, and
+`nexus-canon rechunk <uuid> [--dry-run]` stores an existing size-chunked session that way
+(old files kept). Old `.part-NNNN` sessions stay readable. Layout details: docs/CANON.md.
+
 Dependency-free (Node built-ins; canonical record types from
 `@nexus-cortex/types`). The [nexus-cortex](https://www.npmjs.com/package/nexus-cortex)
 harness embeds this same package as `cortex canon <verb>` — one implementation

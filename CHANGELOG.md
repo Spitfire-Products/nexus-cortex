@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.138.0] - 2026-11-16
+
+Saved browser sign-ins: the agent's local browser can use your own session for a site, one approved use at a time.
+
+### Added
+- **Saved browser sign-ins** (`docs/saved-signins.md`): `cortex browser-secrets import [--browser b[:profile]] [site…] [--sensitive]` or `/signins` → `i` in both TUIs imports a site's cookies from Chrome, Brave, Edge, Arc or Chromium (macOS, Linux) into an encrypted vault. Names are listed first, nothing is decrypted until you name sites, sensitive sites need an explicit tick, and the import runs only from a real terminal. The model only ever sees cookie counts.
+- **Approval per use**: once / this session / always for this site / no. With nobody there to ask (auto-approve, YOLO, a scheduled run) only sites granted `always` load; set one with `cortex browser-secrets grant <site>`.
+- **Stays fresh**: the agent's browser writes a site's refreshed cookies back (every 5 minutes, after a load and before it closes; `NEXUS_SESSION_WRITEBACK_MS`), keeping your grant. A sign-out is never saved: if the site deleted any cookie it was loaded with, the write-back is skipped and recorded.
+- **Early warning**: `/signins` and `list` show `expires <date> — re-import soon` (14 days ahead), `EXPIRED — re-import` and `refreshed <date>`; loads return the warning to the agent and note it once a day in `~/.cortex/session-vault-warnings.jsonl`.
+- **`/signins` site picker**: type to filter, Ctrl+A ticks every listed non-sensitive site, the list scrolls with the highlight.
+- **Canon**: sessions are stored by compaction segment; `cortex canon list --segments <uuid>`, `cortex canon pull <uuid> --segment N` (resume it with `cortex --resume <uuid>.seg-NNNN`), `cortex canon rechunk <uuid>`.
+
+### Fixed
+- Canon stores no longer fill the disk with git's background repacks (auto-maintenance and gc off; on partial clones, pulls never download archived sessions).
+- A pulled canon segment lands where `cortex --resume` looks for it.
+- MCP `load_session` calls go through the permission check.
+
+### Known limits
+- Some sites bind a session to the browser it was created in: X (x.com) did not accept an imported session in the agent's browser in our test.
+
 ## [4.137.18] - 2026-11-15
 
 ### Added

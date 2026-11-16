@@ -18,7 +18,18 @@ export { canonSync } from './canonSync.js';
 export type { CanonSyncOptions, CanonSyncResult } from './canonSync.js';
 export { canonTranslate } from './canonTranslate.js';
 export type { CanonTranslateOptions, CanonTranslateResult } from './canonTranslate.js';
-export { canonList, canonPull, canonPullNative, canonPullNativeAll, claudeProjectSlug, discoverCanonSessions, stripThinkingSignatures } from './canonPull.js';
+export { canonList, canonPull, canonPullNative, canonPullNativeAll, canonSegments, claudeProjectSlug, discoverCanonSessions, findNativeSessions, stripThinkingSignatures } from './canonPull.js';
+export type { CanonSegmentsOptions, CanonSegmentsResult } from './canonPull.js';
+// Segments by compaction (2026-11-15): the segmented store layout, its index, detection and retrieval.
+export {
+  SegmentScanner, SegmentedWriter, writeSegmentedFromFiles, registerSegmentDetector, segmentDetectorFor, claudeCodeBoundary,
+  chunkInfo, logicalPathOf, orderChunks, groupChunkFiles, isSegmentChunk, segmentIndexPath, readSegmentIndex, hasOldParts,
+  segmentsOfFiles, segmentBytesOfFiles, segmentsOfStream, segmentLinesOfStream, fileLinesExact, renderSegments,
+  SEGMENT_INDEX_FORMAT, DEFAULT_PART_BYTES,
+} from './canonSegments.js';
+export type { BoundaryDetector, BoundaryInfo, SegmentFile, SegmentMeta, SegmentIndex, SegmentedWriteOptions, SegmentedWriteResult, ChunkInfo } from './canonSegments.js';
+export { canonRechunk } from './canonRechunk.js';
+export type { CanonRechunkOptions, CanonRechunkResult } from './canonRechunk.js';
 export type { CanonStoreOptions, CanonSession, CanonPullOptions, CanonPullResult, CanonPullNativeOptions, CanonPullNativeResult, CanonPullNativeAllOptions, CanonPullNativeAllResult } from './canonPull.js';
 export { canonArtifacts } from './canonArtifacts.js';
 export type { CanonArtifactsOptions, CanonArtifactsResult } from './canonArtifacts.js';

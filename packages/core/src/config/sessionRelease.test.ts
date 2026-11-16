@@ -9,9 +9,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { putSite, listSites, revokeSite, type SiteEntry, type VaultCookie } from './sessionVault.js';
+import { putSite, listSites, revokeSite, getSiteForRelease, SESSION_VAULT_KEY_ID, type SiteEntry, type VaultCookie } from './sessionVault.js';
+import { deriveKey, encryptValue, decryptValue, type EncryptedSecret } from './secretsVault.js';
 import {
-  releaseSite, revokeSessionSite, isPublicSuffix, PUBLIC_SUFFIXES, grantsPath,
+  releaseSite, revokeSessionSite, isPublicSuffix, PUBLIC_SUFFIXES, grantsPath, toCdpPartitionKey, readGrant, setGrant,
   clearSessionGrants, type CdpLike, type ReleaseAnswer, type ReleaseOptions, type Ask,
 } from './sessionRelease.js';
 
@@ -131,12 +132,12 @@ describe('ask = once', () => {
     expect(fs.existsSync(grantsFile)).toBe(false);                    // 'once' is never remembered
   });
 
-  it('maps partitionKey 1:1 and omits fields the vault did not have', async () => {
+  it('maps partitionKey to the CDP shape and omits fields the vault did not have', async () => {
     putSite(entry({ cookies: [cookie({ partitionKey: 'v-0007' }), cookie({ name: 'bare', value: 'v-0008', expires: undefined, sameSite: undefined })] }), vaultFile, env);
     const cdp = fakeCdp();
     await releaseSite('github.com', 'once', cdp, opts(stubAsk('once').ask));
     const cookies = (cdp.calls[0]!.params as { cookies: Record<string, unknown>[] }).cookies;
-    expect(cookies[0]).toEqual({ name: 'session', value: 'v-0001', domain: 'github.com', path: '/', expires: 1800000000, secure: true, httpOnly: true, sameSite: 'Lax', partitionKey: 'v-0007' });
+    expect(cookies[0]).toEqual({ name: 'session', value: 'v-0001', domain: 'github.com', path: '/', expires: 1800000000, secure: true, httpOnly: true, sameSite: 'Lax', partitionKey: { topLevelSite: 'v-0007', hasCrossSiteAncestor: false } });
     expect(Object.keys(cookies[1]!).sort()).toEqual(['domain', 'httpOnly', 'name', 'path', 'secure', 'value']);
   });
 
@@ -157,8 +158,8 @@ describe('ask = session', () => {
     putSite(entry(), vaultFile, env);
     const cdp = fakeCdp();
     const { ask, prompts } = stubAsk('session');
-    await releaseSite('github.com', 'session', cdp, opts(ask));
-    await releaseSite('github.com', 'session', cdp, opts(ask));
+    await releaseSite('github.com', 'session', cdp, opts(ask, { sessionId: 's1' }));
+    await releaseSite('github.com', 'session', cdp, opts(ask, { sessionId: 's1' }));
     expect(prompts).toHaveLength(1);
     expect(cdp.calls).toHaveLength(2);
     expect(fs.existsSync(grantsFile)).toBe(false);
@@ -167,8 +168,26 @@ describe('ask = session', () => {
       { site: 'github.com', mode: 'session', at: 1700000001000 },
     ]);
     clearSessionGrants();                                             // a new process asks again
-    await releaseSite('github.com', 'session', cdp, opts(ask));
+    await releaseSite('github.com', 'session', cdp, opts(ask, { sessionId: 's1' }));
     expect(prompts).toHaveLength(2);
+  });
+
+  it("is bound to the session that answered: another session (or none) asks again; a re-import and a revoke drop it (D5)", async () => {
+    putSite(entry(), vaultFile, env);
+    const cdp = fakeCdp();
+    const { ask, prompts } = stubAsk('session');
+    await releaseSite('github.com', 'session', cdp, opts(ask, { sessionId: 'A' }));
+    await releaseSite('github.com', 'session', cdp, opts(ask, { sessionId: 'A' }));
+    expect(prompts).toHaveLength(1);
+    await releaseSite('github.com', 'session', cdp, opts(ask, { sessionId: 'B' }));
+    expect(prompts).toHaveLength(2);
+    await releaseSite('github.com', 'session', cdp, opts(ask));
+    expect(prompts).toHaveLength(3);
+    putSite({ ...entry(), importedAt: 1700000999000 }, vaultFile, env);
+    await releaseSite('github.com', 'session', cdp, opts(ask, { sessionId: 'A' }));
+    expect(prompts).toHaveLength(4);
+    await releaseSite('github.com', 'session', cdp, opts(ask, { sessionId: 'A' }));
+    expect(prompts).toHaveLength(4);
   });
 });
 
@@ -428,16 +447,99 @@ describe('expired cookies are never sent', () => {
     const res = await releaseSite('github.com', 'once', cdp, opts(stubAsk('once').ask));
     const cookies = (cdp.calls[0]!.params as { cookies: { name: string }[] }).cookies;
     expect(cookies.map((c) => c.name)).toEqual(['edge']);
-    expect(res).toEqual({ site: 'github.com', loaded: 1 });
+    expect(res).toMatchObject({ site: 'github.com', loaded: 1 });   // + an early warning: the only cookie expires now (11-16)
+    expect(res.warning).toMatch(/expires .* re-import/);
   });
 
-  it('every cookie expired: nothing sent, nothing logged, loaded 0', async () => {
+  it('every cookie expired: no ask, nothing sent, nothing logged, loaded 0', async () => {
     putSite(entry({ cookies: [cookie({ name: 'a', value: 'v-0007', expires: 1600000000 }), cookie({ name: 'b', value: 'v-0008', expires: 1500000000 })] }), vaultFile, env);
     const cdp = fakeCdp();
-    const res = await releaseSite('github.com', 'once', cdp, opts(stubAsk('once').ask));
-    expect(res).toEqual({ site: 'github.com', loaded: 0 });
+    const { ask, prompts } = stubAsk('once');
+    const res = await releaseSite('github.com', 'once', cdp, opts(ask));
+    expect(res).toEqual({ site: 'github.com', loaded: 0, expired: 2, warning: expect.stringMatching(/has expired — re-import/) });
+    expect(prompts).toEqual([]);
     expect(cdp.calls).toEqual([]);
     expect(logLines()).toEqual([]);
+  });
+});
+
+describe('T3: partitionKey conversion', () => {
+  it('none → undefined, string (legacy) → false, object → kept exactly as stored, anything else → invalid', () => {
+    expect(toCdpPartitionKey(undefined)).toBeUndefined();
+    expect(toCdpPartitionKey(null)).toBeUndefined();
+    // the bare string is the LEGACY / unknown form: has_cross_site_ancestor was never recorded, so it cannot be claimed true
+    expect(toCdpPartitionKey('https://github.com')).toEqual({ topLevelSite: 'https://github.com', hasCrossSiteAncestor: false });
+    // the object form is what a browser importer stores: the flag is carried, never forced to false
+    expect(toCdpPartitionKey({ topLevelSite: 'https://a.example', hasCrossSiteAncestor: false })).toEqual({ topLevelSite: 'https://a.example', hasCrossSiteAncestor: false });
+    expect(toCdpPartitionKey({ topLevelSite: 'https://a.example', hasCrossSiteAncestor: true })).toEqual({ topLevelSite: 'https://a.example', hasCrossSiteAncestor: true });
+    expect(toCdpPartitionKey('')).toBeNull();
+    expect(toCdpPartitionKey(7)).toBeNull();
+    expect(toCdpPartitionKey({})).toBeNull();
+    expect(toCdpPartitionKey({ topLevelSite: 7 })).toBeNull();
+    // an object without a boolean flag cannot be expressed faithfully → dropped, never guessed as false
+    expect(toCdpPartitionKey({ topLevelSite: 'https://a.example' })).toBeNull();
+    expect(toCdpPartitionKey({ topLevelSite: 'https://a.example', hasCrossSiteAncestor: 'true' })).toBeNull();
+  });
+
+  it('T3 D3: an object partitionKey with hasCrossSiteAncestor true survives the vault and reaches Network.setCookies', async () => {
+    const key = { topLevelSite: 'v-0020', hasCrossSiteAncestor: true };
+    putSite(entry({ cookies: [cookie({ partitionKey: key })] }), vaultFile, env);
+    expect(getSiteForRelease('github.com', vaultFile, env).cookies[0]!.partitionKey).toEqual(key);
+    const cdp = fakeCdp();
+    const res = await releaseSite('github.com', 'once', cdp, opts(stubAsk('once').ask));
+    expect(res).toEqual({ site: 'github.com', loaded: 1 });
+    const sent = (cdp.calls[0]!.params as { cookies: Record<string, unknown>[] }).cookies;
+    expect(sent[0]!.partitionKey).toEqual({ topLevelSite: 'v-0020', hasCrossSiteAncestor: true });
+  });
+
+  it('refuses to STORE an invalid partitionKey (T3 D3: the store validates it now)', () => {
+    expect(() => putSite(entry({ cookies: [
+      cookie({ name: 'plain', value: 'v-0001' }),
+      cookie({ name: 'broken', value: 'v-0003', partitionKey: '' }),
+    ] }), vaultFile, env)).toThrow(/partitionKey/i);
+    expect(fs.existsSync(vaultFile)).toBe(false);
+  });
+
+  it('drops a cookie whose STORED partitionKey cannot be sent, and counts it in skipped', async () => {
+    putSite(entry({ cookies: [
+      cookie({ name: 'plain', value: 'v-0001' }),
+      cookie({ name: 'partitioned', value: 'v-0002', partitionKey: 'https://github.com' }),
+      cookie({ name: 'broken', value: 'v-0003' }),
+    ] }), vaultFile, env);
+    // A payload written by an older build (or a hand-edited vault) is not re-validated on read, so the send-time guard still
+    // has to drop a key it cannot express — never send the cookie unpartitioned.
+    const stored = JSON.parse(fs.readFileSync(vaultFile, 'utf8')) as { sites: Record<string, { payload: EncryptedSecret }> };
+    const key = deriveKey(MASTER, SESSION_VAULT_KEY_ID);
+    const rec = stored.sites['github.com']!;
+    const payload = JSON.parse(decryptValue(key, rec.payload)) as { cookies: Record<string, unknown>[]; storage: Record<string, string> };
+    payload.cookies[2]!.partitionKey = '';
+    rec.payload = encryptValue(key, JSON.stringify(payload));
+    fs.writeFileSync(vaultFile, JSON.stringify(stored), { mode: 0o600 });
+
+    const cdp = fakeCdp();
+    const res = await releaseSite('github.com', 'once', cdp, opts(stubAsk('once').ask));
+    expect(res).toEqual({ site: 'github.com', loaded: 2, skipped: 1 });
+    const sent = (cdp.calls[0]!.params as { cookies: Record<string, unknown>[] }).cookies;
+    expect(sent.map((c) => c.name)).toEqual(['plain', 'partitioned']);
+    expect(sent[0]!.partitionKey).toBeUndefined();
+    expect(sent[1]!.partitionKey).toEqual({ topLevelSite: 'https://github.com', hasCrossSiteAncestor: false });
+  });
+
+  it('omits skipped entirely when nothing was dropped', async () => {
+    putSite(entry(), vaultFile, env);
+    const res = await releaseSite('github.com', 'once', fakeCdp(), opts(stubAsk('once').ask));
+    expect(res).toEqual({ site: 'github.com', loaded: 1 });
+  });
+});
+
+describe('T3: a stale grant is cleared on ANY answer', () => {
+  it('no: the stale grant is gone afterwards', async () => {
+    putSite(entry(), vaultFile, env);
+    setGrant('github.com', 1700000000000, 1600000000000, grantsFile); // a DIFFERENT entry's grant
+    const cdp = fakeCdp();
+    const res = await releaseSite('github.com', 'once', cdp, opts(stubAsk('no').ask));
+    expect(res).toEqual({ site: 'github.com', loaded: 0 });
+    expect(readGrant('github.com', grantsFile)).toBeUndefined();
   });
 });
 

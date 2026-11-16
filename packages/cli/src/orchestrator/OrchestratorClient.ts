@@ -738,7 +738,8 @@ export class OrchestratorClient {
    *
    * @param handler - Custom ApprovalHandler implementation with requestApproval method
    */
-  setApprovalHandler(handler: { requestApproval: (request: any) => Promise<boolean> }): void {
+  // T3: a handler may answer with a scope ({ approved, scope }) — the middleware normalises it (normalizeApprovalAnswer); booleans still work.
+  setApprovalHandler(handler: import('@nexus-cortex/core').ApprovalHandler): void {
     if (this.mode === 'direct' && this.orchestrator) {
       this.orchestrator.setApprovalHandler(handler);
     }

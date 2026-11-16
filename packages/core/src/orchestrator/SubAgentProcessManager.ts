@@ -39,6 +39,7 @@ import {
   type IPCPermissionRequestMessage,
 } from './SubAgentIPC.js';
 import type { ApprovalHandler } from '../middleware/contracts/MiddlewareContracts.js';
+import { normalizeApprovalAnswer } from '../middleware/contracts/MiddlewareContracts.js';
 import { resolveWorkspaceClean, resolveCortexStateDir } from '../utils/stateDir.js';
 import { childAgentDepth } from './toolAllowlist.js';
 
@@ -453,13 +454,14 @@ export class SubAgentProcessManager implements ISubAgentManager {
 
     if (this.config.approvalHandler) {
       try {
-        // Forward to parent's approval handler (shows UI to user with full tool details)
-        approved = await this.config.approvalHandler.requestApproval({
+        // Forward to parent's approval handler (shows UI to user with full tool details). The answer may be a bare boolean
+        // (legacy handler) or { approved, scope } — normalised through the one helper (vault T3, D1).
+        approved = normalizeApprovalAnswer(await this.config.approvalHandler.requestApproval({
           toolName: payload.toolName,
           toolInput: payload.toolInput,
           reason: `[Sub-Agent: ${state.agentName}] ${payload.reason}`,
           timestamp: new Date(payload.timestamp),
-        });
+        })).approved;
       } catch (error) {
         if (this.config.debug) {
           console.error(`[SubAgentProcessManager] Approval handler error:`, error);

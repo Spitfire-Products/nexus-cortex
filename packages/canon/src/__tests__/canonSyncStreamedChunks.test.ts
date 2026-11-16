@@ -15,6 +15,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { canonSync } from '../canonSync.js';
+import { orderChunks } from '../canonSegments.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'canon-stream-'));
 const BARE = path.join(tmp, 'origin.git');
@@ -31,8 +32,10 @@ const N = 52_000;            // ~52 MB of ~1 KB records → over the 50 MB chunk
 const BAD_AT = 30_000;       // 0-based index of the mid-file corrupt record
 const CORRUPT = '{"type":"api-request-blob","hash":"abc" "broken":';
 
-const parts = () => fs.readdirSync(path.dirname(DEST)).filter((n) => n.startsWith('big.jsonl.part-')).sort()
-  .map((n) => path.join(path.dirname(DEST), n));
+// 2026-11-15: a NEW chunked session is stored in the segmented layout (canonSegments: big.jsonl.seg-SSSS.part-PPPP; this
+// harness has no compaction marker → one segment). Read whichever layout is on disk, in reassembly order.
+const parts = () => orderChunks(fs.readdirSync(path.dirname(DEST)).filter((n) => n.startsWith('big.jsonl.part-') || n.startsWith('big.jsonl.seg-'))
+  .map((n) => path.join(path.dirname(DEST), n)));
 
 beforeAll(() => {
   execFileSync('git', ['init', '-q', '-b', 'main', '--bare', BARE]);

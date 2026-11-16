@@ -69,7 +69,7 @@ import {
   autoResearchBacklogRelease,
 } from './commands/autoresearch/backlog.js';
 import { canonInit } from './commands/canon/init.js';
-import { canonArtifactsCmd, canonGraphCmd, canonListCmd, canonPullCmd, canonSyncCmd, canonTranslateCmd, canonWatchCmd } from './commands/canon/pipeline.js';
+import { canonArtifactsCmd, canonGraphCmd, canonListCmd, canonPullCmd, canonRechunkCmd, canonSegmentsCmd, canonSyncCmd, canonTranslateCmd, canonWatchCmd } from './commands/canon/pipeline.js';
 import { tmuxList } from './commands/tmux/list.js';
 import { middlewareList } from './commands/middleware/list.js';
 import { middlewareStatus } from './commands/middleware/status.js';
@@ -545,6 +545,20 @@ program
     process.exit(await runSecrets(action ?? 'status', args ?? [], { ...options, json: !!program.opts().json }));
   });
 
+// 2026-11-15 browser session vault (vault task T3): what is stored, and how to take it back. Metadata only — a cookie value is
+// never printed; the library it calls cannot return one.
+program
+  .command('browser-secrets [action] [args...]')
+  .description('Saved browser sessions (metadata only): list [--json] | import [--browser <b[:profile]>] [site...] [--sensitive] | grant <site> | clear <site> | revoke <site>')
+  .option('--json', 'machine-readable output')
+  .option('--session', '(refused here: a "this session" grant lives in the running agent — use /signins in the TUI)')
+  .option('--browser <spec>', 'import: chrome | brave | edge | arc | chromium, optionally :<profile dir or name> (default chrome)')
+  .option('--sensitive', 'import: also import named sensitive sites (banking, email/identity, government, health, payments, passwords)')
+  .action(async (action: string | undefined, args: string[], options) => {
+    const { runBrowserSecrets } = await import('./commands/browser-secrets/index.js');
+    process.exit(await runBrowserSecrets(action ?? 'list', args ?? [], { json: !!options.json || !!program.opts().json, session: !!options.session, browser: options.browser, sensitive: !!options.sensitive }));
+  });
+
 // Browser backend (operator 2026-11-03): hosted MCP by default; the local @nexus-cortex/browser only when chosen (install = approval).
 program
   .command('browser [action] [args...]')
@@ -995,9 +1009,28 @@ canon
   .option('--store <dir>', 'canon store working clone (default: $CANON_STORE, else an existing /tmp/canon-store, else ~/.cache/nexus-canon/store)')
   .option('--all', 'include sessions under 4KB')
   .option('--project <id>', 'only sessions of one project (derived project↔session map)')
+  .option('--segments <session>', "one session's compaction windows (lines, time span, tokens, first prompt, summary)")
+  .option('--native', 'with --segments: read the byte-exact /native copy instead of the canonical line')
+  .option('--harness <h>', 'with --segments: restrict the uuid match to one harness')
+  .option('--rel <path>', 'with --segments: pin the exact stored path')
   .action(async (opts) => {
     const globalOpts = program.opts();
+    if (opts.segments) {
+      await canonSegmentsCmd({ session: opts.segments, native: opts.native, harness: opts.harness, rel: opts.rel, store: opts.store, json: globalOpts.json });
+      return;
+    }
     await canonListCmd({ store: opts.store, all: opts.all, project: opts.project, json: globalOpts.json });
+  });
+
+canon
+  .command('rechunk <session>')
+  .description('Store an existing native session by compaction segment (written beside the old files, sha256-verified; nothing deleted)')
+  .option('--store <dir>', 'canon store working clone (default: $CANON_STORE, else an existing /tmp/canon-store, else ~/.cache/nexus-canon/store)')
+  .option('--dry-run', 'print the segments and the files that would be written; write nothing')
+  .option('--harness <h>', 'restrict the uuid match to one harness')
+  .option('--rel <path>', 'exact native path, e.g. claude-code/<dir>/<uuid>.jsonl')
+  .action(async (session, opts) => {
+    await canonRechunkCmd({ session, store: opts.store, dryRun: opts.dryRun, harness: opts.harness, rel: opts.rel });
   });
 
 canon
@@ -1049,10 +1082,17 @@ canon
   .option('--strip-signatures', 'G1: strip provider thinking signatures from the materialized copy (foreign-account replay safety); thinking → <prior_reasoning> text')
   .option('--native', 'reverse materialization: byte-exact ORIGINAL-harness files from /native (claude-code default dest: ~/.claude/projects/<slug>/ — claude --resume ready)')
   .option('--project <cwd>', 'with --native: re-home under the project slug derived from this cwd (so claude --resume run there sees it)')
-  .option('--harness <h>', 'with --native: restrict the uuid match to one harness')
+  .option('--harness <h>', 'restrict the uuid match to one harness')
+  .option('--rel <path>', 'pin the exact stored path when a uuid matches several copies')
+  .option('--segment <n>', 'materialize ONE compaction window as <uuid>.seg-NNNN.jsonl (`canon list --segments <uuid>` lists them)')
   .action(async (session, opts) => {
     const globalOpts = program.opts();
-    await canonPullCmd({ session, to: opts.to, force: opts.force, store: opts.store, target: opts.target, stripSignatures: opts.stripSignatures, native: opts.native, project: opts.project, harness: opts.harness, json: globalOpts.json });
+    let segment: number | undefined;
+    if (opts.segment !== undefined) {
+      segment = Number(opts.segment);
+      if (!Number.isInteger(segment) || segment < 0) { console.error('--segment must be a non-negative integer'); process.exitCode = 2; return; }
+    }
+    await canonPullCmd({ session, to: opts.to, force: opts.force, store: opts.store, target: opts.target, stripSignatures: opts.stripSignatures, native: opts.native, project: opts.project, harness: opts.harness, rel: opts.rel, segment, json: globalOpts.json });
   });
 
 canon

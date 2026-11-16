@@ -9,6 +9,7 @@
 import React from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { PendingApproval } from '../hooks/useReactApprovalHandler.js';
+import { choicesForRequest, isLoadSessionRequest, reduceApprovalKey, initialChoiceState } from '../approvalChoices.js';
 import { Colors } from '@nexus-cortex/cli/dist/themes/colors.js';
 
 export interface ApprovalDialogProps {
@@ -16,6 +17,8 @@ export interface ApprovalDialogProps {
   onApprove: () => void;
   onDeny: () => void;
   onApproveAndYolo: () => void;
+  /** Answer with a specific choice (the four-way load_session dialog). Omitted → the three legacy buttons only. */
+  onChoose?: (choice: import('../approvalChoices.js').ApprovalChoice) => void;
 }
 
 /**
@@ -67,13 +70,36 @@ export const ApprovalDialog: React.FC<ApprovalDialogProps> = ({
   onApprove,
   onDeny,
   onApproveAndYolo,
+  onChoose,
 }) => {
   const { request } = pendingApproval;
   const fileName = extractFileName(request.toolInput);
   const actionVerb = getActionVerb(request.toolName);
 
+  // A load_session request asks the four-way question (once / session / always / no); everything else keeps the legacy three.
+  const loadSession = isLoadSessionRequest(request);
+  const choices = choicesForRequest(request);
+  const [state, setState] = React.useState(() => initialChoiceState(choices.length));
+
+  const pick = (index: number) => {
+    const choice = choices[index];
+    if (!choice) return;
+    if (onChoose) { onChoose(choice); return; }
+    // No onChoose wired: fall back to the legacy callbacks, which answer 'once' / 'no'.
+    if (choice.value === 'no') onDeny(); else onApprove();
+  };
+
   // Handle keyboard input
   useInput((input, key) => {
+    if (loadSession) {
+      // arrows move, Enter commits, numbers pick, esc = no — the same reducer the pure tests exercise.
+      const raw = key.upArrow ? 'up' : key.downArrow ? 'down' : key.return ? 'enter' : key.escape ? 'escape' : input;
+      const next = reduceApprovalKey(state, raw, choices.length);
+      if (next.answer !== undefined) { pick(next.index); return; }
+      if (next.index !== state.index) setState(next);
+      return;
+    }
+
     // 1 or y = approve
     if (input === '1' || input === 'y' || input === 'Y') {
       onApprove();
@@ -152,22 +178,38 @@ export const ApprovalDialog: React.FC<ApprovalDialogProps> = ({
       </Box>
 
       {/* Options */}
-      <Box flexDirection="column">
-        <Text>
-          <Text color={Colors.AccentGreen}>❯ 1.</Text> Yes
-        </Text>
-        <Text>
-          <Text dimColor>  2.</Text> {request.autoApproveOn ? 'Yes (auto-approve is already ON)' : 'Yes, and auto-approve this session (shift+tab)'}
-        </Text>
-        <Text>
-          <Text dimColor>  3.</Text> No, skip (esc)
-        </Text>
-      </Box>
+      {loadSession ? (
+        <Box flexDirection="column">
+          <Text>
+            {request.reason}
+          </Text>
+          {choices.map((c, i) => (
+            <Text key={`${c.value}-${i}`}>
+              <Text color={i === state.index ? Colors.AccentGreen : undefined} dimColor={i !== state.index}>
+                {i === state.index ? '❯ ' : '  '}{i + 1}.
+              </Text>
+              {' '}{c.label}
+            </Text>
+          ))}
+        </Box>
+      ) : (
+        <Box flexDirection="column">
+          <Text>
+            <Text color={Colors.AccentGreen}>❯ 1.</Text> Yes
+          </Text>
+          <Text>
+            <Text dimColor>  2.</Text> {request.autoApproveOn ? 'Yes (auto-approve is already ON)' : 'Yes, and auto-approve this session (shift+tab)'}
+          </Text>
+          <Text>
+            <Text dimColor>  3.</Text> No, skip (esc)
+          </Text>
+        </Box>
+      )}
 
       {/* Hint */}
       <Box marginTop={1}>
         <Text dimColor italic>
-          Press 1/2/3, y/n, Enter, or Esc
+          {loadSession ? 'Press 1-4, ↑/↓ + Enter, or Esc' : 'Press 1/2/3, y/n, Enter, or Esc'}
         </Text>
       </Box>
     </Box>

@@ -22,6 +22,7 @@ import * as fs from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 import * as path from 'node:path';
 import { dropArchivedDuplicates, dropEchoedSessions } from './canonArchive.js';
+import { SegmentedWriter, hasOldParts, segmentIndexPath } from './canonSegments.js';
 
 export interface CanonSyncOptions {
   /** Canon store working clone (default: defaultCanonStore() in storePath.ts — CANON_STORE, an existing /tmp/canon-store, else ~/.cache/nexus-canon/store; auto-cloned). */
@@ -40,6 +41,9 @@ export interface CanonSyncOptions {
    *  stores). Scoped stores are cone-mode sparse clones; root config files and
    *  native/SKIPPED.md remain present (cone semantics). */
   scope?: string;
+  /** Tuning/test hooks: the single-file cap (default 50 MB) and the sub-chunk size (default 25 MB). */
+  maxBytes?: number;
+  partBytes?: number;
 }
 
 export interface CanonSyncResult {
@@ -219,8 +223,8 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
   const DRY = o.dryRun ?? false;
   const STORE = o.store ?? defaultCanonStore();
   const MANIFEST_PATH = path.join(HOME, '.canon', 'manifest.json');
-  const MAX_BYTES = 50 * 1024 * 1024; // GitHub hard-rejects >100MB; margin for scrub growth
-  const PART_BYTES = 25 * 1024 * 1024;
+  const MAX_BYTES = o.maxBytes ?? 50 * 1024 * 1024; // GitHub hard-rejects >100MB; margin for scrub growth
+  const PART_BYTES = o.partBytes ?? 25 * 1024 * 1024;
 
   // Scoped-sync mode (see CanonSyncOptions.scope): 'auto' | 'label,label' | unset.
   const SCOPE_RAW = (o.scope ?? process.env.CANON_SYNC_SCOPE ?? '').trim();
@@ -308,6 +312,13 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
     const destBase = path.join(STORE, 'native', destRel);
     fs.mkdirSync(path.dirname(destBase), { recursive: true });
     try { fs.unlinkSync(destBase); } catch { /* none */ }
+    // LAYOUT (canonSegments, 2026-11-15): new chunked sessions are stored BY COMPACTION SEGMENT — closed segments never
+    // change, only the open tail's last sub-chunk grows. A session already stored in the old size-cut layout (and never
+    // re-chunked with rechunkSession) keeps that layout: no silent migration, no duplicate copy.
+    const seg = fs.existsSync(segmentIndexPath(destBase)) || !hasOldParts(destBase)
+      ? new SegmentedWriter(destBase, { harness: destRel.split(path.sep)[0] ?? null, partBytes: PART_BYTES })
+      : null;
+    let held: string | null = null; // seg mode: the last line, pushed once we know whether it is the unterminated final one
     const dec = new StringDecoder('utf8'); const block = Buffer.allocUnsafe(8 * 1024 * 1024);
     let pending = '', buf = '', part = 0, lineNo = 0, torn = false, scrubbedAny = false;
     const writePart = (slice: string) => {
@@ -346,7 +357,10 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
       if (!ok.length) return;
       const raw = ok.join('\n') + '\n'; const out = scrub(raw);
       if (out.length !== raw.length) scrubbedAny = true;
-      buf += out; drain(false);
+      if (seg) {
+        const ls = out.split('\n'); ls.pop();
+        for (const l of ls) { if (held !== null) seg.push(held + '\n'); held = l; }
+      } else { buf += out; drain(false); }
     };
     try {
       for (;;) {
@@ -362,7 +376,10 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
         console.log(`[canon-sync] torn line ${s.no} in ${destRel} — kept ${s.no - 1}-line valid prefix, will retry next cycle`);
         tornTrimmed++; torn = true;
       } else if (pending.length && buf.endsWith('\n')) buf = buf.slice(0, -1);   // unterminated last line: keep the file's bytes as-is
-      drain(true);
+      if (seg) {
+        if (held !== null) seg.push(!torn && pending.length ? held : held + '\n');
+        seg.finish();
+      } else drain(true);
     } catch (e) { skipped.push(`${destRel} — read failed: ${e}`); return; }
     finally { fs.closeSync(fd); }
     if (scrubbedAny) scrubbedHits++;
@@ -381,7 +398,9 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
     // parts = original; growing sessions only rewrite the LAST part, so git deltas
     // stay cheap). LFS rejected: no delta on growing blobs + 1GB/mo bandwidth cap.
     // Non-splittable oversized files remain visible skips (D8).
-    if (st.size > MAX_BYTES) {
+    // A session already stored by segment stays segmented whatever its size (its readers prefer the segmented files).
+    const segmentedAlready = src.endsWith('.jsonl') && fs.existsSync(segmentIndexPath(path.join(STORE, 'native', destRel)));
+    if (st.size > MAX_BYTES || segmentedAlready) {
       if (src.endsWith('.jsonl')) { syncChunked(src, destRel, st); return; }
       skipped.push(`${destRel} — ${(st.size / 1e6).toFixed(0)}MB > 50MB cap, not line-splittable`);
       manifest[key] = { mtimeMs: st.mtimeMs, size: st.size };

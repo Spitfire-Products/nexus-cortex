@@ -19,6 +19,7 @@
  */
 import { defaultCanonStore } from './storePath.js';
 import { sidecarFiles } from './sidecar.js';
+import { SegmentedWriter, fileLinesExact, isSegmentChunk, logicalPathOf, orderChunks, segmentDetectorFor } from './canonSegments.js';
 import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, guardedPush, atomicClone, requireFullSurfaceStore, withStoreLock } from './canonRepo.js';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
@@ -93,8 +94,7 @@ function discover(rootAbs: string, relPrefix: string): LogicalFile[] {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) { walk(p); continue; }
       if (!e.isFile()) continue;
-      const m = e.name.match(/^(.*\.jsonl)\.part-\d{4}$/);
-      const logical = m ? path.join(dir, m[1]!) : p;
+      const logical = logicalPathOf(p); // both layouts: size parts and segmented sub-chunks (canonSegments)
       if (!logical.endsWith('.jsonl')) continue;
       const g = groups.get(logical) ?? [];
       g.push(p);
@@ -103,8 +103,8 @@ function discover(rootAbs: string, relPrefix: string): LogicalFile[] {
   };
   walk(rootAbs);
   const out: LogicalFile[] = [];
-  for (const [logical, parts] of groups) {
-    parts.sort();
+  for (const [logical, files] of groups) {
+    const parts = orderChunks(files); // a segmented copy kept beside an old layout wins
     // Signature = git blob SHAs (content-stable across clones; mtime:size only
     // as a fallback for not-yet-committed files, which then retry next run).
     const sig = SCRIPT_VERSION + '|' + parts
@@ -162,6 +162,24 @@ function finalizeOutput(destAbs: string, tmpAbs: string) {
   }
   try { fs.unlinkSync(destAbs); } catch { /* none */ }
   fs.unlinkSync(tmpAbs);
+}
+
+/**
+ * Segmented output (canonSegments): the canonical line split at the compaction boundaries it carries (the translated
+ * records keep `system/compact_boundary`), the events sidecar split along the same segments, plus `<id>.segments.json`.
+ * Unchanged sub-chunks are not rewritten. A single-file form of this output is replaced; OLD `.part-NNNN` outputs (a
+ * session re-chunked with canonRechunk) are LEFT in place — readers prefer the segmented files, and deleting dozens of
+ * parts in one commit would trip guardedAddAll's mass-deletion guard and block every translate commit. They are removed
+ * by hand with the native old parts (canonRechunk prints the commands).
+ */
+function finalizeSegmented(destAbs: string, tmpAbs: string, events: { file: string; cuts: number[] } | undefined, harness: string) {
+  const w = new SegmentedWriter(destAbs, { harness, partBytes: PART_BYTES, ownsEvents: true });
+  for (const line of fileLinesExact(tmpAbs)) w.push(line);
+  w.finish(events);
+  fs.unlinkSync(tmpAbs);
+  if (events) fs.unlinkSync(events.file);
+  const eventsAbs = destAbs.replace(/\.jsonl$/, '.events.jsonl');
+  for (const logical of [destAbs, eventsAbs]) { try { fs.unlinkSync(logical); } catch { /* none */ } }
 }
 
 function writeIfChanged(abs: string, content: string) {
@@ -267,11 +285,17 @@ async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-co
   // Sidecar lines STREAM to <events>.tmp (2026-11-11): holding them as an array, then join()ing a second copy, ran V8 out of heap
   // (~2.5 GB) on the 824 MB faee1cf3 session, whose api-request-blob records alone are > 1 GB. Same push/length surface as before.
   const eventsTmp = eventsAbs + '.tmp';
-  let eventsFd: number | null = null; let eventsN = 0;
+  let eventsFd: number | null = null; let eventsN = 0; let eventsBytes = 0;
   const events = {
-    push(l: string) { if (eventsFd === null) { fs.mkdirSync(path.dirname(eventsTmp), { recursive: true }); eventsFd = fs.openSync(eventsTmp, 'w'); } fs.writeSync(eventsFd, l + '\n'); eventsN++; },
+    push(l: string) { if (eventsFd === null) { fs.mkdirSync(path.dirname(eventsTmp), { recursive: true }); eventsFd = fs.openSync(eventsTmp, 'w'); } eventsBytes += fs.writeSync(eventsFd, l + '\n'); eventsN++; },
     get length() { return eventsN; },
   };
+  // SEGMENTED output (canonSegments) mirrors the native layout: a native session stored by compaction segment gets its
+  // canonical line and its events sidecar written the same way. Events carry no boundary of their own, so they are cut at
+  // the byte offset the sidecar had reached when each native boundary record was read (native order).
+  const segmented = lf.parts.some(isSegmentChunk);
+  const detectBoundary = segmented ? segmentDetectorFor(harness) : null;
+  const eventCuts: number[] = [];
   const fileErrors: string[] = [];
   if (DRY) {
     st.files++;
@@ -427,6 +451,7 @@ async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-co
       continue;
     }
     if (rec && rec.timestamp) lastTs = rec.timestamp; // track for synthetic-record fallback
+    if (detectBoundary && lineNo > 1 && detectBoundary(rec)) eventCuts.push(eventsBytes);
     if (harness === 'gemini-cli') {
       // Buffered — the chats format is a mini event-sourced log (see
       // HARNESS_ONBOARDING.md Appendix C): header + {$set:{...}} patches +
@@ -721,6 +746,10 @@ async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-co
     manifest[lf.rel] = lf.sig;
     return;
   }
+  if (segmented) {
+    if (eventsFd !== null) { fs.closeSync(eventsFd); eventsFd = null; }
+    finalizeSegmented(destAbs, tmpAbs, events.length ? { file: eventsTmp, cuts: eventCuts } : undefined, harness);
+  } else {
   finalizeOutput(destAbs, tmpAbs);
   if (events.length) {
     // Chunk-aware like the main file: a sidecar > 50 MB becomes .part-NNNN files (GitHub's 100 MB cap; sidecar.ts resolves both).
@@ -729,6 +758,7 @@ async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-co
   } else {
     if (fs.existsSync(eventsAbs)) fs.unlinkSync(eventsAbs);
     for (const p of sidecarFiles(destAbs)) fs.unlinkSync(p);
+  }
   }
   // projection: canon IS the nexus-cortex dialect — materialize by reference
   writeIfChanged(path.join(STORE, 'projections', 'nexus-cortex', lf.rel + '.ref'), destRel + '\n');

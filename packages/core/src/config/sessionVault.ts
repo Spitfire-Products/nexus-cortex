@@ -43,9 +43,45 @@ export interface VaultCookie {
   secure: boolean;
   httpOnly: boolean;
   sameSite?: 'Strict' | 'Lax' | 'None';
-  /** CHIPS / partitioned cookie key, when the browser had one */
-  partitionKey?: string;
+  /**
+   * CHIPS / partitioned cookie key, when the browser had one.
+   *
+   * Chrome's cookie DB keeps two columns: `top_frame_site_key` (a string) and `has_cross_site_ancestor` (a boolean). Both are
+   * part of the key a partitioned cookie is stored under, so the store carries BOTH shapes:
+   *   - `string` — the LEGACY / unknown form: only the top-level site is known and the flag was never recorded.
+   *   - `{ topLevelSite, hasCrossSiteAncestor }` — the full form a browser importer must write, read from Chrome's
+   *     `has_cross_site_ancestor` column. Restoring a cookie with the wrong flag puts it in a different partition.
+   */
+  partitionKey?: string | VaultPartitionKey;
 }
+
+/** The full CHIPS partition key: the top-level site plus Chrome's `has_cross_site_ancestor` flag, exactly as stored. */
+export interface VaultPartitionKey { topLevelSite: string; hasCrossSiteAncestor: boolean }
+
+/**
+ * WHAT A BROWSER IMPORTER MUST WRITE — the exact contract of this store, per cookie and per entry.
+ *
+ * Per cookie (`VaultCookie`):
+ *   - `name`      — the cookie name, as the browser reports it.
+ *   - `value`     — the cookie value, as the browser reports it (encrypted at rest; never logged, never returned to a model).
+ *   - `domain`    — the cookie's domain attribute (may be a subdomain of the entry's `site`).
+ *   - `path`      — the cookie's path attribute.
+ *   - `expires`   — epoch SECONDS (what browsers report). OMITTED for a session cookie (no expiry) — never 0 and never a date.
+ *   - `secure`    — boolean.
+ *   - `httpOnly`  — boolean.
+ *   - `sameSite`  — 'Strict' | 'Lax' | 'None'. OMITTED when the browser recorded none (unspecified is not 'Lax').
+ *   - `partitionKey` — the OBJECT form `{ topLevelSite, hasCrossSiteAncestor }` ONLY for a partitioned (CHIPS) cookie:
+ *                   `topLevelSite` is Chrome's `top_frame_site_key`, `hasCrossSiteAncestor` is Chrome's
+ *                   `has_cross_site_ancestor` column as a BOOLEAN (not 0/1, not a string). Omit the field entirely for an
+ *                   unpartitioned cookie. The bare-string form is still READ (an older vault), never written by an importer.
+ *
+ * Per entry (`SiteEntry`):
+ *   - `site`       — the registrable domain (e.g. 'github.com'), lower-case, no scheme, no path.
+ *   - `source`     — where it came from, e.g. 'chrome:Default' (profile-qualified).
+ *   - `importedAt` — epoch MILLISECONDS, NEW on every import. This is the entry's identity: grants and pre-approvals are bound
+ *                    to it, so a re-import makes every older answer stale.
+ *   - `storage`    — optional string map (localStorage-style key → value), omitted when the browser had none.
+ */
 
 /** One site's imported session. `site` is the registrable domain ('github.com'); cookies may live on its subdomains. */
 export interface SiteEntry {
@@ -55,20 +91,23 @@ export interface SiteEntry {
   /** where it came from, e.g. 'chrome:Default' */
   source: string;
   importedAt: number;
-  /** min cookie expiry (epoch s), when any cookie expires */
+  /** latest real cookie expiry (epoch s) — siteExpiresAt */
   expiresAt?: number;
+  /** epoch ms of the last write-back of the browser's refreshed cookies (refreshSite); the import lineage (importedAt) is unchanged */
+  refreshedAt?: number;
 }
 
 /** What listSites() reports: enough to choose a site, never enough to use one. */
-export interface SiteSummary { site: string; source: string; importedAt: number; expiresAt?: number; cookieCount: number }
+export interface SiteSummary { site: string; source: string; importedAt: number; expiresAt?: number; refreshedAt?: number; cookieCount: number }
 
 export type ReleaseMode = 'once' | 'session' | 'always';
-export interface ReleaseLogEntry { site: string; mode: ReleaseMode; at: number; task?: string }
+export interface ReleaseLogEntry { site: string; /** 'refresh' = a write-back of the browser's refreshed cookies (log-only kind, never an approval answer) */
+  mode: ReleaseMode | 'refresh'; at: number; task?: string }
 
 /** Test seam: replace the temp-file write (a simulated disk failure must never damage the vault). */
 export interface SessionVaultIO { writeTmp?: (tmpPath: string, data: string) => void }
 
-interface StoredSite { site: string; source: string; importedAt: number; expiresAt?: number; cookieCount: number; payload: EncryptedSecret }
+interface StoredSite { site: string; source: string; importedAt: number; expiresAt?: number; refreshedAt?: number; cookieCount: number; payload: EncryptedSecret }
 interface SessionVaultFile { version: 1; check: EncryptedSecret; sites: Record<string, StoredSite> }
 
 /** `~/.cortex/session-vault.enc` (CORTEX_HOME relocates it, like every other cortex file). */
@@ -94,6 +133,21 @@ const bareDomain = (d: string): string => d.trim().toLowerCase().replace(/^\./, 
 /** A cookie may be set on the site itself or on one of its subdomains — never on a sibling or a parent. */
 const domainAllowed = (domain: string, site: string): boolean => { const d = bareDomain(domain); return d === site || d.endsWith(`.${site}`); };
 
+/**
+ * A cookie's partitionKey is either a non-empty string (the legacy form: only the top-level site is known) or the full object
+ * `{ topLevelSite: non-empty string, hasCrossSiteAncestor: boolean }`. Anything else is refused, and the error names the field
+ * and the cookie but never echoes the value (a partition key is browser state, not something an error message should quote).
+ */
+function assertPartitionKey(pk: unknown, cookieName: string, site: string): void {
+  const bad = (): never => { throw new Error(`invalid cookie ${cookieName} for ${site}: partitionKey must be a non-empty string or { topLevelSite, hasCrossSiteAncestor }`); };
+  if (pk === undefined) return;
+  if (typeof pk === 'string') { if (pk.trim()) return; bad(); }
+  if (!pk || typeof pk !== 'object' || Array.isArray(pk)) bad();
+  const o = pk as { topLevelSite?: unknown; hasCrossSiteAncestor?: unknown };
+  if (typeof o.topLevelSite !== 'string' || !o.topLevelSite.trim()) bad();
+  if (typeof o.hasCrossSiteAncestor !== 'boolean') bad();
+}
+
 function assertEntry(entry: SiteEntry): SiteEntry {
   if (!entry || typeof entry !== 'object') throw new Error('a site entry is required');
   const site = assertSite(entry.site);
@@ -105,6 +159,7 @@ function assertEntry(entry: SiteEntry): SiteEntry {
     if (typeof c.domain !== 'string' || !bareDomain(c.domain)) throw new Error(`invalid cookie ${c.name} for ${site}: a cookie needs a domain`);
     if (!domainAllowed(c.domain, site)) throw new Error(`cookie domain "${c.domain}" does not belong to site "${site}" (a cookie must be on the site or one of its subdomains)`);
     if (c.sameSite !== undefined && c.sameSite !== 'Strict' && c.sameSite !== 'Lax' && c.sameSite !== 'None') throw new Error(`invalid cookie ${c.name} for ${site}: sameSite must be Strict, Lax or None`);
+    assertPartitionKey(c.partitionKey, c.name, site);
   }
   if (entry.storage !== undefined) {
     if (!entry.storage || typeof entry.storage !== 'object' || Array.isArray(entry.storage)) throw new Error(`invalid site entry for ${site}: storage must be a record of strings`);
@@ -149,16 +204,26 @@ function keyFor(data: SessionVaultFile | null, env: NodeJS.ProcessEnv): Buffer {
 }
 
 // ── API ─────────────────────────────────────────────────────────────────────
+/**
+ * A site's expiry for the listing = the LATEST real cookie expiry (epoch seconds > 0); session cookies (no `expires`, or ≤ 0) are
+ * ignored; none with a real expiry → undefined. It was the EARLIEST (2026-11-15 real-Mac test, m2): one short-lived tracking cookie made
+ * x.com read "expired" ~22 min after import while its login cookies lasted months — and release (sessionRelease) drops only the cookies
+ * that are themselves expired, so the site still loaded. The latest expiry is when the site's dated cookies are all gone.
+ */
+export function siteExpiresAt(cookies: ReadonlyArray<{ expires?: number }>): number | undefined {
+  const real = cookies.map((c) => c.expires).filter((x): x is number => typeof x === 'number' && x > 0);
+  return real.length ? Math.max(...real) : undefined;
+}
+
 /** Store (or replace) one site's session. Validates the site and every cookie domain before anything is written. */
 export function putSite(entry: SiteEntry, file = sessionVaultPath(), env: NodeJS.ProcessEnv = process.env, io: SessionVaultIO = {}): SiteEntry {
   const e = assertEntry(entry);
   const data = readSessionVault(file);
   const key = keyFor(data, env);
   const vault: SessionVaultFile = data ?? { version: 1, check: encryptValue(key, CHECK_PLAINTEXT), sites: {} };
-  const expiries = e.cookies.map((c) => c.expires).filter((x): x is number => typeof x === 'number');
-  const expiresAt = e.expiresAt ?? (expiries.length ? Math.min(...expiries) : undefined);
+  const expiresAt = e.expiresAt ?? siteExpiresAt(e.cookies);
   const payload = encryptValue(key, JSON.stringify({ cookies: e.cookies, storage: e.storage ?? {} }));
-  vault.sites[e.site] = { site: e.site, source: e.source, importedAt: e.importedAt, ...(expiresAt !== undefined ? { expiresAt } : {}), cookieCount: e.cookies.length, payload };
+  vault.sites[e.site] = { site: e.site, source: e.source, importedAt: e.importedAt, ...(expiresAt !== undefined ? { expiresAt } : {}), ...(e.refreshedAt !== undefined ? { refreshedAt: e.refreshedAt } : {}), cookieCount: e.cookies.length, payload };
   writeSessionVault(vault, file, io);
   return { ...e, ...(expiresAt !== undefined ? { expiresAt } : {}) };
 }
@@ -168,7 +233,7 @@ export function listSites(file = sessionVaultPath()): SiteSummary[] {
   const data = readSessionVault(file);
   if (!data) return [];
   return Object.values(data.sites ?? {})
-    .map((s) => ({ site: s.site, source: s.source, importedAt: s.importedAt, ...(s.expiresAt !== undefined ? { expiresAt: s.expiresAt } : {}), cookieCount: s.cookieCount }))
+    .map((s) => ({ site: s.site, source: s.source, importedAt: s.importedAt, ...(s.expiresAt !== undefined ? { expiresAt: s.expiresAt } : {}), ...(s.refreshedAt !== undefined ? { refreshedAt: s.refreshedAt } : {}), cookieCount: s.cookieCount }))
     .sort((a, b) => a.site.localeCompare(b.site));
 }
 
@@ -185,7 +250,35 @@ export function getSiteForRelease(site: string, file = sessionVaultPath(), env: 
   return {
     site: rec.site, cookies: payload.cookies ?? [], storage: payload.storage ?? {}, source: rec.source, importedAt: rec.importedAt,
     ...(rec.expiresAt !== undefined ? { expiresAt: rec.expiresAt } : {}),
+    ...(rec.refreshedAt !== undefined ? { refreshedAt: rec.refreshedAt } : {}),
   };
+}
+
+export type RefreshSkip = 'missing' | 'reimported' | 'no-cookies';
+/**
+ * WRITE-BACK (operator 11-16: "add them to this release" — long-running scheduled jobs must not run into a stale snapshot): store the
+ * browser's CURRENT cookies for a site that this process released, KEEPING the import lineage. `importedAt` is unchanged, so every grant
+ * bound to it ('always', 'this session') stays valid; `refreshedAt` records the write-back. Only cookies on the site or its subdomains
+ * are kept (the same domainAllowed rule as an import); storage and source are carried over. Skipped — nothing written — when the site
+ * is gone, was RE-IMPORTED since it was released (a fresh import is a fresh consent; an older browser state must not overwrite it), or
+ * the browser holds no cookies for it. Returns counts only.
+ */
+export function refreshSite(
+  site: string,
+  cookies: readonly VaultCookie[],
+  opts: { expectImportedAt: number; now?: number; file?: string; env?: NodeJS.ProcessEnv; io?: SessionVaultIO },
+): { site: string; saved: number } | { site: string; skipped: RefreshSkip } {
+  const s = assertSite(site);
+  const file = opts.file ?? sessionVaultPath();
+  const env = opts.env ?? process.env;
+  const cur = listSites(file).find((x) => x.site === s);
+  if (!cur) return { site: s, skipped: 'missing' };
+  if (cur.importedAt !== opts.expectImportedAt) return { site: s, skipped: 'reimported' };
+  const mine = cookies.filter((c) => c && typeof c.domain === 'string' && bareDomain(c.domain) !== '' && domainAllowed(c.domain, s));
+  if (!mine.length) return { site: s, skipped: 'no-cookies' };
+  const old = getSiteForRelease(s, file, env);
+  putSite({ site: s, cookies: [...mine], storage: old.storage ?? {}, source: old.source, importedAt: old.importedAt, refreshedAt: opts.now ?? Date.now() }, file, env, opts.io ?? {});
+  return { site: s, saved: mine.length };
 }
 
 /** Drop a site's session. Works without the key on purpose: revoking access must never require an unlock. */
@@ -206,7 +299,7 @@ const RELEASE_TASK_RE = /^[A-Za-z0-9._:-]{1,64}$/;
 export function appendReleaseLog(entry: ReleaseLogEntry, file = releaseLogPath()): ReleaseLogEntry {
   const site = assertSite(entry?.site);
   const mode = entry?.mode;
-  if (mode !== 'once' && mode !== 'session' && mode !== 'always') throw new Error(`invalid release mode "${String(mode)}": use once, session or always`);
+  if (mode !== 'once' && mode !== 'session' && mode !== 'always' && mode !== 'refresh') throw new Error(`invalid release mode "${String(mode)}": use once, session, always (or refresh for a write-back)`);
   if (typeof entry.at !== 'number' || !Number.isFinite(entry.at)) throw new Error('a release log entry needs the time it happened (at, epoch ms)');
   const task = typeof entry.task === 'string' && RELEASE_TASK_RE.test(entry.task) ? entry.task : undefined;
   const line: ReleaseLogEntry = { site, mode, at: entry.at, ...(task !== undefined ? { task } : {}) };
