@@ -93,8 +93,9 @@ a turn (for example `cortex models list`) fires no hooks at all.
 JSON without `additionalContext` adds nothing. Where the context goes:
 - `SessionStart`, `UserPromptSubmit`, `Stop` and compaction hooks: into the next prompt the model sees (for `Stop`, the next turn).
 - `PreToolUse` and `PostToolUse`: appended to the tool results of that step, so the model sees it in the very next request.
-Each piece arrives as a `<system-reminder>` block naming the event. Context added to a prompt is sent with the request only: the history
-saved on disk keeps the user's original prompt. Context added to a tool result is saved with that result. All hook context for one request
+Each piece arrives as a `<system-reminder>` block naming the event. Context added to a prompt stays attached to that prompt for the rest
+of the session, so the model still sees it on later turns. The history saved on disk keeps only the user's original prompt, and a resumed
+session gets its `SessionStart` (source `resume`) context again. Context added to a tool result is saved with that result. All hook context for one request
 is capped at 20,000 characters (`CORTEX_HOOKS_MAX_CONTEXT_CHARS`).
 
 **Block.** Exit code 2 blocks on two events, with stderr as the reason:

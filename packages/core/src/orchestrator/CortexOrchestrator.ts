@@ -2530,7 +2530,7 @@ export class CortexOrchestrator {
 
     // 6. Proactive context management - ensure history fits before sending
     await this.ensureHistoryFitsModel(model);
-    injectedContent = this.deliverHookContext(injectedContent); // lifecycle hooks: SessionStart / UserPromptSubmit / Stop / compaction context
+    injectedContent = this.deliverHookContext(injectedContent, userMessage.uuid); // lifecycle hooks: SessionStart / UserPromptSubmit / Stop / compaction context
 
     // 7. Convert history to canonical messages for API
     // For the API call, we need to use the injected content (with system-reminder tags)
@@ -5234,7 +5234,7 @@ export class CortexOrchestrator {
 
     // Proactive context management - ensure history fits before streaming
     await this.ensureHistoryFitsModel(model);
-    injectedContent = this.deliverHookContext(injectedContent); // lifecycle hooks (same as sendMessage)
+    injectedContent = this.deliverHookContext(injectedContent, userMessage.uuid); // lifecycle hooks (same as sendMessage)
 
     // Convert history to canonical messages for API
     // Use injected content for the last message (current user message)
@@ -12111,6 +12111,8 @@ export class CortexOrchestrator {
    *  messageHistory keeps the RAW content (storage, display, title, judges and every text reader see the raw text); only the API
    *  conversion swaps the injected content in, so every request of the session carries the same bytes for that message. */
   private injectedApiContent = new Map<string, string | any[]>();
+  /** Lifecycle-hook context delivered with a user message (uuid → the text block); re-attached to that message in every later request. */
+  private hookContextByUuid = new Map<string, string>();
 
   private rememberInjectedContent(uuid: string, injected: string | any[]): void {
     if (resolvePersistInjected()) this.injectedApiContent.set(uuid, injected);
@@ -12118,10 +12120,16 @@ export class CortexOrchestrator {
 
   /** The record convertSingleMessage sees for the API (R223 swap; identity when off / not injected). */
   private apiViewOf(msg: Message): Message {
-    if (this.injectedApiContent.size === 0 || !msg?.uuid) return msg;
+    if (!msg?.uuid || (this.injectedApiContent.size === 0 && this.hookContextByUuid.size === 0)) return msg;
     const injected = this.injectedApiContent.get(msg.uuid);
-    if (injected === undefined) return msg;
-    return { ...msg, message: { ...(msg as any).message, content: injected } } as Message;
+    const view = injected === undefined ? msg : ({ ...msg, message: { ...(msg as any).message, content: injected } } as Message);
+    const hook = this.hookContextByUuid.get(msg.uuid);
+    if (hook === undefined) return view;
+    const content = (view as any).message?.content;
+    const has = Array.isArray(content) ? content.some((b: any) => b?.type === 'text' && b.text === hook) : typeof content === 'string' && content.includes(hook);
+    if (has) return view;
+    const withHook = Array.isArray(content) ? [{ type: 'text', text: hook }, ...content] : [{ type: 'text', text: hook }, { type: 'text', text: String(content ?? '') }];
+    return { ...view, message: { ...(view as any).message, content: withHook } } as Message;
   }
 
   /** R221 general safety net (CORTEX_WALL_CACHE_FIX=on, dark; off = no-op): drop the cached canonical conversion of
@@ -12179,7 +12187,7 @@ export class CortexOrchestrator {
   }
 
   private convertToCanonicalMessages(rawMessages: Message[]): CanonicalMessage[] {
-    const messages = this.injectedApiContent.size > 0 ? rawMessages.map((m) => this.apiViewOf(m)) : rawMessages;
+    const messages = this.injectedApiContent.size > 0 || this.hookContextByUuid.size > 0 ? rawMessages.map((m) => this.apiViewOf(m)) : rawMessages;
     const tailIdx = messages.length - 1;
     const converted = messages.map((msg, i) => {
       // Tail is recomputed every call (see cache doc-comment above).
@@ -12720,11 +12728,17 @@ export class CortexOrchestrator {
     };
   }
 
-  /** Put queued hook context into this turn's user content (same channel as the repo-state / MCP harness notes). */
-  private deliverHookContext(injectedContent: string | any[]): string | any[] {
+  /**
+   * Put queued hook context into this turn's user content (same channel as the repo-state / MCP harness notes), and REMEMBER it for that
+   * message: every later request of the session carries it again on the same message (apiViewOf), the way Claude Code keeps hook context
+   * in the conversation. Before (4.139.0) it rode only the turn's first request, so a session's 2nd turn no longer saw its SessionStart
+   * block (m2 11-17). The stored history keeps the raw text; a resumed session gets SessionStart(resume) again instead.
+   */
+  private deliverHookContext(injectedContent: string | any[], uuid?: string): string | any[] {
     if (!this.hooks.hasPending()) return injectedContent;
     const text = this.hooks.drain();
     if (!text) return injectedContent;
+    if (uuid) this.hookContextByUuid.set(uuid, text);
     if (Array.isArray(injectedContent)) { injectedContent.unshift({ type: 'text', text }); return injectedContent; }
     return [{ type: 'text', text }, { type: 'text', text: String(injectedContent) }];
   }

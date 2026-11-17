@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.139.1] - 2026-11-17
+
+### Fixed
+- **Hook context stays in the conversation.** Text added by a `SessionStart`, `UserPromptSubmit` or `Stop` hook stays with the turn it came with, so the agent still sees it on later turns. In 4.139.0 it reached only the first request of that turn, so an agent's second turn no longer saw its start-of-session instructions. The saved session history still holds only what was typed.
+
 ## [4.139.0] - 2026-11-17
 
 Lifecycle hooks: run your own commands, or add fixed text for the agent, at fixed points in a session.

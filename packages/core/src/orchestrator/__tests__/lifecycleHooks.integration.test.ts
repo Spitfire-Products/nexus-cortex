@@ -107,7 +107,9 @@ describe('lifecycle hooks in the turn loop', () => {
       expect(lastUserText(api.requests[0])).toContain('SessionStart hook additional context: SS-CONTEXT');
       expect(lastUserText(api.requests[0])).toContain('UserPromptSubmit hook additional context: UPS-CONTEXT');
       expect(lastUserText(api.requests[1])).toContain('PostToolUse hook additional context: POST-CONTEXT');
-      expect(lastUserText(api.requests[1])).not.toContain('SS-CONTEXT');   // delivered once
+      expect(lastUserText(api.requests[1])).not.toContain('SS-CONTEXT');   // not repeated on the tool round's newest message …
+      const count = (req: any, needle: string) => JSON.stringify(req).split(needle).length - 1;
+      expect(count(api.requests[1], 'SS-CONTEXT')).toBe(1);                // … but it STAYS on the turn's user message (m2 11-17: turn 2 lost it)
       // the persisted history keeps the user's ORIGINAL text (the turn-start context is request-only, like every harness note)
       const firstUser = orch.messageHistory.find((m: any) => m.type === 'user');
       expect(JSON.stringify(firstUser.message.content)).not.toContain('SS-CONTEXT');
@@ -115,6 +117,8 @@ describe('lifecycle hooks in the turn loop', () => {
       await turn(orch, mode, 'again');
       expect(events().filter((e) => e.hook_event_name === 'SessionStart')).toHaveLength(1);
       expect(lastUserText(api.requests[2])).toContain('Stop hook additional context: STOP-CONTEXT');
+      expect(count(api.requests[2], 'SS-CONTEXT')).toBe(1);                // still in context on the next turn, exactly once
+      expect(count(api.requests[2], 'UPS-CONTEXT')).toBe(2);                // one per turn, each kept on its own message
       await orch.cleanup();
       const end = events().at(-1);
       expect(end).toMatchObject({ hook_event_name: 'SessionEnd', reason: 'exit', session_id: sid });
