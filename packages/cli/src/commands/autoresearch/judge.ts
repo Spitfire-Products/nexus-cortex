@@ -143,6 +143,7 @@ export async function autoResearchJudge(options: AutoResearchJudgeOptions): Prom
       projectPath: cwd,
       workingDirectory: cwd,
       defaultModelId: model,
+      hooks: false, // a user's lifecycle hooks must not reach this single-purpose run (docs/hooks.md)
       permissionMode: 'auto',
     } as any);
     await orchestrator.createSession(cwd, model);

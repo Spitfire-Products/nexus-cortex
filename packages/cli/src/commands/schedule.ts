@@ -1,6 +1,6 @@
 /**
  * `cortex schedule` — durable loops / crons for the cortex agent (2026-11-14). Core + rationale: ../lifecycle/schedule.ts.
- *   cortex schedule add "<tag>" --every <min> (--prompt <text> | --prompt-file <f>) [--mail-name <addr> --mail-only] [--yolo] [--cwd <dir>] [--session <id>] [--model <id>]
+ *   cortex schedule add "<tag>" (--every <min> | --run-at-start) (--prompt <text> | --prompt-file <f>) [--run-at-start] [--mail-name <addr> --mail-only] [--yolo] [--cwd <dir>] [--session <id>] [--model <id>]
  *   cortex schedule list | remove "<tag>" | enable|disable "<tag>" | run-due [--dry-run] | install | uninstall
  * `install` registers ONE OS ticker (launchd every 60 s on macOS, a crontab line on Linux) that runs `cortex schedule run-due`.
  */
@@ -9,7 +9,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { acquireTickLock, dueJobs, jobInvocation, liveScheduleOwner, loadJobs, mailGate, removeJob, saveJobs, schedulesFile, upsertJob, type ScheduleJob } from '../lifecycle/schedule.js';
+import { acquireTickLock, dueJobs, jobInvocation, liveScheduleOwner, loadJobs, mailGate, removeJob, saveJobs, schedulesFile, systemBootMs, upsertJob, type ScheduleJob } from '../lifecycle/schedule.js';
 
 const CORTEX_JS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'bin', 'cortex.js');
 const LOG = path.join(os.homedir(), '.cortex', 'schedule.log');
@@ -52,17 +52,18 @@ export async function scheduleCli(op: string, tag: string | undefined, o: Record
     case 'add': {
       if (!tag) throw new Error('add needs a tag, e.g. "[mail poll]"');
       const prompt = o.promptFile ? fs.readFileSync(o.promptFile, 'utf8').trim() : String(o.prompt || '').trim();
-      const every = Number(o.every);
-      if (!prompt || !(every >= 1)) throw new Error('add needs --every <minutes ≥ 1> and --prompt or --prompt-file');
-      const j: ScheduleJob = { tag, everyMin: every, prompt, ...(o.session ? { session: o.session } : {}), ...(o.model ? { model: o.model } : {}),
+      const runAtStart = !!o.runAtStart;
+      const every = o.every === undefined && runAtStart ? 0 : Number(o.every);   // --run-at-start alone = a start-only job
+      if (!prompt || !(every >= 1 || (runAtStart && every === 0))) throw new Error('add needs --every <minutes ≥ 1> (or --run-at-start) and --prompt or --prompt-file');
+      const j: ScheduleJob = { tag, everyMin: every, prompt, ...(runAtStart ? { runAtStart: true } : {}), ...(o.session ? { session: o.session } : {}), ...(o.model ? { model: o.model } : {}),
         ...(o.cwd ? { cwd: path.resolve(o.cwd) } : {}), ...(o.mailName ? { mailName: o.mailName } : {}), ...(o.when ? { when: String(o.when) } : {}), mailOnly: !!o.mailOnly, yolo: !!o.yolo, enabled: true };
-      saveJobs(file, upsertJob(jobs, j)); console.log(`[schedule] ${tag}: every ${every} min${j.mailOnly ? `, only with unread mail for ${j.mailName}` : ''}${j.when ? `, only when \`${j.when}\` prints something` : ''}${j.yolo ? ', auto-approve ON' : ''}`); return;
+      saveJobs(file, upsertJob(jobs, j)); console.log(`[schedule] ${tag}: ${every >= 1 ? `every ${every} min` : 'only'}${runAtStart ? `${every >= 1 ? ',' : ''} at each start (window open / machine boot)` : ''}${j.mailOnly ? `, only with unread mail for ${j.mailName}` : ''}${j.when ? `, only when \`${j.when}\` prints something` : ''}${j.yolo ? ', auto-approve ON' : ''}`); return;
     }
     case 'remove': saveJobs(file, removeJob(jobs, tag || '')); console.log(`[schedule] removed ${tag}`); return;
     case 'enable': case 'disable': saveJobs(file, jobs.map((j) => j.tag === tag ? { ...j, enabled: op === 'enable' } : j)); console.log(`[schedule] ${op}d ${tag}`); return;
     case 'list': {
       if (!jobs.length) { console.log('[schedule] no jobs (cortex schedule add …)'); return; }
-      for (const j of jobs) console.log(`${j.enabled === false ? 'off' : 'on '} ${j.tag}  every ${j.everyMin} min${j.mailOnly ? ` · mail-only (${j.mailName})` : ''}${j.when ? ` · when: ${j.when}` : ''}${j.yolo ? ' · yolo' : ''} · last ${j.lastRunMs ? new Date(j.lastRunMs).toISOString() : 'never'}${j.lastRc !== undefined ? ` rc ${j.lastRc}` : ''}`);
+      for (const j of jobs) console.log(`${j.enabled === false ? 'off' : 'on '} ${j.tag}  ${j.everyMin >= 1 ? `every ${j.everyMin} min` : 'start-only'}${j.runAtStart ? ' · at start' : ''}${j.mailOnly ? ` · mail-only (${j.mailName})` : ''}${j.when ? ` · when: ${j.when}` : ''}${j.yolo ? ' · yolo' : ''} · last ${j.lastRunMs ? new Date(j.lastRunMs).toISOString() : 'never'}${j.lastRc !== undefined ? ` rc ${j.lastRc}` : ''}`);
       { const ow = liveScheduleOwner(); if (ow) console.log(`runner: ${ow.ui} window (pid ${ow.pid}) runs due jobs in its session while open; the ticker stands down`); }
       console.log(`ticker: ${process.platform === 'darwin' ? (fs.existsSync(PLIST) ? 'launchd installed' : 'NOT installed (cortex schedule install)') : 'crontab (cortex schedule install)'} · log ${LOG}`);
       return;
@@ -73,7 +74,7 @@ export async function scheduleCli(op: string, tag: string | undefined, o: Record
       if (owner) { if (o.dryRun) console.log(`[schedule] owned by ${owner.ui} pid ${owner.pid} on ${owner.host} — the ticker stands down`); return; }
       const release = acquireTickLock(LOCK); if (!release) return;   // a previous tick's turn is still running
       try {
-        for (const j of dueJobs(jobs, Date.now())) {
+        for (const j of dueJobs(jobs, Date.now(), { startedAtMs: systemBootMs() })) {   // runAtStart: once per machine boot
           if (!mailGate(j, peekMail)) continue;                        // mail-only and nothing unread: no turn, no spend
           if (o.dryRun) { console.log(`[schedule] would run ${j.tag}`); continue; }
           jobs = loadJobs(file).map((x) => x.tag === j.tag ? { ...x, lastRunMs: Date.now(), lastRunner: 'ticker' } : x); saveJobs(file, jobs);   // stamp BEFORE: a crash never re-fires in a loop

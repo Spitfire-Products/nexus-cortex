@@ -3,6 +3,7 @@
  * Exposes session CRUD operations and checkpoint management
  */
 import { Router, Request, Response } from 'express';
+import { isSessionStartSource } from '@nexus-cortex/core';
 import { getServerOrchestrator } from './messages.js';
 
 export const sessionsRouter = Router();
@@ -20,7 +21,7 @@ sessionsRouter.post('/sessions/new', async (req: Request, res: Response) => {
       });
     }
 
-    const { modelId, projectPath } = req.body;
+    const { modelId, projectPath, source } = req.body ?? {};
     const model = modelId || process.env.DEFAULT_MODEL_ID || 'gemini-2.5-flash';
     // Default to PROJECT_ROOT (monorepo root, set at server startup) for consistency
     // with /v1/messages and /sessions/:id/load. Using process.cwd() here was causing
@@ -29,8 +30,9 @@ sessionsRouter.post('/sessions/new', async (req: Request, res: Response) => {
     // chain state + accumulated cache metrics across session restarts.
     const path = projectPath || process.env.PROJECT_ROOT || process.cwd();
 
-    // Create new session (this will save the old one and start fresh)
-    await orchestrator.createSession(path, model);
+    // Create new session (this will save the old one and start fresh). `source` = the lifecycle hooks' SessionStart source
+    // (a scheduled run sends "schedule"; default "new").
+    await orchestrator.createSession(path, model, isSessionStartSource(source) ? { source } : {});
 
     // Get the new session info
     const currentModel = orchestrator.getCurrentModel();
@@ -261,6 +263,25 @@ sessionsRouter.get('/sessions/:id/checkpoints', async (req: Request, res: Respon
     res.status(500).json({
       error: { message: error.message, type: 'server_error' }
     });
+  }
+});
+
+/**
+ * POST /sessions/current/end
+ * Lifecycle hooks: run SessionEnd for the current session (once per started session) without discarding it — the headless
+ * `cortex "…"` one-shot calls this after each reply. A later turn on the same session fires SessionStart source=resume.
+ */
+sessionsRouter.post('/sessions/current/end', async (req: Request, res: Response) => {
+  try {
+    const orchestrator = getServerOrchestrator();
+    if (!orchestrator) {
+      return res.status(503).json({ error: { message: 'Server not initialized', type: 'server_error' } });
+    }
+    const reason = typeof req.body?.reason === 'string' && req.body.reason.trim() ? String(req.body.reason).slice(0, 40) : 'other';
+    await orchestrator.endSession(reason);
+    res.json({ success: true, sessionId: orchestrator.getSessionId(), reason });
+  } catch (error: any) {
+    res.status(500).json({ error: { message: error.message, type: 'server_error' } });
   }
 });
 

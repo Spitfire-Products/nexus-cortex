@@ -303,6 +303,8 @@ export interface AppendStats {
   openRewrites: number;
   /** SEALED parts that no longer matched the source — the stream was rewritten from there (each one logged). */
   diverged: string[];
+  /** SEALED parts kept as stored although the source was redacted in place (same lines; every differing line now carries `[redacted:`). */
+  redactionsKept: number;
 }
 
 const sha256 = (b: Buffer) => createHash('sha256').update(b).digest('hex');
@@ -313,7 +315,7 @@ class PartStore {
   readonly written: string[] = [];
   readonly unchanged: string[] = [];
   readonly removed: string[] = [];
-  readonly stats: AppendStats = { verified: 0, bytesWritten: 0, openRewrites: 0, diverged: [] };
+  readonly stats: AppendStats = { verified: 0, bytesWritten: 0, openRewrites: 0, diverged: [], redactionsKept: 0 };
   constructor(readonly dir: string, private readonly prev: Map<string, SegmentFile>, private readonly dryRun: boolean,
     private readonly quietOpen: boolean, private readonly log: (m: string) => void) {}
 
@@ -346,6 +348,8 @@ class PartStore {
     return { file: name, bytes: data.length, sha256: sha };
   }
   diverge(msg: string): void { this.stats.diverged.push(msg); this.log(`[canon-parts] ${msg}`); }
+  /** A sealed part kept although the source was REDACTED in place (logged; not a divergence — the stored bytes stand). */
+  redactionKept(msg: string): void { this.stats.redactionsKept++; this.log(`[canon-parts] ${msg}`); }
   openRewrite(kind: 'grew-line' | 'changed' | 'shrunk', label: string): void {
     this.stats.openRewrites++;
     if (!this.quietOpen && kind !== 'grew-line') this.log(`[canon-parts] ${label}: the open tail part ${kind === 'shrunk' ? 'is longer than the source (source shrank)' : 'changed'} — rewritten`);
@@ -357,7 +361,10 @@ class PartRun {
   readonly out: SegmentFile[] = [];
   private buf: Buffer[] = [];
   private bufBytes = 0;
-  private mode: 'verify' | 'grow' | 'fresh';
+  private mode: 'verify' | 'grow' | 'fresh' | 'realign';
+  private bufLines = 0;
+  /** realign mode: the sealed part whose bytes no longer match, and its stored lines (see sealedMismatch). */
+  private realign: { e: StoredPart; stored: Buffer; lines: Buffer[] } | null = null;
   /** grow mode: the buffer still equals the stored open part (nothing appended, nothing changed). */
   private growIntact = false;
   /** An unstable line was pushed this run: nothing after it is sealed (except at the partBytes hard cap). */
@@ -370,7 +377,58 @@ class PartRun {
   private get i(): number { return this.out.length; }
   private isOpen(i: number): boolean { return this.lastOpen && i === this.existing.length - 1; }
   private data(): Buffer { return this.buf.length === 1 ? this.buf[0]! : Buffer.concat(this.buf, this.bufBytes); }
-  private append(b: Buffer, stable: boolean): void { this.buf.push(b); this.bufBytes += b.length; if (!stable) this.unstable = true; }
+  private append(b: Buffer, stable: boolean): void { this.buf.push(b); this.bufBytes += b.length; this.bufLines++; if (!stable) this.unstable = true; }
+  private reset(): void { this.buf = []; this.bufBytes = 0; this.bufLines = 0; }
+
+  /**
+   * IN-PLACE REDACTION (2026-11-17). A secret scrub (the workspace's scrub-transcript-secrets hook, or any writer that redacts a
+   * transcript after the fact) rewrites lines INSIDE a session the store already sealed. Rewriting the stream from there broke the
+   * append-only rule: every scrub of a 68 MB session re-stored it from that part on, and the deleted later parts tripped the
+   * mass-deletion guard (no canon commit at all until it was cleared). Now such a part is KEPT as stored when the source span holds
+   * the same number of lines and every line that differs carries `[redacted:` in the source — the stored bytes were already
+   * scrubbed by sync's own pass, so nothing is lost, and the stream continues after it. Any other mid-file change keeps the
+   * logged rewrite below (never a silent duplicate, never a silent drop).
+   */
+  private startRealign(e: StoredPart): boolean {
+    if (process.env.CANON_REDACTION_REALIGN === '0') return false;
+    let stored: Buffer;
+    try { stored = fs.readFileSync(e.abs ?? path.join(this.ps.dir, e.file)); } catch { return false; }
+    if (stored.length !== e.bytes) return false;
+    const lines: Buffer[] = [];
+    let s = 0;
+    for (let k = stored.indexOf(0x0a); k >= 0; k = stored.indexOf(0x0a, s)) { lines.push(stored.subarray(s, k + 1)); s = k + 1; }
+    if (s < stored.length) return false;   // a sealed part always ends on a line boundary
+    this.realign = { e, stored, lines };
+    this.mode = 'realign';
+    return true;
+  }
+  /** realign: all lines of the stored part are buffered — keep it if the difference is redaction only, else the logged rewrite. */
+  private finishRealign(): void {
+    const { e, stored, lines } = this.realign!;
+    this.realign = null;
+    let changed = 0, ok = true;
+    for (let k = 0; k < lines.length && ok; k++) {
+      if (this.buf[k]!.equals(lines[k]!)) continue;
+      changed++;
+      if (!this.buf[k]!.includes('[redacted:')) ok = false;
+    }
+    if (!ok) { this.sealedMismatch(e, 'differs (not a redaction)'); return; }
+    this.ps.redactionKept(`${this.label}: sealed part ${e.file} kept — the source was redacted in place (${changed} line(s)); appending after it`);
+    this.out.push(this.ps.keepPart(e, stored)); this.reset();
+    this.mode = this.i >= this.existing.length ? 'fresh' : 'verify';
+  }
+  private tryRealign(e: StoredPart, why: string): void {
+    if (this.bufLines <= this.lineCount(e) && this.startRealign(e)) {
+      if (this.bufLines === this.realign!.lines.length) this.finishRealign();
+      return;
+    }
+    this.sealedMismatch(e, why);
+  }
+  private lineCount(e: StoredPart): number {
+    try { const b = fs.readFileSync(e.abs ?? path.join(this.ps.dir, e.file)); let n = 0; for (let k = b.indexOf(0x0a); k >= 0; k = b.indexOf(0x0a, k + 1)) n++; return n; }
+    catch { return -1; }
+  }
+
   private sealedMismatch(e: StoredPart, why: string): void {
     this.divergedHere = true;
     this.ps.diverge(`${this.label}: sealed part ${e.file} ${why} — the source changed in the middle; rewriting from this part (previous bytes stay in git history)`);
@@ -378,6 +436,11 @@ class PartRun {
   }
 
   push(b: Buffer, stable = true): void {
+    if (this.mode === 'realign') {
+      this.append(b, stable);
+      if (this.bufLines === this.realign!.lines.length) this.finishRealign();
+      return;
+    }
     if (this.mode === 'verify') {
       const e = this.existing[this.i];
       if (!e) this.mode = 'fresh';
@@ -387,16 +450,20 @@ class PartRun {
         const same = this.ps.matches(e, this.data());
         if (this.isOpen(this.i)) { this.mode = 'grow'; this.growIntact = same; if (!same) this.ps.openRewrite('changed', this.label); return; }
         if (same) {
-          this.out.push(this.ps.keepPart(e, this.data())); this.buf = []; this.bufBytes = 0;
+          this.out.push(this.ps.keepPart(e, this.data())); this.reset();
           if (this.i >= this.existing.length) this.mode = 'fresh';
           return;
         }
-        this.sealedMismatch(e, 'differs');
+        this.tryRealign(e, 'differs');
         return;
       } else if (this.isOpen(this.i)) {
         // The line runs past the stored tail's end: an unterminated last line that has since completed (normal), or a changed tail.
         this.mode = 'grow'; this.growIntact = false; this.ps.openRewrite('grew-line', this.label);
-      } else this.sealedMismatch(e, 'ends mid-line');
+      } else {
+        this.tryRealign(e, 'ends mid-line');
+        if ((this.mode as string) === 'realign') { this.append(b, stable); if (this.bufLines === this.realign!.lines.length) this.finishRealign(); return; }
+        if ((this.mode as string) === 'verify') { this.push(b, stable); return; }   // realigned before this line: check it against the next part
+      }
     }
     const limit = this.mode === 'grow' ? this.sealBytes : this.partBytes;
     if (this.bufBytes > 0 && this.bufBytes + b.length > limit && (!this.unstable || this.bufBytes + b.length > this.partBytes)) this.flush();
@@ -409,14 +476,22 @@ class PartRun {
     const e = this.existing[this.i];
     if (this.mode === 'grow' && this.growIntact && e) this.out.push(this.ps.keepPart(e, this.data()));   // the open tail sealed unchanged
     else this.out.push(this.ps.store(this.name(this.i), this.data()));
-    this.buf = []; this.bufBytes = 0; this.mode = 'fresh'; this.growIntact = false;
+    this.reset(); this.mode = 'fresh'; this.growIntact = false;
   }
 
   finish(): SegmentFile[] {
+    if (this.mode === 'realign') {   // the source ended before the stored part's last line: truncated, not redacted
+      const e = this.realign!.e; this.realign = null;
+      this.sealedMismatch(e, `holds more lines than the source (${this.bufLines} left in the source)`);
+    }
     if (this.mode === 'verify' && this.bufBytes > 0) {
       const e = this.existing[this.i]!;
       if (this.isOpen(this.i)) { this.mode = 'grow'; this.growIntact = false; this.ps.openRewrite('shrunk', this.label); }
-      else this.sealedMismatch(e, `holds more bytes than the source (${e.bytes} stored, ${this.bufBytes} in the source)`);
+      else {
+        // A redaction that SHORTENED the last sealed part, with nothing after it: same lines, fewer bytes.
+        if (this.bufLines === this.lineCount(e) && this.startRealign(e)) this.finishRealign();
+        else this.sealedMismatch(e, `holds more bytes than the source (${this.bufBytes} in the source, ${e.bytes} stored)`);
+      }
     }
     this.flush();
     if (!this.divergedHere) {

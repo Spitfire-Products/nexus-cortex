@@ -129,6 +129,8 @@ const COMMANDER_SUBCOMMANDS = new Set([
   'secrets', 'canon', 'features', 'sessions', 'server', 'browser', 'desktop', 'schedule',
   // vault T3/T4 (2026-11-14): missing here sent `cortex browser-secrets list` to the MODEL as a prompt (found by home's real-bin test).
   'browser-secrets',
+  // lifecycle hooks trust (2026-11-17)
+  'hooks',
 ]);
 const __firstPositional = args.find((a) => !a.startsWith('-'));
 // 2026-11-12 sub-agent NESTING GUARD: an agent's tool (Bash …) marks its children with CORTEX_TOOL_PARENT_DEPTH (core toolChildEnv). From
@@ -746,7 +748,10 @@ async function run() {
 
   // --new: create fresh session first
   if (newSession) {
-    await fetchJSON('/sessions/new', { method: 'POST' });
+    // Lifecycle hooks: a scheduled run (`cortex schedule` sets CORTEX_SESSION_SOURCE=schedule) starts its session with SessionStart
+    // source=schedule; anything else is `new`. Older servers ignore the body.
+    const source = ['schedule', 'update'].includes(process.env.CORTEX_SESSION_SOURCE || '') ? process.env.CORTEX_SESSION_SOURCE : undefined;
+    await fetchJSON('/sessions/new', { method: 'POST', ...(source ? { body: JSON.stringify({ source }) } : {}) });
     if (!quiet) {
       process.stderr.write('New session created.\n');
     }
@@ -787,6 +792,14 @@ async function run() {
     method: 'POST',
     body: JSON.stringify(payload),
   }, messageTimeoutMs);
+
+  // Lifecycle hooks: a one-shot is a whole session from the hooks' point of view — SessionEnd now (the server keeps the session; a later
+  // turn on it fires SessionStart source=resume). No-op without hooks; an older server without the route is ignored.
+  // Plain fetch, not fetchJSON: a timeout here must never exit before the answer is printed.
+  try {
+    await fetch(`${BASE_URL}/sessions/current/end`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'oneshot' }),
+      signal: AbortSignal.timeout(120000), dispatcher: LONG_TIMEOUT_DISPATCHER });
+  } catch { /* best-effort */ }
 
   // --json: raw output
   if (jsonOutput) {

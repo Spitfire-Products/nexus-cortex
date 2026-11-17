@@ -65,6 +65,7 @@ and web page reads via WebFetch. Web **search** and **browse** turn on when a se
 | Browser: hosted (default) or on this machine | `cortex browser install` (installs the local browser) · `cortex browser status` · `cortex browser use hosted\|local` — [docs/browser.md](docs/browser.md) |
 | Desktop control (your screen, mouse, keyboard) | `cortex desktop install` · `cortex desktop status` · `cortex desktop disable` |
 | Encrypted secrets (API keys, tokens) | `cortex secrets set NAME` · `/secrets` in the TUIs — [docs/secrets.md](docs/secrets.md) |
+| Hooks (run your commands at session start, before prompts, around tool calls, at turn end) | `~/.cortex/hooks.json` or `<project>/.cortex/hooks.json` (Claude Code format) — [docs/hooks.md](docs/hooks.md) |
 | Stop the background server | `cortex --shutdown` |
 | Update to the latest version | `cortex update`  (also updates the browser and desktop packages you installed; `--browser` / `--desktop` add them) |
 | Uninstall | `cortex uninstall`  (or `npm uninstall -g nexus-cortex`) |

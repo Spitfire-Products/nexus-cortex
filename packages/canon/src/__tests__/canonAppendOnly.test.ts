@@ -195,6 +195,36 @@ describe('sync: 50 syncs of a growing session are append-only', () => {
   });
 });
 
+describe('in-place redaction keeps sealed parts (append-only)', () => {
+  it('a secret redacted inside sealed parts: parts kept as stored, logged, new lines appended, no deletions', async () => {
+    const { store, home, projects } = fixtureStore('redact');
+    const src = path.join(projects, '-proj', `${ID}.jsonl`);
+    const dir = path.join(store, 'native', 'claude-code', '-proj'); const base = `${ID}.jsonl`;
+    const opts = { store, home, partBytes: PART, sealBytes: SEAL };
+    const secret = 'sk-ant-' + 'A'.repeat(40);
+    const recs = Array.from({ length: 1200 }, (_, k) => JSON.stringify({ type: 'user', k, text: (k % 50 === 7 ? `key ${secret} ` : '') + 'x'.repeat(300) }) + '\n');
+    fs.mkdirSync(path.dirname(src), { recursive: true });
+    fs.writeFileSync(src, recs.join(''));
+    await canonSync(opts);
+    const before = shaMap(filesOf(dir, base));
+    const sealed = readSegmentIndex(path.join(dir, base))!.segments.flatMap((s) => s.parts!.slice(0, -1).map((p) => p.file));
+    expect(sealed.length).toBeGreaterThan(2);
+    // the scrub hook's shape: a different-length placeholder, rewritten in place, plus new lines appended
+    const red = recs.map((l) => l.split(secret).join('[redacted:sk:0123456789]'));
+    const more = Array.from({ length: 20 }, (_, k) => JSON.stringify({ type: 'user', k: 1200 + k, text: 'y'.repeat(300) }) + '\n');
+    fs.writeFileSync(src, red.join('') + more.join(''));
+    const logs: string[] = []; const orig = console.log; console.log = (...a: unknown[]) => { logs.push(a.join(' ')); };
+    let r; try { r = await canonSync(opts); } finally { console.log = orig; }
+    expect(r!.diverged ?? []).toEqual([]);
+    expect(logs.some((l) => l.includes('redacted in place'))).toBe(true);
+    const after = shaMap(filesOf(dir, base));
+    for (const f of sealed) expect(after.get(f), `sealed ${f} rewritten`).toBe(before.get(f));
+    const whole = cat(filesOf(dir, base)).toString('utf8');
+    expect(whole.endsWith(more.join(''))).toBe(true);                         // the new lines were appended once
+    expect(whole.split('\n').filter(Boolean).length).toBe(1220);               // nothing doubled, nothing dropped
+  });
+});
+
 describe('translate: canonical outputs + events are append-only too', () => {
   const { store, home, projects } = fixtureStore('translate');
   const src = path.join(projects, '-proj', `${ID}.jsonl`);

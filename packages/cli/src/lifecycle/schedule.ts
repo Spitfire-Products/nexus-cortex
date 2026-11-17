@@ -5,5 +5,5 @@
 export {
   schedulesFile, scheduleOwnerFile, loadJobs, saveJobs, upsertJob, removeJob, dueJobs, stampJob, jobInvocation, mailGate, hasUnreadMail,
   peekMailAsync, acquireTickLock, readScheduleOwner, liveScheduleOwner, claimScheduleOwner, releaseScheduleOwner, OWNER_STALE_MS,
-  InSessionScheduler, scheduledTurnPrompt, type ScheduleJob, type ScheduleOwner,
+  InSessionScheduler, scheduledTurnPrompt, systemBootMs, type ScheduleJob, type ScheduleOwner,
 } from '@nexus-cortex/core';

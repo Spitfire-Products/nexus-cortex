@@ -142,7 +142,7 @@ import { classifyTask } from '../training/TaskClassifier.js';
 import { closestToolMatches } from './toolNameMatcher.js';
 import { classifyApiError } from './apiErrorClassifier.js';
 import { pinStaticSystemPrompt } from './staticSystemPromptPin.js';
-import { filterAgentTools, isBlockedBaseToolCall, isBrowseAgent, mayNotSpawn, agentDepth, maxAgentDepth } from './toolAllowlist.js';
+import { filterAgentTools, isBlockedBaseToolCall, isBrowseAgent, mayNotSpawn, agentDepth, maxAgentDepth, normalizeToolName } from './toolAllowlist.js';
 import { hasVisibleAssistantText, shouldForceSynthesis } from './assistantTextPresence.js';
 import { resolveTurnContractEnforce, checkTurnFormat, buildFormatRejectMessage, resolveActionPlanFields, ACTION_PLAN_TOOLS, planFieldsMissing, stripPlanFields, buildPlanFieldsRejectMessage } from './turnContractValidator.js'; // HB-TURN-CONTRACT-ENFORCE / R172
 import { computeToolBudgetSignal, isToolProgressStalled } from './toolBudgetSignal.js';
@@ -202,6 +202,8 @@ import { RetryMiddleware } from '../middleware/RetryMiddleware.js';
 import { PermissionsMiddleware } from '../middleware/PermissionsMiddleware.js';
 import { SystemMessageMiddleware } from '../middleware/SystemMessageMiddleware.js';
 import { MentorshipMiddleware } from '../middleware/MentorshipMiddleware.js';
+import { SessionHooks, truncateForPayload } from '../hooks/SessionHooks.js';
+import type { SessionStartSource } from '../hooks/hooksConfig.js';
 
 // PTC: Progressive tool loading for non-PTC providers
 import { ClientSideToolFilter } from '../tools/ClientSideToolFilter.js';
@@ -230,6 +232,10 @@ export interface OrchestratorConfig {
   /** The running surface (fuzzycortex | neoncortex | cortexserver | cli) — selects `<surface>.autoApprove` in ~/.cortex/config.json.
    *  Falls back to env CORTEX_SURFACE. */
   surface?: string;
+
+  /** Lifecycle hooks (docs/hooks.md). false = this orchestrator never runs hooks — for internal single-purpose runs (the autoresearch
+   *  judge / fixer) whose prompt must not pick up a user's hook context. Default: on (they still need a hooks.json to do anything). */
+  hooks?: boolean;
 
   /**
    * Path to a file that REPLACES the core `system_prompt` system message
@@ -513,6 +519,8 @@ export interface OrchestratorResponse {
     /** Served-model drift: provider served a different backend than requested. */
     servedModel?: string;
     servedModelDrift?: boolean;
+    /** Set when a UserPromptSubmit hook blocked the prompt (exit 2): nothing was sent to the model. */
+    hookBlocked?: { event: 'UserPromptSubmit'; reason: string };
   };
 }
 
@@ -583,6 +591,19 @@ function refuseSpawnInBrowseAgent<R>(result: R): R {
     metadata: { ...r.metadata, shouldSpawnSubAgent: false, refusedByAgentPolicy: true } } as unknown as R;
 }
 
+/** The user's prompt as plain text for the UserPromptSubmit payload (string, content blocks, or server message arrays). */
+export function flattenPromptText(content: string | any[]): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.map((b: any) => {
+    if (typeof b === 'string') return b;
+    if (b?.type === 'text' && typeof b.text === 'string') return b.text;
+    if (b?.role && typeof b.content === 'string') return b.content;
+    if (b?.role && Array.isArray(b.content)) return flattenPromptText(b.content);
+    return '';
+  }).filter(Boolean).join('\n');
+}
+
 /** Appends the user's original request to a browse delegate's task (once; trimmed) so its scope rules have the real scope to keep. */
 export function withUserRequest(taskPrompt: string, userText: string): string {
   const u = (userText || '').trim();
@@ -611,6 +632,8 @@ export class CortexOrchestrator {
    *  scored + recorded at the next sendMessage (graduation-signal capture,
    *  Decision Capture Layer §5). In-memory only; lost on restart by design. */
   private pendingTurnPrediction: import('../training/TurnPredictionStore.js').PendingTurnPrediction | null = null;
+  /** Lifecycle hooks (docs/hooks.md). Dark without a hooks.json: every call below is a no-op and request bytes are unchanged. */
+  private readonly hooks: SessionHooks;
 
   // Wave 3: Approval mode for auto-approve actions feature
   private approvalMode: { autoApproveActions: boolean };
@@ -2071,6 +2094,13 @@ export class CortexOrchestrator {
     this.systemMessageMiddleware = systemMessageMiddleware;
     this.mentorshipMiddleware = mentorshipMiddleware;
 
+    this.hooks = new SessionHooks({
+      disabled: config.hooks === false,
+      projectDir: () => this.config.projectPath || this.config.workingDirectory || process.cwd(),
+      transcriptPath: (id) => { try { return this.historyStore.getSessionPath(id); } catch { return undefined; } },
+      debug: !!this.config.debug,
+    });
+
     // Wire SearchToolsTool provider for deferred tool discovery.
     // The closure captures `this` so it resolves the active model's naming
     // convention at call-time — names in SearchTools results match the tools
@@ -2177,6 +2207,9 @@ export class CortexOrchestrator {
     if (!this.sessionTimeline) {
       throw new Error('Session not initialized. Call createSession() first.');
     }
+    // Lifecycle hooks: deferred SessionStart, then UserPromptSubmit (exit 2 = the prompt never reaches the model). No config = no-op.
+    const promptBlock = await this.runTurnStartHooks(content);
+    if (promptBlock !== null) return this.hookBlockedResponse(promptBlock);
     this.applyOutputCap(options); // HB-OUTPUT-CAP (dark)
 
     // Item 10: full-mass pre-assembly boundary — doctrine curation completes
@@ -2497,6 +2530,7 @@ export class CortexOrchestrator {
 
     // 6. Proactive context management - ensure history fits before sending
     await this.ensureHistoryFitsModel(model);
+    injectedContent = this.deliverHookContext(injectedContent); // lifecycle hooks: SessionStart / UserPromptSubmit / Stop / compaction context
 
     // 7. Convert history to canonical messages for API
     // For the API call, we need to use the injected content (with system-reminder tags)
@@ -3858,7 +3892,7 @@ export class CortexOrchestrator {
         try {
           this.herdrReport('working', `tool:${toolUseBlocks[0]?.name ?? 'batch'}`); // R145
           // Secrets vault Phase 2: stored values never reach the model or the screen («secret:NAME»); identity without a vault.
-          const toolResults = maskToolResults(await this.handleToolCalls(toolUseBlocks, abortController.signal, structuredOutputState));
+          const toolResults = maskToolResults(await this.handleToolCallsWithHooks(toolUseBlocks, abortController.signal, structuredOutputState));
           this.testPostExecThrow(); // test-only fault injection for the re-execution guard (inert in prod)
           clearTimeout(timeoutId);
           notePollResults(exactRepeatTracker, toolUseBlocks, toolResults); // R137: poll repeats count only on identical STALLED output
@@ -4761,6 +4795,9 @@ export class CortexOrchestrator {
       }
     }
 
+    // Lifecycle hooks: Stop (turn end) — its context is delivered with the next request.
+    await this.runStopHooks();
+
     // Clean up ephemeral mentorship messages — they served their purpose during this turn
     this.cleanupEphemeralMessages();
 
@@ -4923,6 +4960,13 @@ export class CortexOrchestrator {
     // Validate session initialized
     if (!this.currentSessionId || !this.sessionTimeline) {
       throw new Error('Session not initialized. Call createSession() first.');
+    }
+    // Lifecycle hooks — same as sendMessage (deferred SessionStart, UserPromptSubmit block).
+    const promptBlock = await this.runTurnStartHooks(content);
+    if (promptBlock !== null) {
+      yield { type: 'text_delta' as const, delta: this.hookBlockedText(promptBlock) } as StreamChunk;
+      yield { type: 'message_stop' as const, data: { usage: { inputTokens: 0, outputTokens: 0 }, hookBlocked: { event: 'UserPromptSubmit', reason: promptBlock } } } as StreamChunk;
+      return;
     }
     this.applyOutputCap(options); // HB-OUTPUT-CAP (dark)
 
@@ -5190,6 +5234,7 @@ export class CortexOrchestrator {
 
     // Proactive context management - ensure history fits before streaming
     await this.ensureHistoryFitsModel(model);
+    injectedContent = this.deliverHookContext(injectedContent); // lifecycle hooks (same as sendMessage)
 
     // Convert history to canonical messages for API
     // Use injected content for the last message (current user message)
@@ -5972,7 +6017,7 @@ export class CortexOrchestrator {
         // Execute tools (reuse existing method)
         this.herdrReport('working', `tool:${toolUseBlocks[0]?.name ?? 'batch'}`); // R145
         // Secrets vault Phase 2: stored values never reach the model or the screen («secret:NAME»); identity without a vault.
-        const toolResults = maskToolResults(await this.handleToolCalls(toolUseBlocks, abortController.signal, structuredOutputState));
+        const toolResults = maskToolResults(await this.handleToolCallsWithHooks(toolUseBlocks, abortController.signal, structuredOutputState));
         this.testPostExecThrow(); // test-only fault injection for the re-execution guard (inert in prod)
         clearTimeout(timeoutId);
         notePollResults(streamRepeatTracker, toolUseBlocks, toolResults); // R137 (streaming parity)
@@ -6950,6 +6995,9 @@ export class CortexOrchestrator {
       },
     } as StreamChunk;
 
+    // Lifecycle hooks: Stop (turn end) — its context is delivered with the next request.
+    await this.runStopHooks();
+
     // Clean up ephemeral mentorship messages — they served their purpose during this turn
     this.cleanupEphemeralMessages();
 
@@ -7267,8 +7315,11 @@ export class CortexOrchestrator {
    */
   async createSession(
     projectPath: string,
-    initialModelId?: string
+    initialModelId?: string,
+    opts: { source?: SessionStartSource } = {}
   ): Promise<Session> {
+    // Lifecycle hooks: the session being replaced ends (SessionEnd fires only if it had started — i.e. ran a turn).
+    await this.hooks.endSession('clear');
     const sessionId = uuidv4();
     const modelId = initialModelId || this.config.defaultModelId;
 
@@ -7321,6 +7372,8 @@ export class CortexOrchestrator {
 
     // Store project path in config
     this.config.projectPath = projectPath;
+    // SessionStart is deferred to the first turn (a TUI creates a session and may resume another right after: one start, as `resume`).
+    this.hooks.sessionCreated(sessionId, opts.source ?? 'new');
 
     // Update executor registry with session context for historical tools
     this.executorRegistry.updateConfig({
@@ -7415,6 +7468,7 @@ export class CortexOrchestrator {
     if (!sessionInfo) {
       throw new Error(`Session ${sessionId} not found`);
     }
+    await this.hooks.endSession('resume'); // lifecycle hooks: the session being replaced ends
 
     // Load persisted metadata (currentModel, cacheMetrics, responsesApiChain).
     // getSessionInfo() synthesises metadata from file stats only — it does not
@@ -7548,6 +7602,8 @@ export class CortexOrchestrator {
         this.sessionTimeline.recordMessage(messageId, role);
       }
     }
+
+    this.hooks.sessionCreated(sessionId, 'resume'); // SessionStart(resume) fires before the next request
 
     if (this.config.debug) {
       console.log('[Orchestrator] Resumed session:', sessionId);
@@ -7753,6 +7809,9 @@ export class CortexOrchestrator {
     if (this.config.debug) {
       console.log('[Orchestrator] Cleaning up resources...');
     }
+
+    // Lifecycle hooks: SessionEnd (only for a session that ran a turn; a `cortex models list` client never started one).
+    try { await this.hooks.endSession('exit'); } catch { /* hooks never break teardown */ }
 
     // Phase 2.9: Cleanup MCP connections
     if (this.mcpManager) {
@@ -8139,6 +8198,10 @@ export class CortexOrchestrator {
       return; // Within limits, no action needed
     }
 
+    // Lifecycle hooks: PreCompact (e.g. write a checkpoint first). No config = no-op.
+    if (this.hooks.has('PreCompact')) await this.hooks.fire('PreCompact', { trigger: 'auto', tokens: currentTokens, threshold });
+    let compactedForHooks = false;
+
     if (this.config.debug) {
       console.log(`⚠  Context size (${currentTokens} tokens) exceeds threshold (${threshold}) - managing context...`);
     }
@@ -8264,11 +8327,18 @@ export class CortexOrchestrator {
         }).catch(() => {});
         if (this.config.debug) console.log(`[Orchestrator Context] resume reminder injected (${resumeText.length} chars memory, task pinned=${taskText.length > 0})`);
       }
+      compactedForHooks = true;
 
     } catch (error: any) {
       console.error(`[Orchestrator Context] Context management failed:`, error.message);
       // Don't throw - let the request proceed
       // Reactive compaction in HelperModelMiddleware will catch API errors
+    }
+
+    // Lifecycle hooks: PostCompact, then SessionStart(source=compact) — context lands in the next request (re-inject the entry point).
+    if (compactedForHooks) {
+      if (this.hooks.has('PostCompact')) await this.hooks.fire('PostCompact', { trigger: 'auto', tokens_before: currentTokens });
+      await this.hooks.compacted();
     }
   }
 
@@ -12605,6 +12675,118 @@ export class CortexOrchestrator {
       console.log(`[Orchestrator] Unregistered policy: ${policyName}`);
     }
     return result;
+  }
+
+  // ============================================================
+  // LIFECYCLE HOOKS (docs/hooks.md) — the one place every surface reaches them
+  // ============================================================
+
+  /**
+   * End the current session for the lifecycle hooks (SessionEnd, once per started session) without discarding it — a later turn on it
+   * fires SessionStart(resume). The server's one-shot route calls this after each `cortex "…"` reply; cleanup() calls it on exit.
+   */
+  async endSession(reason: string = 'other'): Promise<void> {
+    try { await this.hooks.endSession(reason); } catch { /* hooks never break a session */ }
+  }
+
+  /** Deferred SessionStart + UserPromptSubmit. Returns the block reason, or null to proceed. */
+  private async runTurnStartHooks(content: string | any[]): Promise<string | null> {
+    if (!this.hooks.enabled()) return null;
+    try {
+      await this.hooks.ensureStarted();
+      if (!this.hooks.has('UserPromptSubmit')) return null;
+      const r = await this.hooks.fire('UserPromptSubmit', { prompt: flattenPromptText(content) });
+      return r.blocked ? r.blocked.reason : null;
+    } catch (e: any) {
+      if (this.config.debug) console.warn(`[hooks] turn-start hooks failed: ${e?.message ?? e}`);
+      return null;
+    }
+  }
+
+  private hookBlockedText(reason: string): string {
+    return `Prompt blocked by a UserPromptSubmit hook: ${reason}`;
+  }
+
+  /** The response for a prompt a UserPromptSubmit hook blocked: nothing reached the model or the history. */
+  private hookBlockedResponse(reason: string): OrchestratorResponse {
+    const model = this.getCurrentModel();
+    return {
+      messageId: uuidv4(),
+      content: [{ type: 'text', text: this.hookBlockedText(reason) }],
+      toolUses: [],
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      model: { id: model?.id ?? this.currentModelId, provider: model?.provider ?? 'unknown' },
+      metadata: { conversationId: this.currentConversationId, usedHelperModel: false, compactionTriggered: false, hookBlocked: { event: 'UserPromptSubmit', reason } },
+    };
+  }
+
+  /** Put queued hook context into this turn's user content (same channel as the repo-state / MCP harness notes). */
+  private deliverHookContext(injectedContent: string | any[]): string | any[] {
+    if (!this.hooks.hasPending()) return injectedContent;
+    const text = this.hooks.drain();
+    if (!text) return injectedContent;
+    if (Array.isArray(injectedContent)) { injectedContent.unshift({ type: 'text', text }); return injectedContent; }
+    return [{ type: 'text', text }, { type: 'text', text: String(injectedContent) }];
+  }
+
+  /** Stop hooks at turn end (context waits for the next request). */
+  private async runStopHooks(): Promise<void> {
+    if (!this.hooks.has('Stop')) return;
+    try { await this.hooks.fire('Stop', { stop_hook_active: false }); } catch { /* never breaks a turn */ }
+  }
+
+  /** The canonical (registry) name of a tool the model called — `grep` → `Grep`; MCP / unknown names unchanged. Matchers test this. */
+  private canonicalToolName(name: string): string {
+    const n = normalizeToolName(name);
+    return toolFactory.getAllTools().find((t) => normalizeToolName(t.name) === n)?.name ?? name;
+  }
+
+  /**
+   * handleToolCalls wrapped in PreToolUse / PostToolUse. Without tool hooks (and no queued context) this IS handleToolCalls.
+   * PreToolUse runs for every call of the batch before the batch executes; a block (exit 2) returns stderr as that call's error result.
+   * Context from tool hooks (and anything queued mid-turn, e.g. after a compaction) is appended to the batch's last tool result — the
+   * same channel the decision-prior reminders use — so it reaches the very next request.
+   */
+  private async handleToolCallsWithHooks(
+    toolUseBlocks: Array<{ id: string; name: string; input: any }>,
+    signal: AbortSignal,
+    structuredOutputState?: StructuredOutputTurnState,
+  ): Promise<Array<{ tool_use_id: string; tool_name: string; content: string; is_error?: boolean; metadata?: any }>> {
+    const pre = this.hooks.has('PreToolUse');
+    const post = this.hooks.has('PostToolUse');
+    if (!pre && !post && !this.hooks.hasPending()) return this.handleToolCalls(toolUseBlocks, signal, structuredOutputState);
+    const blocked: Array<{ tool_use_id: string; tool_name: string; content: string; is_error?: boolean; metadata?: any }> = [];
+    const allowed: typeof toolUseBlocks = [];
+    for (const b of toolUseBlocks) {
+      if (pre) {
+        const tool = this.canonicalToolName(b.name);
+        const r = await this.hooks.fire('PreToolUse', { tool_name: tool, tool_input: b.input ?? {}, tool_use_id: b.id }, tool);
+        if (r.blocked) {
+          blocked.push({ tool_use_id: b.id, tool_name: b.name, content: `Blocked by a PreToolUse hook: ${r.blocked.reason}`, is_error: true, metadata: { hookBlocked: true } });
+          continue;
+        }
+      }
+      allowed.push(b);
+    }
+    const ran = allowed.length ? await this.handleToolCalls(allowed, signal, structuredOutputState) : [];
+    if (post) {
+      for (const r of ran) {
+        const block = allowed.find((b) => b.id === r.tool_use_id);
+        const tool = this.canonicalToolName(r.tool_name);
+        await this.hooks.fire('PostToolUse', {
+          tool_name: tool, tool_input: block?.input ?? {}, tool_use_id: r.tool_use_id,
+          tool_response: truncateForPayload(String(r.content ?? '')), is_error: !!r.is_error,
+        }, tool);
+      }
+    }
+    const order = new Map(toolUseBlocks.map((b, i) => [b.id, i]));
+    const all = [...blocked, ...ran].sort((a, b) => (order.get(a.tool_use_id) ?? 1e9) - (order.get(b.tool_use_id) ?? 1e9));
+    const ctx = this.hooks.drain();
+    if (ctx && all.length) {
+      const last = all[all.length - 1]!;
+      all[all.length - 1] = { ...last, content: `${last.content ?? ''}\n\n${ctx}` };
+    }
+    return all;
   }
 
   /**

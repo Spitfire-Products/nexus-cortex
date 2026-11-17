@@ -8,7 +8,7 @@ import os from 'os';
 import path from 'path';
 import {
   InSessionScheduler, saveJobs, loadJobs, claimScheduleOwner, liveScheduleOwner, releaseScheduleOwner, readScheduleOwner, OWNER_STALE_MS,
-  scheduledTurnPrompt, type ScheduleJob,
+  scheduledTurnPrompt, dueJobs, jobInvocation, systemBootMs, type ScheduleJob,
 } from './schedule.js';
 
 let dir: string; let file: string; let ownerFile: string;
@@ -94,5 +94,41 @@ describe('InSessionScheduler.tick', () => {
     process.env.CORTEX_TUI_SCHEDULER = 'off';
     const h = harness(); h.s.start(); expect(h.s.owns).toBe(false); h.s.stop();
     delete process.env.CORTEX_TUI_SCHEDULER;
+  });
+});
+
+describe('runAtStart (2026-11-17): due once each time a runner starts', () => {
+  const now = 50_000_000;
+  it('dueJobs: due when not run since the start; a start-only job (everyMin 0) is never periodic; no start given = periodic rules only', () => {
+    const recent = job({ runAtStart: true, lastRunMs: now - 60_000 });               // ran 1 min ago, every 5 min → not periodic-due
+    expect(dueJobs([recent], now)).toHaveLength(0);
+    expect(dueJobs([recent], now, { startedAtMs: now - 30_000 })).toHaveLength(1);    // ...but the runner started after that run
+    expect(dueJobs([recent], now, { startedAtMs: now - 120_000 })).toHaveLength(0);   // already ran since this start
+    const startOnly = job({ runAtStart: true, everyMin: 0, lastRunMs: now - 10 * 24 * 3600_000 });
+    expect(dueJobs([startOnly], now)).toHaveLength(0);
+    expect(dueJobs([startOnly], now, { startedAtMs: now - 1000 })).toHaveLength(1);
+    expect(dueJobs([job({ runAtStart: true, enabled: false })], now, { startedAtMs: now })).toHaveLength(0);
+    expect(dueJobs([job({ lastRunMs: now - 60_000 })], now, { startedAtMs: now - 1000 })).toHaveLength(0);   // plain jobs ignore the start
+  });
+  it('systemBootMs is in the past (the OS ticker\'s start)', () => {
+    expect(systemBootMs(now)).toBeLessThanOrEqual(now);
+  });
+  it('the TUI scheduler runs a runAtStart job once after start(), then not again until the next start', async () => {
+    saveJobs(file, [job({ tag: '[resume]', runAtStart: true, everyMin: 0, lastRunMs: 1 })]);
+    let t = 10_000_000; const turns: string[] = [];
+    const mk = () => new InSessionScheduler({ isIdle: () => true, lastUserActivityMs: () => 0, runTurn: async (p) => { turns.push(p); } },
+      { ui: 'neoncortex', file, ownerFile, now: () => t, tickMs: 3_600_000 });
+    const s = mk();
+    expect(await s.tick()).toBe('none');           // not started yet → no start-run
+    s.start(); await new Promise((r) => setTimeout(r, 50));
+    expect(turns).toEqual(['[scheduled [resume]] read your mail']);
+    t += 1000; expect(await s.tick()).toBe('none'); // once per start
+    s.stop();
+    t += 1000; const s2 = mk(); s2.start(); await new Promise((r) => setTimeout(r, 50)); s2.stop();
+    expect(turns).toHaveLength(2);                 // the next window start runs it again
+  });
+  it('a fresh scheduled session is marked for the lifecycle hooks (SessionStart source=schedule); a pinned session is not', () => {
+    expect(jobInvocation(job(), '/x/cortex.js').env.CORTEX_SESSION_SOURCE).toBe('schedule');
+    expect(jobInvocation(job({ session: 'abc' }), '/x/cortex.js').env.CORTEX_SESSION_SOURCE).toBeUndefined();
   });
 });

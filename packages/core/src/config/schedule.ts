@@ -7,7 +7,7 @@
  *   - an open TUI (operator 11-14: "First class team member would mean through the tui. not as a subagent"): while a fuzzycortex /
  *     neoncortex window is open it OWNS the schedule — it writes a heartbeat (~/.cortex/schedule-owner.json) and runs due jobs as turns
  *     in ITS OWN session whenever it is idle. The ticker sees a live owner and stands down, so a job never runs twice.
- * mailOnly jobs fire only when the agent has unread mail (no turn, no spend otherwise).
+ * mailOnly jobs fire only when the agent has unread mail (no turn, no spend otherwise). runAtStart jobs are also due once per runner start.
  */
 import fs from 'fs';
 import os from 'os';
@@ -25,6 +25,7 @@ export interface ScheduleJob {
   mailOnly?: boolean;     // fire only when that address has unread mail (the agent-home team mail; a convenience for that setup)
   when?: string;          // generic gate: a shell command; the job fires only when it exits 0 AND prints something (2026-11-15)
   yolo?: boolean;         // ticker: auto-approve tools for this job. In a TUI the session's own approval mode applies.
+  runAtStart?: boolean;   // also due ONCE each time a runner starts (TUI window opened; ticker = machine boot). everyMin 0 = start-only (2026-11-17)
   enabled?: boolean;
   lastRunMs?: number;
   lastRc?: number;
@@ -53,9 +54,24 @@ export function upsertJob(jobs: ScheduleJob[], j: ScheduleJob): ScheduleJob[] {
 
 export function removeJob(jobs: ScheduleJob[], tag: string): ScheduleJob[] { return jobs.filter((j) => j.tag !== tag); }
 
-/** Due when never run or a full period passed (20 s slack so a 60 s ticker does not slip a period). */
-export function dueJobs(jobs: ScheduleJob[], nowMs: number): ScheduleJob[] {
-  return jobs.filter((j) => j.enabled !== false && (!j.lastRunMs || nowMs - j.lastRunMs >= Math.max(1, j.everyMin) * 60_000 - 20_000));
+/**
+ * Due when never run or a full period passed (20 s slack so a 60 s ticker does not slip a period). A `runAtStart` job is ALSO due when it
+ * has not run since `startedAtMs` — the runner's start (the TUI scheduler's start, or the machine's boot for the OS ticker, which itself
+ * starts every minute). A runAtStart job with everyMin 0 runs only at start.
+ */
+export function dueJobs(jobs: ScheduleJob[], nowMs: number, opts: { startedAtMs?: number } = {}): ScheduleJob[] {
+  return jobs.filter((j) => {
+    if (j.enabled === false) return false;
+    const atStart = !!j.runAtStart && opts.startedAtMs !== undefined && (!j.lastRunMs || j.lastRunMs < opts.startedAtMs);
+    if (atStart) return true;
+    if (j.runAtStart && !(j.everyMin >= 1)) return false;   // start-only job: never periodic
+    return !j.lastRunMs || nowMs - j.lastRunMs >= Math.max(1, j.everyMin) * 60_000 - 20_000;
+  });
+}
+
+/** When this machine booted (ms epoch) — the OS ticker's "start" for runAtStart jobs (it is itself launched every minute). */
+export function systemBootMs(nowMs = Date.now()): number {
+  return nowMs - Math.round(os.uptime() * 1000);
 }
 
 /** Merge fields into ONE job in the file (re-read first: another runner may have written since). */
@@ -74,6 +90,8 @@ export function jobInvocation(j: ScheduleJob, cortexJs: string): { args: string[
   // warn, never block: an update-required refusal at every release darkened the m2's mail loop until someone ran cortex update (11-14)
   const env: Record<string, string> = { CORTEX_UPDATE_POLICY: process.env.CORTEX_UPDATE_POLICY || 'warn' };
   if (j.yolo) env.YOLO = 'true';
+  // a fresh scheduled session starts with SessionStart source=schedule (lifecycle hooks; cli/bin/cortex.js passes it to POST /sessions/new)
+  if (!j.session) env.CORTEX_SESSION_SOURCE = 'schedule';
   return { args, env };
 }
 
@@ -184,6 +202,7 @@ export class InSessionScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private owning = false;
+  private startedAtMs: number | undefined;   // runAtStart jobs are due once after this
   private readonly o: Required<Omit<InSessionSchedulerOptions, 'file' | 'ownerFile'>> & { file: string; ownerFile: string };
   constructor(private readonly h: InSessionSchedulerHooks, opts: InSessionSchedulerOptions) {
     this.o = { tickMs: 30_000, idleGraceMs: 60_000, peek: peekMailAsync, now: Date.now, file: schedulesFile(), ownerFile: scheduleOwnerFile(), ...opts } as any;
@@ -191,6 +210,7 @@ export class InSessionScheduler {
   /** Starts ticking. Off with CORTEX_TUI_SCHEDULER=off (the OS ticker keeps running the jobs headlessly then). */
   start(): void {
     if (this.timer || (process.env.CORTEX_TUI_SCHEDULER || '').toLowerCase() === 'off') return;
+    this.startedAtMs = this.o.now();
     void this.tick();
     this.timer = setInterval(() => void this.tick(), this.o.tickMs);
     (this.timer as any).unref?.();
@@ -206,7 +226,7 @@ export class InSessionScheduler {
     this.owning = owned;
     if (!owned) return 'not-owner';
     if (this.running || !this.h.isIdle() || now - this.h.lastUserActivityMs() < this.o.idleGraceMs) return 'busy';
-    const due = dueJobs(loadJobs(this.o.file), now);
+    const due = dueJobs(loadJobs(this.o.file), now, { startedAtMs: this.startedAtMs });
     for (const j of due) {
       if (j.when && !(await whenGateAsync(j.when))) continue;
       if (j.mailOnly && !hasUnreadMail(await this.o.peek(j.mailName || ''))) continue;

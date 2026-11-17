@@ -462,6 +462,11 @@ export class CortexV4Server {
       this.viewServer = null;
     }
 
+    // Lifecycle hooks: SessionEnd for the live session (no-op without hooks / when it never ran a turn).
+    if (this.orchestrator) {
+      try { await this.orchestrator.endSession('exit'); } catch { /* hooks never block shutdown */ }
+    }
+
     // Print session summary on shutdown
     if (this.orchestrator) {
       try {
@@ -569,6 +574,7 @@ ${chalk.bold.underline('Headless Mode (curl):')}
 ${chalk.bold.underline('Session Management:')}
   GET    /sessions                     List all sessions
   POST   /sessions/new                 Start fresh session (old one saved)
+  POST   /sessions/current/end         Run SessionEnd hooks for the current session (kept on disk)
   GET    /sessions/:id/stats           Token usage, turns, tool calls
   GET    /sessions/:id/messages        Full message history
   POST   /sessions/:id/model           Switch model mid-session

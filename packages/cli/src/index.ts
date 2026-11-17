@@ -1410,11 +1410,37 @@ systemMessages
 
 // `ui` interactive command group moved to @nexus-cortex/tui (neoncortex / cli-full).
 
+// Lifecycle hooks: project-file trust (docs/hooks.md). A project's .cortex/hooks.json runs only after `cortex hooks trust`.
+program
+  .command('hooks <op> [dir]')
+  .description('Lifecycle hooks: status | trust | untrust — a project .cortex/hooks.json runs only after you trust its exact contents')
+  .action(async (op: string, dir: string | undefined) => {
+    const core: any = await import('@nexus-cortex/core');
+    const fs = await import('node:fs');
+    const project = path.resolve(dir || process.cwd());
+    try {
+      if (op === 'trust') {
+        const r = core.trustProjectHooks(project);
+        console.log(`[hooks] trusted ${r.file} (sha256 ${r.sha256.slice(0, 12)}…). Editing it later needs \`cortex hooks trust\` again.`);
+      } else if (op === 'untrust') {
+        console.log(core.untrustProjectHooks(project) ? `[hooks] removed trust for ${project}/.cortex/hooks.json` : `[hooks] ${project}/.cortex/hooks.json was not trusted`);
+      } else if (op === 'status') {
+        for (const f of core.hooksConfigPaths(project)) {
+          const isUser = path.resolve(f) === path.resolve(core.cortexUserDir(), 'hooks.json');
+          const state = isUser ? (fs.existsSync(f) ? 'user file (always loads)' : 'absent') : core.projectHooksTrust(f);
+          console.log(`${state.padEnd(26)} ${f}`);
+        }
+        if (process.env.CORTEX_HOOKS === 'off') console.log('CORTEX_HOOKS=off — no hook runs in this environment');
+      } else { console.error(`[hooks] unknown op "${op}" (status | trust | untrust)`); process.exit(2); }
+    } catch (e: any) { console.error(`[hooks] ${e.message}`); process.exit(1); }
+  });
+
 // Package lifecycle commands
 program
   .command('schedule <op> [tag]')
   .description('Durable loops/crons for the cortex agent (survive restarts): add | list | remove | enable | disable | run-due | install | uninstall')
   .option('--every <min>', 'period in minutes (add)')
+  .option('--run-at-start', 'add: also run once each time a runner starts (a TUI window opens, or the machine boots for the ticker); without --every the job runs only then')
   .option('--prompt <text>', 'the prompt each run sends (add)')
   .option('--prompt-file <file>', 'read the prompt from a file (add)')
   .option('--when <command>', 'add: run only when this shell command exits 0 and prints something (e.g. a check for new work)')

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.139.0] - 2026-11-17
+
+Lifecycle hooks: run your own commands, or add fixed text for the agent, at fixed points in a session.
+
+### Added
+- **Lifecycle hooks** (`docs/hooks.md`). Put a `hooks.json` in `~/.cortex/`; it uses the same format as Claude Code's hooks, so existing hook scripts carry over. Hooks run at these points: session start (new, resume, after compaction, scheduled), before each prompt, before and after each tool call, before and after compaction, at the end of each turn, and when the session ends.
+  - A hook's output is added to the agent's context.
+  - A `PreToolUse` or `UserPromptSubmit` hook can block a tool call or a prompt by exiting with code 2.
+  - A hook that fails or times out is logged to `~/.cortex/hooks.log` and never breaks the session.
+  - Hooks work the same in both TUIs, the `cortex "…"` one-shot, the server and scheduled jobs. Without a hooks file nothing changes, and `CORTEX_HOOKS=off` turns them off.
+- **Project hooks need your trust**: a project's `.cortex/hooks.json` runs only after `cortex hooks trust` in that project. Trust covers the file's exact contents, so editing the file means trusting it again, and a repository you clone cannot run commands on its own. `cortex hooks status` lists the hook files for a directory and whether each is trusted; `cortex hooks untrust` removes the trust.
+- **`cortex schedule add … --run-at-start`** runs a job once each time a TUI window opens or the machine boots. Without `--every`, it runs only then.
+
+### Fixed
+- **Canon keeps stored parts when a session is redacted in place.** Some tools hide secrets inside an existing session file after the fact. Canon now keeps the stored part and appends after it, instead of storing the session again from that point. The old behaviour could also stop every sync at the mass-deletion guard. `CANON_REDACTION_REALIGN=0` restores the old behaviour.
+
 ## [4.138.2] - 2026-11-17
 
 The canon store grows only by the new tail of each session. (4.138.1 was tagged but never published; 4.138.2 is the same release with its canon settings documented.)

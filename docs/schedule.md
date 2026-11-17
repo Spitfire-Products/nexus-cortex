@@ -13,6 +13,12 @@ cortex schedule remove "[new-issues]"
 
 Jobs live in `~/.cortex/schedules.json`. Each run sends the job's prompt as one agent turn.
 
+## Running at start: `--run-at-start`
+`--run-at-start` makes a job also run once each time a runner starts: when a TUI window opens (it runs the job once it has been idle), or,
+for the ticker, once after the machine boots. Without `--every` the job runs only then (`cortex schedule add "[resume]" --run-at-start
+--prompt "…"`). Requires nexus-cortex with lifecycle hooks (the same release). A fresh session started by the ticker for a job fires the
+`SessionStart` hook with `source: "schedule"` — see [hooks.md](hooks.md).
+
 ## Who runs a job: the window or the ticker
 - **While a TUI window (fuzzycortex) is open, it is the runner.** It runs a due job as a turn in its own session once it has been idle for
   about a minute. `cortex schedule list` then shows `runner: fuzzycortex window (pid …)`.

@@ -51,6 +51,7 @@ export async function autoResearchFix(options: AutoResearchFixOptions): Promise<
       projectPath: cwd,
       workingDirectory: cwd,
       defaultModelId: model,
+      hooks: false, // a user's lifecycle hooks must not reach this single-purpose run (docs/hooks.md)
       permissionMode: 'auto', // YOLO — autonomous, no approval prompts
     } as any);
     await orchestrator.createSession(cwd, model);

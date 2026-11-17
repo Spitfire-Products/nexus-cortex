@@ -100,6 +100,12 @@ agent's browser gets one only after you approve it (`/signins` manages them). Se
 `cortex schedule` runs prompts on a period, surviving restarts; `--when "<command>"` fires a job only when there is work. See
 [schedule.md](schedule.md) for who runs the jobs (the open window or the OS ticker) and how to check the ticker after an update.
 
+### Hooks
+
+`~/.cortex/hooks.json` (or `<project>/.cortex/hooks.json`) runs your commands at session start, before each prompt, around tool calls and
+compactions, at turn end and at session end — the same format as Claude Code's hooks. A hook can add context for the model or block a tool
+call or a prompt. See [hooks.md](hooks.md).
+
 ### Updating an MCP server without restarting (`ReconnectMcpServer`)
 
 After `npm i -g` of an MCP package (for example `@nexus-cortex/desktop`), the running session still has the old version loaded. The agent can

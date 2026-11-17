@@ -84,6 +84,9 @@ export * from './mcp/index.js';
 // Configuration system exports
 export * from './config/index.js';
 
+// Lifecycle hooks (SessionStart / UserPromptSubmit / Pre+PostToolUse / Stop / Pre+PostCompact / SessionEnd) — docs/hooks.md
+export * from './hooks/index.js';
+
 // Phase 2: Orchestrator
 // Orchestrator exports
 export * from './orchestrator/index.js';

@@ -33,6 +33,7 @@ export function getServerOrchestrator(): CortexOrchestrator | null {
 export const messagesRouter = Router();
 
 messagesRouter.post('/v1/messages', async (req: Request, res: Response, next) => {
+  let ephemeralOrchestrator: CortexOrchestrator | undefined;   // stateless mode: one per request — its hooks session ends with the request
   try {
     const {
       model: requestModel,
@@ -107,6 +108,7 @@ messagesRouter.post('/v1/messages', async (req: Request, res: Response, next) =>
         permissionMode: yolo ? 'auto' : 'disabled'
       });
       await orchestrator.createSession(projectRoot, model);
+      ephemeralOrchestrator = orchestrator;
     }
 
     // Build message options.
@@ -193,5 +195,7 @@ messagesRouter.post('/v1/messages', async (req: Request, res: Response, next) =>
     }
   } catch (error) {
     next(error);
+  } finally {
+    if (ephemeralOrchestrator) { try { await ephemeralOrchestrator.endSession('oneshot'); } catch { /* hooks never fail a request */ } }
   }
 });
