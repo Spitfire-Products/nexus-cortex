@@ -512,12 +512,11 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
     if (scopedLegs && !scopedLegs.includes('browser-cortex')) {
       // scoped store without the browser leg — nothing to integrate here
     } else try {
-      // 2026-11-17 GROWTH FIX: these branches have UNRELATED history, so a `fetch --depth 1` shares nothing with the store and the
-      // server re-sent the branch tip's WHOLE tree + blobs (~500 MB, 5,333 objects of which 5,190 were already local) on EVERY sync,
-      // for all 6 branches — the recurring same-size promisor packs. Now: (1) a branch is fetched only when its tip moved since the
-      // last fold-in (tips from this ls-remote, remembered in ~/.canon/browser-branch-tips.json per store); (2) the fetch carries
-      // --filter=blob:none, so only commits/trees come down and the checkout below lazily fetches just the browser-cortex blobs
-      // that are actually missing.
+      // 2026-11-17 GROWTH FIX: these browser-cortex branches have UNRELATED history and used to re-download ~600 MB of already-held
+      // objects on every sync (first via `--depth 1`, then via a `--filter=blob:none` + checkout lazy over-fetch — see the fetch below).
+      // Now: (1) a branch is folded only when its tip moved since the last fold-in (tips from this ls-remote, remembered in
+      // ~/.canon/browser-branch-tips.json per store); (2) the fetch is a plain have-negotiated fetch, so the server dedups against the
+      // browser blobs already in main and sends only the genuinely-new ones.
       const TIPS_PATH = path.join(HOME, '.canon', 'browser-branch-tips.json');
       let tipsAll: Record<string, Record<string, string>> = {};
       try { tipsAll = JSON.parse(fs.readFileSync(TIPS_PATH, 'utf8')); } catch { /* none yet */ }
@@ -529,7 +528,15 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
         const [, sha, branch] = m as unknown as [string, string, string];
         if (tips[branch] === sha) continue;   // unchanged since the last fold-in — nothing to fetch
         try {
-          git(['fetch', '--depth', '1', '--filter=blob:none', 'origin', branch]);
+          // NO --depth, NO --filter (2026-11-17, THIRD growth root cause). Two earlier variants both over-fetched:
+          //  - `--depth 1` made the store SHALLOW; the grafts rode every later `fetch` of main and GitHub re-sent ~600 MB of already-held
+          //    objects on each rebase-after-rejected-push.
+          //  - `--filter=blob:none` fetched only commits/trees, so the `checkout … native/browser-cortex` below had to LAZILY fetch the
+          //    browser blobs — and the promisor lazy-fetch over-sent a ~629 MB pack, 99.6% objects already local (14 such packs on 11-17).
+          // A plain, full, have-negotiated fetch is the fix: git sends `have` lines for our refs (prior fold-ins put the browser blobs in
+          // main), so the server returns ONLY the genuinely-new blobs of this branch; the checkout then finds every blob locally — no
+          // lazy fetch, no shallow grafts. The tips-file skip above means this runs only when a branch tip actually moved.
+          git(['fetch', 'origin', branch]);
           git(['checkout', 'FETCH_HEAD', '--', 'native/browser-cortex']);
           tips[branch] = sha;
           console.log(`[canon-sync] integrated browser branch ${branch} @ ${sha.slice(0, 10)}`);

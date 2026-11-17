@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.139.2] - 2026-11-17
+
+### Fixed
+- **Canon store growth.** Merging in the browser-agent session branches re-downloaded hundreds of megabytes the store already held, each time another machine had pushed first, because the fetch left file contents to be pulled on demand and that on-demand fetch over-asked. The branches are now fetched in one pass that skips everything already present. (Two earlier variants of this fetch caused the same symptom in different ways; this removes the last one.) Every machine that pushes to a shared canon store should update.
+
 ## [4.139.1] - 2026-11-17
 
 ### Fixed
