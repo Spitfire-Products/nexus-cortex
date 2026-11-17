@@ -7,14 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [4.138.1] - 2026-11-17
+## [4.138.2] - 2026-11-17
 
-The canon store grows only by the new tail of each session.
+The canon store grows only by the new tail of each session. (4.138.1 was tagged but never published; 4.138.2 is the same release with its canon settings documented.)
 
 ### Fixed
 - **Canon store growth**: every sync used to store whole files again: the open compaction segment's last part (up to 25 MB), every session under 50 MB, the canonical copy of each, and each project's `graph.json`. Now a stored part, once sealed, never changes: each sync appends only the new bytes (a small open tail part seals at 256 KB, `CANON_SEAL_BYTES`), the canonical line and its events sidecar are written the same way, and the derived graph is rebuilt at most once a day (`CANON_GRAPH_MIN_INTERVAL_MS`; `canon graph` still builds it on demand). Existing sessions keep their files. Every machine that pushes to a shared store needs this version.
 - **Canon browser-branch fold-in**: a browser branch is fetched only when its tip moved, and without blobs (`--filter=blob:none`); it used to download the branch's whole tree on every sync.
 - **`cortex secrets exec --only`** passes only the named secrets to the command.
+- **Canon settings documented**: `CANON_SEAL_BYTES`, `CANON_GRAPH_MIN_INTERVAL_MS`, `CANON_WATCH_MIN_INTERVAL_MS`, `CANON_REPACK_LOOSE_COUNT`, `CANON_REPACK_LOOSE_MB` in `.env.defaults`.
 
 ## [4.138.0] - 2026-11-16
 
