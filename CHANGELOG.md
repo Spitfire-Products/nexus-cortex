@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.139.3] - 2026-11-17
+
+### Fixed
+- **Shared canon store, multiple machines.** Each machine now stores its own cortex sessions and decisions under its own name. Before, every machine used the same label, so two machines wrote different decisions to the same path and their syncs collided; on a store with large chunked files this could wedge a machine's sync with a rebase conflict. The name comes from the machine's agent-home name, and falls back to the old label when none is set, so a single-machine store is unaffected.
+
 ## [4.139.2] - 2026-11-17
 
 ### Fixed

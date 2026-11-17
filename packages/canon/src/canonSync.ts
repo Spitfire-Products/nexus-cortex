@@ -91,9 +91,22 @@ export function isBinaryFile(file: string): boolean {
  *  ('workspace'), each HOME/<project> and each HOME/<project>/packages/<pkg> that carries a `.cortex/` dir. Labels are the dir
  *  basenames (a repeated basename is prefixed with its parent). Discovered, never hard-coded: the published package must not know
  *  the author's workspace layout. Hidden dirs and node_modules are skipped; an unreadable HOME yields the workspace root only. */
+/** The label for THIS machine's own `$HOME/.cortex` root. Was the fixed string 'workspace', which collided across machines: home, m2
+ *  and macbook each wrote their OWN decisions.jsonl to native/nexus-cortex-decisions/workspace/, so every sync clobbered the last and
+ *  a two-writer chunk migration produced an add/add rebase conflict that wedged the clients' stores (m2 stuck 11-17). Now machine-unique:
+ *  env CANON_MACHINE_LABEL, else ~/.agent-home-name (clients set it: 'm2', 'macbook'), else 'workspace' (home, which has no name file —
+ *  so home's existing path is unchanged and the clients' decisions move to their own namespace). */
+export function machineCortexLabel(H: string, env: NodeJS.ProcessEnv = process.env): string {
+  const e = (env.CANON_MACHINE_LABEL || '').trim();
+  if (e) return e;
+  try { const n = fs.readFileSync(path.join(H, '.agent-home-name'), 'utf8').trim(); if (n) return n.replace(/[^A-Za-z0-9_.-]/g, '-'); } catch { /* no name file: home */ }
+  return 'workspace';
+}
+
 export function discoverCortexRoots(H: string, leaf: string): Array<{ label: string; path: string }> {
-  const out: Array<{ label: string; path: string }> = [{ label: 'workspace', path: path.join(H, '.cortex', leaf) }];
-  const seen = new Set<string>(['workspace']);
+  const root = machineCortexLabel(H);
+  const out: Array<{ label: string; path: string }> = [{ label: root, path: path.join(H, '.cortex', leaf) }];
+  const seen = new Set<string>([root]);
   const subdirs = (dir: string): string[] => {
     try {
       return fs.readdirSync(dir, { withFileTypes: true })
