@@ -13,10 +13,12 @@
  *   <id>.jsonl.seg-SSSS.part-PPPP          the session's bytes, segment SSSS, size-limited sub-chunk PPPP
  *   <id>.events.jsonl.seg-SSSS.part-PPPP   the canon layer's events sidecar, split along the same segments
  *   <id>.segments.json                     the index (SegmentIndex below)
- * Concatenating every sub-chunk of every segment in name order reproduces the stored session byte-for-byte. A CLOSED
- * segment (one followed by another boundary) never changes again, so its files are never rewritten; only the open
- * last segment's last sub-chunk grows. The old names do not end in `.jsonl` and do not match the old `.part-NNNN`
- * grouping, so a reader that predates this layout ignores the files instead of mis-grouping them.
+ * Concatenating every sub-chunk of every segment in name order (numeric — see compareChunkNames) reproduces the stored
+ * session byte-for-byte. A CLOSED segment (one followed by another boundary) never changes again, so its files are never
+ * rewritten. APPEND-ONLY PARTS (2026-11-17, see "writer" below): inside the open segment, too, a sealed part is never
+ * rewritten — only the small open tail part (≤ sealBytes, default 256 KB) is, and it seals once it would grow past that.
+ * The old names do not end in `.jsonl` and do not match the old `.part-NNNN` grouping, so a reader that predates this
+ * layout ignores the files instead of mis-grouping them.
  *
  * Readers accept both layouts (chunkInfo / groupChunkFiles); when a logical file has both (a session re-chunked with
  * rechunkSession, whose old files are deliberately kept), the segmented files win.
@@ -88,6 +90,8 @@ export interface SegmentIndex {
   logical: string;
   harness: string | null;
   partBytes: number;
+  /** Seal size of the open tail part when this index was written (absent in indexes written before 2026-11-17). */
+  sealBytes?: number;
   lines: number;
   bytes: number;
   /** sha256 of the whole stored session (all sub-chunks concatenated). */
@@ -191,8 +195,11 @@ export function* fileLinesExact(file: string, blockBytes = 8 * 1024 * 1024): Gen
 
 // ── names ────────────────────────────────────────────────────────────────────
 
-const SEG_RE = /^(.*)\.seg-(\d{4})\.part-(\d{4})$/;
-const PART_RE = /^(.*)\.part-(\d{4})$/;
+// Part / segment numbers are written 4-digit zero-padded and WIDEN past 9999 (`part-10000`): readers accept 4+ digits and order
+// chunks NUMERICALLY (compareChunkNames), so a long-lived session's 10,000th part sorts after its 9,999th. (A reader from before
+// 2026-11-17 ignores a 5-digit name instead of mis-ordering it; at the 256 KB seal size that is ≥ 2.5 GB in ONE segment.)
+const SEG_RE = /^(.*)\.seg-(\d{4,})\.part-(\d{4,})$/;
+const PART_RE = /^(.*)\.part-(\d{4,})$/;
 const pad4 = (n: number) => String(n).padStart(4, '0');
 
 export interface ChunkInfo { logical: string; layout: 'seg' | 'part' | 'single'; seg?: number; part?: number }
@@ -209,10 +216,23 @@ export function logicalPathOf(p: string): string {
   return path.join(path.dirname(p), chunkInfo(path.basename(p)).logical);
 }
 export function isSegmentChunk(p: string): boolean { return SEG_RE.test(path.basename(p)); }
+/** Reassembly order of two stored files (paths or names): logical name, then the single form first, then segment, then part —
+ *  numbers compared numerically (a plain string sort puts `part-10000` before `part-9999`). */
+export function compareChunkNames(a: string, b: string): number {
+  const x = chunkInfo(path.basename(a)), y = chunkInfo(path.basename(b));
+  const da = path.dirname(a), db = path.dirname(b);
+  if (da !== db) return da < db ? -1 : 1;
+  if (x.logical !== y.logical) return x.logical < y.logical ? -1 : 1;
+  const rank = (c: ChunkInfo) => (c.layout === 'single' ? 0 : 1);
+  if (rank(x) !== rank(y)) return rank(x) - rank(y);
+  const sx = x.seg ?? -1, sy = y.seg ?? -1;
+  if (sx !== sy) return sx - sy;
+  return (x.part ?? -1) - (y.part ?? -1);
+}
 /** A logical file's stored files in reassembly order. Segmented files win over an old layout kept beside them. */
 export function orderChunks(files: string[]): string[] {
   const seg = files.filter(isSegmentChunk);
-  return (seg.length ? seg : files).slice().sort();
+  return (seg.length ? seg : files).slice().sort(compareChunkNames);
 }
 /** Group stored file paths by logical path (both layouts), each group in reassembly order. */
 export function groupChunkFiles(files: Iterable<string>): Map<string, string[]> {
@@ -238,145 +258,390 @@ export function readSegmentIndex(logicalAbs: string): SegmentIndex | null {
 /** Old size-cut parts present for a logical file (`<logical>.part-NNNN`). */
 export function hasOldParts(logicalAbs: string): boolean {
   const dir = path.dirname(logicalAbs); const base = path.basename(logicalAbs) + '.part-';
-  try { return fs.readdirSync(dir).some((n) => n.startsWith(base) && /^\d{4}$/.test(n.slice(base.length))); } catch { return false; }
+  try { return fs.readdirSync(dir).some((n) => n.startsWith(base) && /^\d{4,}$/.test(n.slice(base.length))); } catch { return false; }
+}
+/** The old-layout parts of a logical file (`<logical>.part-NNNN`), absolute, in numeric order. */
+export function oldPartsOf(logicalAbs: string): string[] {
+  const dir = path.dirname(logicalAbs); const base = path.basename(logicalAbs) + '.part-';
+  let names: string[] = [];
+  try { names = fs.readdirSync(dir); } catch { return []; }
+  return names.filter((n) => n.startsWith(base) && /^\d{4,}$/.test(n.slice(base.length))).map((n) => path.join(dir, n)).sort(compareChunkNames);
 }
 
-// ── writer ───────────────────────────────────────────────────────────────────
+// ── writer (APPEND-ONLY parts, 2026-11-17) ───────────────────────────────────
+//
+// Before 2026-11-17 the open segment's last sub-chunk (up to 25 MB) — and every session under 50 MB as one whole file — was
+// rewritten on EVERY sync, so each sync stored a fresh full git blob of the live transcript (measured 11-16/17: ~470 MB of native/
+// blobs + ~445 MB of canon/ blobs in 6 h for a few MB of new records). Now a part file, once SEALED, is never rewritten:
+//  - each run VERIFIES the bytes already stored (sha256 from the index, else the file) and appends only what lies beyond them;
+//  - the last part is the OPEN tail: it takes more lines while it stays ≤ sealBytes (default 256 KB — rewritten while small), and
+//    seals unchanged the moment the next line would push it past. A big existing tail (a 25 MB legacy part) therefore seals as-is;
+//  - bytes beyond the store go to NEW parts cut at partBytes (25 MB), so a first capture is a few big parts, not thousands of tiny ones;
+//  - a sealed part whose bytes no longer match the source (rewritten / truncated in the middle) is LOGGED and the stream is
+//    rewritten from that part on (the previous bytes stay in git history) — never a silent duplicate, never a silent drop.
+// Store growth per sync is therefore ≈ the new bytes + the open tail (≤ sealBytes) + the small index, not a copy of the session.
 
-export interface SegmentedWriteOptions {
-  /** Harness label — picks the boundary detector (null/unknown = one segment). */
-  harness?: string | null;
-  partBytes?: number;
-  /** Compute the index and the file plan; write and remove nothing. */
-  dryRun?: boolean;
-  /** This writer owns the session's events-sidecar files too (canon layer): stale segmented events files are removed even
-   *  when finish() gets no events. The native layer has no sidecar and leaves such names alone. */
-  ownsEvents?: boolean;
+/** Default seal size of the open tail part (env CANON_SEAL_BYTES / option sealBytes override). */
+export const DEFAULT_SEAL_BYTES = 256 * 1024;
+
+/** The seal size in effect: an explicit option, else env CANON_SEAL_BYTES, else DEFAULT_SEAL_BYTES — never above partBytes. */
+export function resolveSealBytes(opt: number | undefined, partBytes: number = DEFAULT_PART_BYTES): number {
+  const env = Number(process.env.CANON_SEAL_BYTES);
+  const v = opt !== undefined && opt > 0 ? opt : Number.isFinite(env) && env > 0 ? env : DEFAULT_SEAL_BYTES;
+  return Math.max(1, Math.min(v, partBytes));
 }
-export interface SegmentedWriteResult {
-  index: SegmentIndex;
-  indexPath: string;
-  /** Files (abs) written this run (new or changed bytes). */
-  written: string[];
-  /** Files (abs) whose bytes were already identical — not touched (mtime kept). */
-  unchanged: string[];
-  /** Stale segmented files of this session removed (only ever this layout's own names). */
-  removed: string[];
+
+/** A part already in the store. `abs` overrides where its bytes are read for verification (dry-run adoption). */
+export interface StoredPart { file: string; bytes: number; sha256?: string; abs?: string }
+
+export interface AppendStats {
+  /** Stored parts verified identical and left untouched. */
+  verified: number;
+  /** Bytes written this run (new parts + rewritten open tails). */
+  bytesWritten: number;
+  /** Open-tail rewrites with different content (a growing tail, or translate's still-changing tail records). */
+  openRewrites: number;
+  /** SEALED parts that no longer matched the source — the stream was rewritten from there (each one logged). */
+  diverged: string[];
 }
 
-/**
- * Write one session in the segmented layout. push() every stored line in order (WITH its '\n'; the final line may lack
- * it — its bytes are kept exactly), then finish(). Sub-chunks whose bytes are unchanged (sha256 vs the previous index,
- * else a byte compare) are not rewritten, so closed segments keep identical bytes and mtimes across syncs.
- */
-export class SegmentedWriter {
-  private readonly scanner: SegmentScanner;
-  private readonly partBytes: number;
-  private readonly dir: string;
-  private readonly base: string;
-  private readonly prev = new Map<string, SegmentFile>();
-  private readonly whole: Hash = createHash('sha256');
-  private buf: Buffer[] = [];
-  private bufBytes = 0;
-  private seg = 0;
-  private part = 0;
-  private readonly keep = new Set<string>();
-  private readonly result: Omit<SegmentedWriteResult, 'index' | 'indexPath'> = { written: [], unchanged: [], removed: [] };
+const sha256 = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 
-  constructor(private readonly logicalAbs: string, private readonly o: SegmentedWriteOptions = {}) {
-    this.scanner = new SegmentScanner(segmentDetectorFor(o.harness));
-    this.partBytes = o.partBytes ?? DEFAULT_PART_BYTES;
-    this.dir = path.dirname(logicalAbs);
-    this.base = path.basename(logicalAbs);
-    const prev = readSegmentIndex(logicalAbs);
-    for (const s of prev?.segments ?? []) for (const f of [...(s.parts ?? []), ...(s.events ?? [])]) this.prev.set(f.file, f);
-    if (!o.dryRun) fs.mkdirSync(this.dir, { recursive: true });
+/** Shared write/verify bookkeeping of one logical file (main + events streams). */
+class PartStore {
+  readonly keep = new Set<string>();
+  readonly written: string[] = [];
+  readonly unchanged: string[] = [];
+  readonly removed: string[] = [];
+  readonly stats: AppendStats = { verified: 0, bytesWritten: 0, openRewrites: 0, diverged: [] };
+  constructor(readonly dir: string, private readonly prev: Map<string, SegmentFile>, private readonly dryRun: boolean,
+    private readonly quietOpen: boolean, private readonly log: (m: string) => void) {}
+
+  /** True when `data` equals the stored part (index sha256 + on-disk size, else a byte compare against the file). */
+  matches(p: StoredPart, data: Buffer): boolean {
+    if (data.length !== p.bytes) return false;
+    const abs = p.abs ?? path.join(this.dir, p.file);
+    let size = -1;
+    try { size = fs.statSync(abs).size; } catch { return false; }
+    if (size !== p.bytes) return false;
+    if (p.sha256) return sha256(data) === p.sha256;
+    try { return fs.readFileSync(abs).equals(data); } catch { return false; }
   }
-
-  push(line: Buffer | string): void {
-    const b = typeof line === 'string' ? Buffer.from(line, 'utf8') : line;
-    if (this.scanner.feed(stripTerminator(b), b.length)) {
-      this.flush();
-      this.seg = this.scanner.segments.length - 1;
-      this.part = 0;
-    }
-    if (this.bufBytes > 0 && this.bufBytes + b.length > this.partBytes) this.flush();
-    this.buf.push(b); this.bufBytes += b.length;
-    this.whole.update(b);
+  /** A stored part kept as-is (verified; nothing written). */
+  keepPart(p: StoredPart, data: Buffer): SegmentFile {
+    this.keep.add(p.file); this.unchanged.push(path.join(this.dir, p.file)); this.stats.verified++;
+    return { file: p.file, bytes: p.bytes, sha256: p.sha256 ?? sha256(data) };
   }
-
-  private flush(): void {
-    if (!this.bufBytes) return;
-    const name = `${this.base}.seg-${pad4(this.seg)}.part-${pad4(this.part)}`;
-    const data = Buffer.concat(this.buf, this.bufBytes);
-    (this.scanner.segments[this.seg]!.parts ??= []).push(this.store(name, data));
-    this.part++;
-    this.buf = []; this.bufBytes = 0;
-  }
-
-  private store(name: string, data: Buffer): SegmentFile {
-    const sha256 = createHash('sha256').update(data).digest('hex');
+  /** Write one part unless the stored bytes are already identical. */
+  store(name: string, data: Buffer): SegmentFile {
+    const sha = sha256(data);
     const abs = path.join(this.dir, name);
     this.keep.add(name);
     let size = -1;
     try { size = fs.statSync(abs).size; } catch { /* absent */ }
     const prev = this.prev.get(name);
-    const same = size === data.length && (prev ? prev.sha256 === sha256 && prev.bytes === data.length : fs.readFileSync(abs).equals(data));
-    if (same) this.result.unchanged.push(abs);
-    else { if (!this.o.dryRun) fs.writeFileSync(abs, data); this.result.written.push(abs); }
-    return { file: name, bytes: data.length, sha256 };
+    const same = size === data.length && (prev ? prev.sha256 === sha && prev.bytes === data.length : fs.readFileSync(abs).equals(data));
+    if (same) this.unchanged.push(abs);
+    else { if (!this.dryRun) fs.writeFileSync(abs, data); this.written.push(abs); this.stats.bytesWritten += data.length; }
+    return { file: name, bytes: data.length, sha256: sha };
+  }
+  diverge(msg: string): void { this.stats.diverged.push(msg); this.log(`[canon-parts] ${msg}`); }
+  openRewrite(kind: 'grew-line' | 'changed' | 'shrunk', label: string): void {
+    this.stats.openRewrites++;
+    if (!this.quietOpen && kind !== 'grew-line') this.log(`[canon-parts] ${label}: the open tail part ${kind === 'shrunk' ? 'is longer than the source (source shrank)' : 'changed'} — rewritten`);
+  }
+}
+
+/** One append-only stream of parts (a segment's main bytes, its events, or an old-layout session). See the block comment above. */
+class PartRun {
+  readonly out: SegmentFile[] = [];
+  private buf: Buffer[] = [];
+  private bufBytes = 0;
+  private mode: 'verify' | 'grow' | 'fresh';
+  /** grow mode: the buffer still equals the stored open part (nothing appended, nothing changed). */
+  private growIntact = false;
+  /** An unstable line was pushed this run: nothing after it is sealed (except at the partBytes hard cap). */
+  private unstable = false;
+  private divergedHere = false;
+  constructor(private readonly existing: StoredPart[], private readonly lastOpen: boolean, private readonly name: (i: number) => string,
+    private readonly sealBytes: number, private readonly partBytes: number, private readonly ps: PartStore, private readonly label: string) {
+    this.mode = existing.length ? 'verify' : 'fresh';
+  }
+  private get i(): number { return this.out.length; }
+  private isOpen(i: number): boolean { return this.lastOpen && i === this.existing.length - 1; }
+  private data(): Buffer { return this.buf.length === 1 ? this.buf[0]! : Buffer.concat(this.buf, this.bufBytes); }
+  private append(b: Buffer, stable: boolean): void { this.buf.push(b); this.bufBytes += b.length; if (!stable) this.unstable = true; }
+  private sealedMismatch(e: StoredPart, why: string): void {
+    this.divergedHere = true;
+    this.ps.diverge(`${this.label}: sealed part ${e.file} ${why} — the source changed in the middle; rewriting from this part (previous bytes stay in git history)`);
+    this.mode = 'fresh';
+  }
+
+  push(b: Buffer, stable = true): void {
+    if (this.mode === 'verify') {
+      const e = this.existing[this.i];
+      if (!e) this.mode = 'fresh';
+      else if (this.bufBytes + b.length <= e.bytes) {
+        this.append(b, stable);
+        if (this.bufBytes < e.bytes) return;
+        const same = this.ps.matches(e, this.data());
+        if (this.isOpen(this.i)) { this.mode = 'grow'; this.growIntact = same; if (!same) this.ps.openRewrite('changed', this.label); return; }
+        if (same) {
+          this.out.push(this.ps.keepPart(e, this.data())); this.buf = []; this.bufBytes = 0;
+          if (this.i >= this.existing.length) this.mode = 'fresh';
+          return;
+        }
+        this.sealedMismatch(e, 'differs');
+        return;
+      } else if (this.isOpen(this.i)) {
+        // The line runs past the stored tail's end: an unterminated last line that has since completed (normal), or a changed tail.
+        this.mode = 'grow'; this.growIntact = false; this.ps.openRewrite('grew-line', this.label);
+      } else this.sealedMismatch(e, 'ends mid-line');
+    }
+    const limit = this.mode === 'grow' ? this.sealBytes : this.partBytes;
+    if (this.bufBytes > 0 && this.bufBytes + b.length > limit && (!this.unstable || this.bufBytes + b.length > this.partBytes)) this.flush();
+    if (this.mode === 'grow') this.growIntact = false;
+    this.append(b, stable);
+  }
+
+  private flush(): void {
+    if (!this.bufBytes) return;
+    const e = this.existing[this.i];
+    if (this.mode === 'grow' && this.growIntact && e) this.out.push(this.ps.keepPart(e, this.data()));   // the open tail sealed unchanged
+    else this.out.push(this.ps.store(this.name(this.i), this.data()));
+    this.buf = []; this.bufBytes = 0; this.mode = 'fresh'; this.growIntact = false;
+  }
+
+  finish(): SegmentFile[] {
+    if (this.mode === 'verify' && this.bufBytes > 0) {
+      const e = this.existing[this.i]!;
+      if (this.isOpen(this.i)) { this.mode = 'grow'; this.growIntact = false; this.ps.openRewrite('shrunk', this.label); }
+      else this.sealedMismatch(e, `holds more bytes than the source (${e.bytes} stored, ${this.bufBytes} in the source)`);
+    }
+    this.flush();
+    if (!this.divergedHere) {
+      for (let k = this.out.length; k < this.existing.length; k++) {
+        if (this.isOpen(k)) this.ps.openRewrite('shrunk', this.label);
+        else { this.sealedMismatch(this.existing[k]!, 'lies past the end of the source (the source shrank); it leaves the working tree'); break; }
+      }
+    }
+    return this.out;
+  }
+}
+
+/** True when the file holds at most one compaction segment (stops reading at the second boundary). */
+function holdsOneSegment(file: string, harness: string | null | undefined): boolean {
+  const sc = new SegmentScanner(segmentDetectorFor(harness));
+  for (const line of fileLinesExact(file)) {
+    sc.feed(stripTerminator(line), line.length);
+    if (sc.segments.length > 1) return false;
+  }
+  return true;
+}
+const fileSize = (abs: string): number => { try { return fs.statSync(abs).size; } catch { return -1; } };
+
+export interface SegmentedWriteOptions {
+  /** Harness label — picks the boundary detector (null/unknown = one segment). */
+  harness?: string | null;
+  /** Size cap of a NEW part (default 25 MB). */
+  partBytes?: number;
+  /** Seal size of the open tail part (default resolveSealBytes: CANON_SEAL_BYTES, else 256 KB; never above partBytes). */
+  sealBytes?: number;
+  /** Compute the index and the file plan; write, rename and remove nothing. */
+  dryRun?: boolean;
+  /** This writer owns the session's events-sidecar files too (canon layer): stale segmented events files are removed even
+   *  when finish() gets no events. The native layer has no sidecar and leaves such names alone. */
+  ownsEvents?: boolean;
+  /** A single-file form `<logical>` already stored (no index yet): ADOPT it as segment 0's first part by renaming it — zero new
+   *  bytes in git — when it is ≥ sealBytes and holds one segment (its events single too, with ownsEvents); otherwise it is
+   *  replaced by the segmented files (removed once they are written). */
+  adoptSingle?: boolean;
+  /** Keep the session as ONE file `<logical>` while its total is ≤ this many bytes (a small session IS its open tail). */
+  singleBelow?: number;
+  /** Do not log open-tail rewrites (translate: its tail records legitimately change while the session grows). */
+  quietOpen?: boolean;
+  log?: (msg: string) => void;
+}
+export interface SegmentedWriteResult {
+  index: SegmentIndex;
+  indexPath: string;
+  /** 'single' = written as one small file `<logical>` (singleBelow); no index file. */
+  layout: 'segmented' | 'single';
+  /** Files (abs) written this run (new or changed bytes). */
+  written: string[];
+  /** Files (abs) whose bytes were already identical — not touched (mtime kept). */
+  unchanged: string[];
+  /** Stale files of this session removed (this layout's own names, or a replaced single form). */
+  removed: string[];
+  stats: AppendStats;
+}
+
+/**
+ * Write one session in the segmented layout, APPEND-ONLY. push() every stored line in order (WITH its '\n'; the final line may lack
+ * it — its bytes are kept exactly, and it is never sealed), then finish(). `stable = false` marks a line a later run may still
+ * change (translate's tail): it is never sealed this run. Closed segments and sealed parts keep identical bytes and mtimes.
+ */
+export class SegmentedWriter {
+  private readonly scanner: SegmentScanner;
+  private readonly partBytes: number;
+  private readonly sealBytes: number;
+  private readonly dir: string;
+  private readonly base: string;
+  private readonly eventsBase: string;
+  private readonly prevSegs: SegmentMeta[] | null;
+  private readonly whole: Hash = createHash('sha256');
+  private readonly ps: PartStore;
+  private readonly log: (m: string) => void;
+  private adoptedMain: StoredPart | null = null;
+  private adoptedEvents: StoredPart | null = null;
+  private replaceSingle = false;
+  private pending: { b: Buffer; stable: boolean; n: number }[] | null = null;
+  private pendingBytes = 0;
+  private run: PartRun | null = null;
+  private runSeg = -1;
+
+  constructor(private readonly logicalAbs: string, private readonly o: SegmentedWriteOptions = {}) {
+    this.scanner = new SegmentScanner(segmentDetectorFor(o.harness));
+    this.partBytes = o.partBytes ?? DEFAULT_PART_BYTES;
+    this.sealBytes = resolveSealBytes(o.sealBytes, this.partBytes);
+    this.dir = path.dirname(logicalAbs);
+    this.base = path.basename(logicalAbs);
+    this.eventsBase = this.base.replace(/\.jsonl$/, '.events.jsonl');
+    this.log = o.log ?? ((m) => console.log(m));
+    const prevIdx = readSegmentIndex(logicalAbs);
+    this.prevSegs = prevIdx?.segments ?? null;
+    const prev = new Map<string, SegmentFile>();
+    for (const s of this.prevSegs ?? []) for (const f of [...(s.parts ?? []), ...(s.events ?? [])]) prev.set(f.file, f);
+    this.ps = new PartStore(this.dir, prev, !!o.dryRun, !!o.quietOpen, this.log);
+    if (!o.dryRun) fs.mkdirSync(this.dir, { recursive: true });
+    if (!this.prevSegs && o.adoptSingle) {
+      const size = fileSize(logicalAbs);
+      if (size >= this.sealBytes && holdsOneSegment(logicalAbs, o.harness)) {
+        this.adoptedMain = this.adopt(logicalAbs, `${this.base}.seg-${pad4(0)}.part-${pad4(0)}`, size);
+        const evSingle = path.join(this.dir, this.eventsBase);
+        const evSize = o.ownsEvents ? fileSize(evSingle) : -1;
+        if (evSize > 0) this.adoptedEvents = this.adopt(evSingle, `${this.eventsBase}.seg-${pad4(0)}.part-${pad4(0)}`, evSize);
+      } else if (size >= 0) this.replaceSingle = true;
+    }
+    if (!this.prevSegs && !this.adoptedMain && o.singleBelow !== undefined && o.singleBelow > 0) this.pending = [];
+  }
+
+  /** Rename a stored single file to its part name (same blob → no new bytes in git). Dry run: verify against the single in place. */
+  private adopt(singleAbs: string, partName: string, bytes: number): StoredPart {
+    if (this.o.dryRun) return { file: partName, bytes, abs: singleAbs };
+    fs.renameSync(singleAbs, path.join(this.dir, partName));
+    this.log(`[canon-parts] adopted ${path.basename(singleAbs)} as ${partName} (renamed, not rewritten)`);
+    return { file: partName, bytes };
+  }
+
+  push(line: Buffer | string, stable = true): void {
+    const b = typeof line === 'string' ? Buffer.from(line, 'utf8') : line;
+    this.scanner.feed(stripTerminator(b), b.length);
+    this.whole.update(b);
+    const n = this.scanner.segments.length - 1;
+    if (this.pending) {
+      this.pending.push({ b, stable, n }); this.pendingBytes += b.length;
+      if (this.pendingBytes <= this.o.singleBelow!) return;
+      const p = this.pending; this.pending = null;
+      for (const x of p) this.route(x.b, x.stable, x.n);
+      return;
+    }
+    this.route(b, stable, n);
+  }
+
+  private route(b: Buffer, stable: boolean, n: number): void {
+    if (n !== this.runSeg || !this.run) { this.closeRun(); this.startRun(n); }
+    this.run!.push(b, stable);
+  }
+  /** Was segment n the open (last, unclosed) segment of the stored index? Its last part is then the open tail. */
+  private wasOpen(n: number): boolean {
+    if (this.prevSegs) return !!this.prevSegs[n] && !this.prevSegs[n]!.closed;
+    return n === 0 && !!this.adoptedMain;
+  }
+  private startRun(n: number): void {
+    const existing: StoredPart[] = this.prevSegs?.[n]?.parts ?? (n === 0 && this.adoptedMain ? [this.adoptedMain] : []);
+    this.run = new PartRun(existing, this.wasOpen(n), (i) => `${this.base}.seg-${pad4(n)}.part-${pad4(i)}`,
+      this.sealBytes, this.partBytes, this.ps, `${this.base} seg ${n}`);
+    this.runSeg = n;
+  }
+  private closeRun(): void {
+    if (!this.run) return;
+    this.scanner.segments[this.runSeg]!.parts = this.run.finish();
+    this.run = null;
   }
 
   /**
-   * Close the session. `events` (canon layer): an events-sidecar file to split along the same segments; `cuts` are the
-   * byte offsets in that file where segments 1, 2, … begin (events past the last segment go to the last one).
+   * Close the session. `events` (canon layer): an events-sidecar file to split along the same segments; `cuts` are the byte offsets
+   * in that file where segments 1, 2, … begin (events past the last segment go to the last one); `stableBytes`: event bytes at or
+   * past this offset are never sealed this run.
    */
-  finish(events?: { file: string; cuts: number[] }): SegmentedWriteResult {
-    this.flush();
+  finish(events?: { file: string; cuts: number[]; stableBytes?: number }): SegmentedWriteResult {
     const segs = this.scanner.segments;
-    const eventsBase = this.base.replace(/\.jsonl$/, '.events.jsonl');
+    const indexPath = segmentIndexPath(this.logicalAbs);
+    const mkIndex = (): SegmentIndex => ({
+      format: SEGMENT_INDEX_FORMAT, logical: this.base, harness: this.o.harness ?? null, partBytes: this.partBytes, sealBytes: this.sealBytes,
+      lines: this.scanner.lineCount, bytes: this.scanner.byteCount, sha256: this.whole.digest('hex'), segments: segs,
+    });
+    const ps = this.ps;
+    if (this.pending) {
+      // Small session: one file, the open tail itself (rewritten while small — the old whole-file path, but only below singleBelow).
+      ps.store(this.base, Buffer.concat(this.pending.map((x) => x.b), this.pendingBytes));
+      return { index: mkIndex(), indexPath, layout: 'single', written: ps.written, unchanged: ps.unchanged, removed: ps.removed, stats: ps.stats };
+    }
+    this.closeRun();
+    for (let k = segs.length; k < (this.prevSegs?.length ?? 0); k++) {
+      if (this.prevSegs![k]!.closed) { ps.diverge(`${this.base}: stored segment ${k} has no counterpart in the source (the source shrank or its compactions moved)`); break; }
+    }
     if (events) {
-      let off = 0, cur = 0, part = 0;
-      let eb: Buffer[] = []; let ebBytes = 0;
-      const flushEv = () => {
-        if (!ebBytes) return;
-        const name = `${eventsBase}.seg-${pad4(cur)}.part-${pad4(part)}`;
-        (segs[cur]!.events ??= []).push(this.store(name, Buffer.concat(eb, ebBytes)));
-        part++; eb = []; ebBytes = 0;
-      };
+      const stableAt = events.stableBytes ?? Infinity;
+      let off = 0, cur = -1; let er: PartRun | null = null;
+      const closeEv = () => { if (er) { segs[cur]!.events = er.finish(); er = null; } };
       for (const line of fileLinesExact(events.file)) {
         let k = 0;
         while (k < events.cuts.length && events.cuts[k]! <= off) k++;
         k = Math.min(k, segs.length - 1);
-        if (k !== cur) { flushEv(); cur = k; part = 0; }
-        if (ebBytes > 0 && ebBytes + line.length > this.partBytes) flushEv();
-        eb.push(line); ebBytes += line.length; off += line.length;
+        if (k !== cur || !er) {
+          closeEv(); cur = k;
+          const existing: StoredPart[] = this.prevSegs?.[k]?.events ?? (k === 0 && this.adoptedEvents ? [this.adoptedEvents] : []);
+          er = new PartRun(existing, this.wasOpen(k), (i) => `${this.eventsBase}.seg-${pad4(k)}.part-${pad4(i)}`,
+            this.sealBytes, this.partBytes, ps, `${this.eventsBase} seg ${k}`);
+        }
+        off += line.length;
+        er!.push(line, off <= stableAt);
       }
-      flushEv();
+      closeEv();
     }
-    const index: SegmentIndex = {
-      format: SEGMENT_INDEX_FORMAT, logical: this.base, harness: this.o.harness ?? null, partBytes: this.partBytes,
-      lines: this.scanner.lineCount, bytes: this.scanner.byteCount, sha256: this.whole.digest('hex'), segments: segs,
-    };
-    const indexPath = segmentIndexPath(this.logicalAbs);
-    const body = JSON.stringify(index, null, 1) + '\n';
+    const index = mkIndex();
+    const body = renderSegmentIndex(index);
     let prevBody = '';
     try { prevBody = fs.readFileSync(indexPath, 'utf8'); } catch { /* none */ }
-    if (prevBody !== body) { if (!this.o.dryRun) fs.writeFileSync(indexPath, body); this.result.written.push(indexPath); }
+    if (prevBody !== body) { if (!this.o.dryRun) fs.writeFileSync(indexPath, body); ps.written.push(indexPath); ps.stats.bytesWritten += Buffer.byteLength(body); }
     // Stale files of THIS layout only (the session got shorter, or a segment re-cut): never an old-layout file.
     const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const own = new RegExp(`^(${esc(this.base)}|${esc(eventsBase)})\\.seg-\\d{4}\\.part-\\d{4}$`);
+    const own = new RegExp(`^(${esc(this.base)}|${esc(this.eventsBase)})\\.seg-\\d{4,}\\.part-\\d{4,}$`);
     let names: string[] = [];
     try { names = fs.readdirSync(this.dir); } catch { /* dry run on a new dir */ }
     for (const n of names) {
-      if (!own.test(n) || this.keep.has(n)) continue;
-      if (!events && !this.o.ownsEvents && n.startsWith(eventsBase + '.')) continue; // a main-only writer (native) leaves events files alone
+      if (!own.test(n) || ps.keep.has(n)) continue;
+      if (this.adoptedMain?.file === n || this.adoptedEvents?.file === n) continue;   // dry run: the adoption was not performed
+      if (!events && !this.o.ownsEvents && n.startsWith(this.eventsBase + '.')) continue; // a main-only writer (native) leaves events files alone
       const abs = path.join(this.dir, n);
       if (!this.o.dryRun) fs.unlinkSync(abs);
-      this.result.removed.push(abs);
+      ps.removed.push(abs);
     }
-    return { index, indexPath, ...this.result };
+    if (this.replaceSingle) {
+      const singles = [this.logicalAbs, ...(this.o.ownsEvents ? [path.join(this.dir, this.eventsBase)] : [])];
+      for (const abs of singles) if (fs.existsSync(abs)) { if (!this.o.dryRun) fs.unlinkSync(abs); ps.removed.push(abs); }
+    }
+    return { index, indexPath, layout: 'segmented', written: ps.written, unchanged: ps.unchanged, removed: ps.removed, stats: ps.stats };
   }
+}
+
+/** The index file body: compact JSON, one segment per line (2026-11-17 — the index is rewritten on every sync of a growing
+ *  session, so it is kept small; the old pretty-printed form was ~2× larger). Any JSON reader parses both forms. */
+export function renderSegmentIndex(index: SegmentIndex): string {
+  const { segments, ...head } = index;
+  return JSON.stringify(head).slice(0, -1) + ',"segments":[\n' + segments.map((x) => JSON.stringify(x)).join(',\n') + '\n]}\n';
 }
 
 /** Write a whole file (or several old parts, concatenated in order) in the segmented layout. */
@@ -384,6 +649,68 @@ export function writeSegmentedFromFiles(sources: string[], logicalAbs: string, o
   const w = new SegmentedWriter(logicalAbs, o);
   for (const src of sources) for (const line of fileLinesExact(src)) w.push(line);
   return w.finish();
+}
+
+export interface PlainWriteOptions {
+  partBytes?: number;
+  sealBytes?: number;
+  dryRun?: boolean;
+  /** A single-file form `<logical>` already stored (no parts yet): ADOPT it as `.part-0000` by renaming it when it is ≥ sealBytes,
+   *  else replace it (removed once the parts are written). */
+  adoptSingle?: boolean;
+  quietOpen?: boolean;
+  log?: (msg: string) => void;
+}
+export interface PlainWriteResult { files: SegmentFile[]; written: string[]; unchanged: string[]; removed: string[]; stats: AppendStats }
+
+/**
+ * The OLD size-cut layout (`<logical>.part-NNNN`, no index), continued APPEND-ONLY: the parts already stored are verified (byte
+ * compare — there is no index to hold their sha256) and never rewritten; new bytes go to the open tail / new parts exactly as in
+ * the segmented layout. Readers that concatenate the parts in order keep working unchanged.
+ */
+export class PlainPartWriter {
+  private readonly ps: PartStore;
+  private readonly run: PartRun;
+  private readonly base: string;
+  private readonly dir: string;
+  private replaceSingle = false;
+  private adopted: StoredPart | null = null;
+  constructor(private readonly logicalAbs: string, private readonly o: PlainWriteOptions = {}) {
+    const partBytes = o.partBytes ?? DEFAULT_PART_BYTES;
+    const sealBytes = resolveSealBytes(o.sealBytes, partBytes);
+    this.dir = path.dirname(logicalAbs); this.base = path.basename(logicalAbs);
+    const log = o.log ?? ((m: string) => console.log(m));
+    this.ps = new PartStore(this.dir, new Map(), !!o.dryRun, !!o.quietOpen, log);
+    if (!o.dryRun) fs.mkdirSync(this.dir, { recursive: true });
+    const existing: StoredPart[] = oldPartsOf(logicalAbs).map((abs) => ({ file: path.basename(abs), bytes: fileSize(abs) }));
+    if (!existing.length && o.adoptSingle) {
+      const size = fileSize(logicalAbs);
+      if (size >= sealBytes) {
+        const name = `${this.base}.part-${pad4(0)}`;
+        if (o.dryRun) this.adopted = { file: name, bytes: size, abs: logicalAbs };
+        else { fs.renameSync(logicalAbs, path.join(this.dir, name)); this.adopted = { file: name, bytes: size }; log(`[canon-parts] adopted ${this.base} as ${name} (renamed, not rewritten)`); }
+        existing.push(this.adopted);
+      } else if (size >= 0) this.replaceSingle = true;
+    }
+    this.run = new PartRun(existing, true, (i) => `${this.base}.part-${pad4(i)}`, sealBytes, partBytes, this.ps, this.base);
+  }
+  push(line: Buffer | string, stable = true): void { this.run.push(typeof line === 'string' ? Buffer.from(line, 'utf8') : line, stable); }
+  finish(): PlainWriteResult {
+    const files = this.run.finish();
+    const ps = this.ps;
+    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const own = new RegExp(`^${esc(this.base)}\\.part-\\d{4,}$`);
+    let names: string[] = [];
+    try { names = fs.readdirSync(this.dir); } catch { /* dry run on a new dir */ }
+    for (const n of names) {
+      if (!own.test(n) || ps.keep.has(n) || this.adopted?.file === n) continue;
+      const abs = path.join(this.dir, n);
+      if (!this.o.dryRun) fs.unlinkSync(abs);
+      ps.removed.push(abs);
+    }
+    if (this.replaceSingle && files.length && fs.existsSync(this.logicalAbs)) { if (!this.o.dryRun) fs.unlinkSync(this.logicalAbs); ps.removed.push(this.logicalAbs); }
+    return { files, written: ps.written, unchanged: ps.unchanged, removed: ps.removed, stats: ps.stats };
+  }
 }
 
 // ── segment retrieval ────────────────────────────────────────────────────────

@@ -174,7 +174,9 @@ cortex canon watch [--debounce <ms>] [--dry-run]
                         # session root and auto-run the full pipeline (sync →
                         # translate → graph; debounced, default 60s) whenever a
                         # session file changes — derived layers only recompute
-                        # when the sync actually copied something. Initial
+                        # when the sync actually copied something, and the graph
+                        # at most once per CANON_GRAPH_MIN_INTERVAL_MS (default
+                        # 24 h; `canon graph` builds it on demand). Initial
                         # catch-up at startup; Ctrl-C to stop. Also on the
                         # standalone bin: `nexus-canon watch`.
 ```
@@ -205,10 +207,11 @@ WINDOW instead (`packages/canon/src/canonSegments.ts`):
   are parsed — a line that only mentions the word is not a boundary. A harness with no
   marker (or a session not yet compacted) is one segment; a harness adds its marker with
   `registerSegmentDetector(label, fn)`.
-- **Stable history**: a closed segment never changes, so its files are never rewritten;
-  only the open segment's last sub-chunk grows. Concatenating every sub-chunk in name
-  order reproduces the stored bytes exactly (the index records each file's sha256 and the
-  whole session's).
+- **Stable history**: a closed segment never changes, so its files are never rewritten,
+  and inside the open segment a sealed part is never rewritten either (append-only parts,
+  below). Concatenating every sub-chunk in name order (numeric order: part numbers widen
+  past 9999) reproduces the stored bytes exactly (the index records each file's sha256 and
+  the whole session's).
 - **Index** (`<id>.segments.json`, format `canon-segments/1`): per segment — `n`,
   `closed`, `lineStart`/`lineEnd` and `byteStart`/`byteEnd` (0-based, end-exclusive),
   first/last record timestamp, record counts by type, the first real user prompt
@@ -219,6 +222,37 @@ WINDOW instead (`packages/canon/src/canonSegments.ts`):
   files win. Segment lookups on an old-layout or small single-file session are computed
   from the bytes on the fly (nothing written). The native layer is written by `sync`; the
   canonical line follows the native layout at the next `translate`.
+
+### Append-only parts (2026-11-17)
+
+Until 2026-11-17 every sync re-stored whole files: the open segment's last sub-chunk (up to 25 MB), every session under
+50 MB as one whole file, the canonical outputs the same way, and every project `graph.json`. Measured over 6 hours of syncs,
+that was ~470 MB of native blobs, ~445 MB of canon blobs and ~260 MB of graph blobs, for a few MB of new records. The
+writers in `canonSegments.ts` (`SegmentedWriter`, and `PlainPartWriter` for the old layout) now work like this:
+
+- **Verify, then append.** Each run checks the bytes the store already holds against the source (the sha256 in the index,
+  else a byte compare with the file) and writes only what comes after them. A stored part is never rewritten once it is
+  sealed.
+- **A small open tail.** The last part of the open segment is the open tail. It takes new lines while it stays at or under
+  the seal size (`CANON_SEAL_BYTES`, option `sealBytes`, default 256 KB), so it is rewritten only while it is small. It is
+  sealed, unchanged, as soon as the next line would make it bigger. New bytes go to new parts of up to 25 MB, so a first
+  capture is a few large parts. A session that is still at or under the seal size is stored as one file.
+- **Existing data is continued, never re-stored.** A big tail part from the old writer is sealed as it is. A single-file
+  session is adopted by renaming it (to `seg-0000.part-0000` if it holds one compaction window, else to `.part-0000`), which
+  keeps the same git blob. An old `.part-NNNN` session continues in that layout, append-only.
+- **A changed source is handled safely.** If a sealed part no longer matches its source (the session was rewritten or
+  truncated in the middle), the writer logs `[canon-parts] … sealed part … — the source changed in the middle` and rewrites
+  from that part on. The previous bytes stay in git history. Nothing is duplicated and nothing is dropped silently. `sync`
+  and `translate` return these cases in `diverged`.
+- **Translate** writes the canonical line and its events sidecar with the same writers. It still runs over the whole
+  session, but its output for an unchanged prefix is byte-identical, so only the new records are stored. Records that a
+  later run can still change are never sealed: records taken from the native session's own open tail (its blob, and
+  so `provenance.ref`, changes while it grows) and records flushed at end of file (an assistant message whose fragments are
+  still arriving).
+- **Index**: `<id>.segments.json` is written as compact JSON with one segment per line, and records `sealBytes`.
+
+Growth per sync is about the new bytes, plus at most one open tail (up to the seal size), plus the small index. Before, it
+was the whole open segment or the whole session.
 
 CLI: `cortex canon list --segments <uuid>`, `cortex canon pull <uuid> --segment <n>`, `cortex canon rechunk <uuid>`
 (the same flags as the standalone `nexus-canon` below). **Resume a pulled segment by its own id**:

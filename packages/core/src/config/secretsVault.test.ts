@@ -8,7 +8,7 @@ import path from 'path';
 import { webcrypto } from 'crypto';
 import {
   createVault, initVaultDefault, writeVaultFile, readVaultFile, Vault, deriveKey, encryptValue, decryptValue, loadVaultIntoEnv, openVaultNonInteractive, maskSecrets,
-  toolChildEnv, maskSecretText, maskToolResults, describeVaultForAgent, _resetVaultSessionForTests, storeSecretForAgent,
+  toolChildEnv, envWithoutVault, maskSecretText, maskToolResults, describeVaultForAgent, _resetVaultSessionForTests, storeSecretForAgent,
   PBKDF2_ITERATIONS, VAULT_ID, type EncryptedSecret,
 } from './secretsVault.js';
 
@@ -127,6 +127,16 @@ describe('Phase 2 — tool processes and tool output', () => {
   it('no vault → identity (a copy of the env, masking off)', () => {
     expect(toolChildEnv({ A: '1' })).toEqual({ A: '1', CORTEX_TOOL_PARENT_DEPTH: '0' });   // + the 4.133.2 nesting marker (depth of the agent that started the tool)
     expect(maskSecretText('anything vault-only-value-123')).toBe('anything vault-only-value-123');
+  });
+
+  it('envWithoutVault: drops only the keys the startup copied in from the vault; keeps real env + the unlock key (secrets exec 11-16)', () => {
+    setup();
+    const e = envWithoutVault(process.env);
+    expect(e.P2_VAULT_ONLY).toBeUndefined(); expect(e.P2_BOUND).toBeUndefined();
+    expect(e.P2_REAL).toBe('real-env-value');                            // real env wins and is kept
+    expect(e.CORTEX_SECRETS_KEY).toBe('master-p2-xyz');                  // a child cortex can still unlock (exec --only strips it itself)
+    expect(e.GH_TOKEN).toBeUndefined();                                  // no bindings added — that is toolChildEnv's job
+    expect(envWithoutVault({ X: '1' }).X).toBe('1');
   });
 
   it('children lose vault-loaded keys + the unlock key, keep real env, get bindings', () => {

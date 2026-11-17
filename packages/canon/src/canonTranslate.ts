@@ -19,11 +19,10 @@
  */
 import { defaultCanonStore } from './storePath.js';
 import { sidecarFiles } from './sidecar.js';
-import { SegmentedWriter, fileLinesExact, isSegmentChunk, logicalPathOf, orderChunks, segmentDetectorFor } from './canonSegments.js';
+import { PlainPartWriter, SegmentedWriter, fileLinesExact, hasOldParts, isSegmentChunk, logicalPathOf, orderChunks, resolveSealBytes, segmentDetectorFor } from './canonSegments.js';
 import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, guardedPush, atomicClone, requireFullSurfaceStore, withStoreLock } from './canonRepo.js';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
-import { StringDecoder } from 'node:string_decoder';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 
@@ -36,6 +35,8 @@ export interface CanonTranslateOptions {
   dryRun?: boolean;
   /** Store remote for the auto-clone (default env CANON_REPO or the canonical repo). */
   repoUrl?: string;
+  /** Seal size of an output's open tail part (default env CANON_SEAL_BYTES, else 256 KB). */
+  sealBytes?: number;
 }
 
 export interface CanonTranslateResult {
@@ -44,6 +45,10 @@ export interface CanonTranslateResult {
   errors: string[];
   summary: string;
   pushed: boolean;
+  /** Bytes the output writers wrote into the store this run (new parts + open tails + indexes). */
+  bytesWritten?: number;
+  /** Sealed output parts that no longer matched (rewritten from there; each logged). Normally empty. */
+  diverged?: string[];
 }
 
 async function canonTranslateUnlocked(o: CanonTranslateOptions = {}): Promise<CanonTranslateResult> {
@@ -53,6 +58,9 @@ async function canonTranslateUnlocked(o: CanonTranslateOptions = {}): Promise<Ca
 const MANIFEST_PATH = path.join(HOME, '.canon', 'translate-manifest.json');
 const MAX_BYTES = 50 * 1024 * 1024;
 const PART_BYTES = 25 * 1024 * 1024;
+const SEAL_BYTES = resolveSealBytes(o.sealBytes, PART_BYTES);
+let bytesWritten = 0;
+const divergedOut: string[] = [];
 const SCRIPT_VERSION = 'a3.17'; // bump to force full re-translate
 
 const MESSAGE_TYPES = new Set(['user', 'assistant', 'system', 'file-history-snapshot']);
@@ -116,70 +124,59 @@ function discover(rootAbs: string, relPrefix: string): LogicalFile[] {
   return out.sort((a, b) => a.rel.localeCompare(b.rel));
 }
 
-/** yields [line, blobShaOfThePartContainingIt] */
-async function* logicalLines(parts: string[]): AsyncGenerator<[string, string]> {
-  for (const p of parts) {
+/** yields [line, blobShaOfThePartContainingIt, partIndex] */
+async function* logicalLines(parts: string[]): AsyncGenerator<[string, string, number]> {
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i]!;
     const blob = blobs.get(path.relative(STORE, p)) ?? 'untracked';
     const rl = readline.createInterface({ input: fs.createReadStream(p), crlfDelay: Infinity });
-    for await (const line of rl) if (line.trim()) yield [line, blob];
+    for await (const line of rl) if (line.trim()) yield [line, blob, i];
   }
 }
 
-// ── chunk-aware output: single file ≤50MB, else 25MB .part-NNNN files ──────
-function finalizeOutput(destAbs: string, tmpAbs: string) {
+// ── APPEND-ONLY output (2026-11-17) ─────────────────────────────────────────
+// The canonical line and its events sidecar are written through canonSegments' append-only part writers, the same as the
+// native layer: the parts already stored are verified and never rewritten, only the new tail is appended. The translation itself
+// still runs over the whole native session (its state — fragment merging, parent remapping, pairing repair — is a forward pass),
+// but its output for an unchanged prefix is byte-identical, so the store receives only the new records.
+// `stableBytes`: output bytes at or past this offset may still change in a later run — records derived from the native session's
+// own OPEN tail part (whose blob, i.e. the `provenance.ref`, changes as it grows) and records flushed at EOF (an assistant
+// message whose fragments are still arriving). Such bytes are never sealed this run; they stay in the open tail part.
+
+/** Plain (old) layout: one file while ≤ singleMax and no parts exist yet, else append-only `.part-NNNN` files. */
+function finalizePlain(destAbs: string, tmpAbs: string, singleMax: number, stableBytes: number) {
   const size = fs.statSync(tmpAbs).size;
-  const staleParts = () => {
-    const dir = path.dirname(destAbs); const base = path.basename(destAbs);
-    let names: string[] = [];
-    try { names = fs.readdirSync(dir); } catch { return []; }
-    return names.filter((n) => n.startsWith(base + '.part-')).map((n) => path.join(dir, n));
-  };
-  if (size <= MAX_BYTES) {
-    for (const p of staleParts()) fs.unlinkSync(p);
-    fs.renameSync(tmpAbs, destAbs);
+  if (!hasOldParts(destAbs) && size <= singleMax) {
+    fs.renameSync(tmpAbs, destAbs);   // identical bytes → identical blob: an unchanged single file adds nothing to git
     return;
   }
-  // split at line boundaries into parts; remove single-file form + extra parts. STREAMED (2026-11-11): a > 512 MB output (the 824 MB
-  // faee1cf3 session's sidecar) cannot be one V8 string. Same cut rule as before — the last '\n' at or before offset + PART_BYTES,
-  // counted in chars — so parts are identical to the old whole-string split.
-  const fd = fs.openSync(tmpAbs, 'r'); const dec = new StringDecoder('utf8'); const block = Buffer.allocUnsafe(8 * 1024 * 1024);
-  let buf = '', part = 0;
-  const cut = (final: boolean) => {
-    while (buf.length > PART_BYTES || (final && buf.length > 0)) {
-      let end = buf.length;
-      if (buf.length > PART_BYTES) { const nl = buf.lastIndexOf('\n', PART_BYTES); end = nl > 0 ? nl + 1 : PART_BYTES; }   // no newline in range: cut at PART_BYTES, as the old split did
-      fs.writeFileSync(`${destAbs}.part-${String(part).padStart(4, '0')}`, buf.slice(0, end));
-      buf = buf.slice(end); part++;
-    }
-  };
-  try {
-    for (;;) { const n = fs.readSync(fd, block, 0, block.length, null); if (n === 0) break; buf += dec.write(block.subarray(0, n)); cut(false); }
-    buf += dec.end(); cut(true);
-  } finally { fs.closeSync(fd); }
-  for (const p of staleParts()) {
-    const idx = Number(p.slice(-4));
-    if (idx >= part) fs.unlinkSync(p);
-  }
-  try { fs.unlinkSync(destAbs); } catch { /* none */ }
+  const w = new PlainPartWriter(destAbs, { partBytes: PART_BYTES, sealBytes: SEAL_BYTES, adoptSingle: true, quietOpen: true });
+  let off = 0;
+  for (const line of fileLinesExact(tmpAbs)) { off += line.length; w.push(line, off <= stableBytes); }
+  const r = w.finish();
+  bytesWritten += r.stats.bytesWritten;
+  if (r.stats.diverged.length) divergedOut.push(...r.stats.diverged);
   fs.unlinkSync(tmpAbs);
 }
 
 /**
  * Segmented output (canonSegments): the canonical line split at the compaction boundaries it carries (the translated
  * records keep `system/compact_boundary`), the events sidecar split along the same segments, plus `<id>.segments.json`.
- * Unchanged sub-chunks are not rewritten. A single-file form of this output is replaced; OLD `.part-NNNN` outputs (a
- * session re-chunked with canonRechunk) are LEFT in place — readers prefer the segmented files, and deleting dozens of
- * parts in one commit would trip guardedAddAll's mass-deletion guard and block every translate commit. They are removed
- * by hand with the native old parts (canonRechunk prints the commands).
+ * Append-only: sealed sub-chunks are never rewritten. An existing single-file form of this output is adopted by rename (one
+ * window) or replaced; OLD `.part-NNNN` outputs (a session re-chunked with canonRechunk) are LEFT in place — readers prefer the
+ * segmented files, and deleting dozens of parts in one commit would trip guardedAddAll's mass-deletion guard and block every
+ * translate commit. They are removed by hand with the native old parts (canonRechunk prints the commands).
  */
-function finalizeSegmented(destAbs: string, tmpAbs: string, events: { file: string; cuts: number[] } | undefined, harness: string) {
-  const w = new SegmentedWriter(destAbs, { harness, partBytes: PART_BYTES, ownsEvents: true });
-  for (const line of fileLinesExact(tmpAbs)) w.push(line);
-  w.finish(events);
+function finalizeSegmented(destAbs: string, tmpAbs: string, events: { file: string; cuts: number[]; stableBytes: number } | undefined,
+  harness: string, stableBytes: number) {
+  const w = new SegmentedWriter(destAbs, { harness, partBytes: PART_BYTES, sealBytes: SEAL_BYTES, ownsEvents: true, adoptSingle: true, quietOpen: true });
+  let off = 0;
+  for (const line of fileLinesExact(tmpAbs)) { off += line.length; w.push(line, off <= stableBytes); }
+  const r = w.finish(events);
+  bytesWritten += r.stats.bytesWritten;
+  if (r.stats.diverged.length) divergedOut.push(...r.stats.diverged);
   fs.unlinkSync(tmpAbs);
   if (events) fs.unlinkSync(events.file);
-  const eventsAbs = destAbs.replace(/\.jsonl$/, '.events.jsonl');
-  for (const logical of [destAbs, eventsAbs]) { try { fs.unlinkSync(logical); } catch { /* none */ } }
 }
 
 function writeIfChanged(abs: string, content: string) {
@@ -303,7 +300,16 @@ async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-co
   }
   fs.mkdirSync(path.dirname(destAbs), { recursive: true });
   const tmpAbs = destAbs + '.tmp';
-  const out = fs.createWriteStream(tmpAbs);
+  const outStream = fs.createWriteStream(tmpAbs);
+  let outBytes = 0;
+  const out = {
+    write(s: string) { outBytes += Buffer.byteLength(s); return outStream.write(s); },
+    end(cb: (e?: any) => void) { outStream.end(cb); },
+  };
+  // Stability marks (see finalizeSegmented): output/event bytes from here on may still change in a later run.
+  let stableOut = -1, stableEv = -1;
+  const lastPart = lf.parts.length - 1;
+  const markUnstable = () => { if (stableOut < 0) { stableOut = outBytes; stableEv = eventsBytes; } };
   type Frag = { rec: any; line: number; ref: string };
   const remap = new Map<string, string>();
   // Sidecarred events (attachments, snapshots) can sit INSIDE the parentUuid
@@ -442,8 +448,9 @@ async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-co
   };
 
   let lineNo = 0;
-  for await (const [line, blob] of logicalLines(lf.parts)) {
+  for await (const [line, blob, partIdx] of logicalLines(lf.parts)) {
     lineNo++;
+    if (partIdx === lastPart || blob === 'untracked') markUnstable();   // the native open tail (or an uncommitted part)
     let rec: any;
     try { rec = JSON.parse(line); }
     catch (e) {
@@ -645,6 +652,7 @@ async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-co
       emitCanon(rec, lineNo, blob);
     }
   }
+  if (harness === 'gemini-cli') markUnstable();   // supersede-by-id: the buffered records are emitted at EOF, after a later run may supersede them
   if (harness === 'gemini-cli' && gmBuf.length) {
     // Pass 1 — resolve the event-sourced log: typed records supersede by id
     // (keep-LAST content at FIRST-seen order); messages inside {$set:{messages}}
@@ -736,6 +744,7 @@ async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-co
   }
   // EOF flush: tail in-flight calls are deliberately left in ccOpen (undrained)
   // — verify's tail window allows them; the next sync completes the pair.
+  markUnstable();   // whatever is flushed from here on depends on records that may still arrive
   flushAsst();
   flushRes();
   await new Promise<void>((res, rej) => out.end((e: any) => (e ? rej(e) : res())));
@@ -748,13 +757,16 @@ async function translateFile(lf: LogicalFile, harness: 'claude-code' | 'nexus-co
   }
   if (segmented) {
     if (eventsFd !== null) { fs.closeSync(eventsFd); eventsFd = null; }
-    finalizeSegmented(destAbs, tmpAbs, events.length ? { file: eventsTmp, cuts: eventCuts } : undefined, harness);
+    finalizeSegmented(destAbs, tmpAbs, events.length ? { file: eventsTmp, cuts: eventCuts, stableBytes: stableEv } : undefined, harness, stableOut);
   } else {
-  finalizeOutput(destAbs, tmpAbs);
+  // Native single file (a small session, or one not re-synced since 2026-11-17): output stays one file up to the old 50 MB cap.
+  // Native old-layout parts: append-only parts (a single output form is adopted by rename once it is past the seal size).
+  const singleMax = lf.parts.length === 1 && !/\.part-\d{4,}$/.test(lf.parts[0]!) ? MAX_BYTES : SEAL_BYTES;
+  finalizePlain(destAbs, tmpAbs, singleMax, stableOut);
   if (events.length) {
-    // Chunk-aware like the main file: a sidecar > 50 MB becomes .part-NNNN files (GitHub's 100 MB cap; sidecar.ts resolves both).
+    // Same writer for the sidecar (GitHub's 100 MB cap; sidecar.ts resolves single and parts).
     fs.closeSync(eventsFd!); eventsFd = null;
-    finalizeOutput(eventsAbs, eventsTmp);
+    finalizePlain(eventsAbs, eventsTmp, singleMax, stableEv);
   } else {
     if (fs.existsSync(eventsAbs)) fs.unlinkSync(eventsAbs);
     for (const p of sidecarFiles(destAbs)) fs.unlinkSync(p);
@@ -897,10 +909,11 @@ Until then their absence is stated here rather than implied.
   const translated = Object.values(stats).reduce((n, s) => n + s.files, 0);
   const repairNote = dupResults + orphanRepairs > 0 ? `, ${orphanRepairs} orphan-repair(s), ${dupResults} dup result(s) dropped` : '';
   const summary = `${translated} translated, ${unchanged} unchanged, ${errors.length} error(s)${repairNote}`;
+  if (divergedOut.length) errors.push(...divergedOut.map((d) => `output diverged (rewritten from there): ${d}`));
 
   if (DRY) {
     console.log(`[canon-translate DRY] would translate ${translated} logical file(s), ${unchanged} unchanged`);
-    return { translated, unchanged, errors, summary, pushed: false };
+    return { translated, unchanged, errors, summary, pushed: false, bytesWritten, diverged: divergedOut };
   }
 
   if (translated || errors.length) {
@@ -952,7 +965,7 @@ Until then their absence is stated here rather than implied.
   if (errors.length) {
     for (const e of errors.slice(0, 10)) console.error('  error:', e);
   }
-  return { translated, unchanged, errors, summary, pushed };
+  return { translated, unchanged, errors, summary: `${summary}, ${(bytesWritten / 1e6).toFixed(2)} MB output written`, pushed, bytesWritten, diverged: divergedOut };
 }
 
 /** Translate under the store's single-writer lock (withStoreLock). */

@@ -12,6 +12,7 @@ import inquirer from 'inquirer';
 import {
   Vault, createVault, initVaultDefault, openVaultNonInteractive, vaultPath,
   getGlobalEnvPath, parseEnvFile,
+  envWithoutVault,
 } from '@nexus-cortex/core';
 
 const SECRET_NAME = /(_API_KEY|_API_TOKEN|_OAUTH_TOKEN|_TOKEN|_SECRET|_PASSWORD|_ACCESS_KEY)$/;
@@ -117,15 +118,22 @@ export async function runSecrets(action: string, args: string[], opts: Record<st
         if (!args.length) throw new Error('usage: cortex secrets exec [--only NAME,NAME] -- <command> [args…]');
         const v = await openVault();
         const only = opts.only ? new Set(String(opts.only).split(',').map((x: string) => x.trim()).filter(Boolean)) : null;
-        const env: NodeJS.ProcessEnv = { ...process.env };
-        let injected = 0;
-        for (const n of v.names()) { if (only && !only.has(n)) continue; if (env[n] === undefined || env[n] === '') { env[n] = v.get(n)!; injected++; } }
+        // Start from the REAL environment (startup already loaded every vault key into process.env), then add exactly the selected keys.
+        // With --only the child also gets no vault master key, so it cannot open the vault and read the rest.
+        const env: NodeJS.ProcessEnv = envWithoutVault(process.env);
+        if (only) { delete env.CORTEX_SECRETS_KEY; delete env.CORTEX_SECRETS_KEY_FILE; }
+        // counts only, never names' values: 'injected' = taken from the vault; 'already set' = the real env had it (it wins, so the vault copy
+        // is not used); 'missing' = an --only name the vault does not hold. 11-15: '0 key(s) injected' on a repl whose Replit secrets already
+        // carried the key read as a broken counter — it was the env-wins rule, unreported.
+        let injected = 0, already = 0;
+        for (const n of v.names()) { if (only && !only.has(n)) continue; if (env[n] === undefined || env[n] === '') { env[n] = v.get(n)!; injected++; } else already++; }
+        const missing = only ? [...only].filter((n) => !v.names().includes(n)) : [];
         const { spawn } = await import('child_process');
         return await new Promise<number>((resolve) => {
           const child = spawn(args[0]!, args.slice(1), { env, stdio: 'inherit' });
           child.on('exit', (code, sig) => resolve(code ?? (sig ? 128 + ((os.constants.signals as Record<string, number>)[sig] ?? 1) : 1)));   // shell convention for a signal
           child.on('error', (e) => { console.error(`error: ${e.message}`); resolve(127); });
-          if (opts.verbose) console.error(`[secrets] ${injected} key(s) injected`);
+          if (opts.verbose) console.error(`[secrets] ${injected} key(s) injected from the vault, ${already} already set in the environment (the environment wins)${missing.length ? `; not in the vault: ${missing.join(', ')}` : ''}`);
         });
       }
       default:

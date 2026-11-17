@@ -28,6 +28,10 @@ import { canonPipeline } from './canonPipeline.js';
 export interface CanonWatchOptions extends CanonSyncOptions {
   /** Debounce window before a sync fires after the last change (default 60s). */
   debounceMs?: number;
+  /** Minimum ms between syncs (default 15 min; env CANON_WATCH_MIN_INTERVAL_MS). The startup catch-up sync is not delayed. */
+  minIntervalMs?: number;
+  /** Minimum ms between graph rebuilds (default env CANON_GRAPH_MIN_INTERVAL_MS, else 24 h) — see canonPipeline. */
+  graphMinIntervalMs?: number;
   /** Abort to stop watching (a SIGINT handler wires this). */
   signal?: AbortSignal;
   /** Called after each auto-sync (CLI logging). */
@@ -37,6 +41,9 @@ export interface CanonWatchOptions extends CanonSyncOptions {
 }
 
 const DEFAULT_DEBOUNCE_MS = 60_000;
+/** Minimum time between two syncs (2026-11-16: a 60 s debounce synced ~50×/hour while a session was active; every sync stored another
+ *  full copy of the live transcript → the store grew 4.9 → 14 GB in a day). Override: CANON_WATCH_MIN_INTERVAL_MS / options.minIntervalMs. */
+const DEFAULT_MIN_INTERVAL_MS = 15 * 60_000;
 
 /**
  * Watch every declared harness session root and auto-sync (debounced) on change.
@@ -47,6 +54,10 @@ export async function canonWatch(options: CanonWatchOptions = {}): Promise<void>
   const HOME = options.home ?? process.env.HOME ?? os.homedir();
   const STORE = options.store ?? defaultCanonStore();
   const debounceMs = options.debounceMs && options.debounceMs > 0 ? options.debounceMs : DEFAULT_DEBOUNCE_MS;
+  const envMin = Number(process.env.CANON_WATCH_MIN_INTERVAL_MS);
+  const minIntervalMs = options.minIntervalMs !== undefined && options.minIntervalMs >= 0 ? options.minIntervalMs
+    : Number.isFinite(envMin) && envMin >= 0 ? envMin : DEFAULT_MIN_INTERVAL_MS;
+  let lastSyncAt = 0;   // 0 = never synced: the first (catch-up) sync is not held back
 
   // Derive the watch list + capture extensions from the SAME declarative source
   // canonSync uses, so `HARNESSES.json` overrides apply to the watcher too.
@@ -71,11 +82,12 @@ export async function canonWatch(options: CanonWatchOptions = {}): Promise<void>
   const runSync = async (): Promise<void> => {
     if (syncing) { pendingWhileSyncing = true; return; }
     syncing = true;
+    lastSyncAt = Date.now();
     try {
       // Full pipeline: sync → translate → graph (§27l graphs stay current reactively).
-      const pipe = await canonPipeline({ store: STORE, home: HOME, dryRun: options.dryRun, repoUrl: options.repoUrl });
+      const pipe = await canonPipeline({ store: STORE, home: HOME, dryRun: options.dryRun, repoUrl: options.repoUrl, sealBytes: options.sealBytes, graphMinIntervalMs: options.graphMinIntervalMs });
       if (pipe.errors.length) console.warn(`[canon-watch] pipeline warnings: ${pipe.errors.slice(0, 3).join(' | ')}`);
-      if (pipe.translated || pipe.graphed) console.log(`[canon-watch] derived layers refreshed (translate=${pipe.translated} graph=${pipe.graphed})`);
+      if (pipe.translated || pipe.graphed) console.log(`[canon-watch] derived layers refreshed (translate=${pipe.translated} graph=${pipe.graphed}${pipe.graphSkipped ? ` — graph skipped: ${pipe.graphSkipped}` : ''})`);
       options.onSync?.(pipe.sync);
     } catch (err) {
       console.warn(`[canon-watch] sync failed: ${(err as Error)?.message ?? String(err)}`);
@@ -87,7 +99,9 @@ export async function canonWatch(options: CanonWatchOptions = {}): Promise<void>
 
   const schedule = (): void => {
     if (timer) clearTimeout(timer);
-    timer = setTimeout(() => { timer = null; void runSync(); }, debounceMs);
+    const sinceLast = lastSyncAt ? Date.now() - lastSyncAt : Infinity;
+    const wait = Math.max(debounceMs, minIntervalMs - sinceLast);
+    timer = setTimeout(() => { timer = null; void runSync(); }, wait);
   };
 
   const watched = new Set<string>();

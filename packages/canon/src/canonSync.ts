@@ -22,7 +22,7 @@ import * as fs from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 import * as path from 'node:path';
 import { dropArchivedDuplicates, dropEchoedSessions } from './canonArchive.js';
-import { SegmentedWriter, hasOldParts, segmentIndexPath } from './canonSegments.js';
+import { PlainPartWriter, SegmentedWriter, hasOldParts, resolveSealBytes, segmentIndexPath, segmentsOfFiles } from './canonSegments.js';
 
 export interface CanonSyncOptions {
   /** Canon store working clone (default: defaultCanonStore() in storePath.ts — CANON_STORE, an existing /tmp/canon-store, else ~/.cache/nexus-canon/store; auto-cloned). */
@@ -41,9 +41,12 @@ export interface CanonSyncOptions {
    *  stores). Scoped stores are cone-mode sparse clones; root config files and
    *  native/SKIPPED.md remain present (cone semantics). */
   scope?: string;
-  /** Tuning/test hooks: the single-file cap (default 50 MB) and the sub-chunk size (default 25 MB). */
+  /** Tuning/test hooks: the cap for non-JSONL files (default 50 MB) and the size cap of a NEW part (default 25 MB). */
   maxBytes?: number;
   partBytes?: number;
+  /** Seal size of a session's open tail part (default env CANON_SEAL_BYTES, else 256 KB; never above partBytes). A part that
+   *  reached it is never rewritten again; a session at or under it is stored as one file. */
+  sealBytes?: number;
 }
 
 export interface CanonSyncResult {
@@ -53,6 +56,10 @@ export interface CanonSyncResult {
   chunked: number;
   scrubbedHits: number;
   pushed: boolean;
+  /** Bytes the session writers wrote into the store this sync (new parts + open tails + indexes) — the store's growth before git compression. */
+  bytesWritten?: number;
+  /** Sealed parts that no longer matched their source (rewritten from there; each logged). Normally empty. */
+  diverged?: string[];
 }
 
 /**
@@ -225,6 +232,7 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
   const MANIFEST_PATH = path.join(HOME, '.canon', 'manifest.json');
   const MAX_BYTES = o.maxBytes ?? 50 * 1024 * 1024; // GitHub hard-rejects >100MB; margin for scrub growth
   const PART_BYTES = o.partBytes ?? 25 * 1024 * 1024;
+  const SEAL_BYTES = resolveSealBytes(o.sealBytes, PART_BYTES);   // open tail part seal size (CANON_SEAL_BYTES; default 256 KB)
 
   // Scoped-sync mode (see CanonSyncOptions.scope): 'auto' | 'label,label' | unset.
   const SCOPE_RAW = (o.scope ?? process.env.CANON_SYNC_SCOPE ?? '').trim();
@@ -272,6 +280,7 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
 
   const skipped: string[] = [];
   let copied = 0, unchanged = 0, scrubbedHits = 0, chunked = 0, tornTrimmed = 0, unparseableCarried = 0;
+  let appendWritten = 0; const diverged: string[] = [];
 
   /** Sync-time parse probe (2026-08-14 — "torn snapshot" fix). A live writer can
    *  be mid-line when sync reads a session file; copying that tear poisons the
@@ -296,45 +305,36 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
     return { content, torn: false };
   }
 
-  /** Lossless line-boundary chunking: <dest>.part-NNNN files; reassembly = cat in
-   *  order. Streams line-by-line (a 200MB read into one string is fine on this box,
-   *  but split must respect line boundaries so no record is ever cut). */
+  /** Every .jsonl session (any size, 2026-11-17) is stored APPEND-ONLY through canonSegments' part writers: the bytes already
+   *  in the store are verified and never rewritten, only the new tail is appended (a small open tail part, sealed at SEAL_BYTES),
+   *  so a sync stores the new records — not another full copy of the live transcript. Reassembly = the parts in order. */
   function syncChunked(src: string, destRel: string, st: fs.Stats) {
     if (DRY) { chunked++; copied++; return; }
     // STREAMED (2026-11-11): a session past V8's max string length (~512 MB) threw "Cannot create a string longer than
     // 0x1fffffe8 characters" on readFileSync and was skipped every cycle (faee1cf3, 824 MB, stuck since 10-29). Read in
-    // byte blocks through a UTF-8 StringDecoder, keep only complete lines, scrub per line batch (every SECRET_PATTERN is
-    // line-local), and cut parts with the SAME rule as before (last '\n' at or before offset + PART_BYTES, counted in
-    // chars of the scrubbed text), so existing parts stay byte-identical and only the grown tail is rewritten.
+    // byte blocks through a UTF-8 StringDecoder, keep only complete lines, scrub per line (every SECRET_PATTERN is line-local).
     let fd: number;
     try { fd = fs.openSync(src, 'r'); }
     catch (e) { skipped.push(`${destRel} — read failed: ${e}`); return; }
     const destBase = path.join(STORE, 'native', destRel);
     fs.mkdirSync(path.dirname(destBase), { recursive: true });
-    try { fs.unlinkSync(destBase); } catch { /* none */ }
-    // LAYOUT (canonSegments, 2026-11-15): new chunked sessions are stored BY COMPACTION SEGMENT — closed segments never
-    // change, only the open tail's last sub-chunk grows. A session already stored in the old size-cut layout (and never
-    // re-chunked with rechunkSession) keeps that layout: no silent migration, no duplicate copy.
-    const seg = fs.existsSync(segmentIndexPath(destBase)) || !hasOldParts(destBase)
-      ? new SegmentedWriter(destBase, { harness: destRel.split(path.sep)[0] ?? null, partBytes: PART_BYTES })
-      : null;
-    let held: string | null = null; // seg mode: the last line, pushed once we know whether it is the unterminated final one
+    // LAYOUT (canonSegments): a session with an index continues segmented; an OLD size-cut session (`.part-NNNN`, no index)
+    // continues in that layout, append-only (no migration, no duplicate copy); a single-file session is ADOPTED by rename when
+    // it is ≥ SEAL_BYTES (segmented when it holds one compaction window, else as `.part-0000`) — zero new bytes in git; a new or
+    // small session is written segmented, staying ONE file while it is ≤ SEAL_BYTES (it is then its own open tail).
+    const harness = destRel.split(path.sep)[0] ?? null;
+    const wopts = { harness, partBytes: PART_BYTES, sealBytes: SEAL_BYTES };
+    let sink: SegmentedWriter | PlainPartWriter;
+    if (fs.existsSync(segmentIndexPath(destBase))) sink = new SegmentedWriter(destBase, wopts);
+    else if (hasOldParts(destBase)) sink = new PlainPartWriter(destBase, wopts);
+    else {
+      let single = -1; try { single = fs.statSync(destBase).size; } catch { /* none */ }
+      if (single >= SEAL_BYTES && segmentsOfFiles([destBase], harness).length > 1) sink = new PlainPartWriter(destBase, { ...wopts, adoptSingle: true });
+      else sink = new SegmentedWriter(destBase, { ...wopts, adoptSingle: true, singleBelow: SEAL_BYTES });
+    }
+    let held: string | null = null; // the last line, pushed once we know whether it is the unterminated final one
     const dec = new StringDecoder('utf8'); const block = Buffer.allocUnsafe(8 * 1024 * 1024);
-    let pending = '', buf = '', part = 0, lineNo = 0, torn = false, scrubbedAny = false;
-    const writePart = (slice: string) => {
-      const partPath = `${destBase}.part-${String(part).padStart(4, '0')}`;
-      const same = fs.existsSync(partPath) && fs.statSync(partPath).size === Buffer.byteLength(slice)
-        && fs.readFileSync(partPath, 'utf8') === slice;
-      if (!same) fs.writeFileSync(partPath, slice);
-      part++;
-    };
-    const drain = (final: boolean) => {
-      while (buf.length > PART_BYTES || (final && buf.length > 0)) {
-        let end = buf.length;
-        if (buf.length > PART_BYTES) { const nl = buf.lastIndexOf('\n', PART_BYTES); end = nl > 0 ? nl + 1 : PART_BYTES; }   // no newline in range: cut at PART_BYTES, as the old split did
-        writePart(buf.slice(0, end)); buf = buf.slice(end);
-      }
-    };
+    let pending = '', lineNo = 0, torn = false, scrubbedAny = false;
     // A bad record FOLLOWED by valid records is mid-file corruption (2026-11-11: faee1cf3 line 197,556, a malformed 141 KB
     // api-request-blob after a crash) — never a writer race. Treating it as a torn tail froze the copy at that line forever.
     // It is carried losslessly as a marker record holding the raw line as a JSON string; only a bad LAST line is a torn tail.
@@ -344,23 +344,27 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
       unparseableCarried++;
       return JSON.stringify({ type: 'canon-unparseable-line', line: s.no, raw: s.text });
     };
-    const take = (lines: string[]) => {   // complete lines → validate → scrub → buffer
-      const ok: string[] = [];
+    const emit = (l: string) => {   // scrub one stored line; a scrub that breaks the JSON is a SCRUB BUG — carried as a marker, loudly
+      let out = scrub(l);
+      if (out !== l) {
+        scrubbedAny = true;
+        if (l.trim()) { try { JSON.parse(out); } catch {
+          console.log(`[canon-sync] POST-SCRUB unparseable line in ${destRel} (scrub-pattern bug, report it) — carried as canon-unparseable-line`);
+          out = JSON.stringify({ type: 'canon-unparseable-line', postScrub: true, raw: out });
+        } }
+      }
+      if (held !== null) sink.push(held + '\n');
+      held = out;
+    };
+    const take = (lines: string[]) => {   // complete lines → validate → scrub → writer
       for (const l of lines) {
         lineNo++;
-        if (!l.trim()) { if (suspect) trail.push(l); else ok.push(l); continue; }
+        if (!l.trim()) { if (suspect) trail.push(l); else emit(l); continue; }
         let valid = true; try { JSON.parse(l); } catch { valid = false; }
-        if (!valid) { if (suspect) { ok.push(corrupt(suspect), ...trail); trail = []; } suspect = { no: lineNo, text: l }; continue; }
-        if (suspect) { ok.push(corrupt(suspect), ...trail); trail = []; suspect = null; }
-        ok.push(l);
+        if (!valid) { if (suspect) { emit(corrupt(suspect)); for (const t of trail) emit(t); trail = []; } suspect = { no: lineNo, text: l }; continue; }
+        if (suspect) { emit(corrupt(suspect)); for (const t of trail) emit(t); trail = []; suspect = null; }
+        emit(l);
       }
-      if (!ok.length) return;
-      const raw = ok.join('\n') + '\n'; const out = scrub(raw);
-      if (out.length !== raw.length) scrubbedAny = true;
-      if (seg) {
-        const ls = out.split('\n'); ls.pop();
-        for (const l of ls) { if (held !== null) seg.push(held + '\n'); held = l; }
-      } else { buf += out; drain(false); }
     };
     try {
       for (;;) {
@@ -375,11 +379,12 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
         const s = suspect as { no: number; text: string };
         console.log(`[canon-sync] torn line ${s.no} in ${destRel} — kept ${s.no - 1}-line valid prefix, will retry next cycle`);
         tornTrimmed++; torn = true;
-      } else if (pending.length && buf.endsWith('\n')) buf = buf.slice(0, -1);   // unterminated last line: keep the file's bytes as-is
-      if (seg) {
-        if (held !== null) seg.push(!torn && pending.length ? held : held + '\n');
-        seg.finish();
-      } else drain(true);
+      }
+      // An unterminated last line keeps the file's bytes as-is — and is UNSTABLE (its '\n' is still coming): never sealed.
+      if (held !== null) { if (!torn && pending.length) sink.push(held as string, false); else sink.push(held + '\n'); }
+      const r = sink.finish();
+      appendWritten += r.stats.bytesWritten;
+      if (r.stats.diverged.length) diverged.push(...r.stats.diverged.map((d) => `${destRel}: ${d}`));
     } catch (e) { skipped.push(`${destRel} — read failed: ${e}`); return; }
     finally { fs.closeSync(fd); }
     if (scrubbedAny) scrubbedHits++;
@@ -394,14 +399,10 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
     const key = destRel;
     const prev = manifest[key];
     if (prev && prev.mtimeMs === st.mtimeMs && prev.size === st.size) { unchanged++; return; }
-    // Oversized JSONL: chunk at LINE boundaries into ~25MB parts (lossless: cat
-    // parts = original; growing sessions only rewrite the LAST part, so git deltas
-    // stay cheap). LFS rejected: no delta on growing blobs + 1GB/mo bandwidth cap.
-    // Non-splittable oversized files remain visible skips (D8).
-    // A session already stored by segment stays segmented whatever its size (its readers prefer the segmented files).
-    const segmentedAlready = src.endsWith('.jsonl') && fs.existsSync(segmentIndexPath(path.join(STORE, 'native', destRel)));
-    if (st.size > MAX_BYTES || segmentedAlready) {
-      if (src.endsWith('.jsonl')) { syncChunked(src, destRel, st); return; }
+    // Every .jsonl goes through the append-only part writer, whatever its size (2026-11-17: the whole-file path re-stored every
+    // session under 50 MB in full on each sync). Other oversized files cannot be line-split: visible skips (D8).
+    if (src.endsWith('.jsonl')) { syncChunked(src, destRel, st); return; }
+    if (st.size > MAX_BYTES) {
       skipped.push(`${destRel} — ${(st.size / 1e6).toFixed(0)}MB > 50MB cap, not line-splittable`);
       manifest[key] = { mtimeMs: st.mtimeMs, size: st.size };
       return;
@@ -511,17 +512,37 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
     if (scopedLegs && !scopedLegs.includes('browser-cortex')) {
       // scoped store without the browser leg — nothing to integrate here
     } else try {
+      // 2026-11-17 GROWTH FIX: these branches have UNRELATED history, so a `fetch --depth 1` shares nothing with the store and the
+      // server re-sent the branch tip's WHOLE tree + blobs (~500 MB, 5,333 objects of which 5,190 were already local) on EVERY sync,
+      // for all 6 branches — the recurring same-size promisor packs. Now: (1) a branch is fetched only when its tip moved since the
+      // last fold-in (tips from this ls-remote, remembered in ~/.canon/browser-branch-tips.json per store); (2) the fetch carries
+      // --filter=blob:none, so only commits/trees come down and the checkout below lazily fetches just the browser-cortex blobs
+      // that are actually missing.
+      const TIPS_PATH = path.join(HOME, '.canon', 'browser-branch-tips.json');
+      let tipsAll: Record<string, Record<string, string>> = {};
+      try { tipsAll = JSON.parse(fs.readFileSync(TIPS_PATH, 'utf8')); } catch { /* none yet */ }
+      const tips: Record<string, string> = tipsAll[STORE] ?? {};
       const heads = git(['ls-remote', '--heads', 'origin', 'browser-cortex-*']);
       for (const line of heads.split('\n')) {
-        const m = line.match(/refs\/heads\/(browser-cortex-[A-Za-z0-9_-]+)$/);
+        const m = line.match(/^([0-9a-f]{40})\s+refs\/heads\/(browser-cortex-[A-Za-z0-9_-]+)$/);
         if (!m) continue;
+        const [, sha, branch] = m as unknown as [string, string, string];
+        if (tips[branch] === sha) continue;   // unchanged since the last fold-in — nothing to fetch
         try {
-          git(['fetch', '--depth', '1', 'origin', m[1]!]);
+          git(['fetch', '--depth', '1', '--filter=blob:none', 'origin', branch]);
           git(['checkout', 'FETCH_HEAD', '--', 'native/browser-cortex']);
-          console.log(`[canon-sync] integrated browser branch ${m[1]}`);
+          tips[branch] = sha;
+          console.log(`[canon-sync] integrated browser branch ${branch} @ ${sha.slice(0, 10)}`);
         } catch (e) {
-          console.warn(`[canon-sync] browser branch ${m[1]} integration failed: ${(e as Error)?.message ?? e}`);
+          console.warn(`[canon-sync] browser branch ${branch} integration failed: ${(e as Error)?.message ?? e}`);
         }
+      }
+      if (!DRY) {   // the folded files are in the working tree now; the add/commit below carries them even if this push fails
+        try {
+          tipsAll[STORE] = tips;
+          fs.mkdirSync(path.dirname(TIPS_PATH), { recursive: true });
+          fs.writeFileSync(TIPS_PATH, JSON.stringify(tipsAll));
+        } catch { /* best effort: a lost tips file only costs one extra fetch per branch */ }
       }
       // Torn-tail probe over the FOLDED tree: the checkout path above bypasses
       // syncFile's probe entirely, so a torn line pushed by a browser SPA would
@@ -536,7 +557,7 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
         for (const e of entries) {
           const p = path.join(dir, e.name);
           if (e.isDirectory()) { walkBc(p); continue; }
-          const partMatch = e.name.match(/^(.*\.jsonl)\.part-(\d{4})$/);
+          const partMatch = e.name.match(/^(.*\.jsonl)\.part-(\d{4,})$/);
           if (!e.name.endsWith('.jsonl') && !partMatch) continue;
           const rel = path.relative(STORE, p);
           const probe = probeJsonl(fs.readFileSync(p, 'utf8'), rel);
@@ -600,7 +621,7 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
     } else if (stageOk) {
       git(['commit', '-q', '-m', `canon-sync: ${copied} file(s) updated, ${skipped.length} skipped`]);
       pushed = guardedPush(git, 'canon-sync');
-      if (pushed) console.log(`[canon-sync] pushed: ${copied} copied, ${unchanged} unchanged, ${skipped.length} skipped, ${chunked} chunked, ${scrubbedHits} files had secrets scrubbed${unparseableCarried ? `, ${unparseableCarried} corrupt record(s) carried as canon-unparseable-line` : ''}`);
+      if (pushed) console.log(`[canon-sync] pushed: ${copied} copied, ${unchanged} unchanged, ${skipped.length} skipped, ${chunked} chunked, ${scrubbedHits} files had secrets scrubbed${unparseableCarried ? `, ${unparseableCarried} corrupt record(s) carried as canon-unparseable-line` : ''}, ${(appendWritten / 1e6).toFixed(2)} MB session bytes written${diverged.length ? `, ${diverged.length} DIVERGED sealed part(s)` : ''}`);
       else console.log(`[canon-sync] committed locally, push deferred to next cycle: ${copied} copied, ${unchanged} unchanged, ${skipped.length} skipped, ${chunked} chunked, ${scrubbedHits} files had secrets scrubbed${unparseableCarried ? `, ${unparseableCarried} corrupt record(s) carried as canon-unparseable-line` : ''}`);
     } else {
       console.log(`[canon-sync] no changes (${unchanged} unchanged, ${skipped.length} previously-skipped)`);
@@ -609,7 +630,7 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
     console.log(`[canon-sync DRY] would copy ${copied}, unchanged ${unchanged}, skip ${skipped.length}`);
     for (const s of skipped.slice(0, 10)) console.log('  skip:', s);
   }
-  return { copied, unchanged, skipped, chunked, scrubbedHits, pushed };
+  return { copied, unchanged, skipped, chunked, scrubbedHits, pushed, bytesWritten: appendWritten, diverged };
 }
 
 /** Sync under the store's single-writer lock (withStoreLock). */

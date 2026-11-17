@@ -36,8 +36,12 @@ import { isStaleServer, staleServerPolicy, wrongProject } from './stale-server.j
 // shell env, so .env values (DEFAULT_MODEL_ID, CORTEX_CLIENT_FETCH_TIMEOUT_MS, …)
 // never reached the CLI's own pre-send decisions even though the server it spawns
 // loaded them. Must run BEFORE any process.env read below. Best-effort.
+// The env for a delegated subcommand child (below): WITHOUT the vault keys this bootstrap copied in, so the child's own bootstrap loads
+// and tracks them itself (2026-11-16: the child saw them as REAL env, so `secrets exec --only A` passed every key and counted 0 injected).
+let __childEnv = () => process.env;
 try {
-  const { bootstrapEnv } = await import('@nexus-cortex/core');
+  const { bootstrapEnv, envWithoutVault } = await import('@nexus-cortex/core');
+  if (typeof envWithoutVault === 'function') __childEnv = () => envWithoutVault(process.env);
   const { fileURLToPath: __f } = await import('node:url');
   const { dirname: __d, resolve: __r } = await import('node:path');
   bootstrapEnv(__r(__d(__f(import.meta.url)), '..')); // bin/.. = the cli package root
@@ -154,7 +158,7 @@ if (__firstPositional && COMMANDER_SUBCOMMANDS.has(__firstPositional)) {
     await ensureServer();
   }
   const CLI_ENTRY = join(__cortex_dirname, '..', 'dist', 'index.js');
-  const res = spawnSync(process.execPath, [CLI_ENTRY, ...args], { stdio: 'inherit' });
+  const res = spawnSync(process.execPath, [CLI_ENTRY, ...args], { stdio: 'inherit', env: __childEnv() });
   process.exit(res.status ?? 0);
 }
 

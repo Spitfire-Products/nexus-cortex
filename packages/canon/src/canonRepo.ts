@@ -204,6 +204,28 @@ export function guardedAddAll(git: (args: string[]) => string, label: string, ma
 }
 
 /**
+ * Pack loose objects once they pile up (2026-11-16). hardenStoreConfig turns auto-gc/maintenance OFF (a detached auto-repack was the
+ * 11-15 "mystery writer"), so nothing else ever packs: every sync of a growing transcript left full loose copies — 4.1 GiB of them in one
+ * day. `git repack -d` (incremental: loose → one delta-compressed pack, never touches existing packs, prunes nothing reachable) ran in
+ * minutes and turned those 4.1 GiB into ~10 MB. Runs in the foreground of the sync that triggered it, after its push; failures only warn.
+ * Thresholds: CANON_REPACK_LOOSE_COUNT (default 400 objects) / CANON_REPACK_LOOSE_MB (default 200).
+ */
+export function repackLooseIfNeeded(git: (args: string[]) => string, label: string): void {
+  try {
+    const out = git(['count-objects', '-v']);
+    const num = (k: string) => Number((out.match(new RegExp(`^${k}: (\\d+)`, 'm')) ?? [])[1] ?? 0);
+    const count = num('count'), sizeKb = num('size');
+    const maxCount = Number(process.env.CANON_REPACK_LOOSE_COUNT) || 400;
+    const maxMb = Number(process.env.CANON_REPACK_LOOSE_MB) || 200;
+    if (count < maxCount && sizeKb / 1024 < maxMb) return;
+    git(['-c', 'pack.threads=2', 'repack', '-d', '-q']);
+    console.log(`[${label}] packed ${count} loose objects (${(sizeKb / 1024).toFixed(0)} MB)`);
+  } catch (e) {
+    console.warn(`[${label}] loose-object repack skipped: ${(e as Error)?.message ?? e}`);
+  }
+}
+
+/**
  * Multi-writer-safe push: push main; on rejection (a concurrent writer —
  * another machine, a bench-worker fleet, watcher+cron overlap — landed
  * first) `pull --rebase` and retry. Canon writers are append-only over
@@ -217,6 +239,7 @@ export function guardedPush(git: (args: string[]) => string, label: string, maxA
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       git(['push', '-q', 'origin', 'main']);
+      repackLooseIfNeeded(git, label);
       return true;
     } catch {
       // rejected — try to land on top of the concurrent writer's commit

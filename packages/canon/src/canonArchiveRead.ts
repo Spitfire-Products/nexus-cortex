@@ -22,7 +22,7 @@ import * as path from 'node:path';
 import * as readline from 'node:readline';
 import type { CanonSession } from './canonPull.js';
 import { isSidecarName, sidecarFiles } from './sidecar.js';
-import { isSegmentChunk, logicalPathOf } from './canonSegments.js';
+import { compareChunkNames, isSegmentChunk, logicalPathOf } from './canonSegments.js';
 
 /** Where an archived session's bytes live: git blob ids in the store (part order), plus the events sidecar. */
 export interface ArchivedSessionRef {
@@ -102,7 +102,7 @@ export function discoverArchivedCanonSessions(
   // A segmented layout kept beside an old one wins (canonSegments.orderChunks), for parts and sidecars alike.
   const preferSeg = <T extends { name: string }>(ps: T[]): T[] => { const seg = ps.filter((p) => isSegmentChunk(p.name)); return seg.length ? seg : ps; };
   for (const g of groups.values()) g.parts = preferSeg(g.parts);
-  for (const sc of sidecars.values()) { sc.parts = preferSeg(sc.parts); sc.parts.sort((x, y) => x.name.localeCompare(y.name)); sc.sha = sc.parts[sc.parts.length - 1]!.sha; }
+  for (const sc of sidecars.values()) { sc.parts = preferSeg(sc.parts); sc.parts.sort((x, y) => compareChunkNames(x.name, y.name)); sc.sha = sc.parts[sc.parts.length - 1]!.sha; }
   const sizes = localBlobSizes(store, [
     ...[...groups.values()].flatMap((g) => g.parts.map((p) => p.sha)),
     ...[...sidecars.values()].flatMap((sc) => sc.parts.map((p) => p.sha)),
@@ -114,7 +114,7 @@ export function discoverArchivedCanonSessions(
   const sessions: CanonSession[] = [];
   for (const [rel, g] of groups) {
     if (liveRels.has(rel)) continue;
-    g.parts.sort((a, b) => a.name.localeCompare(b.name));
+    g.parts.sort((a, b) => compareChunkNames(a.name, b.name));
     const local = g.parts.every((p) => p.size >= 0);
     const bytes = g.parts.reduce((n, p) => n + Math.max(0, p.size), 0);
     if (local && bytes === 0) continue; // empty main (a non-local session's size is unknown, so it is kept)

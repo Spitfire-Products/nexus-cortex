@@ -26,8 +26,9 @@ export {
   chunkInfo, logicalPathOf, orderChunks, groupChunkFiles, isSegmentChunk, segmentIndexPath, readSegmentIndex, hasOldParts,
   segmentsOfFiles, segmentBytesOfFiles, segmentsOfStream, segmentLinesOfStream, fileLinesExact, renderSegments,
   SEGMENT_INDEX_FORMAT, DEFAULT_PART_BYTES,
+  PlainPartWriter, DEFAULT_SEAL_BYTES, resolveSealBytes, compareChunkNames, oldPartsOf, renderSegmentIndex,
 } from './canonSegments.js';
-export type { BoundaryDetector, BoundaryInfo, SegmentFile, SegmentMeta, SegmentIndex, SegmentedWriteOptions, SegmentedWriteResult, ChunkInfo } from './canonSegments.js';
+export type { BoundaryDetector, BoundaryInfo, SegmentFile, SegmentMeta, SegmentIndex, SegmentedWriteOptions, SegmentedWriteResult, ChunkInfo, StoredPart, AppendStats, PlainWriteOptions, PlainWriteResult } from './canonSegments.js';
 export { canonRechunk } from './canonRechunk.js';
 export type { CanonRechunkOptions, CanonRechunkResult } from './canonRechunk.js';
 export type { CanonStoreOptions, CanonSession, CanonPullOptions, CanonPullResult, CanonPullNativeOptions, CanonPullNativeResult, CanonPullNativeAllOptions, CanonPullNativeAllResult } from './canonPull.js';
@@ -54,4 +55,5 @@ export { canonWatch } from './canonWatch.js';
 export { defaultCanonStore, LEGACY_CANON_STORE } from './storePath.js';
 export type { CanonWatchOptions } from './canonWatch.js';
 export { canonPipeline } from './canonPipeline.js';
-export type { CanonPipelineResult } from './canonPipeline.js';
+export { DEFAULT_GRAPH_MIN_INTERVAL_MS, graphMinIntervalMs, lastGraphBuild, recordGraphBuild } from './canonPipeline.js';
+export type { CanonPipelineResult, CanonPipelineOptions } from './canonPipeline.js';

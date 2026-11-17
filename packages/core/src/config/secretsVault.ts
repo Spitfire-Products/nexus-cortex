@@ -248,6 +248,16 @@ export function toolChildEnv(base: NodeJS.ProcessEnv = process.env, tool?: strin
   return out;
 }
 
+/** `base` WITHOUT the keys the startup copied in from the vault (a name whose value still equals the vault's) — i.e. the real environment,
+ *  so a caller can add back exactly the keys it means to (`cortex secrets exec --only`). 2026-11-16: exec copied process.env AFTER bootstrap
+ *  had loaded every vault key into it, so `--only A` still handed the child every key and the counter always said 0 injected. */
+export function envWithoutVault(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...base };
+  const s = currentSession();
+  if (s) for (const [name, value] of s.injected) if (out[name] === value) delete out[name];
+  return out;
+}
+
 /** Replace every vault value (and the vault key) in `text` with «secret:NAME». Identity when no vault is unlocked. */
 export function maskSecretText(text: string): string {
   const s = currentSession();

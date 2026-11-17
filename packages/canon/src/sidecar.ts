@@ -6,7 +6,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { logicalPathOf } from './canonSegments.js';
+import { compareChunkNames, logicalPathOf } from './canonSegments.js';
 
 /** The sidecar path for a logical session file (`…/<id>.jsonl` → `…/<id>.events.jsonl`). */
 export function sidecarLogical(logicalAbs: string): string {
@@ -21,14 +21,14 @@ export function sidecarFiles(logicalAbs: string): string[] {
   let names: string[] | undefined;
   const list = () => { try { return (names ??= fs.readdirSync(dir)); } catch { return (names = []); } };
   const segBase = path.basename(side) + '.seg-';
-  const seg = list().filter((n) => n.startsWith(segBase) && /^\d{4}\.part-\d{4}$/.test(n.slice(segBase.length))).sort();
+  const seg = list().filter((n) => n.startsWith(segBase) && /^\d{4,}\.part-\d{4,}$/.test(n.slice(segBase.length))).sort(compareChunkNames);
   if (seg.length) return seg.map((n) => path.join(dir, n));
   if (fs.existsSync(side)) return [side];
   const base = path.basename(side) + '.part-';
-  return list().filter((n) => n.startsWith(base) && /^\d{4}$/.test(n.slice(base.length))).sort().map((n) => path.join(dir, n));
+  return list().filter((n) => n.startsWith(base) && /^\d{4,}$/.test(n.slice(base.length))).sort(compareChunkNames).map((n) => path.join(dir, n));
 }
 
 /** True for a sidecar file name, single, part or segmented (`x.events.jsonl`, `….part-0003`, `….seg-0002.part-0000`). */
 export function isSidecarName(name: string): boolean {
-  return /\.events\.jsonl(\.seg-\d{4})?(\.part-\d{4})?$/.test(name);
+  return /\.events\.jsonl(\.seg-\d{4,})?(\.part-\d{4,})?$/.test(name);
 }

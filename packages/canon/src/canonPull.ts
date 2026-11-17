@@ -149,7 +149,7 @@ export function countArchived(store: string, section: 'canon' | 'native'): numbe
     }).split('\n').map((l) => logicalPathOf(l.replace(new RegExp(`^${section}/`), ''))));
     const mains = new Set<string>();
     for (const p of out.split('\n')) {
-      const m = p.match(/^archive\/\d{4}-\d{2}\/(canon|native)\/(.+?\.jsonl)(\.seg-\d{4}\.part-\d{4}|\.part-\d{4})?$/);
+      const m = p.match(/^archive\/\d{4}-\d{2}\/(canon|native)\/(.+?\.jsonl)(\.seg-\d{4,}\.part-\d{4,}|\.part-\d{4,})?$/);
       // Archived-only sessions: a copy also present in the live tree is already listed above.
       if (m && m[1] === section && !m[2]!.endsWith('.events.jsonl') && !live.has(m[2]!)) mains.add(m[2]!);
     }
@@ -367,7 +367,7 @@ async function pullNativeFrom(o: CanonPullNativeOptions, nativeRoot: string): Pr
   if (mains.length > 1) {
     const sameId = new Set(mains.map((m) => path.basename(m))).size === 1;
     const harnesses = [...new Set(mains.map((m) => path.relative(nativeRoot, m).split(path.sep)[0]!))];
-    const r = sameId && harnesses.length === 1 ? resolveCopies(mains, (m) => (groups.get(m) ?? []).slice().sort()) : undefined;
+    const r = sameId && harnesses.length === 1 ? resolveCopies(mains, (m) => orderChunks(groups.get(m) ?? [])) : undefined;
     if (!r) {
       console.error(harnesses.length > 1
         ? `[canon-pull-native] stored under ${harnesses.length} harnesses (${harnesses.join(', ')}) — a session continued in another harness; choose with --harness <name> (or --rel <path>):`
@@ -426,7 +426,7 @@ async function pullNativeFrom(o: CanonPullNativeOptions, nativeRoot: string): Pr
       return { code: 1, destDir };
     }
     fs.mkdirSync(path.dirname(dest), { recursive: true });
-    const parts = groups.get(logical)!.slice().sort();
+    const parts = orderChunks(groups.get(logical)!);
     fs.writeFileSync(dest, '');
     for (const p of parts) fs.appendFileSync(dest, fs.readFileSync(p));
     written.push(dest);
