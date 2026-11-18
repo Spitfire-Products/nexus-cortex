@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.139.4] - 2026-11-18
+
+### Fixed
+- **Canon store growth from duplicate packs.** A blob-less canon clone that pulled another machine's changes re-materialized data it already held as a near-duplicate pack, so the store's git database kept growing — around a gigabyte a day — because automatic git maintenance is deliberately off. The store now consolidates its packs on its own after a sync once enough have piled up, reclaiming the duplicates (on the home store: nine packs and 2.5 GB down to two packs and 1.4 GB). It runs at most once every few hours, never while another canon writer is working, and with capped memory so it is safe on a small machine; a failed run leaves the store exactly as it was.
+
 ## [4.139.3] - 2026-11-17
 
 ### Fixed

@@ -226,6 +226,61 @@ export function repackLooseIfNeeded(git: (args: string[]) => string, label: stri
 }
 
 /**
+ * Size-triggered FULL repack (2026-11-18). `hardenStoreConfig` disables auto-gc/maintenance (a detached auto-repack was the
+ * 11-15 "mystery writer") and `repackLooseIfNeeded` only consolidates LOOSE objects — so DUPLICATE packs are never reclaimed.
+ * A blob:none PARTIAL clone that pulls another machine's push materializes the base tree via a lazy over-fetch, landing a
+ * near-duplicate promisor pack on each pull (the store grew 1.9 → 6.2 GB in ~4 h of pulls, 11-18). `git repack -a -d`
+ * consolidates every pack into one (+ the separate promisor pack git keeps on a partial clone) and reclaims the duplicates
+ * (measured 3.9 → 1.4 GB in ~2 min). The CALLER runs this INSIDE the writer lock (withStoreLock), so it never collides with
+ * the watcher / cron / CLI — the very collision that made every HAND repack unusable (11-17: canon-store-watch respawns the
+ * watcher mid-repack). Gated on PACK COUNT (the real signal — a consolidated partial store has 1-2 packs, every lazy
+ * over-fetch adds one): fires only when packs exceed CANON_REPACK_ALL_MAX_PACKS (default 4) AND packed size is over a floor
+ * CANON_REPACK_ALL_MB (default 500 MB) AND the last full repack is older than CANON_REPACK_ALL_MIN_INTERVAL_MS (default 6 h;
+ * timestamp in <store>/.git/canon-last-full-repack, untracked, survives watcher restarts). Memory-bounded (pack.threads=1 +
+ * pack.windowMemory) so it is safe on the 8 GB no-swap repl where the OOM killer picks Claude first. GIT_NO_LAZY_FETCH=1 is
+ * belt-and-suspenders — repack only packs objects already present, it never fetches. NEVER throws (git repack deletes old
+ * packs only on SUCCESS, so an interrupted/failed repack always leaves the store intact — proven 11-17); a failure only
+ * warns. Returns true when it repacked. CANON_REPACK_ALL_DISABLE=1 turns it off entirely.
+ */
+export function repackAllIfNeeded(store: string, label: string): boolean {
+  if (process.env.CANON_REPACK_ALL_DISABLE === '1') return false;
+  const gitDir = path.join(store, '.git');
+  if (!fs.existsSync(gitDir)) return false;
+  const run = (args: string[], extraEnv: NodeJS.ProcessEnv = {}): string =>
+    execFileSync('git', ['-C', store, ...args], {
+      encoding: 'utf8', maxBuffer: 256 * 1024 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...extraEnv },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  try {
+    const parse = (out: string, k: string) => Number((out.match(new RegExp(`^${k}: (\\d+)`, 'm')) ?? [])[1] ?? 0);
+    const before = run(['count-objects', '-v']);
+    const sizePackMb = parse(before, 'size-pack') / 1024;   // size-pack is in KB
+    const packs = parse(before, 'packs');
+    // The real signal is PACK COUNT, not absolute size: every lazy over-fetch lands another pack, so a healthy consolidated
+    // partial store has 1-2 packs and >maxPacks means duplicates piled up. A size floor skips a store of many tiny packs.
+    // (The first cut keyed on packed size >= 2500 MB and missed the real case: 9 dup packs totalling 2487 MB, 13 MB under it.)
+    const maxPacks = Number(process.env.CANON_REPACK_ALL_MAX_PACKS) || 4;
+    const floorMb = Number(process.env.CANON_REPACK_ALL_MB) || 500;
+    if (packs < maxPacks || sizePackMb < floorMb) return false;
+    const stamp = path.join(gitDir, 'canon-last-full-repack');
+    const everyMs = Number(process.env.CANON_REPACK_ALL_MIN_INTERVAL_MS) || 6 * 3600_000;
+    try { if (Date.now() - fs.statSync(stamp).mtimeMs < everyMs) return false; } catch { /* never repacked — proceed */ }
+    const t0 = Date.now();
+    // -a -d consolidates ALL packs and prunes the now-redundant ones; threads=1 + a bounded delta window keep RSS modest.
+    run(['-c', 'pack.threads=1', '-c', 'pack.windowMemory=128m', '-c', 'pack.deltaCacheSize=128m', 'repack', '-a', '-d', '-q'],
+      { GIT_NO_LAZY_FETCH: '1' });
+    try { fs.writeFileSync(stamp, String(Date.now())); } catch { /* best-effort stamp */ }
+    const afterMb = parse(run(['count-objects', '-v']), 'size-pack') / 1024;
+    console.log(`[${label}] full repack: ${sizePackMb.toFixed(0)} → ${afterMb.toFixed(0)} MB packed (${packs} packs, ${((Date.now() - t0) / 1000).toFixed(0)}s)`);
+    return true;
+  } catch (e) {
+    console.warn(`[${label}] full repack skipped: ${(e as Error)?.message ?? e}`);
+    return false;
+  }
+}
+
+/**
  * Multi-writer-safe push: push main; on rejection (a concurrent writer —
  * another machine, a bench-worker fleet, watcher+cron overlap — landed
  * first) `pull --rebase` and retry. Canon writers are append-only over

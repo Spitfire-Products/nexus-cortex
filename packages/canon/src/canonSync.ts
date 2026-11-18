@@ -16,7 +16,7 @@
  * @module canon/canonSync
  */
 import { defaultCanonStore } from './storePath.js';
-import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush, isScopedStore, sparseAdd, withStoreLock } from './canonRepo.js';
+import { requireCanonRepo, redactRepoUrl, canonGit, guardedAddAll, atomicClone, guardedPush, isScopedStore, sparseAdd, withStoreLock, repackAllIfNeeded } from './canonRepo.js';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
@@ -646,6 +646,12 @@ async function canonSyncUnlocked(o: CanonSyncOptions = {}): Promise<CanonSyncRes
     } else {
       console.log(`[canon-sync] no changes (${unchanged} unchanged, ${skipped.length} previously-skipped)`);
     }
+    // Reclaim DUPLICATE packs left by the lazy over-fetch on `pull --rebase` (guardedPush): repackLooseIfNeeded only packs
+    // LOOSE objects and auto-gc is disabled, so nothing else consolidates them (store ballooned 1.9 → 6.2 GB in ~4 h of pulls,
+    // 11-18). Runs on every non-dry pass but is internally gated by size + a 6 h interval, so it fires rarely; it is INSIDE
+    // the writer lock here (canonSync wraps canonSyncUnlocked in withStoreLock), so it never collides with the watcher/cron/CLI
+    // — the collision that made every hand repack unusable. See repackAllIfNeeded.
+    repackAllIfNeeded(STORE, 'canon-sync');
   } else {
     console.log(`[canon-sync DRY] would copy ${copied}, unchanged ${unchanged}, skip ${skipped.length}`);
     for (const s of skipped.slice(0, 10)) console.log('  skip:', s);
